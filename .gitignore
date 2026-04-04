@@ -1,0 +1,15 @@
+.env
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# Ignore all data except the setup script
+data/*
+!data/data_setup.py
+!data/.gitkeep
