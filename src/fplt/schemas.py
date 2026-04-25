@@ -13,8 +13,6 @@ Schemas are grouped by pipeline stage:
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandera.pandas as pa
 from pandera.typing import Series
 
@@ -44,14 +42,14 @@ class GameweekSchema(pa.DataFrameModel):
     season: Series[str]
 
     # Extended columns present from ~2019-20 onwards
-    position: Optional[Series[str]] = pa.Field(nullable=True)
-    team: Optional[Series[str]] = pa.Field(nullable=True)
-    xP: Optional[Series[float]] = pa.Field(nullable=True)
-    starts: Optional[Series[int]] = pa.Field(nullable=True)
-    expected_goals: Optional[Series[float]] = pa.Field(nullable=True)
-    expected_assists: Optional[Series[float]] = pa.Field(nullable=True)
-    expected_goal_involvements: Optional[Series[float]] = pa.Field(nullable=True)
-    expected_goals_conceded: Optional[Series[float]] = pa.Field(nullable=True)
+    position: Series[str] | None = pa.Field(nullable=True)
+    team: Series[str] | None = pa.Field(nullable=True)
+    xP: Series[float] | None = pa.Field(nullable=True)
+    starts: Series[int] | None = pa.Field(nullable=True)
+    expected_goals: Series[float] | None = pa.Field(nullable=True)
+    expected_assists: Series[float] | None = pa.Field(nullable=True)
+    expected_goal_involvements: Series[float] | None = pa.Field(nullable=True)
+    expected_goals_conceded: Series[float] | None = pa.Field(nullable=True)
 
     class Config:
         strict = False  # extra columns (e.g. mng_* in 2024-25) are ignored
@@ -66,8 +64,8 @@ class FixtureSchema(pa.DataFrameModel):
     team_a: Series[int]
     season: Series[str]
 
-    team_h_score: Optional[Series[float]] = pa.Field(nullable=True, ge=0)
-    team_a_score: Optional[Series[float]] = pa.Field(nullable=True, ge=0)
+    team_h_score: Series[float] | None = pa.Field(nullable=True, ge=0)
+    team_a_score: Series[float] | None = pa.Field(nullable=True, ge=0)
 
     class Config:
         strict = False
@@ -100,7 +98,7 @@ class FixtureRecordSchema(pa.DataFrameModel):
     team_h_score: Series[int] = pa.Field(ge=0)
     team_a_score: Series[int] = pa.Field(ge=0)
 
-    kickoff_time: Optional[Series[object]]  # tz-aware datetime when present
+    kickoff_time: Series[object] | None  # tz-aware datetime when present
 
     class Config:
         strict = False
@@ -123,9 +121,9 @@ class FeatureSchema(pa.DataFrameModel):
     season: Series[str]
 
     # Opponent strength — present whenever teams_df has the columns
-    opp_strength_overall: Optional[Series[float]] = pa.Field(nullable=True)
-    opp_strength_attack: Optional[Series[float]] = pa.Field(nullable=True)
-    opp_strength_defence: Optional[Series[float]] = pa.Field(nullable=True)
+    opp_strength_overall: Series[float] | None = pa.Field(nullable=True)
+    opp_strength_attack: Series[float] | None = pa.Field(nullable=True)
+    opp_strength_defence: Series[float] | None = pa.Field(nullable=True)
 
     class Config:
         strict = False
@@ -141,7 +139,7 @@ class DixonColesFixtureSchema(pa.DataFrameModel):
     team_h: Series[object]
     team_a: Series[object]
 
-    fixture_id: Optional[Series[object]]  # used as ScoreDistribution identifier
+    fixture_id: Series[object] | None  # used as ScoreDistribution identifier
 
     class Config:
         strict = False
@@ -197,13 +195,13 @@ class GoalAllocPredSchema(pa.DataFrameModel):
 class ComponentPredSchema(pa.DataFrameModel):
     """Output of ComponentPredictor.predict_components()."""
 
-    minutes: Optional[Series[float]] = pa.Field(ge=0.0, le=90.0, nullable=True)
-    goals_scored: Optional[Series[float]] = pa.Field(ge=0.0, le=5.0, nullable=True)
-    assists: Optional[Series[float]] = pa.Field(ge=0.0, le=3.0, nullable=True)
-    clean_sheets: Optional[Series[float]] = pa.Field(ge=0.0, le=1.0, nullable=True)
-    saves: Optional[Series[float]] = pa.Field(ge=0.0, le=15.0, nullable=True)
-    bonus: Optional[Series[float]] = pa.Field(ge=0.0, le=3.0, nullable=True)
-    yellow_cards: Optional[Series[float]] = pa.Field(ge=0.0, le=1.0, nullable=True)
+    minutes: Series[float] | None = pa.Field(ge=0.0, le=90.0, nullable=True)
+    goals_scored: Series[float] | None = pa.Field(ge=0.0, le=5.0, nullable=True)
+    assists: Series[float] | None = pa.Field(ge=0.0, le=3.0, nullable=True)
+    clean_sheets: Series[float] | None = pa.Field(ge=0.0, le=1.0, nullable=True)
+    saves: Series[float] | None = pa.Field(ge=0.0, le=15.0, nullable=True)
+    bonus: Series[float] | None = pa.Field(ge=0.0, le=3.0, nullable=True)
+    yellow_cards: Series[float] | None = pa.Field(ge=0.0, le=1.0, nullable=True)
 
     class Config:
         strict = False

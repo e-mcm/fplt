@@ -72,7 +72,7 @@ class GoalAllocationModel(PointModel):
         X: DataFrame[FeatureSchema],
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "GoalAllocationModel":
+    ) -> GoalAllocationModel:
         """Train the fallback LightGBM model on historical goals data.
 
         Only rows where xg_share is NaN (missing xG) use the fallback at

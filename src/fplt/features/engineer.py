@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import DataFrame
 

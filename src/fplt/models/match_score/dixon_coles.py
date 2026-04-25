@@ -12,9 +12,6 @@ so recent results influence the parameters more heavily.
 
 from __future__ import annotations
 
-import math
-from typing import Any
-
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -104,7 +101,7 @@ class DixonColesModel(DistributionalModel):
         X: pd.DataFrame,
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "DixonColesModel":
+    ) -> DixonColesModel:
         """Fit attack/defence parameters from historical fixture scores.
 
         Args:

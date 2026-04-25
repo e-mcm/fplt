@@ -52,7 +52,7 @@ class MinutesModel(PointModel):
         X: DataFrame[FeatureSchema],
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "MinutesModel":
+    ) -> MinutesModel:
         """Train both stages.
 
         Args:

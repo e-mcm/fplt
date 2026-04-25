@@ -10,7 +10,7 @@ Writes:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import hydra
@@ -23,7 +23,6 @@ from fplt.aggregator import compute_xpts
 from fplt.data.load import load_gameweeks, load_teams
 from fplt.features.engineer import build_features
 from fplt.features.player_share import add_player_xg_share
-from fplt.features.team_strength import build_fixture_records
 from fplt.models.bonus.model import BonusModel
 from fplt.models.cards.model import CardModel
 from fplt.models.goal_allocation.model import GoalAllocationModel
@@ -131,7 +130,7 @@ def main(cfg: DictConfig) -> None:
 
     out_dir = Path("outputs/predictions")
     out_dir.mkdir(parents=True, exist_ok=True)
-    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    date_str = datetime.now(UTC).strftime("%Y%m%d")
     out_path = out_dir / f"xpts_gw{gw:02d}_{date_str}.parquet"
     out_df.to_parquet(out_path, index=False)
     log.info("Wrote %d rows to %s", len(out_df), out_path)

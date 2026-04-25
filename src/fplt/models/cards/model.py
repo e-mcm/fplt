@@ -45,7 +45,7 @@ class CardModel(PointModel):
         X: DataFrame[FeatureSchema],
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "CardModel":
+    ) -> CardModel:
         """Train yellow and red card classifiers.
 
         Args:

@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 
 from fplt.data import (
-    ALL_SEASONS,
     CORE_GW_COLS,
     load_all_seasons,
     load_fixtures,

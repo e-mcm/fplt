@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 
 from fplt.rules import score_components, score_dataframe
 

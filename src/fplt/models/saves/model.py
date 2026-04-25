@@ -41,7 +41,7 @@ class SavesModel(PointModel):
         X: DataFrame[FeatureSchema],
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "SavesModel":
+    ) -> SavesModel:
         """Train on GK rows only.
 
         Args:

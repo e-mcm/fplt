@@ -10,7 +10,6 @@ Falls back to zero share for seasons without xG data (pre-2019-20).
 
 from __future__ import annotations
 
-import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import DataFrame
 

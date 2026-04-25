@@ -38,7 +38,7 @@ class BonusModel(PointModel):
         X: DataFrame[FeatureSchema],
         y: pd.DataFrame | pd.Series | None = None,
         **kwargs: object,
-    ) -> "BonusModel":
+    ) -> BonusModel:
         """Train position-stratified bonus predictor.
 
         Args:
