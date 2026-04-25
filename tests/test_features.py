@@ -64,7 +64,5 @@ def test_total_points_retained(features: pd.DataFrame) -> None:
     assert "total_points" in features.columns
 
 
-def test_row_count_unchanged(
-    gw: pd.DataFrame, features: pd.DataFrame
-) -> None:
+def test_row_count_unchanged(gw: pd.DataFrame, features: pd.DataFrame) -> None:
     assert len(features) == len(gw)

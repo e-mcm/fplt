@@ -1,8 +1,13 @@
 """Data loading for FPL CSV datasets (vaastav/Fantasy-Premier-League)."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
-import pandas as pd
+import pandera.pandas as pa
+from pandera.typing import DataFrame
+
+from fplt.schemas import FixtureSchema, GameweekSchema, TeamSchema
 
 # Columns present in every season — safe to rely on
 CORE_GW_COLS = [
@@ -72,7 +77,10 @@ def _data_dir() -> Path:
     return Path(__file__).parents[3] / "data"
 
 
-def load_gameweeks(season: str, data_dir: Path | None = None) -> pd.DataFrame:
+@pa.check_types
+def load_gameweeks(
+    season: str, data_dir: Path | None = None
+) -> DataFrame[GameweekSchema]:
     """Load merged gameweek data for a single season.
 
     Args:
@@ -82,6 +90,8 @@ def load_gameweeks(season: str, data_dir: Path | None = None) -> pd.DataFrame:
     Returns:
         DataFrame with one row per player per gameweek.
     """
+    import pandas as pd
+
     root = data_dir or _data_dir()
     path = root / season / "gws" / "merged_gw.csv"
     try:
@@ -94,10 +104,13 @@ def load_gameweeks(season: str, data_dir: Path | None = None) -> pd.DataFrame:
     df["season"] = season
     df["kickoff_time"] = pd.to_datetime(df["kickoff_time"], utc=True)
 
-    return df
+    return df  # type: ignore[return-value]
 
 
-def load_fixtures(season: str, data_dir: Path | None = None) -> pd.DataFrame:
+@pa.check_types
+def load_fixtures(
+    season: str, data_dir: Path | None = None
+) -> DataFrame[FixtureSchema]:
     """Load fixture list for a season.
 
     Args:
@@ -107,6 +120,8 @@ def load_fixtures(season: str, data_dir: Path | None = None) -> pd.DataFrame:
     Returns:
         DataFrame with one row per fixture.
     """
+    import pandas as pd
+
     root = data_dir or _data_dir()
     path = root / season / "fixtures.csv"
     df = pd.read_csv(path, low_memory=False)
@@ -125,10 +140,11 @@ def load_fixtures(season: str, data_dir: Path | None = None) -> pd.DataFrame:
         "finished",
         "season",
     ]
-    return df[[c for c in keep if c in df.columns]]
+    return df[[c for c in keep if c in df.columns]]  # type: ignore[return-value]
 
 
-def load_teams(season: str, data_dir: Path | None = None) -> pd.DataFrame:
+@pa.check_types
+def load_teams(season: str, data_dir: Path | None = None) -> DataFrame[TeamSchema]:
     """Load team info and strength ratings for a season.
 
     Args:
@@ -138,6 +154,8 @@ def load_teams(season: str, data_dir: Path | None = None) -> pd.DataFrame:
     Returns:
         DataFrame with one row per team.
     """
+    import pandas as pd
+
     root = data_dir or _data_dir()
     path = root / season / "teams.csv"
     df = pd.read_csv(path, low_memory=False)
@@ -156,13 +174,14 @@ def load_teams(season: str, data_dir: Path | None = None) -> pd.DataFrame:
         "strength_defence_away",
         "season",
     ]
-    return df[[c for c in keep if c in df.columns]]
+    return df[[c for c in keep if c in df.columns]]  # type: ignore[return-value]
 
 
+@pa.check_types
 def load_all_seasons(
     seasons: list[str] | None = None,
     data_dir: Path | None = None,
-) -> pd.DataFrame:
+) -> DataFrame[GameweekSchema]:
     """Load and concatenate gameweek data across multiple seasons.
 
     Args:
@@ -172,6 +191,8 @@ def load_all_seasons(
     Returns:
         DataFrame with all seasons combined, sorted by season and GW.
     """
+    import pandas as pd
+
     seasons = seasons or ALL_SEASONS
     frames: list[pd.DataFrame] = []
 
@@ -183,8 +204,8 @@ def load_all_seasons(
         frames.append(load_gameweeks(season, data_dir))
 
     if not frames:
-        return pd.DataFrame(columns=CORE_GW_COLS + ["season"])
+        return pd.DataFrame(columns=CORE_GW_COLS + ["season"])  # type: ignore[return-value]
 
     df = pd.concat(frames, ignore_index=True)
     df = df.sort_values(["season", "GW", "name"]).reset_index(drop=True)
-    return df
+    return df  # type: ignore[return-value]

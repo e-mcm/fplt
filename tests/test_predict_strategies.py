@@ -28,12 +28,15 @@ def split() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 # --- ByPositionPredictor ---
 
+
 @pytest.fixture(scope="module")
 def by_pos_model(split: tuple) -> ByPositionPredictor:
     df_train, df_test = split
     return ByPositionPredictor(num_rounds=50).fit(
-        df_train, df_train["total_points"],
-        X_val=df_test, y_val=df_test["total_points"],
+        df_train,
+        df_train["total_points"],
+        X_val=df_test,
+        y_val=df_test["total_points"],
     )
 
 
@@ -49,9 +52,7 @@ def test_by_position_predict_shape(
     assert preds.shape == (len(df_test),)
 
 
-def test_by_position_mae(
-    by_pos_model: ByPositionPredictor, split: tuple
-) -> None:
+def test_by_position_mae(by_pos_model: ByPositionPredictor, split: tuple) -> None:
     _, df_test = split
     preds = by_pos_model.predict(df_test)
     mae = float(np.mean(np.abs(preds - df_test["total_points"].to_numpy())))
@@ -67,13 +68,16 @@ def test_by_position_importance_keys(
 
 # --- ComponentPredictor ---
 
+
 @pytest.fixture(scope="module")
 def component_model(split: tuple) -> ComponentPredictor:
     df_train, df_test = split
     predictors = {cfg.name: LGBMPredictor(num_rounds=50) for cfg in COMPONENTS}
     return ComponentPredictor(predictors=predictors).fit(
-        df_train, df_train[COMPONENT_COLS],
-        X_val=df_test, y_val=df_test[COMPONENT_COLS],
+        df_train,
+        df_train[COMPONENT_COLS],
+        X_val=df_test,
+        y_val=df_test[COMPONENT_COLS],
     )
 
 
@@ -94,7 +98,8 @@ def test_component_predict_components_cols(
 ) -> None:
     _, df_test = split
     comp = component_model.predict_components(df_test)
-    for name, _, _, _ in COMPONENTS:
+    for cfg in COMPONENTS:
+        name = cfg.name
         assert name in comp.columns
 
 
@@ -108,9 +113,7 @@ def test_component_predictions_clipped(
     assert (comp["clean_sheets"] <= 1).all()
 
 
-def test_component_mae(
-    component_model: ComponentPredictor, split: tuple
-) -> None:
+def test_component_mae(component_model: ComponentPredictor, split: tuple) -> None:
     _, df_test = split
     preds = component_model.predict(df_test)
     mae = float(np.mean(np.abs(preds - df_test["total_points"].to_numpy())))

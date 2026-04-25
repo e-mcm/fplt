@@ -19,6 +19,7 @@ def timed(fn: Callable[P, R]) -> Callable[P, R]:
         >>> slow()
         slow  1.00s
     """
+
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         start = time.perf_counter()

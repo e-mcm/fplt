@@ -6,8 +6,11 @@ from typing import Any
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import pandera.pandas as pa
+from pandera.typing import DataFrame
 
 from fplt.predict.base import BasePredictor
+from fplt.schemas import FeatureImportanceSchema, FeatureSchema
 
 # Always present after feature engineering (all seasons)
 BASE_FEATURE_COLS: list[str] = [
@@ -91,9 +94,9 @@ class LGBMPredictor(BasePredictor):
 
     def fit(
         self,
-        X: pd.DataFrame,
+        X: DataFrame[FeatureSchema],
         y: pd.Series,
-        X_val: pd.DataFrame | None = None,
+        X_val: DataFrame[FeatureSchema] | None = None,
         y_val: pd.Series | None = None,
     ) -> "LGBMPredictor":
         """Train the model.
@@ -108,8 +111,7 @@ class LGBMPredictor(BasePredictor):
             self
         """
         self._feature_cols = [
-            c for c in BASE_FEATURE_COLS + OPTIONAL_FEATURE_COLS
-            if c in X.columns
+            c for c in BASE_FEATURE_COLS + OPTIONAL_FEATURE_COLS if c in X.columns
         ]
 
         train_data = lgb.Dataset(X[self._feature_cols], label=y)
@@ -139,7 +141,7 @@ class LGBMPredictor(BasePredictor):
         )
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: DataFrame[FeatureSchema]) -> np.ndarray:
         """Predict points for each row in X."""
         if self._model is None:
             raise RuntimeError("Call fit() before predict().")
@@ -153,7 +155,8 @@ class LGBMPredictor(BasePredictor):
     def is_fitted(self) -> bool:
         return self._model is not None
 
-    def feature_importance(self) -> pd.DataFrame:
+    @pa.check_types
+    def feature_importance(self) -> DataFrame[FeatureImportanceSchema]:
         """Return feature importances sorted descending by gain.
 
         Returns:
@@ -161,7 +164,7 @@ class LGBMPredictor(BasePredictor):
         """
         if self._model is None:
             raise RuntimeError("Call fit() before feature_importance().")
-        return (
+        return (  # type: ignore[return-value]
             pd.DataFrame(
                 {
                     "feature": self._feature_cols,

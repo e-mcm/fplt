@@ -1,6 +1,7 @@
-import pytest
-from fplt.rules import score_components, score_dataframe
 import pandas as pd
+import pytest
+
+from fplt.rules import score_components, score_dataframe
 
 
 def test_no_minutes_scores_zero():
@@ -98,10 +99,12 @@ def test_bonus():
 
 
 def test_score_dataframe():
-    df = pd.DataFrame([
-        {"position_enc": 3, "minutes": 90, "goals_scored": 1, "assists": 1},
-        {"position_enc": 0, "minutes": 90, "clean_sheets": 1, "saves": 3},
-    ])
+    df = pd.DataFrame(
+        [
+            {"position_enc": 3, "minutes": 90, "goals_scored": 1, "assists": 1},
+            {"position_enc": 0, "minutes": 90, "clean_sheets": 1, "saves": 3},
+        ]
+    )
     result = score_dataframe(df)
-    assert result.iloc[0] == 2 + 4 + 3   # FWD: appearance + goal + assist
-    assert result.iloc[1] == 2 + 4 + 1   # GK:  appearance + clean sheet + 1 save bonus
+    assert result.iloc[0] == 2 + 4 + 3  # FWD: appearance + goal + assist
+    assert result.iloc[1] == 2 + 4 + 1  # GK:  appearance + clean sheet + 1 save bonus

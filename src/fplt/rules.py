@@ -10,7 +10,7 @@ from fplt.types import Position
 
 # Points per goal scored
 GOAL_POINTS = {
-    Position.GK:  6,
+    Position.GK: 6,
     Position.DEF: 6,
     Position.MID: 5,
     Position.FWD: 4,
@@ -18,7 +18,7 @@ GOAL_POINTS = {
 
 # Points for a clean sheet
 CLEAN_SHEET_POINTS = {
-    Position.GK:  4,
+    Position.GK: 4,
     Position.DEF: 4,
     Position.MID: 1,
     Position.FWD: 0,
@@ -26,13 +26,13 @@ CLEAN_SHEET_POINTS = {
 
 # Points for playing at all vs playing >= 60 minutes
 APPEARANCE_POINTS = {
-    "sub": 1,   # played but < 60 min
+    "sub": 1,  # played but < 60 min
     "full": 2,  # played >= 60 min
 }
 
 # Fixed point values
 ASSIST_POINTS = 3
-SAVE_BONUS_EVERY = 3      # 1pt per 3 saves (GK only)
+SAVE_BONUS_EVERY = 3  # 1pt per 3 saves (GK only)
 PENALTY_SAVE_POINTS = 5
 PENALTY_MISS_POINTS = -2
 YELLOW_CARD_POINTS = -1
@@ -95,7 +95,7 @@ def score_components(
     pts += clean_sheets * CLEAN_SHEET_POINTS.get(pos, 0)
 
     # GK save bonus
-    pts += (saves // SAVE_BONUS_EVERY)
+    pts += saves // SAVE_BONUS_EVERY
 
     # GK penalty save
     pts += penalties_saved * PENALTY_SAVE_POINTS
@@ -126,9 +126,16 @@ def score_dataframe(df: pd.DataFrame) -> pd.Series:
         Series of expected points, same index as df.
     """
     optional = [
-        "goals_scored", "assists", "clean_sheets", "saves",
-        "yellow_cards", "red_cards", "own_goals",
-        "penalties_missed", "penalties_saved", "bonus",
+        "goals_scored",
+        "assists",
+        "clean_sheets",
+        "saves",
+        "yellow_cards",
+        "red_cards",
+        "own_goals",
+        "penalties_missed",
+        "penalties_saved",
+        "bonus",
     ]
 
     def _row(r: pd.Series) -> float:

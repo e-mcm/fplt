@@ -13,10 +13,13 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import pandera.pandas as pa
+from pandera.typing import DataFrame
 
 from fplt.predict.base import BasePredictor
 from fplt.predict.lgbm import LGBMPredictor
 from fplt.rules import score_components
+from fplt.schemas import ComponentPredSchema, FeatureImportanceSchema, FeatureSchema
 
 
 @dataclass(frozen=True)
@@ -37,13 +40,13 @@ class ComponentConfig:
 
 
 COMPONENTS: list[ComponentConfig] = [
-    ComponentConfig("minutes",      "minutes",      0.0,  90.0),
-    ComponentConfig("goals_scored", "goals_scored", 0.0,   5.0),
-    ComponentConfig("assists",      "assists",      0.0,   3.0),
-    ComponentConfig("clean_sheets", "clean_sheets", 0.0,   1.0),
-    ComponentConfig("saves",        "saves",        0.0,  15.0),
-    ComponentConfig("bonus",        "bonus",        0.0,   3.0),
-    ComponentConfig("yellow_cards", "yellow_cards", 0.0,   1.0),
+    ComponentConfig("minutes", "minutes", 0.0, 90.0),
+    ComponentConfig("goals_scored", "goals_scored", 0.0, 5.0),
+    ComponentConfig("assists", "assists", 0.0, 3.0),
+    ComponentConfig("clean_sheets", "clean_sheets", 0.0, 1.0),
+    ComponentConfig("saves", "saves", 0.0, 15.0),
+    ComponentConfig("bonus", "bonus", 0.0, 3.0),
+    ComponentConfig("yellow_cards", "yellow_cards", 0.0, 1.0),
 ]
 
 
@@ -81,15 +84,14 @@ class ComponentPredictor(BasePredictor):
         """
         provided = predictors or {}
         self._predictors: dict[str, BasePredictor] = {
-            cfg.name: provided.get(cfg.name, LGBMPredictor())
-            for cfg in COMPONENTS
+            cfg.name: provided.get(cfg.name, LGBMPredictor()) for cfg in COMPONENTS
         }
 
     def fit(
         self,
-        X: pd.DataFrame,
+        X: DataFrame[FeatureSchema],
         y: pd.DataFrame,
-        X_val: pd.DataFrame | None = None,
+        X_val: DataFrame[FeatureSchema] | None = None,
         y_val: pd.DataFrame | None = None,
     ) -> "ComponentPredictor":
         """Train each injected predictor on its component target.
@@ -121,7 +123,10 @@ class ComponentPredictor(BasePredictor):
 
         return self
 
-    def predict_components(self, X: pd.DataFrame) -> pd.DataFrame:
+    @pa.check_types
+    def predict_components(
+        self, X: DataFrame[FeatureSchema]
+    ) -> DataFrame[ComponentPredSchema]:
         """Return predicted value for each component as a DataFrame.
 
         Returns:
@@ -137,9 +142,9 @@ class ComponentPredictor(BasePredictor):
                 raw = predictor.predict(X)
                 out[cfg.name] = np.clip(raw, cfg.clip_min, cfg.clip_max)
 
-        return pd.DataFrame(out, index=X.index)
+        return pd.DataFrame(out, index=X.index)  # type: ignore[return-value]
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: DataFrame[FeatureSchema]) -> np.ndarray:
         """Predict total points by combining component predictions via rules.
 
         Args:
@@ -177,7 +182,7 @@ class ComponentPredictor(BasePredictor):
     def is_fitted(self) -> bool:
         return any(p.is_fitted for p in self._predictors.values())
 
-    def feature_importance(self) -> dict[str, pd.DataFrame]:
+    def feature_importance(self) -> dict[str, DataFrame[FeatureImportanceSchema]]:
         """Return feature importances per component model.
 
         Returns:

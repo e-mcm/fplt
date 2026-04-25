@@ -1,7 +1,12 @@
 """Feature engineering for FPL prediction models."""
 
-import pandas as pd
+from __future__ import annotations
 
+import pandas as pd
+import pandera.pandas as pa
+from pandera.typing import DataFrame
+
+from fplt.schemas import FeatureSchema, GameweekSchema, TeamSchema
 from fplt.types import Position
 from fplt.utils import timed
 
@@ -45,7 +50,7 @@ _ROLL_STATS_OPTIONAL = [
 
 
 @timed
-def _add_rolling_stats(df: pd.DataFrame) -> pd.DataFrame:
+def _add_rolling_stats(df: DataFrame[GameweekSchema]) -> DataFrame[FeatureSchema]:
     """Add rolling mean features per player per season.
 
     Uses shift(1) before rolling so GW-N features are based on GWs 1..N-1,
@@ -62,9 +67,7 @@ def _add_rolling_stats(df: pd.DataFrame) -> pd.DataFrame:
         shifted = grouped[col].transform(lambda s: s.shift(1))
         for w in WINDOWS:
             feat = f"{col}_rolling_{w}"
-            df[feat] = shifted.groupby(
-                df["element"]
-            ).transform(
+            df[feat] = shifted.groupby(df["element"]).transform(
                 lambda s, w=w: s.rolling(w, min_periods=1).mean()
             )
 
@@ -74,13 +77,13 @@ def _add_rolling_stats(df: pd.DataFrame) -> pd.DataFrame:
         lambda s: s.rolling(5, min_periods=2).std()
     )
 
-    return df
+    return df  # type: ignore[return-value]
 
 
 @timed
 def _add_opponent_strength(
-    df: pd.DataFrame, teams: pd.DataFrame
-) -> pd.DataFrame:
+    df: DataFrame[FeatureSchema], teams: DataFrame[TeamSchema]
+) -> DataFrame[FeatureSchema]:
     """Join opponent team strength ratings onto the GW dataframe.
 
     Picks home/away strength based on the player's perspective:
@@ -107,21 +110,21 @@ def _add_opponent_strength(
 
     # From the player's perspective, the opponent's relevant strength flips
     df["opp_strength_overall"] = df.apply(
-        lambda r: r["strength_overall_away"]
-        if r["was_home"]
-        else r["strength_overall_home"],
+        lambda r: (
+            r["strength_overall_away"] if r["was_home"] else r["strength_overall_home"]
+        ),
         axis=1,
     )
     df["opp_strength_attack"] = df.apply(
-        lambda r: r["strength_attack_away"]
-        if r["was_home"]
-        else r["strength_attack_home"],
+        lambda r: (
+            r["strength_attack_away"] if r["was_home"] else r["strength_attack_home"]
+        ),
         axis=1,
     )
     df["opp_strength_defence"] = df.apply(
-        lambda r: r["strength_defence_away"]
-        if r["was_home"]
-        else r["strength_defence_home"],
+        lambda r: (
+            r["strength_defence_away"] if r["was_home"] else r["strength_defence_home"]
+        ),
         axis=1,
     )
 
@@ -133,24 +136,25 @@ def _add_opponent_strength(
         "strength_defence_home",
         "strength_defence_away",
     ]
-    return df.drop(columns=[c for c in drop if c in df.columns])
+    return df.drop(columns=[c for c in drop if c in df.columns])  # type: ignore[return-value]
 
 
 @timed
-def _encode_position(df: pd.DataFrame) -> pd.DataFrame:
+def _encode_position(df: DataFrame[FeatureSchema]) -> DataFrame[FeatureSchema]:
     """Encode position as an integer. Rows without a known position get -1."""
     if "position" not in df.columns:
         df["position_enc"] = -1
     else:
         df["position_enc"] = df["position"].map(POSITION_ENC).fillna(-1).astype(int)
-    return df
+    return df  # type: ignore[return-value]
 
 
+@pa.check_types
 @timed
 def build_features(
-    gw_df: pd.DataFrame,
-    teams_df: pd.DataFrame,
-) -> pd.DataFrame:
+    gw_df: DataFrame[GameweekSchema],
+    teams_df: DataFrame[TeamSchema],
+) -> DataFrame[FeatureSchema]:
     """Build the full feature set for model training or inference.
 
     Args:
@@ -164,4 +168,4 @@ def build_features(
     df = _add_rolling_stats(gw_df)
     df = _add_opponent_strength(df, teams_df)
     df = _encode_position(df)
-    return df
+    return df  # type: ignore[return-value]

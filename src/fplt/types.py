@@ -29,8 +29,13 @@ class Position(IntEnum):
         Raises:
             ValueError: If the string is not a recognised position.
         """
-        mapping = {"GK": cls.GK, "DEF": cls.DEF, "MID": cls.MID,
-                   "AM": cls.MID, "FWD": cls.FWD}
+        mapping = {
+            "GK": cls.GK,
+            "DEF": cls.DEF,
+            "MID": cls.MID,
+            "AM": cls.MID,
+            "FWD": cls.FWD,
+        }
         try:
             return mapping[s.upper()]
         except KeyError:

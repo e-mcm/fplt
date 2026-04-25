@@ -7,9 +7,12 @@ others.
 
 import numpy as np
 import pandas as pd
+import pandera.pandas as pa
+from pandera.typing import DataFrame
 
 from fplt.predict.base import BasePredictor
 from fplt.predict.lgbm import LGBMPredictor
+from fplt.schemas import FeatureImportanceSchema, FeatureSchema
 from fplt.types import Position
 
 
@@ -35,9 +38,9 @@ class ByPositionPredictor(BasePredictor):
 
     def fit(
         self,
-        X: pd.DataFrame,
+        X: DataFrame[FeatureSchema],
         y: pd.Series,
-        X_val: pd.DataFrame | None = None,
+        X_val: DataFrame[FeatureSchema] | None = None,
         y_val: pd.Series | None = None,
     ) -> "ByPositionPredictor":
         """Train one model per position.
@@ -76,7 +79,7 @@ class ByPositionPredictor(BasePredictor):
 
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: DataFrame[FeatureSchema]) -> np.ndarray:
         """Predict points, routing each row to its position model.
 
         Rows with unrecognised position_enc fall back to the MID model.
@@ -111,7 +114,7 @@ class ByPositionPredictor(BasePredictor):
     def is_fitted(self) -> bool:
         return len(self._models) > 0
 
-    def feature_importance(self) -> dict[str, pd.DataFrame]:
+    def feature_importance(self) -> dict[str, DataFrame[FeatureImportanceSchema]]:
         """Return feature importances per position model.
 
         Returns:
@@ -120,6 +123,5 @@ class ByPositionPredictor(BasePredictor):
         if not self._models:
             raise RuntimeError("Call fit() before feature_importance().")
         return {
-            pos.name: model.feature_importance()
-            for pos, model in self._models.items()
+            pos.name: model.feature_importance() for pos, model in self._models.items()
         }

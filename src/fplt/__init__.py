@@ -6,4 +6,3 @@ from fplt.data import (
 )
 
 __all__ = ["load_gameweeks", "load_fixtures", "load_teams", "load_all_seasons"]
-
