@@ -8,6 +8,8 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+mlruns/
+output/
 
 # Ignore all data except the setup script
 data/*
