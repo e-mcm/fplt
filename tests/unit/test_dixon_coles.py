@@ -68,7 +68,7 @@ def test_specs_register_as_components_not_predictors() -> None:
     assert get_component("poisson_score") is MatchScoreModel
     assert specs["dixon_coles_v1"].params["rho"] == -0.1
     assert specs["poisson_score_v1"].params["rho"] == 0.0
-    assert set(registered_components()) == {"dixon_coles", "poisson_score"}
+    assert {"dixon_coles", "poisson_score"} <= set(registered_components())
     assert "dixon_coles" not in registered_kinds()
 
 

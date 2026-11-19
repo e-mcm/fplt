@@ -1,8 +1,9 @@
-"""Scoreline distributions used by the layered match model.
+"""Scoreline and minutes distributions used by the layered match model.
 
-The grid stops at 10 goals a side. A heavier tail would move expected goals
-after renormalisation, so construction refuses a truncation that drops 1e-6
-or more of the probability.
+The scoreline grid stops at 10 goals a side. A heavier tail would move
+expected goals after renormalisation, so construction refuses a truncation
+that drops 1e-6 or more of the probability. Minutes sit on a fixed set of
+bins so a draw is a minute count the scoring rules can apply directly.
 """
 
 from __future__ import annotations
@@ -10,8 +11,10 @@ from __future__ import annotations
 from typing import Literal
 
 import numpy as np
+import polars as pl
 
 MAX_GOALS = 10
+MINUTE_BINS = np.array([0, 15, 30, 45, 60, 75, 90], dtype=np.int64)
 _MASS_LOST_LIMIT = 1e-6
 _Side = Literal["home", "away"]
 
@@ -116,3 +119,73 @@ class ScorelineDist:
         home = index // goals
         away = index % goals
         return np.stack([home, away], axis=-1).astype(np.int64)
+
+
+class MinutesDist:
+    """Binned minutes for each player-fixture.
+
+    ``pmf[i, b]`` is the probability that row ``i`` plays ``bins[b]`` minutes.
+    Draws are independent across rows: nothing stops two teammates both
+    playing 90. A later version can enforce eleven starters.
+    """
+
+    def __init__(self, keys: pl.DataFrame, bins: np.ndarray, pmf: np.ndarray) -> None:
+        """Renormalise one minutes distribution per player-fixture.
+
+        Args:
+            keys: ``player_key`` and ``fixture_id``, one row per distribution.
+            bins: Minute values, shape ``(B,)``.
+            pmf: Non-negative masses, shape ``(P, B)``.
+
+        Raises:
+            ValueError: The keys, shape, or masses are invalid.
+        """
+        if not {"player_key", "fixture_id"} <= set(keys.columns):
+            raise ValueError("keys need player_key and fixture_id")
+        ordered = keys.select("player_key", "fixture_id")
+        grid = np.asarray(pmf, dtype=np.float64)
+        support = np.asarray(bins)
+        if support.ndim != 1 or support.shape[0] == 0:
+            raise ValueError(f"bins must be a non-empty 1-D array, got {support.shape}")
+        if grid.ndim != 2 or grid.shape[1] != support.shape[0]:
+            raise ValueError(
+                f"pmf must have shape (P, {support.shape[0]}), got {grid.shape}"
+            )
+        if grid.shape[0] != ordered.height:
+            raise ValueError("pmf and keys have different lengths")
+        if np.any(grid < 0) or not np.all(np.isfinite(grid)):
+            raise ValueError("pmf must be finite and non-negative")
+        if grid.shape[0] > 0:
+            total = grid.sum(axis=1)
+            if np.any(total <= 0):
+                raise ValueError("each player needs positive probability mass")
+            grid = grid / total[:, None]
+        self.keys = ordered
+        self.bins = support
+        self.pmf = grid
+
+    def sample(self, rng: np.random.Generator, n: int) -> np.ndarray:
+        """Draw a minute count for every player-fixture.
+
+        Args:
+            rng: Generator for this draw. Callers should build it with
+                ``seed_for`` so a rerun matches.
+            n: Number of draws per player-fixture.
+
+        Returns:
+            Integer array of shape ``(P, n)``. Each value is one of ``bins``.
+
+        Raises:
+            ValueError: ``n`` is negative.
+        """
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        players, width = self.pmf.shape
+        if n == 0 or players == 0:
+            return np.zeros((players, n), dtype=np.int64)
+        cdf = np.cumsum(self.pmf, axis=1)
+        cdf[:, -1] = 1.0
+        draws = rng.random((players, n))
+        index = np.sum(cdf[:, None, :] <= draws[..., None], axis=-1)
+        index = np.minimum(index, width - 1)
+        return np.asarray(self.bins, dtype=np.int64)[index]

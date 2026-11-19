@@ -1,0 +1,8 @@
+name: empirical_minutes_v1
+kind: empirical_minutes
+params:
+  window: 5
+  shrinkage: 5
+  doubtful_chance: 0.5
+refit: every_gw
+seed: 0
