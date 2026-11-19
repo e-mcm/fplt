@@ -715,6 +715,7 @@ dependencies = [
     { name = "pulp" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "scipy" },
 ]
 
@@ -745,6 +746,7 @@ requires-dist = [
     { name = "pulp", specifier = ">=3.3.0" },
     { name = "pydantic-settings", specifier = ">=2.16.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "scipy", specifier = ">=1.13" },
 ]
 
