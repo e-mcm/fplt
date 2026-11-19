@@ -1,0 +1,10 @@
+{
+  "events": [
+    {
+      "id": 1,
+      "deadline_time": "2024-08-16T17:30:00Z",
+      "data_checked": true,
+      "finished": true
+    }
+  ]
+}

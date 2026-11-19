@@ -53,7 +53,9 @@ class DixonColesModel(DistributionalModel):
         >>> model = DixonColesModel()
         >>> model.fit(fixtures)
         >>> # Predict for a batch of upcoming fixtures
-        >>> upcoming = pd.DataFrame({"team_h": [...], "team_a": [...], "kickoff_time": [...]})
+        >>> upcoming = pd.DataFrame(
+        ...     {"team_h": [...], "team_a": [...], "kickoff_time": [...]}
+        ... )
         >>> dist = model.predict_distribution(upcoming)
         >>> dist.p_clean_sheet("home")   # shape (n_fixtures,)
     """

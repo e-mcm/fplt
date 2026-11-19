@@ -39,7 +39,6 @@ def test_p_clean_sheet_away() -> None:
 def test_p_team_scored_k_marginal() -> None:
     pmf = _uniform_pmf(n_fixtures=1, max_goals=3)
     dist = ScoreDistribution(pmf, [0])
-    g = 4
     # Marginal for home side, k=0: sum over all away goals of pmf[0, 0, :]
     expected = pmf[0, 0, :].sum()
     result = dist.p_team_scored_k("home", 0)[0]

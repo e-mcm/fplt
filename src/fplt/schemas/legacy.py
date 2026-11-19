@@ -89,7 +89,7 @@ class TeamSchema(pa.DataFrameModel):
 
 
 class FixtureRecordSchema(pa.DataFrameModel):
-    """Fixture-level training data for DixonColesModel. Output of build_fixture_records."""
+    """Fixture-level training data for DixonColesModel."""
 
     fixture_id: Series[object]  # int or str depending on source
     season: Series[str]
