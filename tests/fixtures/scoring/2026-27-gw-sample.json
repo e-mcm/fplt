@@ -1,0 +1,189 @@
+[
+  {
+    "gameweek": 1,
+    "element_id": 2,
+    "position": "GK",
+    "total_points": 0,
+    "minutes": 0
+  },
+  {
+    "gameweek": 1,
+    "element_id": 9,
+    "position": "DEF",
+    "total_points": 1,
+    "minutes": 9
+  },
+  {
+    "gameweek": 1,
+    "element_id": 29,
+    "position": "GK",
+    "total_points": 1,
+    "minutes": 90,
+    "goals_conceded": 4,
+    "saves": 3,
+    "clearances_blocks_interceptions": 2,
+    "recoveries": 6
+  },
+  {
+    "gameweek": 1,
+    "element_id": 88,
+    "position": "DEF",
+    "total_points": 13,
+    "minutes": 75,
+    "goals_scored": 1,
+    "clean_sheets": 1,
+    "bonus": 1,
+    "clearances_blocks_interceptions": 4,
+    "recoveries": 5
+  },
+  {
+    "gameweek": 1,
+    "element_id": 154,
+    "position": "MID",
+    "total_points": 13,
+    "minutes": 82,
+    "goals_scored": 1,
+    "assists": 1,
+    "goals_conceded": 2,
+    "bonus": 3,
+    "tackles": 2,
+    "recoveries": 7
+  },
+  {
+    "gameweek": 1,
+    "element_id": 26,
+    "position": "FWD",
+    "total_points": 6,
+    "minutes": 90,
+    "goals_scored": 1,
+    "clean_sheets": 1,
+    "clearances_blocks_interceptions": 2
+  },
+  {
+    "gameweek": 1,
+    "element_id": 87,
+    "position": "DEF",
+    "total_points": 8,
+    "minutes": 90,
+    "clean_sheets": 1,
+    "clearances_blocks_interceptions": 8,
+    "tackles": 2,
+    "recoveries": 3
+  },
+  {
+    "gameweek": 1,
+    "element_id": 98,
+    "position": "MID",
+    "total_points": 9,
+    "minutes": 90,
+    "goals_scored": 1,
+    "clean_sheets": 1,
+    "yellow_cards": 1,
+    "clearances_blocks_interceptions": 6,
+    "tackles": 4,
+    "recoveries": 3
+  },
+  {
+    "gameweek": 5,
+    "element_id": 194,
+    "position": "FWD",
+    "total_points": 4,
+    "minutes": 90,
+    "clean_sheets": 1,
+    "clearances_blocks_interceptions": 6,
+    "tackles": 3,
+    "recoveries": 7
+  },
+  {
+    "gameweek": 1,
+    "element_id": 36,
+    "position": "DEF",
+    "total_points": 0,
+    "minutes": 81,
+    "goals_conceded": 4,
+    "clearances_blocks_interceptions": 7,
+    "tackles": 2,
+    "recoveries": 2
+  },
+  {
+    "gameweek": 1,
+    "element_id": 4,
+    "position": "DEF",
+    "total_points": 5,
+    "minutes": 90,
+    "clean_sheets": 1,
+    "yellow_cards": 1,
+    "clearances_blocks_interceptions": 4,
+    "recoveries": 2
+  },
+  {
+    "gameweek": 1,
+    "element_id": 54,
+    "position": "MID",
+    "total_points": -2,
+    "minutes": 39,
+    "goals_conceded": 4,
+    "red_cards": 1,
+    "clearances_blocks_interceptions": 1,
+    "tackles": 4,
+    "recoveries": 2
+  },
+  {
+    "gameweek": 1,
+    "element_id": 37,
+    "position": "DEF",
+    "total_points": -2,
+    "minutes": 90,
+    "goals_conceded": 4,
+    "own_goals": 1,
+    "clearances_blocks_interceptions": 3,
+    "recoveries": 1
+  },
+  {
+    "gameweek": 4,
+    "element_id": 1,
+    "position": "GK",
+    "total_points": 14,
+    "minutes": 90,
+    "clean_sheets": 1,
+    "saves": 2,
+    "penalties_saved": 1,
+    "bonus": 3,
+    "clearances_blocks_interceptions": 2,
+    "recoveries": 14
+  },
+  {
+    "gameweek": 1,
+    "element_id": 106,
+    "position": "FWD",
+    "total_points": 0,
+    "minutes": 82,
+    "clean_sheets": 1,
+    "penalties_missed": 1,
+    "clearances_blocks_interceptions": 1,
+    "recoveries": 4
+  },
+  {
+    "gameweek": 1,
+    "element_id": 15,
+    "position": "MID",
+    "total_points": 11,
+    "minutes": 75,
+    "goals_scored": 1,
+    "clean_sheets": 1,
+    "bonus": 3,
+    "clearances_blocks_interceptions": 1,
+    "tackles": 3,
+    "recoveries": 4
+  },
+  {
+    "gameweek": 1,
+    "element_id": 82,
+    "position": "GK",
+    "total_points": 7,
+    "minutes": 90,
+    "clean_sheets": 1,
+    "saves": 4,
+    "recoveries": 5
+  }
+]

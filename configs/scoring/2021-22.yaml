@@ -1,0 +1,31 @@
+# Scoring before defensive contributions. Unchanged through 2024-25.
+appearance:
+  long_minutes: 60
+  short: 1
+  long: 2
+goals:
+  GK: 6
+  DEF: 6
+  MID: 5
+  FWD: 4
+assists: 3
+clean_sheets:
+  GK: 4
+  DEF: 4
+  MID: 1
+  FWD: 0
+goals_conceded:
+  positions: [GK, DEF]
+  every: 2
+  points: -1
+saves:
+  positions: [GK]
+  every: 3
+  points: 1
+penalties_saved: 5
+penalties_missed: -2
+yellow_cards: -1
+red_cards: -3
+own_goals: -2
+bonus: 1
+defensive_contributions: []
