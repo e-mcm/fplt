@@ -1,4 +1,4 @@
-.PHONY: train predict test check lint typecheck clean
+.PHONY: train predict test check lint typecheck leaderboard clean
 
 # ── Training ──────────────────────────────────────────────────────────────────
 train:
@@ -26,6 +26,10 @@ lint:
 
 typecheck:
 	uv run pyright src/
+
+# ── Leaderboard ───────────────────────────────────────────────────────────────
+leaderboard:
+	uv run streamlit run apps/leaderboard.py
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:
