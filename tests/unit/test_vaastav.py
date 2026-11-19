@@ -7,7 +7,7 @@ import polars as pl
 
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.data.vaastav import import_season
+from fplt.data.vaastav import import_available, import_season
 from fplt.types import GWKey
 
 _KICKOFF = datetime(2021, 8, 14, 14, 0, tzinfo=UTC)
@@ -211,3 +211,15 @@ def test_header_only_gameweek_writes_empty_tables(tmp_path: Path) -> None:
     assert store.read("players").is_empty()
     assert store.read("player_status").is_empty()
     assert store.read("player_fixture_stats").is_empty()
+
+
+def test_import_available_skips_early_seasons(tmp_path: Path) -> None:
+    early = tmp_path / "2020-21" / "gws"
+    early.mkdir(parents=True)
+    (early / "merged_gw.csv").write_text("element,GW\n1,1\n", encoding="utf-8")
+    later = tmp_path / "2024-25" / "gws"
+    later.mkdir(parents=True)
+    (later / "merged_gw.csv").write_text("element,GW\n", encoding="utf-8")
+    store = DataStore(tmp_path / "store")
+    assert import_available(store, tmp_path) == ["2024-25"]
+    assert store.read("players").is_empty()
