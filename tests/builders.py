@@ -1,0 +1,149 @@
+"""Synthetic staged seasons for contract tests. No network and no real FPL dumps."""
+
+from datetime import UTC, datetime, timedelta
+
+import polars as pl
+
+from fplt.data.store import DataStore
+
+_START = datetime(2024, 8, 1, tzinfo=UTC)
+_DEADLINE_GW1 = datetime(2024, 8, 16, 17, tzinfo=UTC)
+_KICKOFF_GW1 = datetime(2024, 8, 17, 14, tzinfo=UTC)
+_DEADLINE_GW2 = datetime(2024, 8, 23, 17, tzinfo=UTC)
+_KICKOFF_GW2 = datetime(2024, 8, 24, 14, tzinfo=UTC)
+
+
+def _utc(frame: pl.DataFrame) -> pl.DataFrame:
+    exprs = [
+        pl.col(name).cast(pl.Datetime("us", "UTC"))
+        for name, dtype in frame.schema.items()
+        if isinstance(dtype, pl.Datetime)
+    ]
+    return frame.with_columns(exprs) if exprs else frame
+
+
+def build_league(root: DataStore) -> DataStore:
+    """Two clubs, one gameweek of results, and one future gameweek."""
+    season = "2024-25"
+    root.write(
+        "teams",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "team_key": [3, 7],
+                    "team_id": [1, 2],
+                    "name": ["Arsenal", "Spurs"],
+                    "short_name": ["ARS", "TOT"],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    root.write(
+        "players",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "player_key": [100, 200],
+                    "element_id": [10, 20],
+                    "team_key": [3, 7],
+                    "position": ["MID", "FWD"],
+                    "web_name": ["A", "B"],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    root.write(
+        "gameweeks",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "gw": [1, 2],
+                    "deadline_time": [_DEADLINE_GW1, _DEADLINE_GW2],
+                    "finished": [True, False],
+                    "data_checked": [True, False],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    result_at = _KICKOFF_GW1 + timedelta(hours=3)
+    root.write(
+        "fixtures",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season, season],
+                    "fixture_id": [1, 1, 2],
+                    "gw": [1, 1, 2],
+                    "team_h_key": [3, 3, 7],
+                    "team_a_key": [7, 7, 3],
+                    "kickoff_time": [_KICKOFF_GW1, _KICKOFF_GW1, _KICKOFF_GW2],
+                    "team_h_score": [None, 2, None],
+                    "team_a_score": [None, 0, None],
+                    "finished": [False, True, False],
+                    "available_at": [_START, result_at, _START],
+                    "source": ["fpl_api", "fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    root.write(
+        "player_status",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "player_key": [100, 200],
+                    "status": ["a", "a"],
+                    "news": ["", ""],
+                    "price": [100, 80],
+                    "ep_next": [6.5, 4.0],
+                    "chance_of_playing": [100.0, 75.0],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    root.write(
+        "player_fixture_stats",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season, season],
+                    "gw": [1, 1, 1],
+                    "player_key": [100, 200, 100],
+                    "fixture_id": [1, 1, 1],
+                    "minutes": [90, 90, 90],
+                    "total_points": [8, 2, 40],
+                    "goals_scored": [1, 0, 5],
+                    "assists": [0, 0, 0],
+                    "clean_sheets": [1, 0, 1],
+                    "goals_conceded": [0, 2, 0],
+                    "saves": [0, 0, 0],
+                    "bonus": [2, 0, 3],
+                    "yellow_cards": [0, 0, 0],
+                    "red_cards": [0, 0, 0],
+                    "own_goals": [0, 0, 0],
+                    "penalties_saved": [0, 0, 0],
+                    "penalties_missed": [0, 0, 0],
+                    "starts": [1, 1, 1],
+                    "available_at": [
+                        result_at,
+                        result_at,
+                        _DEADLINE_GW2 + timedelta(days=1),
+                    ],
+                    "source": ["fpl_api", "fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    return root

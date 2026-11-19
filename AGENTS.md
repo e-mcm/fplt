@@ -61,7 +61,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
   - `make dagster-dev` — local Dagster UI.
 - Use `uv add` / `uv add --dev` to add dependencies; never edit `uv.lock` by hand. Justify any new dependency in the PR description.
 - One issue → one branch → one PR. Reference the issue (`Closes #N`).
-- One milestone finishes in its own PR. Open that PR and merge it before starting the next milestone. Do not stack later milestone work onto an unmerged branch.
+- One milestone finishes in its own PR, and so does each sub-milestone such as M2a. Open that PR and merge it before starting the next one. Do not stack later milestone work onto an unmerged branch.
 ### Small, minimal changes
  
 - **Make the smallest change that completes the task.** Touch only what the task requires.

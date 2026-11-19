@@ -1,0 +1,210 @@
+"""Pandera schemas for staged tables. Every table carries ``available_at``."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+import pandera.polars as pa
+import polars as pl
+
+
+class PlayersSchema(pa.DataFrameModel):
+    """One row per player per season, from the first snapshot that contained them."""
+
+    season: str
+    player_key: int
+    element_id: int
+    team_key: int
+    position: str
+    web_name: str
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+class TeamsSchema(pa.DataFrameModel):
+    season: str
+    team_key: int
+    team_id: int
+    name: str
+    short_name: str
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+class GameweeksSchema(pa.DataFrameModel):
+    season: str
+    gw: int = pa.Field(ge=1, le=38)
+    deadline_time: datetime
+    finished: bool
+    data_checked: bool
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+class FixturesSchema(pa.DataFrameModel):
+    season: str
+    fixture_id: int
+    gw: int = pa.Field(ge=1, le=38)
+    team_h_key: int
+    team_a_key: int
+    kickoff_time: datetime
+    team_h_score: int = pa.Field(nullable=True, ge=0)
+    team_a_score: int = pa.Field(nullable=True, ge=0)
+    finished: bool
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+class PlayerStatusSchema(pa.DataFrameModel):
+    season: str
+    player_key: int
+    status: str
+    news: str
+    price: int = pa.Field(ge=0)
+    ep_next: float = pa.Field(nullable=True)
+    chance_of_playing: float = pa.Field(nullable=True, ge=0, le=100)
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+class PlayerFixtureStatsSchema(pa.DataFrameModel):
+    season: str
+    gw: int = pa.Field(ge=1, le=38)
+    player_key: int
+    fixture_id: int
+    minutes: int = pa.Field(ge=0)
+    total_points: int
+    goals_scored: int = pa.Field(ge=0)
+    assists: int = pa.Field(ge=0)
+    clean_sheets: int = pa.Field(ge=0)
+    goals_conceded: int = pa.Field(ge=0)
+    saves: int = pa.Field(ge=0)
+    bonus: int = pa.Field(ge=0)
+    yellow_cards: int = pa.Field(ge=0)
+    red_cards: int = pa.Field(ge=0)
+    own_goals: int = pa.Field(ge=0)
+    penalties_saved: int = pa.Field(ge=0)
+    penalties_missed: int = pa.Field(ge=0)
+    starts: int = pa.Field(ge=0)
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
+STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
+    "players": PlayersSchema,
+    "teams": TeamsSchema,
+    "gameweeks": GameweeksSchema,
+    "fixtures": FixturesSchema,
+    "player_status": PlayerStatusSchema,
+    "player_fixture_stats": PlayerFixtureStatsSchema,
+}
+
+TABLE_KEYS: dict[str, list[str]] = {
+    "players": ["season", "player_key", "available_at"],
+    "teams": ["season", "team_key", "available_at"],
+    "gameweeks": ["season", "gw", "available_at"],
+    "fixtures": ["season", "fixture_id", "available_at"],
+    "player_status": ["season", "player_key", "available_at"],
+    "player_fixture_stats": ["season", "player_key", "fixture_id", "available_at"],
+}
+
+POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
+    "players": {
+        "season": pl.Utf8(),
+        "player_key": pl.Int64(),
+        "element_id": pl.Int64(),
+        "team_key": pl.Int64(),
+        "position": pl.Utf8(),
+        "web_name": pl.Utf8(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "teams": {
+        "season": pl.Utf8(),
+        "team_key": pl.Int64(),
+        "team_id": pl.Int64(),
+        "name": pl.Utf8(),
+        "short_name": pl.Utf8(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "gameweeks": {
+        "season": pl.Utf8(),
+        "gw": pl.Int64(),
+        "deadline_time": pl.Datetime(time_zone="UTC"),
+        "finished": pl.Boolean(),
+        "data_checked": pl.Boolean(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "fixtures": {
+        "season": pl.Utf8(),
+        "fixture_id": pl.Int64(),
+        "gw": pl.Int64(),
+        "team_h_key": pl.Int64(),
+        "team_a_key": pl.Int64(),
+        "kickoff_time": pl.Datetime(time_zone="UTC"),
+        "team_h_score": pl.Int64(),
+        "team_a_score": pl.Int64(),
+        "finished": pl.Boolean(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "player_status": {
+        "season": pl.Utf8(),
+        "player_key": pl.Int64(),
+        "status": pl.Utf8(),
+        "news": pl.Utf8(),
+        "price": pl.Int64(),
+        "ep_next": pl.Float64(),
+        "chance_of_playing": pl.Float64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "player_fixture_stats": {
+        "season": pl.Utf8(),
+        "gw": pl.Int64(),
+        "player_key": pl.Int64(),
+        "fixture_id": pl.Int64(),
+        "minutes": pl.Int64(),
+        "total_points": pl.Int64(),
+        "goals_scored": pl.Int64(),
+        "assists": pl.Int64(),
+        "clean_sheets": pl.Int64(),
+        "goals_conceded": pl.Int64(),
+        "saves": pl.Int64(),
+        "bonus": pl.Int64(),
+        "yellow_cards": pl.Int64(),
+        "red_cards": pl.Int64(),
+        "own_goals": pl.Int64(),
+        "penalties_saved": pl.Int64(),
+        "penalties_missed": pl.Int64(),
+        "starts": pl.Int64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+}
