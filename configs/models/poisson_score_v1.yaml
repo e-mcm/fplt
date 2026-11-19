@@ -1,0 +1,8 @@
+name: poisson_score_v1
+kind: poisson_score
+params:
+  xi: 0.0065
+  home_advantage: 1.3
+  rho: 0.0
+refit: every_gw
+seed: 0

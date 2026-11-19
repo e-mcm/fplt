@@ -13,14 +13,18 @@ from fplt.backtest.ledger import (
 from fplt.backtest.walk_forward import walk_forward
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.models.spec import get_model, load_model_specs
+from fplt.models.spec import get_model, load_model_specs, registered_kinds
 from fplt.types import GWKey
 from tests.builders import build_league
 
 
 def test_both_baselines_appear_for_one_season(tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path))
-    specs = load_model_specs()
+    specs = {
+        name: spec
+        for name, spec in load_model_specs().items()
+        if spec.kind in registered_kinds()
+    }
     for spec in specs.values():
         model = get_model(spec.kind)(spec)
         frame = walk_forward(model, PITData(store), [GWKey("2024-25", 1)], steps=2)

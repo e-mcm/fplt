@@ -82,6 +82,38 @@ def registered_kinds() -> list[str]:
     return sorted(_REGISTRY)
 
 
+_COMPONENTS: dict[str, type[Any]] = {}
+
+
+def register_component(kind: str) -> Any:
+    """Register a component class under ``kind``.
+
+    Components are not points predictors, so they stay out of the contract
+    suite that walks ``registered_kinds``.
+    """
+
+    def decorate(cls: type[Any]) -> type[Any]:
+        if kind in _COMPONENTS and _COMPONENTS[kind] is not cls:
+            raise ValueError(f"component kind {kind!r} is already registered")
+        _COMPONENTS[kind] = cls
+        return cls
+
+    return decorate
+
+
+def get_component(kind: str) -> type[Any]:
+    """Return the component class registered for ``kind``."""
+    try:
+        return _COMPONENTS[kind]
+    except KeyError:
+        raise KeyError(f"no component registered for kind {kind!r}") from None
+
+
+def registered_components() -> list[str]:
+    """Sorted component registry keys."""
+    return sorted(_COMPONENTS)
+
+
 def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
     """Load every YAML model spec from ``directory``.
 

@@ -275,7 +275,7 @@ Truncate scorelines at `G` (default 10) and renormalise; assert mass lost < 1e-6
 
 | Component | v1 implementation |
 |---|---|
-| `TeamScoreModel` | Dixon-Coles with exponential time decay (ξ configurable), home advantage, low-score correction ρ |
+| `TeamScoreModel` | Dixon-Coles. ξ, home advantage, and ρ come from the model spec. Attack and defence are fit from finished fixtures visible at the deadline. ρ = 0 is the independent Poisson baseline. |
 | `MinutesModel` | Two-stage: P(start) from recent starts, status/chance_of_playing, rotation features; minutes given start/sub from empirical per-player distributions with shrinkage to position priors |
 | `InvolvementModel` | Shrunk per-90 shares of team goals/assists (later xG/xA shares from Understat); penalty-taker override |
 | `OtherPointsModel` | Position-level priors conditioned on minutes bucket; later GBM |
@@ -346,7 +346,7 @@ For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(
 | `xpts`, `xpts_sd`, `p_haul`, `p_60` | |
 | `actual_pts`, `actual_minutes` | filled when the target GW is `data_checked` |
 
-`ledger/components` — component-level predictions vs actuals (scorelines, minutes) for layered models.
+`ledger/components` — one row per model, deadline, and fixture. Scorelines store `p_home`, `p_draw`, `p_away`, `expected_home`, `expected_away`, and, once the target gameweek is `data_checked`, `actual_home`, `actual_away`, and ranked probability score over home/draw/away. Minutes rows join this table later.
 `ledger/decisions` — season simulations of the optimiser per model (§7.3).
 
 ### 7.3 Metrics
