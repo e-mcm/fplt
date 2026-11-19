@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from fplt.types import GWKey
 
 
 class TrainWindow(BaseModel):
@@ -75,6 +80,84 @@ def get_model(kind: str) -> type[Any]:
 def registered_kinds() -> list[str]:
     """Sorted registry keys. The contract suite parametrises over these."""
     return sorted(_REGISTRY)
+
+
+def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
+    """Load every YAML model spec from ``directory``.
+
+    Args:
+        directory: Folder of ``*.yaml`` files. Defaults to ``configs/models``.
+
+    Returns:
+        Specs keyed by ``name``, in file order.
+
+    Raises:
+        FileNotFoundError: ``directory`` does not exist.
+        ValueError: A file is empty, not a mapping, or repeats a name.
+    """
+    folder = directory if directory is not None else _default_specs_dir()
+    if not folder.is_dir():
+        raise FileNotFoundError(folder)
+    loaded: dict[str, ModelSpec] = {}
+    for path in sorted(folder.glob("*.yaml")):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path.name} must contain a mapping")
+        spec = ModelSpec.model_validate(raw)
+        if spec.name in loaded:
+            raise ValueError(f"duplicate model spec name {spec.name!r}")
+        loaded[spec.name] = spec
+    return loaded
+
+
+def artifact_dir(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
+    """Directory for one fitted spec: ``artifacts/<model_id>/as_of=...``."""
+    stamp = f"as_of={as_of.season}_gw{as_of.gw:02d}"
+    return data_dir / "artifacts" / spec.model_id / stamp
+
+
+def save_spec(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
+    """Write ``spec.json`` and ``git_sha.txt`` for this spec and gameweek.
+
+    Args:
+        data_dir: Root that contains ``artifacts/``. Usually ``$FPLT_DATA_DIR``.
+        spec: The spec being recorded.
+        as_of: Gameweek the artifact belongs to.
+
+    Returns:
+        The directory that was written.
+
+    Raises:
+        FileExistsError: Either identity file is already present.
+    """
+    dest = artifact_dir(data_dir, spec, as_of)
+    dest.mkdir(parents=True, exist_ok=True)
+    spec_path = dest / "spec.json"
+    sha_path = dest / "git_sha.txt"
+    if spec_path.exists() or sha_path.exists():
+        raise FileExistsError(f"artifact already exists at {dest}")
+    payload = json.dumps(spec.model_dump(mode="json"), sort_keys=True, indent=2)
+    spec_path.write_text(payload + "\n", encoding="utf-8")
+    sha_path.write_text(git_sha() + "\n", encoding="utf-8")
+    return dest
+
+
+def git_sha() -> str:
+    """Current ``HEAD`` commit, or ``unknown`` when git cannot answer."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
+
+
+def _default_specs_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "configs" / "models"
 
 
 def _package_version() -> str:

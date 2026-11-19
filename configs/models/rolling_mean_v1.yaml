@@ -1,0 +1,6 @@
+name: rolling_mean_v1
+kind: rolling_mean
+params:
+  window: 5
+refit: every_gw
+seed: 0
