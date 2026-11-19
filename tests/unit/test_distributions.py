@@ -1,12 +1,18 @@
 """Scoreline grids stay probability distributions after truncation."""
 
 import numpy as np
+import polars as pl
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays
 
-from fplt.models.distributions import MAX_GOALS, ScorelineDist
+from fplt.models.distributions import (
+    MAX_GOALS,
+    MINUTE_BINS,
+    MinutesDist,
+    ScorelineDist,
+)
 
 _GOALS = MAX_GOALS + 1
 
@@ -97,3 +103,63 @@ def test_renormalised_grid_is_a_distribution(weights: np.ndarray) -> None:
         assert np.all((clean >= -1e-12) & (clean <= 1 + 1e-12))
         marginal = dist.marginal(side)
         np.testing.assert_allclose(marginal.sum(axis=1), np.ones(2))
+
+
+def _minutes(pmf: np.ndarray) -> MinutesDist:
+    keys = pl.DataFrame(
+        {
+            "player_key": list(range(pmf.shape[0])),
+            "fixture_id": [1] * pmf.shape[0],
+        }
+    )
+    return MinutesDist(keys, MINUTE_BINS, pmf)
+
+
+def test_minutes_sample_stays_on_the_bins_and_is_independent() -> None:
+    pmf = np.zeros((2, len(MINUTE_BINS)))
+    pmf[0, 0] = 1.0
+    pmf[1, -1] = 1.0
+    dist = _minutes(pmf)
+    drawn = dist.sample(np.random.default_rng(3), 5)
+    assert drawn.shape == (2, 5)
+    assert np.all(drawn[0] == 0)
+    assert np.all(drawn[1] == 90)
+    assert dist.sample(np.random.default_rng(1), 0).shape == (2, 0)
+    empty = _minutes(np.zeros((0, len(MINUTE_BINS))))
+    assert empty.sample(np.random.default_rng(1), 4).shape == (0, 4)
+
+
+def test_invalid_minutes_are_refused() -> None:
+    pmf = np.ones((1, len(MINUTE_BINS)))
+    with pytest.raises(ValueError, match="player_key"):
+        MinutesDist(pl.DataFrame({"fixture_id": [1]}), MINUTE_BINS, pmf)
+    with pytest.raises(ValueError, match="shape"):
+        _minutes(np.ones((1, 3)))
+    with pytest.raises(ValueError, match="non-negative"):
+        bad = pmf.copy()
+        bad[0, 0] = -1
+        _minutes(bad)
+    with pytest.raises(ValueError, match="positive"):
+        _minutes(np.zeros((1, len(MINUTE_BINS))))
+    with pytest.raises(ValueError, match="lengths"):
+        MinutesDist(
+            pl.DataFrame({"player_key": [1, 2], "fixture_id": [1, 1]}),
+            MINUTE_BINS,
+            pmf,
+        )
+    with pytest.raises(ValueError, match="non-negative"):
+        _minutes(pmf).sample(np.random.default_rng(1), -1)
+
+
+@given(
+    weights=arrays(
+        np.float64,
+        (2, len(MINUTE_BINS)),
+        elements=st.floats(0.1, 3, allow_nan=False, allow_infinity=False),
+    )
+)
+def test_minutes_rows_sum_to_one_and_samples_are_bins(weights: np.ndarray) -> None:
+    dist = _minutes(weights)
+    np.testing.assert_allclose(dist.pmf.sum(axis=1), np.ones(2))
+    drawn = dist.sample(np.random.default_rng(0), 6)
+    assert set(np.unique(drawn)).issubset(set(MINUTE_BINS.tolist()))

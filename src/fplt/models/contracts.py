@@ -1,7 +1,7 @@
 """Top-level predictor contract and the component protocols beneath it.
 
-``ScorelineDist`` and ``MinutesDist`` stay as placeholders until the score
-and minutes models replace them with the concrete classes.
+The distribution protocols stay empty. The concrete classes live in
+``fplt.models.distributions``.
 """
 
 from __future__ import annotations
