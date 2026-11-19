@@ -24,12 +24,34 @@ class TableSource(Protocol):
 
 
 @dataclass(frozen=True)
+class _SeasonWindow:
+    """Hide rows from seasons outside a training window."""
+
+    inner: TableSource
+    seasons: frozenset[str]
+
+    def table(self, name: str) -> pl.LazyFrame:
+        frame = self.inner.table(name)
+        if "season" not in frame.collect_schema().names():
+            return frame
+        return frame.filter(pl.col("season").is_in(sorted(self.seasons)))
+
+    def deadline(self, gw: GWKey) -> datetime:
+        return self.inner.deadline(gw)
+
+
+@dataclass(frozen=True)
 class PITView:
     """Rows visible at one gameweek deadline."""
 
     as_of: GWKey
     cutoff: datetime
     _source: TableSource
+
+    def within_seasons(self, seasons: set[str]) -> PITView:
+        """A view that also hides rows from other seasons."""
+        window = _SeasonWindow(self._source, frozenset(seasons))
+        return PITView(as_of=self.as_of, cutoff=self.cutoff, _source=window)
 
     def table(self, name: str) -> pl.LazyFrame:
         """Rows of ``name`` with ``available_at`` at or before the cutoff."""
