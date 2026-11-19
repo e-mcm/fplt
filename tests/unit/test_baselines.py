@@ -123,7 +123,9 @@ def test_save_load_and_prediction_write_once(tmp_path: Path) -> None:
     artifact = tmp_path / "artifact"
     model.save(artifact)
     restored = RollingMeanPredictor.load(artifact, spec)
-    assert restored.predict(view, [_AS_OF]).equals(expected)
+    keys = ["player_key", "fixture_id"]
+    got = restored.predict(view, [_AS_OF]).sort(keys)
+    assert got.equals(expected.sort(keys))
     with pytest.raises(FileExistsError):
         model.save(artifact)
     path = write_predictions(tmp_path, spec, _AS_OF, expected)
