@@ -1,0 +1,5 @@
+name: ep_next_v1
+kind: ep_next
+params: {}
+refit: every_gw
+seed: 0

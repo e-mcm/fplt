@@ -116,6 +116,26 @@ def artifact_dir(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
     return data_dir / "artifacts" / spec.model_id / stamp
 
 
+def write_identity(dest: Path, spec: ModelSpec) -> None:
+    """Write ``spec.json`` and ``git_sha.txt`` into ``dest``.
+
+    Args:
+        dest: Artifact directory for one spec and gameweek.
+        spec: The spec being recorded.
+
+    Raises:
+        FileExistsError: Either identity file is already present.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    spec_path = dest / "spec.json"
+    sha_path = dest / "git_sha.txt"
+    if spec_path.exists() or sha_path.exists():
+        raise FileExistsError(f"artifact already exists at {dest}")
+    payload = json.dumps(spec.model_dump(mode="json"), sort_keys=True, indent=2)
+    spec_path.write_text(payload + "\n", encoding="utf-8")
+    sha_path.write_text(git_sha() + "\n", encoding="utf-8")
+
+
 def save_spec(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
     """Write ``spec.json`` and ``git_sha.txt`` for this spec and gameweek.
 
@@ -131,14 +151,7 @@ def save_spec(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
         FileExistsError: Either identity file is already present.
     """
     dest = artifact_dir(data_dir, spec, as_of)
-    dest.mkdir(parents=True, exist_ok=True)
-    spec_path = dest / "spec.json"
-    sha_path = dest / "git_sha.txt"
-    if spec_path.exists() or sha_path.exists():
-        raise FileExistsError(f"artifact already exists at {dest}")
-    payload = json.dumps(spec.model_dump(mode="json"), sort_keys=True, indent=2)
-    spec_path.write_text(payload + "\n", encoding="utf-8")
-    sha_path.write_text(git_sha() + "\n", encoding="utf-8")
+    write_identity(dest, spec)
     return dest
 
 

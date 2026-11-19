@@ -1,0 +1,100 @@
+"""Validate and store player-fixture predictions."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import polars as pl
+
+from fplt.models.spec import ModelSpec
+from fplt.schemas.predictions import PREDICTION_COLUMNS, PredictionSchema
+from fplt.types import GWKey
+
+
+def empty_predictions() -> pl.DataFrame:
+    """An empty frame that still matches ``PredictionSchema``."""
+    return pl.DataFrame(schema=PREDICTION_COLUMNS)
+
+
+def prediction_frame(
+    spec: ModelSpec,
+    as_of: GWKey,
+    rows: pl.DataFrame,
+    xpts: pl.Expr,
+    xpts_sd: pl.Expr,
+    p_haul: pl.Expr,
+    p_60: pl.Expr,
+) -> pl.DataFrame:
+    """Attach prediction columns and validate them.
+
+    Args:
+        spec: Model that produced the rows.
+        as_of: Deadline the prediction was made at.
+        rows: Player-fixture rows with ``season``, ``gw``, ``player_key``,
+            and ``fixture_id``.
+        xpts: Expression for expected points.
+        xpts_sd: Expression for the standard deviation, or null.
+        p_haul: Expression for ``P(points >= 10)``, or null.
+        p_60: Expression for ``P(minutes >= 60)``, or null.
+
+    Returns:
+        A frame matching ``PredictionSchema``.
+    """
+    if rows.is_empty():
+        return empty_predictions()
+    frame = (
+        rows.with_columns(
+            pl.lit(spec.model_id).alias("model_id"),
+            pl.lit(as_of.season).alias("as_of_season"),
+            pl.lit(as_of.gw).alias("as_of_gw"),
+            pl.col("season").alias("target_season"),
+            pl.col("gw").alias("target_gw"),
+            xpts.alias("xpts"),
+            xpts_sd.alias("xpts_sd"),
+            p_haul.alias("p_haul"),
+            p_60.alias("p_60"),
+        )
+        .with_columns(
+            pl.col("xpts").cast(pl.Float64),
+            pl.col("xpts_sd").cast(pl.Float64),
+            pl.col("p_haul").cast(pl.Float64),
+            pl.col("p_60").cast(pl.Float64),
+        )
+        .select(list(PREDICTION_COLUMNS))
+    )
+    checked = PredictionSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    return checked
+
+
+def predictions_path(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
+    """Parquet path for one model's predictions at one deadline."""
+    stamp = f"as_of={as_of.season}_gw{as_of.gw:02d}"
+    return data_dir / "predictions" / spec.model_id / stamp / "part.parquet"
+
+
+def write_predictions(
+    data_dir: Path, spec: ModelSpec, as_of: GWKey, frame: pl.DataFrame
+) -> Path:
+    """Validate ``frame`` and write it once.
+
+    Args:
+        data_dir: Root that contains ``predictions/``.
+        spec: Model that produced ``frame``.
+        as_of: Deadline the prediction was made at.
+        frame: A ``PredictionSchema`` frame.
+
+    Returns:
+        The parquet path that was written.
+
+    Raises:
+        FileExistsError: That model and deadline were already written.
+    """
+    checked = PredictionSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    path = predictions_path(data_dir, spec, as_of)
+    if path.exists():
+        raise FileExistsError(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    checked.write_parquet(path)
+    return path
