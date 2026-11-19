@@ -1,0 +1,8 @@
+name: dixon_coles_v1
+kind: dixon_coles
+params:
+  xi: 0.0065
+  home_advantage: 1.3
+  rho: -0.1
+refit: every_gw
+seed: 0
