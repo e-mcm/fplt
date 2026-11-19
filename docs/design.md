@@ -284,7 +284,7 @@ Truncate scorelines at `G` (default 10) and renormalise; assert mass lost < 1e-6
 
 `configs/scoring/<season>.yaml` holds the FPL scoring table for that season: points per goal/assist/clean sheet by position, appearance thresholds, goals-conceded penalties, saves, cards, defensive contributions (introduced 2025/26), bonus, penalties saved/missed, own goals. Fill values from the official rules for each season.
 
-`fplt.scoring.Rules.for_season(season)` loads and validates them. A per-season test reconstructs actual FPL points from `event/{gw}/live` stats for a sample of player-GWs and asserts exact equality with the official totals.
+`fplt.scoring.Rules.for_season(season)` loads and validates them. `Rules.score` applies the table to one player's integer match stats. Clean sheets and goals conceded are the official counts (already gated by minutes and red cards), not a scoreline recomputation. Bonus is the published bonus multiplied by the season's `bonus` rate (1). Defensive contributions are empty before 2025-26. From 2025-26 a defender scores 2 points for 10 clearances, blocks, interceptions and tackles, and a midfielder or forward scores 2 for 12 of those plus recoveries. Points do not stack. A per-season test reconstructs actual FPL points from `event/{gw}/live` stats for a sample of player-GWs and asserts exact equality with the official totals.
 
 ### 5.6 Simulation engine (composition)
 
