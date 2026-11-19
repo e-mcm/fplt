@@ -1,8 +1,7 @@
 """Top-level predictor contract and the component protocols beneath it.
 
-``PITView``, ``ScorelineDist`` and ``MinutesDist`` are named here so the
-signatures exist before the data layer and the distribution types land.
-Later milestones replace these placeholders with the concrete classes.
+``ScorelineDist`` and ``MinutesDist`` stay as placeholders until the score
+and minutes models replace them with the concrete classes.
 """
 
 from __future__ import annotations
@@ -12,14 +11,9 @@ from typing import Protocol, Self, runtime_checkable
 
 import polars as pl
 
+from fplt.data.pit import PITView
 from fplt.models.spec import ModelSpec
 from fplt.types import GWKey
-
-
-class PITView(Protocol):
-    """Rows visible at one gameweek deadline."""
-
-    as_of: GWKey
 
 
 class ScorelineDist(Protocol):
