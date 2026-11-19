@@ -65,6 +65,22 @@ def import_season(store: DataStore, season_dir: Path, season: str) -> None:
     )
 
 
+def import_available(store: DataStore, data_dir: Path) -> list[str]:
+    """Import every season directory under ``data_dir`` that has a merged gameweek file.
+
+    Seasons before 2021-22 are skipped. Returns the season labels that were imported.
+    """
+    if not data_dir.is_dir():
+        return []
+    imported: list[str] = []
+    for path in sorted(item for item in data_dir.iterdir() if item.is_dir()):
+        if path.name < _MIN_SEASON or not (path / "gws" / "merged_gw.csv").exists():
+            continue
+        import_season(store, path, path.name)
+        imported.append(path.name)
+    return imported
+
+
 def _read_optional(path: Path) -> pl.DataFrame | None:
     if not path.exists():
         return None

@@ -27,6 +27,10 @@ lint:
 typecheck:
 	uv run pyright src/
 
+# ── Dagster UI ────────────────────────────────────────────────────────────────
+dagster-dev:
+	uv run dagster dev -m fplt.orchestration
+
 # ── MLflow UI ─────────────────────────────────────────────────────────────────
 mlflow-ui:
 	uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
