@@ -2,7 +2,8 @@
 
 Usage:
     uv run python src/fplt/pipeline/train.py
-    uv run python src/fplt/pipeline/train.py model=dixon_coles pipeline.seasons=[2022-23,2023-24]
+    uv run python src/fplt/pipeline/train.py \
+        model=dixon_coles pipeline.seasons=[2022-23,2023-24]
 
 Training and inference are fully decoupled: this script fits and serializes
 models via MLflow; predict.py loads them by name without any shared state.
