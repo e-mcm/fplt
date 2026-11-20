@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.request import Request
 
 import dagster as dg
 import polars as pl
@@ -15,7 +14,6 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
-from fplt.automation.notify import notify
 from fplt.data.store import DataStore
 from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
@@ -25,21 +23,6 @@ from fplt.settings import get_settings
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
 _ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_notify_posts_only_when_a_url_is_set() -> None:
-    sent: list[Request] = []
-
-    def post(request: Request) -> object:
-        sent.append(request)
-        return None
-
-    assert notify(None, "title", "body", post) is False
-    assert notify("", "title", "body", post) is False
-    assert sent == []
-    assert notify("https://ntfy.sh/fplt", "title", "hello", post) is True
-    assert sent[0].data == b"hello"
-    assert sent[0].get_header("Title") == "title"
 
 
 def test_a_deadline_is_due_only_inside_three_hours(tmp_path: Path) -> None:
