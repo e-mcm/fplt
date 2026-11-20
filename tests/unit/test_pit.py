@@ -5,6 +5,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import polars as pl
+
 from fplt.data.pit import PITData
 from fplt.data.raw import ingest_raw
 from fplt.data.staging import stage_bootstrap
@@ -101,3 +103,26 @@ def test_ingest_raw_writes_staged_parquet(tmp_path: Path) -> None:
     assert players["player_key"].to_list() == [100]
     assert players["source"].to_list() == ["fpl_api"]
     assert store.read("fixtures")["team_h_score"].to_list() == [None]
+
+
+def test_append_aligns_columns_before_concat(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    when = datetime(2024, 8, 1, tzinfo=UTC)
+    frame = pl.DataFrame(
+        {
+            "season": ["2024-25"],
+            "team_key": [1],
+            "team_id": [1],
+            "name": ["A"],
+            "short_name": ["A"],
+            "available_at": [when],
+            "source": ["fpl_api"],
+        }
+    ).with_columns(pl.col("available_at").cast(pl.Datetime("us", "UTC")))
+    store.write("teams", frame)
+    flipped = frame.select(list(reversed(frame.columns))).with_columns(
+        pl.lit(2).alias("team_key")
+    )
+    store.write("teams", flipped)
+    saved = store.read("teams").sort("team_key")
+    assert saved["team_key"].to_list() == [1, 2]

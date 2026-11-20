@@ -105,6 +105,12 @@ def test_results_stay_hidden_until_after_kickoff(tmp_path: Path) -> None:
     assert deadline["deadline_time"][0] == _KICKOFF - timedelta(hours=2)
 
 
+def test_named_club_uses_the_team_code(tmp_path: Path) -> None:
+    store = DataStore(tmp_path / "store")
+    import_season(store, _write_season(tmp_path, team=["A", "B"]), "2021-22")
+    assert store.read("players")["team_key"].sort().to_list() == [3, 7]
+
+
 def test_status_is_a_single_degraded_row(tmp_path: Path) -> None:
     store = DataStore(tmp_path / "store")
     import_season(store, _write_season(tmp_path), "2021-22")

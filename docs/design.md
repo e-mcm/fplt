@@ -332,7 +332,7 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 ### 7.1 Walk-forward protocol
 
-For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`.
+For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see.
 
 ### 7.2 Ledger
 
