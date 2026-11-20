@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -25,6 +25,13 @@ typecheck:
 # ── Leaderboard ───────────────────────────────────────────────────────────────
 leaderboard:
 	uv run streamlit run apps/leaderboard.py
+
+# ── Multi-model eval (ledger for make leaderboard) ────────────────────────────
+# Usage: make eval-board SEASON=2024-25
+# Optional: ARGS='--with-openfpl --from-gw 1 --to-gw 10'
+eval-board:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-board SEASON=2024-25"; exit 1; fi
+	uv run python scripts/eval_board.py --season $(SEASON) $(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:
