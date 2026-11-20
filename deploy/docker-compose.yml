@@ -1,4 +1,8 @@
 # Later VPS layout. The image must contain this repo and its dependencies.
+#
+# Secrets: put values in a gitignored `.env` next to this file (compose loads it
+# for ${…} substitution), or export them in the shell before `docker compose up`.
+# See deploy/README.md and the repo-root `.env.example`. Never commit real values.
 services:
   webserver:
     image: fplt:local
@@ -6,7 +10,16 @@ services:
     environment:
       DAGSTER_HOME: /opt/dagster
       FPLT_DATA_DIR: /var/lib/fplt
+      FPLT_ENTRY_ID: ${FPLT_ENTRY_ID:-}
+      FPLT_FPL_SESSION: ${FPLT_FPL_SESSION:-}
       FPLT_NTFY_URL: ${FPLT_NTFY_URL:-}
+      FPLT_SMTP_HOST: ${FPLT_SMTP_HOST:-}
+      FPLT_SMTP_PORT: ${FPLT_SMTP_PORT:-587}
+      FPLT_SMTP_USER: ${FPLT_SMTP_USER:-}
+      FPLT_SMTP_PASSWORD: ${FPLT_SMTP_PASSWORD:-}
+      FPLT_SMTP_FROM: ${FPLT_SMTP_FROM:-}
+      FPLT_SMTP_TO: ${FPLT_SMTP_TO:-}
+      FPLT_SMTP_USE_TLS: ${FPLT_SMTP_USE_TLS:-true}
     ports:
       - "3000:3000"
     volumes:
@@ -18,7 +31,16 @@ services:
     environment:
       DAGSTER_HOME: /opt/dagster
       FPLT_DATA_DIR: /var/lib/fplt
+      FPLT_ENTRY_ID: ${FPLT_ENTRY_ID:-}
+      FPLT_FPL_SESSION: ${FPLT_FPL_SESSION:-}
       FPLT_NTFY_URL: ${FPLT_NTFY_URL:-}
+      FPLT_SMTP_HOST: ${FPLT_SMTP_HOST:-}
+      FPLT_SMTP_PORT: ${FPLT_SMTP_PORT:-587}
+      FPLT_SMTP_USER: ${FPLT_SMTP_USER:-}
+      FPLT_SMTP_PASSWORD: ${FPLT_SMTP_PASSWORD:-}
+      FPLT_SMTP_FROM: ${FPLT_SMTP_FROM:-}
+      FPLT_SMTP_TO: ${FPLT_SMTP_TO:-}
+      FPLT_SMTP_USE_TLS: ${FPLT_SMTP_USE_TLS:-true}
     volumes:
       - dagster:/opt/dagster
       - data:/var/lib/fplt
