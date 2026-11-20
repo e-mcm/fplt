@@ -17,6 +17,8 @@ from fplt.orchestration.assets import (
     refresh_staged,
     staged_assets,
     staged_ingest,
+    understat_ingest,
+    understat_ingest_job,
 )
 from fplt.orchestration.checks import staged_checks
 from fplt.orchestration.sensors import (
@@ -31,11 +33,12 @@ defs = dg.Definitions(
         raw_snapshots,
         staged_ingest,
         *staged_assets,
+        understat_ingest,
         recommendation_report,
         pre_deadline_plan,
     ],
     asset_checks=staged_checks,
-    jobs=[refresh_staged, catch_up_job, pre_deadline_job],
+    jobs=[refresh_staged, understat_ingest_job, catch_up_job, pre_deadline_job],
     sensors=[
         snapshots_sensor,
         catchup_sensor,

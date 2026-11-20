@@ -1,0 +1,16 @@
+[
+  {
+    "id": "42",
+    "isResult": true,
+    "h": {"id": "83", "title": "Arsenal", "short_title": "ARS"},
+    "a": {"id": "87", "title": "Liverpool", "short_title": "LIV"},
+    "datetime": "2024-08-10 15:00:00"
+  },
+  {
+    "id": "43",
+    "isResult": false,
+    "h": {"id": "88", "title": "Manchester City", "short_title": "MCI"},
+    "a": {"id": "89", "title": "Manchester United", "short_title": "MUN"},
+    "datetime": "2024-08-17 15:00:00"
+  }
+]

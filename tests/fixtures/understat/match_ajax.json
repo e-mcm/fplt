@@ -1,0 +1,46 @@
+{
+  "rosters": {
+    "h": {
+      "1": {
+        "id": "1",
+        "player_id": "501",
+        "team_id": "83",
+        "xG": "0.50",
+        "xA": "0.10",
+        "time": "90",
+        "player": "Home One"
+      },
+      "2": {
+        "id": "2",
+        "player_id": "502",
+        "team_id": "83",
+        "xG": "0",
+        "xA": "0.20",
+        "time": "45",
+        "player": "Home Two"
+      }
+    },
+    "a": {
+      "3": {
+        "id": "3",
+        "player_id": "999",
+        "team_id": "87",
+        "xG": "0.10",
+        "xA": "0",
+        "time": "90",
+        "player": "Away One"
+      }
+    }
+  },
+  "shots": {"h": [], "a": []},
+  "tmpl": {
+    "id": "42",
+    "h": "83",
+    "a": "87",
+    "date": "2024-08-10 15:00:00",
+    "season": "2024",
+    "league": "EPL",
+    "team_h": "Arsenal",
+    "team_a": "Liverpool"
+  }
+}
