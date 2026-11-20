@@ -5,6 +5,7 @@ Fantasy Premier League points prediction and team selection.
 `fplt` predicts points per player per gameweek with composable, versioned models, benchmarks them against each other and external models (e.g. OpenFPL) on point-in-time walk-forward backtests, and turns predictions into squad, captaincy and transfer recommendations. Dagster runs the whole cycle automatically after each gameweek and before each deadline.
 
 - Architecture: [`docs/design.md`](docs/design.md)
+- OpenFPL benchmark setup: [`docs/openfpl.md`](docs/openfpl.md)
 - Rules for coding agents and contributors: [`AGENTS.md`](AGENTS.md)
 
 ## How it fits together
