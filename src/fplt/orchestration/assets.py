@@ -20,6 +20,7 @@ from fplt.automation.cycle import PRODUCTION_MODELS, catch_up, pre_deadline, rep
 from fplt.automation.notify import notify_recommendation
 from fplt.data.raw import ingest_raw
 from fplt.data.store import DataStore
+from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
 from fplt.data.vaastav import import_available
 from fplt.schemas.staged import STAGED_SCHEMAS
 from fplt.settings import get_settings
@@ -109,4 +110,27 @@ catch_up_job = dg.define_asset_job(
 pre_deadline_job = dg.define_asset_job(
     name="pre_deadline",
     selection=dg.AssetSelection.assets(pre_deadline_plan),
+)
+
+
+@dg.asset(name="understat_ingest")
+def understat_ingest() -> int:
+    """Stage Understat xG/xA from write-once raw match JSON.
+
+    Reads ``$FPLT_DATA_DIR/raw/understat/...`` and the repo id maps at
+    ``configs/understat/id_maps.yaml``. Does not touch FPL snapshot ingest.
+    """
+    settings = get_settings()
+    player_keys, team_keys = load_id_maps(default_id_maps_path())
+    return ingest_understat(
+        DataStore(settings.data_dir),
+        settings.data_dir / "raw",
+        player_keys,
+        team_keys,
+    )
+
+
+understat_ingest_job = dg.define_asset_job(
+    name="understat_ingest",
+    selection=dg.AssetSelection.assets(understat_ingest),
 )

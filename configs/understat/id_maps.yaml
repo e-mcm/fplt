@@ -1,0 +1,33 @@
+# Understat id → FPL code (player_key / team_key).
+#
+# Teams are required for every side that appears in a staged match; missing
+# team ids raise KeyError in stage_understat. Players may be omitted — those
+# rows stage with a null player_key until the map is updated.
+#
+# See configs/understat/README.md for how to maintain this file.
+
+teams:
+  # Classic / recurring EPL clubs (Understat ids are stable across seasons).
+  71: 7 # Aston Villa
+  72: 11 # Everton
+  74: 20 # Southampton
+  75: 13 # Leicester
+  76: 35 # West Bromwich Albion
+  78: 31 # Crystal Palace
+  80: 8 # Chelsea
+  81: 21 # West Ham
+  82: 6 # Tottenham
+  83: 3 # Arsenal
+  86: 4 # Newcastle United
+  87: 14 # Liverpool
+  88: 43 # Manchester City
+  89: 1 # Manchester United
+  92: 90 # Burnley
+  220: 36 # Brighton
+  228: 54 # Fulham
+  229: 39 # Wolverhampton Wanderers
+  238: 49 # Sheffield United
+  245: 2 # Leeds
+  # Add promoted / returning clubs as they appear in Understat league data.
+
+players: {}

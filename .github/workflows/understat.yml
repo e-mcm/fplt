@@ -1,0 +1,52 @@
+name: understat
+
+on:
+  schedule:
+    # After typical Saturday/Sunday kickoffs settle (UTC).
+    - cron: "30 22 * * 0,1,6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Capture Understat matches
+        run: python scripts/fetch_understat.py --out "$RUNNER_TEMP/raw"
+
+      - name: Publish to the snapshots branch
+        run: |
+          set -euo pipefail
+          if [ -z "$(find "$RUNNER_TEMP/raw" -type f -name '*.json.gz' | head -n 1)" ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin snapshots || true
+          if git rev-parse --verify origin/snapshots >/dev/null 2>&1; then
+            git checkout --track origin/snapshots
+          else
+            git checkout --orphan snapshots
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p data
+          cp -a "$RUNNER_TEMP/raw/." data/raw/
+          git add data/raw
+          if git diff --cached --quiet; then
+            echo "understat snapshots already present"
+            exit 0
+          fi
+          git commit -m "Capture Understat match JSON"
+          git push origin HEAD:snapshots

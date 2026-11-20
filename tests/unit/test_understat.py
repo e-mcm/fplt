@@ -1,5 +1,6 @@
 """Understat xG is staged with a clock, and later matches stay hidden."""
 
+import gzip
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,14 +10,26 @@ import pytest
 
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.data.understat import stage_understat
+from fplt.data.understat import (
+    available_at_from_match,
+    ingest_understat,
+    load_id_maps,
+    match_raw_path,
+    normalize_match,
+    season_label_from_understat_year,
+    stage_understat,
+    understat_year_from_season,
+)
 from fplt.features.registry import get_feature, materialise_feature
 from fplt.types import GWKey
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _EARLY = datetime(2024, 8, 10, tzinfo=UTC)
 _LATE = datetime(2024, 8, 20, tzinfo=UTC)
-_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "understat_match.json"
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+_FIXTURE = _FIXTURES / "understat_match.json"
+_AJAX = _FIXTURES / "understat" / "match_ajax.json"
+_MAPS = _FIXTURES / "understat" / "id_maps.yaml"
 _PLAYERS = {501: 100, 502: 200}
 _TEAMS = {10: 3, 20: 7}
 
@@ -60,6 +73,63 @@ def test_materialise_keeps_the_first_file(tmp_path: Path) -> None:
         materialise_feature(view, "understat_share", 1, tmp_path)
     with pytest.raises(KeyError, match="not registered"):
         get_feature("understat_share", 2)
+
+
+def test_normalize_match_reads_get_match_data() -> None:
+    payload = json.loads(_AJAX.read_text(encoding="utf-8"))
+    match = normalize_match(42, payload)
+    assert match["id"] == 42
+    assert match["team_h"] == 83
+    assert match["team_a"] == 87
+    assert match["h"][0] == {"id": 501, "xg": 0.5, "xa": 0.1, "time": 90}
+    assert match["a"][0]["id"] == 999
+
+
+def test_available_at_is_kickoff_plus_three_hours() -> None:
+    payload = json.loads(_AJAX.read_text(encoding="utf-8"))
+    assert available_at_from_match(payload) == datetime(2024, 8, 10, 18, 0, tzinfo=UTC)
+
+
+def test_season_label_helpers() -> None:
+    assert season_label_from_understat_year(2024) == "2024-25"
+    assert understat_year_from_season("2024-25") == "2024"
+
+
+def test_load_id_maps_reads_yaml() -> None:
+    players, teams = load_id_maps(_MAPS)
+    assert players == {501: 100, 502: 200}
+    assert teams == {83: 3, 87: 14}
+
+
+def test_ingest_understat_stages_raw_match_files(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    path = match_raw_path(raw, "2024-25", 42)
+    path.parent.mkdir(parents=True)
+    payload = json.loads(_AJAX.read_text(encoding="utf-8"))
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    players, teams = load_id_maps(_MAPS)
+    store = DataStore(tmp_path / "data")
+    assert ingest_understat(store, raw, players, teams) == 1
+    staged = store.read("understat_player_matches")
+    assert staged.height == 3
+    assert staged.filter(pl.col("player_key").is_null()).height == 1
+    assert staged["available_at"][0] == datetime(2024, 8, 10, 18, 0, tzinfo=UTC)
+    assert ingest_understat(store, raw, players, teams) == 1
+    assert store.read("understat_player_matches").height == 3
+
+
+def test_ingest_skips_other_seasons(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    path = match_raw_path(raw, "2023-24", 42)
+    path.parent.mkdir(parents=True)
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        json.dump(json.loads(_AJAX.read_text(encoding="utf-8")), handle)
+    players, teams = load_id_maps(_MAPS)
+    count = ingest_understat(
+        DataStore(tmp_path), raw, players, teams, seasons=["2024-25"]
+    )
+    assert count == 0
 
 
 def _shares(store: DataStore, gameweek: int):

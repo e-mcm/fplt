@@ -84,15 +84,19 @@ All data lives under `$FPLT_DATA_DIR` (default `./data`, gitignored).
 ```
 data/
 ├── raw/                         # immutable, write-once
-│   └── fpl_api/season=2026-27/
-│       └── captured_at=2026-11-21T08-00-00Z/
-│           ├── bootstrap_static.json.gz
-│           └── fixtures.json.gz
-│       └── event_live/gw=12/captured_at=.../event_live.json.gz
+│   ├── fpl_api/season=2026-27/
+│   │   └── captured_at=2026-11-21T08-00-00Z/
+│   │       ├── bootstrap_static.json.gz
+│   │       └── fixtures.json.gz
+│   │   └── event_live/gw=12/captured_at=.../event_live.json.gz
+│   └── understat/season=2026-27/
+│       ├── dates/captured_at=.../dates.json.gz
+│       └── match_id=<id>/match.json.gz   # getMatchData AJAX payload
 ├── staged/                      # typed parquet, one table per entity, derived from raw
 │   ├── players/  teams/  fixtures/  gameweeks/
 │   ├── player_status/           # status/news/price/ep_next per snapshot (time series)
-│   └── player_fixture_stats/    # actuals from event_live
+│   ├── player_fixture_stats/    # actuals from event_live
+│   └── understat_player_matches/
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
@@ -101,6 +105,8 @@ data/
 ```
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet.
+
+Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON onto the `snapshots` branch; the Dagster `understat_ingest` asset stages them with `available_at = kickoff + 3h`.
 
 ### 4.4 Point-in-time access (`PITData`)
 

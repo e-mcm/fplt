@@ -9,8 +9,14 @@ import polars as pl
 import pytest
 
 from fplt.data.snapshots import SnapshotFetchError
+from fplt.data.store import DataStore
 from fplt.orchestration import defs
-from fplt.orchestration.assets import raw_snapshots, staged_assets, staged_ingest
+from fplt.orchestration.assets import (
+    raw_snapshots,
+    staged_assets,
+    staged_ingest,
+    understat_ingest,
+)
 from fplt.orchestration.checks import schema_check_result
 from fplt.orchestration.sensors import snapshots_sensor
 from fplt.settings import get_settings
@@ -137,4 +143,37 @@ def test_sensor_skips_when_the_branch_is_missing(
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "missing"
+    get_settings.cache_clear()
+
+
+def test_understat_ingest_stages_raw_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "understat"
+    fixture = fixtures / "match_ajax.json"
+    maps = fixtures / "id_maps.yaml"
+    raw_match = (
+        tmp_path
+        / "raw"
+        / "understat"
+        / "season=2024-25"
+        / "match_id=42"
+        / "match.json.gz"
+    )
+    raw_match.parent.mkdir(parents=True)
+    with gzip.open(raw_match, "wt", encoding="utf-8") as handle:
+        json.dump(json.loads(fixture.read_text(encoding="utf-8")), handle)
+    monkeypatch.setattr("fplt.orchestration.assets.default_id_maps_path", lambda: maps)
+    result = dg.materialize([understat_ingest])
+    assert result.success
+    assert result.output_for_node("understat_ingest") == 1
+    staged = result.output_for_node("understat_ingest")
+    assert staged == 1
+    frame = DataStore(tmp_path).read("understat_player_matches")
+    assert schema_check_result("understat_player_matches", frame).passed is True
+    assert frame.height == 3
+    graph = defs.get_repository_def().asset_graph
+    names = {key.path[-1] for key in graph.get_all_asset_keys()}
+    assert "understat_ingest" in names
     get_settings.cache_clear()
