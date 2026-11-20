@@ -1,0 +1,8 @@
+name: openfpl_v1
+kind: openfpl
+params:
+  compare_from: "2024-25"
+  model_dir: ""
+  timeout_seconds: 120
+refit: never
+seed: 0
