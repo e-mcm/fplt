@@ -22,6 +22,13 @@ from fplt.orchestration.assets import (
 )
 from fplt.orchestration.checks import staged_checks
 from fplt.orchestration.eval_job import eval_board_job
+from fplt.orchestration.factories import (
+    factory_checks,
+    feature_assets,
+    lineage_job,
+    model_assets,
+    predictions_assets,
+)
 from fplt.orchestration.sensors import (
     catchup_sensor,
     notify_run_failure,
@@ -35,16 +42,20 @@ defs = dg.Definitions(
         staged_ingest,
         *staged_assets,
         understat_ingest,
+        *feature_assets,
+        *model_assets,
+        *predictions_assets,
         recommendation_report,
         pre_deadline_plan,
     ],
-    asset_checks=staged_checks,
+    asset_checks=[*staged_checks, *factory_checks],
     jobs=[
         refresh_staged,
         understat_ingest_job,
         catch_up_job,
         pre_deadline_job,
         eval_board_job,
+        lineage_job,
     ],
     sensors=[
         snapshots_sensor,
