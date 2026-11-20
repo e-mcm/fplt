@@ -25,12 +25,23 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
 uv sync                      # install
-cp .env.example .env         # set FPLT_DATA_DIR, FPLT_ENTRY_ID; for live squad also FPLT_FPL_SESSION
+cp .env.example .env         # set FPLT_DATA_DIR (+ entry / session / alerts as needed)
 make check                   # lint, types, fast tests
 make dagster-dev             # Dagster UI at http://localhost:3000
 ```
 
-`FPLT_FPL_SESSION` is the `pl_profile` cookie from fantasy.premierleague.com. The live squad (selling prices, bank, free transfers) is loaded via `fplt.data.fpl_client.load_current_team` from authenticated `/api/my-team/{entry_id}/`. Without the cookie, use a saved picks JSON with `fplt plan --entry-json`, or public finished-gameweek picks (no selling prices). Never commit a real session cookie.
+Useful env vars (all optional except where noted; see `.env.example`):
+
+| Variable | Purpose |
+|---|---|
+| `FPLT_DATA_DIR` | Data root (default `./data`) |
+| `FPLT_ENTRY_ID` | Manager entry for live-team plans (`fplt plan --from-api` / automation) |
+| `FPLT_FPL_SESSION` | `pl_profile` cookie for authenticated `/api/my-team/{id}/` (selling prices, bank, FT) |
+| `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts |
+| `FPLT_SMTP_HOST` / `FPLT_SMTP_FROM` / `FPLT_SMTP_TO` | Recommendation email (all three required or email is a no-op) |
+| `FPLT_SMTP_PORT` / `FPLT_SMTP_USER` / `FPLT_SMTP_PASSWORD` / `FPLT_SMTP_USE_TLS` | Optional SMTP details |
+
+`FPLT_FPL_SESSION` is the `pl_profile` cookie from fantasy.premierleague.com. Without it, use a saved picks JSON (`fplt plan --entry-json …`) or public finished-gameweek picks via `--from-api` / `FPLT_ENTRY_ID` (no selling prices). Never commit a real session cookie. Missing ntfy/SMTP config is a no-op.
 
 ## Common tasks
 
@@ -39,10 +50,13 @@ make dagster-dev             # Dagster UI at http://localhost:3000
 | Lint, type-check, fast tests | `make check` |
 | Full tests + coverage | `make test` |
 | Dagster UI (dev) | `make dagster-dev` |
-| Backtest a model | `uv run fplt backtest --model dc_layered_v1 --season 2025-26` |
+| Backtest models | `uv run fplt backtest --models dc_layered_v1 lgbm_direct_v1 --season 2025-26` |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
-| Recommend transfers | `uv run fplt plan --model dc_layered_v1` |
+| Recommend transfers (live team) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --from-api` |
+| Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
 | Leaderboard app | `make leaderboard` |
+
+`plan --from-api` is the default whenever `FPLT_ENTRY_ID` is set; `--entry-json` still wins over the API.
 
 ## Adding things
 
