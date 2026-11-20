@@ -7,9 +7,8 @@ from enum import IntEnum
 class Position(IntEnum):
     """FPL player position.
 
-    Integer values match the ``position_enc`` column produced by
-    ``features.engineer`` so they can be used directly as LightGBM features
-    and in DataFrame comparisons without conversion.
+    Integer values match the ``position_enc`` feature column so they can be
+    used directly as LightGBM inputs and in DataFrame comparisons.
     """
 
     GK = 0
