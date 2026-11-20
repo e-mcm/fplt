@@ -1,13 +1,4 @@
-.PHONY: train predict test check lint typecheck leaderboard clean
-
-# ── Training ──────────────────────────────────────────────────────────────────
-train:
-	uv run python src/fplt/pipeline/train.py
-
-# ── Prediction  (GW is required: make predict GW=38) ─────────────────────────
-predict:
-	@if [ -z "$(GW)" ]; then echo "Usage: make predict GW=<number>"; exit 1; fi
-	uv run python src/fplt/pipeline/predict.py pipeline.gw=$(GW)
+.PHONY: test check lint typecheck leaderboard dagster-dev clean
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:
@@ -35,10 +26,6 @@ leaderboard:
 dagster-dev:
 	uv run dagster dev -m fplt.orchestration
 
-# ── MLflow UI ─────────────────────────────────────────────────────────────────
-mlflow-ui:
-	uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
-
 # ── Clean generated artefacts ─────────────────────────────────────────────────
 clean:
-	rm -rf data/features/ outputs/ mlruns/ mlflow.db .hydra/
+	rm -rf data/features/ outputs/ .pytest_cache/

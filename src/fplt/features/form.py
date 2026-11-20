@@ -1,7 +1,8 @@
 """PIT features for the direct LightGBM points model.
 
-Column names follow ``BASE_FEATURE_COLS`` in the legacy predictor, limited to
-fields the staged tables actually carry (no BPS / ICT / xG rolling series).
+``FEATURE_COLUMNS`` is the training/inference matrix contract. Columns are
+limited to fields the staged tables actually carry (no BPS / ICT / xG rolling
+series).
 """
 
 from __future__ import annotations

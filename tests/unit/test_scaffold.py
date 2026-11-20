@@ -1,13 +1,13 @@
-"""Scaffold contracts: legacy schemas, identity, and seeded randomness."""
+"""Scaffold contracts: identity and seeded randomness."""
 
 from fplt.models.spec import ModelSpec, TrainWindow
-from fplt.schemas import FixtureSchema
+from fplt.schemas.staged import FixturesSchema
 from fplt.types import GWKey
 from fplt.utils.rng import seed_for
 
 
-def test_legacy_schemas_remain_importable() -> None:
-    assert FixtureSchema.__name__ == "FixtureSchema"
+def test_staged_schemas_remain_importable() -> None:
+    assert FixturesSchema.__name__ == "FixturesSchema"
 
 
 def test_model_id_changes_when_params_change() -> None:

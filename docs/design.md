@@ -45,8 +45,8 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates, au
 | Configs | `pydantic` models, loaded from YAML | `pydantic-settings` for environment settings. No Hydra. |
 | Orchestration, lineage, validation UI | Dagster (OSS, run locally) | Webserver + daemon as launchd services (§8.6) |
 | Score model | `scipy` | Dixon-Coles via MLE |
-| ML models | `lightgbm`, `scikit-learn` | |
-| Optimiser | `highspy` (HiGHS) or `PuLP` with HiGHS backend | |
+| ML models | `lightgbm` | |
+| Optimiser | `highspy` (HiGHS) | |
 | Experiment comparison | Parquet backtest ledger + Streamlit leaderboard app | No MLflow initially (§7.5) |
 | Tests | `pytest`, `hypothesis`, `pytest-cov` | Coverage Gutters in VS Code reads `coverage.xml` |
 | Lint / types | `ruff` (lint + format), `pyright` | |
@@ -548,6 +548,7 @@ Milestones map to GitHub milestones; each bullet becomes one or more issues.
 | **M7 Automation** | Sensors, pre-deadline run, failure notifications, launchd, recommendation report | One full GW cycle runs unattended |
 | **M8 External benchmarks** | Understat ingestion, OpenFPL adapter | OpenFPL on the leaderboard for 2024-25+ |
 | **M9 Direct models** | LightGBM all-in-one predictor | Layered vs direct comparison available |
+| **M10 Cleanup** | Delete Hydra/MLflow/pandas legacy stack (`pipeline/`, `predict/`, `optimisation/`, old model packages, `conf/`, …) once the new path is self-contained | No imports of deleted modules; `make check` green without those deps |
 
 ---
 

@@ -1,5 +1,0 @@
-defaults:
-  - pipeline: default
-  - model/dixon_coles: default
-  - model/lgbm: default
-  - _self_

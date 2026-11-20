@@ -49,14 +49,15 @@ def _score_with_openfpl(
     rows: list[dict[str, Any]], model_dir: Path
 ) -> list[dict[str, object]]:
     """Median ensemble from an OpenFPL checkout. Returns one row per request."""
-    import joblib
-    import numpy as np
-    import pandas as pd
-
     models_root = model_dir / "models"
     scaler_path = models_root / "xscaler.save"
     if not scaler_path.is_file():
         raise FileNotFoundError(f"OpenFPL models not found in {model_dir}")
+
+    import joblib
+    import numpy as np
+    import pandas as pd
+
     xscaler = joblib.load(scaler_path)
     yscaler = joblib.load(models_root / "yscaler.save")
     features = joblib.load(models_root / "features.save")
