@@ -1,0 +1,14 @@
+[project]
+name = "openfpl-runner"
+version = "0.1.0"
+description = "Isolated environment for the OpenFPL subprocess."
+requires-python = ">=3.10"
+dependencies = [
+    "joblib==1.5.1",
+    "pandas==2.3.1",
+    "scikit-learn==1.7.0",
+    "xgboost==3.0.2",
+]
+
+[tool.uv]
+package = false
