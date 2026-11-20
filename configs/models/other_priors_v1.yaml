@@ -1,0 +1,5 @@
+name: other_priors_v1
+kind: other_priors
+params: {}
+refit: every_gw
+seed: 0
