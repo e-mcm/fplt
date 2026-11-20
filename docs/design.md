@@ -319,7 +319,7 @@ def rolling_points(view: PITView, window: int = 5) -> pl.LazyFrame:
 - A feature function receives a `PITView` and must use only its tables.
 - **Changing a feature's logic requires bumping its version.** Old versions remain available until no spec references them.
 - Feature outputs are materialised to `features/<name>/v=<version>/...` and validated by a per-feature schema (key columns + declared value columns).
-- Models declare features as `name@version` in their `ModelSpec`; `build_feature_matrix(view, specs)` joins them on keys.
+- Models declare features as `name@version` in their `ModelSpec`; `build_feature_matrix(view, specs, horizon)` joins them onto the player-fixture rows for that horizon.
 
 ### 6.2 Initial feature set
 

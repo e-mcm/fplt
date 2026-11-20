@@ -1,0 +1,16 @@
+name: lgbm_direct_v1
+kind: lgbm_direct
+params:
+  num_boost_round: 100
+  learning_rate: 0.05
+  num_leaves: 63
+  min_child_samples: 20
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 5
+features:
+  - context@1
+  - rolling_form@1
+  - opponent_strength@1
+refit: every_gw
+seed: 0
