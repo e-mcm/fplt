@@ -8,6 +8,7 @@ import pytest
 
 import fplt.models.baselines  # noqa: F401 — runs @register_model
 import fplt.models.composite  # noqa: F401 — runs @register_model
+import fplt.models.direct  # noqa: F401 — runs @register_model
 import fplt.models.external.openfpl  # noqa: F401 — runs @register_model
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
