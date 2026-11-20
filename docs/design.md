@@ -437,8 +437,8 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 8.6 Running locally
 
 - Development: `make dagster-dev` (`dagster dev`).
-- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`).
-- A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes.
+- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_SESSION`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
+- A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it when `params.model_dir` is set (or via `--with-openfpl` / `--openfpl-model-dir`), and only for seasons from 2024-25 onwards. Empty `model_dir` yields zeros, not OpenFPL scores.
 
 ---

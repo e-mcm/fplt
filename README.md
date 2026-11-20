@@ -79,3 +79,5 @@ That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--so
 ## Running unattended
 
 `deploy/launchd/` contains service definitions for `dagster-webserver` and `dagster-daemon` so sensors run whenever the machine is on. The post-gameweek sensor processes every missing gameweek, so downtime self-heals; the pre-deadline refresh can also be launched manually from the UI.
+
+Wire live-squad and alert secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_SESSION`, `FPLT_NTFY_URL`, SMTP) via `~/.config/fplt/env` (launchd) or `deploy/.env` (compose) — see [`deploy/README.md`](deploy/README.md). Never commit those values.
