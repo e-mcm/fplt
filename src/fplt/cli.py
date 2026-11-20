@@ -9,8 +9,12 @@ from typing import Literal
 
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.run import run_backtest
-from fplt.optimise.decisions import run_decisions, run_plan
+from fplt.data.fpl_client import FPLAPIError
+from fplt.data.pit import PITData
+from fplt.data.store import DataStore
+from fplt.optimise.decisions import resolve_squad_state, run_decisions, run_plan
 from fplt.settings import get_settings
+from fplt.types import GWKey
 
 _REFITS = ("every_gw", "every_n_gw", "never")
 
@@ -50,6 +54,14 @@ def main(argv: list[str] | None = None) -> None:
     plan.add_argument("--horizon", type=int, default=2)
     plan.add_argument("--decisions", action="store_true")
     plan.add_argument("--entry-json", type=Path)
+    plan.add_argument(
+        "--from-api",
+        action="store_true",
+        help=(
+            "Load the live / public squad via resolve_squad_state "
+            "(default when FPLT_ENTRY_ID is set; --entry-json still wins)"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.command is None:
         return
@@ -119,15 +131,47 @@ def _plan(args: argparse.Namespace) -> None:
             return
         if args.gw is None:
             raise ValueError("fplt plan needs --gw")
-        _solved, path, report = run_plan(
-            get_settings().data_dir,
-            args.model,
-            args.season,
-            args.gw,
-            args.horizon,
-            args.entry_json,
+        settings = get_settings()
+        data_dir = settings.data_dir
+        use_resolve = (
+            args.from_api
+            or args.entry_json is not None
+            or settings.entry_id is not None
         )
-    except (FileExistsError, FileNotFoundError, KeyError, ValueError) as exc:
+        if args.from_api and settings.entry_id is None and args.entry_json is None:
+            raise ValueError("fplt plan --from-api needs FPLT_ENTRY_ID or --entry-json")
+        if use_resolve:
+            # Same helper as automation catch_up / pre_deadline.
+            view = PITData(DataStore(data_dir)).view(GWKey(args.season, args.gw))
+            squad = resolve_squad_state(
+                view,
+                entry_json=args.entry_json,
+                event=args.gw,
+                settings=settings,
+            )
+            _solved, path, report = run_plan(
+                data_dir,
+                args.model,
+                args.season,
+                args.gw,
+                args.horizon,
+                squad=squad,
+            )
+        else:
+            _solved, path, report = run_plan(
+                data_dir,
+                args.model,
+                args.season,
+                args.gw,
+                args.horizon,
+            )
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        KeyError,
+        ValueError,
+        FPLAPIError,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(report, end="")
