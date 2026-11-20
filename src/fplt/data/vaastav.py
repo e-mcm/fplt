@@ -51,7 +51,7 @@ def import_season(store: DataStore, season_dir: Path, season: str) -> None:
     start = season_start(season)
     store.write(
         "players",
-        _players(gameweeks, code_by_element, team_code, season, start),
+        _players(gameweeks, code_by_element, _team_lookup(teams), season, start),
     )
     if teams is not None:
         store.write("teams", _teams(teams, season, start))
@@ -113,6 +113,36 @@ def _team_codes(teams: pl.DataFrame | None) -> dict[int, int]:
     }
 
 
+def _team_lookup(teams: pl.DataFrame | None) -> dict[str, int]:
+    """Map a team id or name onto the stable team code.
+
+    Merged gameweeks name the club (``Arsenal``). Fixture files use the
+    numeric team id. Both have to meet the code stored on ``teams``.
+    """
+    lookup: dict[str, int] = {}
+    for team_id, code in _team_codes(teams).items():
+        lookup[str(team_id)] = code
+    if teams is None:
+        return lookup
+    for row in teams.iter_rows(named=True):
+        raw_code = row.get("code")
+        if raw_code is None:
+            continue
+        code = int(raw_code)
+        for key in ("name", "short_name"):
+            label = row.get(key)
+            if label:
+                lookup[str(label)] = code
+    return lookup
+
+
+def _team_key(value: object, lookup: dict[str, int]) -> int:
+    label = "" if value is None else str(value)
+    if label in lookup:
+        return lookup[label]
+    return _as_int(value)
+
+
 def _kickoff(value: object) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -130,7 +160,7 @@ def _as_int(value: object, default: int = 0) -> int:
 def _players(
     gw: pl.DataFrame,
     codes: dict[int, int],
-    team_code: dict[int, int],
+    teams: dict[str, int],
     season: str,
     start: datetime,
 ) -> pl.DataFrame:
@@ -141,13 +171,12 @@ def _players(
     for row in latest.iter_rows(named=True):
         element = _as_int(row["element"])
         position = str(row.get("position") or "MID")
-        team_id = _as_int(row.get("team"))
         rows.append(
             {
                 "season": season,
                 "player_key": codes.get(element, element),
                 "element_id": element,
-                "team_key": team_code.get(team_id, team_id),
+                "team_key": _team_key(row.get("team"), teams),
                 "position": position if position in _POSITIONS else "MID",
                 "web_name": str(row.get("name") or ""),
                 "available_at": start,

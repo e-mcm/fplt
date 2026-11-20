@@ -40,10 +40,13 @@ class DataStore:
         checked = schema.validate(frame)
         assert isinstance(checked, pl.DataFrame)
         checked = _ensure_utc(checked.lazy()).collect()
+        order = list(POLARS_SCHEMAS[name])
+        checked = checked.select(order)
         path = self.path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             existing = _ensure_utc(pl.read_parquet(path).lazy()).collect()
+            existing = existing.select(order)
             checked = pl.concat([existing, checked], how="vertical_relaxed")
         keys = TABLE_KEYS[name]
         checked = checked.unique(subset=keys, keep="last").sort(keys)
