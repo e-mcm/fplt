@@ -87,6 +87,29 @@ class PlayerStatusSchema(pa.DataFrameModel):
         coerce = True
 
 
+class UnderstatPlayerMatchSchema(pa.DataFrameModel):
+    """One player's xG and xA in one Understat match.
+
+    ``player_key`` is null when the Understat id has not been mapped onto an
+    FPL element code. ``minutes`` is the Understat ``time`` field.
+    """
+
+    season: str
+    match_id: int
+    understat_player_id: int
+    player_key: int = pa.Field(nullable=True)
+    team_key: int
+    xg: float = pa.Field(ge=0)
+    xa: float = pa.Field(ge=0)
+    minutes: int = pa.Field(ge=0)
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 class PlayerFixtureStatsSchema(pa.DataFrameModel):
     season: str
     gw: int = pa.Field(ge=1, le=38)
@@ -121,6 +144,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "fixtures": FixturesSchema,
     "player_status": PlayerStatusSchema,
     "player_fixture_stats": PlayerFixtureStatsSchema,
+    "understat_player_matches": UnderstatPlayerMatchSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -130,6 +154,12 @@ TABLE_KEYS: dict[str, list[str]] = {
     "fixtures": ["season", "fixture_id", "available_at"],
     "player_status": ["season", "player_key", "available_at"],
     "player_fixture_stats": ["season", "player_key", "fixture_id", "available_at"],
+    "understat_player_matches": [
+        "season",
+        "match_id",
+        "understat_player_id",
+        "available_at",
+    ],
 }
 
 POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
@@ -204,6 +234,18 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "penalties_saved": pl.Int64(),
         "penalties_missed": pl.Int64(),
         "starts": pl.Int64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "understat_player_matches": {
+        "season": pl.Utf8(),
+        "match_id": pl.Int64(),
+        "understat_player_id": pl.Int64(),
+        "player_key": pl.Int64(),
+        "team_key": pl.Int64(),
+        "xg": pl.Float64(),
+        "xa": pl.Float64(),
+        "minutes": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },
