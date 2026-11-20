@@ -1,0 +1,171 @@
+"""Catch up checked gameweeks, and refresh the one deadline inside three hours.
+
+A gameweek counts as done when every requested model has a plan parquet for
+that deadline. Catch-up walks the missing checked gameweeks in order, so a
+week that was skipped while the process was down is picked up on the next
+run. The pre-deadline refresh does the same for a single upcoming deadline
+and does not walk earlier weeks.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import polars as pl
+
+from fplt.backtest.run import run_backtest
+from fplt.data.store import DataStore
+from fplt.models.spec import load_model_specs
+from fplt.optimise.decisions import run_plan
+from fplt.optimise.plan import plan_parquet
+from fplt.types import GWKey
+
+PRODUCTION_MODELS = ["rolling_mean_v1"]
+_WINDOW = timedelta(hours=3)
+
+
+def pending_checked(store: DataStore, root: Path, models: list[str]) -> list[GWKey]:
+    """Checked gameweeks that are still missing a plan, earliest first.
+
+    Args:
+        store: Staged tables, including ``gameweeks``.
+        root: Data directory that contains ``plans/``.
+        models: YAML spec names that must each have a plan.
+
+    Returns:
+        Deadlines whose ``data_checked`` flag is set and whose plan is absent.
+    """
+    frame = store.read("gameweeks").filter(pl.col("data_checked"))
+    waiting: list[GWKey] = []
+    seen: set[GWKey] = set()
+    for season, gameweek in frame.select("season", "gw").iter_rows():
+        key = GWKey(str(season), int(gameweek))
+        if key in seen or plans_exist(root, models, key):
+            continue
+        seen.add(key)
+        waiting.append(key)
+    return sorted(waiting)
+
+
+def due_gameweek(store: DataStore, now: datetime) -> GWKey | None:
+    """The earliest unchecked deadline inside the next three hours.
+
+    Args:
+        store: Staged tables, including ``gameweeks``.
+        now: Clock reading, timezone-aware.
+
+    Returns:
+        The deadline to refresh, or ``None`` when nothing is due.
+    """
+    frame = store.read("gameweeks").filter(~pl.col("data_checked"))
+    moment = _aware(now)
+    due: list[tuple[datetime, GWKey]] = []
+    for row in frame.iter_rows(named=True):
+        deadline = _aware(row["deadline_time"])
+        if moment < deadline <= moment + _WINDOW:
+            due.append((deadline, GWKey(str(row["season"]), int(row["gw"]))))
+    if not due:
+        return None
+    due.sort(key=lambda item: item[0])
+    return due[0][1]
+
+
+def catch_up(
+    data_dir: Path,
+    models: list[str] | None = None,
+    horizon: int = 1,
+) -> list[GWKey]:
+    """Fit, score, and plan every checked gameweek that has no plan yet.
+
+    Args:
+        data_dir: Root that contains ``staged/`` and receives ``ledger/`` and
+            ``plans/``.
+        models: YAML spec names. Defaults to ``rolling_mean_v1``.
+        horizon: Weeks each plan looks ahead.
+
+    Returns:
+        The gameweeks processed by this call, in play order.
+    """
+    chosen = PRODUCTION_MODELS if models is None else models
+    done: list[GWKey] = []
+    for key in pending_checked(DataStore(data_dir), data_dir, chosen):
+        _play(data_dir, chosen, key, horizon)
+        done.append(key)
+    return done
+
+
+def pre_deadline(
+    data_dir: Path,
+    now: datetime,
+    models: list[str] | None = None,
+    horizon: int = 1,
+) -> GWKey | None:
+    """Plan the deadline inside the next three hours, when it has no plan yet.
+
+    Args:
+        data_dir: Root that contains ``staged/`` and receives the plan.
+        now: Clock reading, timezone-aware.
+        models: YAML spec names. Defaults to ``rolling_mean_v1``.
+        horizon: Weeks the plan looks ahead.
+
+    Returns:
+        The deadline that was planned, or ``None`` when nothing was due.
+    """
+    chosen = PRODUCTION_MODELS if models is None else models
+    key = due_gameweek(DataStore(data_dir), now)
+    if key is None or plans_exist(data_dir, chosen, key):
+        return None
+    _play(data_dir, chosen, key, horizon)
+    return key
+
+
+def reports(root: Path) -> str:
+    """Concatenate every saved plan report.
+
+    Args:
+        root: Data directory that contains ``plans/``.
+
+    Returns:
+        The markdown, or an empty string when no report has been written.
+    """
+    folder = root / "plans"
+    if not folder.exists():
+        return ""
+    parts = [
+        path.read_text(encoding="utf-8") for path in sorted(folder.rglob("report.md"))
+    ]
+    return "\n".join(parts)
+
+
+def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
+    run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
+    for name in models:
+        try:
+            run_plan(data_dir, name, key.season, key.gw, horizon)
+        except FileExistsError:
+            continue
+
+
+def plans_exist(root: Path, models: list[str], key: GWKey) -> bool:
+    """Whether every model already has a plan for ``key``.
+
+    Args:
+        root: Data directory that contains ``plans/``.
+        models: YAML spec names.
+        key: Deadline to look up.
+
+    Returns:
+        True when each model's parquet is already on disk.
+    """
+    specs = load_model_specs()
+    return all(
+        plan_parquet(root, specs[name].model_id, key.season, key.gw).exists()
+        for name in models
+    )
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

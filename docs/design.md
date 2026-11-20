@@ -425,6 +425,8 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 
 The pre-deadline run can always be launched manually from the UI.
 
+A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for that deadline. The catch-up sensor asks the `recommendation_report` asset to plan every waiting week, and the markdown is stored as asset metadata. Run failures POST to `FPLT_NTFY_URL` when it is set.
+
 ### 8.6 Running locally
 
 - Development: `make dagster-dev` (`dagster dev`).

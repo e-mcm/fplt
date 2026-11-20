@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.fplt.webserver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>dagster-webserver</string>
+    <string>-h</string>
+    <string>127.0.0.1</string>
+    <string>-p</string>
+    <string>3000</string>
+    <string>-m</string>
+    <string>fplt.orchestration</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DAGSTER_HOME</key>
+    <string>/usr/local/var/fplt/dagster</string>
+    <key>FPLT_DATA_DIR</key>
+    <string>/usr/local/var/fplt/data</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
