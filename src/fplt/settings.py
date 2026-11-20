@@ -7,7 +7,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Paths and the FPL entry this install optimises for."""
+    """Paths and the FPL entry this install optimises for.
+
+    ``fpl_session`` is the ``pl_profile`` cookie value from
+    fantasy.premierleague.com. It is required for the live squad via
+    ``/api/my-team/{entry_id}/`` (selling prices and free transfers). Never
+    commit a real cookie value.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="FPLT_",
@@ -18,6 +24,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("./data")
     entry_id: int | None = None
+    fpl_session: str | None = None
     ntfy_url: str | None = None
 
 
