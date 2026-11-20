@@ -7,6 +7,7 @@ from typing import Literal
 
 # Importing the package registers the predictors with get_model.
 import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from fplt.backtest.ledger import append_predictions, fill_actuals
 from fplt.backtest.walk_forward import walk_forward
 from fplt.data.pit import PITData
