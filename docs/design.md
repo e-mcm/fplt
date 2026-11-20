@@ -426,7 +426,7 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 
 The pre-deadline run can always be launched manually from the UI.
 
-A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for that deadline. The catch-up sensor asks the `recommendation_report` asset to plan every waiting week, and the markdown is stored as asset metadata. Run failures POST to `FPLT_NTFY_URL` when it is set.
+A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for that deadline. The catch-up sensor asks the `recommendation_report` asset to plan every waiting week, and the markdown is stored as asset metadata. After a successful catch-up or pre-deadline plan, the concatenated `report.md` body is pushed via `FPLT_NTFY_URL` and/or optional SMTP (`FPLT_SMTP_HOST`, `FPLT_SMTP_FROM`, `FPLT_SMTP_TO`, plus user/password/port/TLS) when those settings are present; missing config is a no-op. Run failures POST to `FPLT_NTFY_URL` when it is set.
 
 ### 8.6 Running locally
 

@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     entry_id: int | None = None
     fpl_session: str | None = None
     ntfy_url: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_to: str | None = None
+    smtp_use_tls: bool = True
 
 
 @lru_cache(maxsize=1)
