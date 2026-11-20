@@ -14,7 +14,9 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
+from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
+from fplt.optimise.state import SquadState
 from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
 from fplt.orchestration.sensors import catchup_sensor, pre_deadline_sensor
@@ -47,6 +49,102 @@ def test_catch_up_plans_a_skipped_checked_week(tmp_path: Path) -> None:
     moment = _GW3 - timedelta(hours=1)
     assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is not None
     assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is None
+
+
+def test_catch_up_passes_live_squad_when_entry_id_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _league(tmp_path)
+    monkeypatch.setenv("FPLT_ENTRY_ID", "42")
+    monkeypatch.setenv("FPLT_FPL_SESSION", "cookie")
+    get_settings.cache_clear()
+    team = CurrentTeam.from_my_team(42, _live_payload())
+    seen: list[SquadState | None] = []
+
+    def load_team(**_: object) -> CurrentTeam:
+        return team
+
+    def spy_plan(
+        data_dir: Path,
+        model_name: str,
+        season: str,
+        gameweek: int,
+        horizon: int,
+        entry_json: Path | None = None,
+        squad: SquadState | None = None,
+    ):
+        seen.append(squad)
+        from fplt.optimise.decisions import run_plan as real
+
+        return real(
+            data_dir,
+            model_name,
+            season,
+            gameweek,
+            horizon,
+            entry_json=entry_json,
+            squad=squad,
+        )
+
+    monkeypatch.setattr("fplt.optimise.decisions.load_current_team", load_team)
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", spy_plan)
+    try:
+        done = catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
+        assert [key.gw for key in done] == [1, 2]
+        assert len(seen) == 2
+        for squad in seen:
+            assert squad is not None
+            assert squad.bank == 21
+            assert len(squad.owned) == 15
+            assert squad.owned[0].selling_price == 46
+            assert squad.free_transfers == 1
+    finally:
+        get_settings.cache_clear()
+
+
+def test_catch_up_without_entry_id_keeps_yaml_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _league(tmp_path)
+    monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
+    monkeypatch.delenv("FPLT_FPL_SESSION", raising=False)
+    get_settings.cache_clear()
+    seen: list[SquadState | None] = []
+
+    def boom(**_: object) -> CurrentTeam:
+        raise AssertionError("load_current_team must not run without entry id")
+
+    def spy_plan(
+        data_dir: Path,
+        model_name: str,
+        season: str,
+        gameweek: int,
+        horizon: int,
+        entry_json: Path | None = None,
+        squad: SquadState | None = None,
+    ):
+        seen.append(squad)
+        from fplt.optimise.decisions import run_plan as real
+
+        return real(
+            data_dir,
+            model_name,
+            season,
+            gameweek,
+            horizon,
+            entry_json=entry_json,
+            squad=squad,
+        )
+
+    monkeypatch.setattr("fplt.optimise.decisions.load_current_team", boom)
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", spy_plan)
+    try:
+        catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
+        assert seen
+        assert all(squad is not None and squad.owned == [] for squad in seen)
+        assert all(squad is not None and squad.bank == 1000 for squad in seen)
+    finally:
+        get_settings.cache_clear()
 
 
 def test_sensors_request_a_run_and_then_skip(
@@ -96,6 +194,35 @@ def test_materialize_attaches_the_report(
 def _use(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
+
+
+def _live_payload() -> dict[str, object]:
+    # Valid 2/5/5/3 with ≤3 per club among the synthetic league keys.
+    elements = [1, 16, 7, 12, 17, 22, 27, 4, 9, 14, 19, 24, 5, 10, 15]
+    picks = [
+        {
+            "element": element,
+            "position": index,
+            "selling_price": 45 + index,
+            "multiplier": 1 if index <= 11 else 0,
+            "purchase_price": 45 + index,
+            "is_captain": index == 9,
+            "is_vice_captain": index == 6,
+        }
+        for index, element in enumerate(elements, start=1)
+    ]
+    return {
+        "picks": picks,
+        "chips": [],
+        "transfers": {
+            "cost": 4,
+            "status": "cost",
+            "limit": 1,
+            "made": 0,
+            "bank": 21,
+            "value": 1022,
+        },
+    }
 
 
 def _league(root: Path) -> DataStore:

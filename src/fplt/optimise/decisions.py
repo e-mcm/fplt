@@ -8,11 +8,13 @@ can be banked. Predictions are whatever the ledger recorded at that deadline.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
 
 from fplt.backtest.ledger import read_predictions
+from fplt.data.fpl_client import CurrentTeam, load_current_team
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -31,7 +33,10 @@ from fplt.optimise.state import (
     load_squad_state,
 )
 from fplt.schemas.plan import CandidateSchema, DecisionSchema
+from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
+
+TeamLoader = Callable[..., CurrentTeam]
 
 
 def candidates_as_of(view: PITView) -> pl.DataFrame:
@@ -184,6 +189,59 @@ def write_decisions(root: Path, frame: pl.DataFrame) -> Path:
     return path
 
 
+def resolve_squad_state(
+    view: PITView,
+    *,
+    entry_json: Path | None = None,
+    event: int | None = None,
+    settings: Settings | None = None,
+    load_team: TeamLoader | None = None,
+) -> SquadState:
+    """Build squad state from YAML, optional entry JSON, or the live FPL team.
+
+    Preference order:
+
+    1. ``entry_json`` when provided (CLI ``--entry-json``).
+    2. Live / public team when ``FPLT_ENTRY_ID`` is set
+       (``load_current_team`` → ``apply_entry_picks``).
+    3. Otherwise the YAML draft (empty ``owned`` is an initial squad).
+
+    Free transfers from authenticated ``my-team`` replace the YAML value when
+    they fit ``ft_bank_cap``. Public entry picks leave YAML free transfers
+    unchanged. Chip overrides always stay in YAML.
+
+    Args:
+        view: Point-in-time view used to map FPL element ids to ``player_key``.
+        entry_json: Optional picks JSON path. Wins over the live entry.
+        event: Finished gameweek for the public picks fallback when no
+            session cookie is set. Ignored when ``my-team`` succeeds.
+        settings: Process settings; defaults to ``get_settings()``.
+        load_team: Injectable ``load_current_team`` (for tests).
+
+    Returns:
+        Squad state ready for ``plan_squad`` / ``run_plan``.
+
+    Raises:
+        FPLAPIError: Live load fails when ``entry_id`` is set.
+        KeyError: A pick's element has no ``player_key`` in ``view``.
+        ValueError: An entry payload is malformed or lacks selling prices.
+    """
+    state = load_squad_state()
+    keys = _element_keys(view)
+    if entry_json is not None:
+        payload = json.loads(entry_json.read_text(encoding="utf-8"))
+        return apply_entry_picks(state, payload, keys)
+
+    cfg = settings if settings is not None else get_settings()
+    if cfg.entry_id is None:
+        return state
+
+    loader = load_current_team if load_team is None else load_team
+    team = loader(event=event, settings=cfg)
+    state = apply_entry_picks(state, team.picks_payload(), keys)
+    return _with_live_free_transfers(state, team)
+
+
 def run_plan(
     data_dir: Path,
     model_name: str,
@@ -191,6 +249,7 @@ def run_plan(
     gameweek: int,
     horizon: int,
     entry_json: Path | None = None,
+    squad: SquadState | None = None,
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -201,7 +260,9 @@ def run_plan(
         gameweek: Deadline to plan from.
         horizon: Weeks to look ahead, capped at gameweek 38.
         entry_json: Optional ``entry/{id}/event/{gw}/picks`` payload. It
-            replaces the owned squad and the bank.
+            replaces the owned squad and the bank when ``squad`` is omitted.
+        squad: Pre-resolved squad state (e.g. from ``resolve_squad_state``).
+            When set, ``entry_json`` is ignored.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -211,11 +272,13 @@ def run_plan(
         FileExistsError: This deadline was already written.
     """
     spec = load_model_specs()[model_name]
-    state = load_squad_state()
     view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
-    if entry_json is not None:
-        payload = json.loads(entry_json.read_text(encoding="utf-8"))
-        state = apply_entry_picks(state, payload, _element_keys(view))
+    if squad is not None:
+        state = squad
+    elif entry_json is not None:
+        state = resolve_squad_state(view, entry_json=entry_json)
+    else:
+        state = load_squad_state()
     window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
     solved = plan_squad(
         candidates_as_of(view),
@@ -430,6 +493,14 @@ def _element_keys(view: PITView) -> dict[int, int]:
         .collect()
     )
     return {int(element): int(key) for element, key in frame.iter_rows()}
+
+
+def _with_live_free_transfers(state: SquadState, team: CurrentTeam) -> SquadState:
+    """Apply ``my-team`` free transfers when they fit the banking cap."""
+    free = team.free_transfers
+    if free is None or free < 1 or free > state.ft_bank_cap:
+        return state
+    return state.model_copy(update={"free_transfers": free})
 
 
 def _empty_decisions() -> pl.DataFrame:

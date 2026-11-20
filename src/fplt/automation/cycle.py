@@ -5,6 +5,10 @@ that deadline. Catch-up walks the missing checked gameweeks in order, so a
 week that was skipped while the process was down is picked up on the next
 run. The pre-deadline refresh does the same for a single upcoming deadline
 and does not walk earlier weeks.
+
+When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_SESSION`` for the live squad),
+each plan starts from ``resolve_squad_state`` / ``load_current_team`` rather
+than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
 """
 
 from __future__ import annotations
@@ -15,9 +19,10 @@ from pathlib import Path
 import polars as pl
 
 from fplt.backtest.run import run_backtest
+from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.decisions import run_plan
+from fplt.optimise.decisions import resolve_squad_state, run_plan
 from fplt.optimise.plan import plan_parquet
 from fplt.types import GWKey
 
@@ -140,9 +145,12 @@ def reports(root: Path) -> str:
 
 def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
     run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
+    # Live squad when FPLT_ENTRY_ID is set; otherwise YAML draft / empty owned.
+    view = PITData(DataStore(data_dir)).view(key)
+    squad = resolve_squad_state(view, event=key.gw)
     for name in models:
         try:
-            run_plan(data_dir, name, key.season, key.gw, horizon)
+            run_plan(data_dir, name, key.season, key.gw, horizon, squad=squad)
         except FileExistsError:
             continue
 
