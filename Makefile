@@ -1,4 +1,8 @@
-.PHONY: test check lint typecheck leaderboard dagster-dev clean
+.PHONY: test check lint typecheck leaderboard dagster-dev clean bootstrap-vaastav
+
+# ── Historical data (vaastav) ─────────────────────────────────────────────────
+bootstrap-vaastav:
+	uv run python scripts/bootstrap_vaastav.py
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:
