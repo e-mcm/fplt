@@ -8,6 +8,7 @@ from typing import Any
 import polars as pl
 import pytest
 
+from fplt.backtest.eval_set import _yaml_openfpl_model_dir_set
 from fplt.models.direct.lgbm import LGBMDirectPredictor
 from fplt.models.spec import ModelSpec, get_model
 from fplt.orchestration import defs
@@ -17,7 +18,6 @@ from fplt.orchestration.eval_job import (
     EvalResult,
     _openfpl_skip_note,
     _run_openfpl,
-    _yaml_openfpl_model_dir_set,
     resolve_eval_models,
     run_eval_board,
 )
@@ -51,7 +51,7 @@ def test_yaml_model_dir_auto_includes(
         params={"model_dir": "/fitted", "compare_from": "2024-25"},
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.load_model_specs",
+        "fplt.backtest.eval_set.load_model_specs",
         lambda: {OPENFPL_MODEL: spec},
     )
     assert OPENFPL_MODEL in resolve_eval_models("2025-26")
@@ -112,7 +112,7 @@ def test_run_eval_board_delegates_to_backtest(
 
     monkeypatch.setattr("fplt.orchestration.eval_job.run_backtest", fake_backtest)
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job._yaml_openfpl_model_dir_set",
+        "fplt.backtest.eval_set._yaml_openfpl_model_dir_set",
         lambda: False,
     )
     result = run_eval_board(
@@ -188,7 +188,7 @@ def test_skip_note_when_openfpl_omitted(
         lambda *a, **k: [ModelSpec(name="rolling_mean_v1", kind="rolling_mean")],
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job._yaml_openfpl_model_dir_set",
+        "fplt.backtest.eval_set._yaml_openfpl_model_dir_set",
         lambda: False,
     )
     result = run_eval_board(tmp_path, "2024-25", 1, 1, models=None)
@@ -293,7 +293,7 @@ def test_skip_note_for_early_default_season(
         lambda *a, **k: [ModelSpec(name="rolling_mean_v1", kind="rolling_mean")],
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job._yaml_openfpl_model_dir_set",
+        "fplt.backtest.eval_set._yaml_openfpl_model_dir_set",
         lambda: False,
     )
     monkeypatch.setattr(
@@ -309,7 +309,7 @@ def test_yaml_model_dir_false_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.load_model_specs",
+        "fplt.backtest.eval_set.load_model_specs",
         lambda: {},
     )
     assert _yaml_openfpl_model_dir_set() is False

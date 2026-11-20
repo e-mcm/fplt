@@ -341,6 +341,8 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see.
 
+Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes MAE/RMSE/Spearman/top-10/Brier summary JSON + parquet under `$FPLT_DATA_DIR/compare/` for the leaderboard or a later Streamlit view.
+
 ### 7.2 Ledger
 
 `ledger/predictions` — every backtest and live prediction, joined later to actuals:
@@ -441,6 +443,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 - Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_SESSION`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it when `params.model_dir` is set (or via `--with-openfpl` / `--openfpl-model-dir`), and only for seasons from 2024-25 onwards. Empty `model_dir` yields zeros, not OpenFPL scores.
+- Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
 
 ---
 
@@ -530,7 +533,7 @@ fplt/
 │   ├── backtest/                # walk-forward, ledger, metrics, decision sim
 │   ├── optimise/
 │   ├── orchestration/           # Dagster definitions, factories, sensors, checks
-│   └── cli.py                   # `fplt backtest`, `fplt predict`, ...
+│   └── cli.py                   # `fplt backtest`, `fplt compare`, `fplt predict`, ...
 ├── apps/leaderboard.py
 ├── external/openfpl/            # isolated env for OpenFPL
 ├── deploy/{launchd/, docker-compose.yml}
