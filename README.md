@@ -25,10 +25,12 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
 uv sync                      # install
-cp .env.example .env         # set FPLT_DATA_DIR, FPL entry id
+cp .env.example .env         # set FPLT_DATA_DIR, FPLT_ENTRY_ID; for live squad also FPLT_FPL_SESSION
 make check                   # lint, types, fast tests
 make dagster-dev             # Dagster UI at http://localhost:3000
 ```
+
+`FPLT_FPL_SESSION` is the `pl_profile` cookie from fantasy.premierleague.com. The live squad (selling prices, bank, free transfers) is loaded via `fplt.data.fpl_client.load_current_team` from authenticated `/api/my-team/{entry_id}/`. Without the cookie, use a saved picks JSON with `fplt plan --entry-json`, or public finished-gameweek picks (no selling prices). Never commit a real session cookie.
 
 ## Common tasks
 

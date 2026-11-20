@@ -64,7 +64,8 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates, au
 | FPL API `fixtures/` | Fixtures, kickoff times, results, per-fixture stats | |
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
-| FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | For optimiser state |
+| FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | Public finished-GW picks only; live GW is 403 without auth |
+| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit | Requires `pl_profile` cookie (`FPLT_FPL_SESSION`); see `fplt.data.fpl_client` |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped |
 
@@ -467,7 +468,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 10.1 Inputs
 
 - Predictions for horizon H from one predictor (expected points; optionally samples).
-- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. Fetched from `entry/{id}` endpoints where possible; FT count and chips may need user-provided overrides in `configs/squad_state.yaml`.
+- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.data.fpl_client.load_current_team` loads this from authenticated `my-team/{id}` when `FPLT_ENTRY_ID` and `FPLT_FPL_SESSION` (`pl_profile` cookie) are set; otherwise fall back to a saved `entry/{id}/event/{gw}/picks` JSON (`fplt plan --entry-json`) or public finished-GW picks (no selling prices). FT count and chips may still need overrides in `configs/squad_state.yaml`.
 - Rules for the season (squad limits, FT banking cap, hit cost).
 
 ### 10.2 Formulation (multi-period ILP)
@@ -500,9 +501,9 @@ fplt/
 ├── docs/design.md
 ├── scripts/snapshot.py          # standalone, runs on GitHub Actions
 ├── src/fplt/
-│   ├── settings.py              # pydantic-settings (paths, FPL entry id)
+│   ├── settings.py              # pydantic-settings (paths, FPL entry id, FPL session)
 │   ├── types.py                 # GWKey, enums
-│   ├── data/                    # clients, raw writer, staging, DataStore, PITData
+│   ├── data/                    # FPL client, raw writer, staging, DataStore, PITData
 │   ├── schemas/                 # pandera.polars schemas
 │   ├── features/                # registry + feature definitions
 │   ├── scoring/                 # Rules
