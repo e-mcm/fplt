@@ -1,0 +1,27 @@
+# Later VPS layout. The image must contain this repo and its dependencies.
+services:
+  webserver:
+    image: fplt:local
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -m fplt.orchestration
+    environment:
+      DAGSTER_HOME: /opt/dagster
+      FPLT_DATA_DIR: /var/lib/fplt
+      FPLT_NTFY_URL: ${FPLT_NTFY_URL:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - dagster:/opt/dagster
+      - data:/var/lib/fplt
+  daemon:
+    image: fplt:local
+    command: dagster-daemon run -m fplt.orchestration
+    environment:
+      DAGSTER_HOME: /opt/dagster
+      FPLT_DATA_DIR: /var/lib/fplt
+      FPLT_NTFY_URL: ${FPLT_NTFY_URL:-}
+    volumes:
+      - dagster:/opt/dagster
+      - data:/var/lib/fplt
+volumes:
+  dagster:
+  data:

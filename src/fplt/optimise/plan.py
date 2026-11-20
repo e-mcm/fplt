@@ -178,6 +178,22 @@ def plan_table(
     )
 
 
+def plan_parquet(root: Path, model_id: str, season: str, gameweek: int) -> Path:
+    """Parquet path for one model's plan at one deadline.
+
+    Args:
+        root: Data directory that contains ``plans/``.
+        model_id: Predictor id.
+        season: Season label.
+        gameweek: Deadline the plan was built at.
+
+    Returns:
+        ``plans/<model_id>/as_of=<season>_gwNN/part.parquet``.
+    """
+    stamp = f"as_of={season}_gw{gameweek:02d}"
+    return root / "plans" / model_id / stamp / "part.parquet"
+
+
 def write_plan(root: Path, frame: pl.DataFrame) -> Path:
     """Write a plan parquet. The same ``as_of`` is never replaced.
 
@@ -198,8 +214,7 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
     models = checked["model_id"].unique().to_list()
     if len(seasons) != 1 or len(gameweeks) != 1 or len(models) != 1:
         raise ValueError("a plan file is one model and one deadline")
-    stamp = f"as_of={seasons[0]}_gw{int(gameweeks[0]):02d}"
-    path = root / "plans" / str(models[0]) / stamp / "part.parquet"
+    path = plan_parquet(root, str(models[0]), str(seasons[0]), int(gameweeks[0]))
     if path.exists():
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)

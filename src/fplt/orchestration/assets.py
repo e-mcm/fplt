@@ -7,12 +7,16 @@ parquet file per table, and ``available_at`` is what makes a row visible.
 # Dagster does not ship type stubs.
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false, reportUnknownParameterType=false
+# pyright: reportMissingTypeArgument=false
 
 from __future__ import annotations
+
+from datetime import UTC, datetime
 
 import dagster as dg
 import polars as pl
 
+from fplt.automation.cycle import PRODUCTION_MODELS, catch_up, pre_deadline, reports
 from fplt.data.raw import ingest_raw
 from fplt.data.store import DataStore
 from fplt.data.vaastav import import_available
@@ -58,4 +62,44 @@ staged_assets = [staged_asset(table) for table in STAGED_SCHEMAS]
 refresh_staged = dg.define_asset_job(
     name="refresh_staged",
     selection=dg.AssetSelection.assets(raw_snapshots, staged_ingest, *staged_assets),
+)
+
+
+@dg.asset(name="recommendation_report")
+def recommendation_report() -> dg.MaterializeResult:
+    """Plan every checked gameweek that is still missing one.
+
+    The markdown for those plans is attached as asset metadata.
+    """
+    data = get_settings().data_dir
+    done = catch_up(data, PRODUCTION_MODELS, horizon=1)
+    text = reports(data) or "No plan yet."
+    processed = ", ".join(f"{key.season} gw{key.gw}" for key in done) or "none"
+    return dg.MaterializeResult(
+        metadata={
+            "processed": processed,
+            "report": dg.MetadataValue.md(text),
+        }
+    )
+
+
+@dg.asset(name="pre_deadline_plan")
+def pre_deadline_plan() -> dg.MaterializeResult:
+    """Plan the deadline inside the next three hours, if it has no plan yet."""
+    data = get_settings().data_dir
+    key = pre_deadline(data, datetime.now(UTC), PRODUCTION_MODELS, horizon=1)
+    label = "none" if key is None else f"{key.season} gw{key.gw}"
+    text = reports(data) or "No plan yet."
+    return dg.MaterializeResult(
+        metadata={"deadline": label, "report": dg.MetadataValue.md(text)}
+    )
+
+
+catch_up_job = dg.define_asset_job(
+    name="catch_up",
+    selection=dg.AssetSelection.assets(recommendation_report),
+)
+pre_deadline_job = dg.define_asset_job(
+    name="pre_deadline",
+    selection=dg.AssetSelection.assets(pre_deadline_plan),
 )

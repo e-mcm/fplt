@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("./data")
     entry_id: int | None = None
+    ntfy_url: str | None = None
 
 
 @lru_cache(maxsize=1)
