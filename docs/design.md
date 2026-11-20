@@ -347,7 +347,7 @@ For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(
 | `actual_pts`, `actual_minutes` | filled when the target GW is `data_checked` |
 
 `ledger/components` — one row per model, deadline, and fixture. Scorelines store `p_home`, `p_draw`, `p_away`, `expected_home`, `expected_away`, and, once the target gameweek is `data_checked`, `actual_home`, `actual_away`, and ranked probability score over home/draw/away. Minutes rows join this table later.
-`ledger/decisions` — season simulations of the optimiser per model (§7.3).
+`ledger/decisions` — one row per model, gameweek, and player kept or sold that week: `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `actual_pts`, `hit`, and `free_transfers` available at the deadline. A re-run replaces rows for the same model and gameweek.
 
 ### 7.3 Metrics
 
@@ -476,7 +476,9 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 ### 10.3 Output
 
-`PlanSchema` table (per GW: squad, XI, captain, vice, transfers, expected points) and a markdown recommendation report.
+`PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. The same deadline is never overwritten.
+
+Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `fplt plan --entry-json` replaces the owned players and the bank from an `entry/{id}/event/{gw}/picks` payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
 
 ---
 

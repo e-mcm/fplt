@@ -1,0 +1,9 @@
+# Starting squad for `fplt plan`. An empty owned list is an initial draft.
+# `fplt plan --entry-json` replaces owned and bank from an entry picks payload.
+bank: 1000
+free_transfers: 1
+ft_bank_cap: 5
+hit_cost: 4
+decay: 0.9
+bench_weight: 0.0001
+owned: []
