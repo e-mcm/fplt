@@ -468,7 +468,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 10.1 Inputs
 
 - Predictions for horizon H from one predictor (expected points; optionally samples).
-- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.data.fpl_client.load_current_team` loads this from authenticated `my-team/{id}` when `FPLT_ENTRY_ID` and `FPLT_FPL_SESSION` (`pl_profile` cookie) are set; otherwise fall back to a saved `entry/{id}/event/{gw}/picks` JSON (`fplt plan --entry-json`) or public finished-GW picks (no selling prices). FT count and chips may still need overrides in `configs/squad_state.yaml`.
+- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_SESSION` / `pl_profile`; else public finished-GW picks, no selling prices). Automation `catch_up` / `pre_deadline` call this before `run_plan`. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
 - Rules for the season (squad limits, FT banking cap, hit cost).
 
 ### 10.2 Formulation (multi-period ILP)
@@ -483,7 +483,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 `optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. The same deadline is never overwritten.
 
-Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `fplt plan --entry-json` replaces the owned players and the bank from an `entry/{id}/event/{gw}/picks` payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
+Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
 
 ---
 
