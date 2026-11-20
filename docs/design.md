@@ -472,13 +472,15 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 
 ### 10.2 Formulation (multi-period ILP)
 
-Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out. Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer. Objective: Σ_t decay^t × (XI points + captain bonus + small bench weight) − hit costs. Solve with HiGHS.
+Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out. Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer. Objective: Σ_t decay^t × (XI points + captain bonus + small bench weight) − hit costs. Solve with HiGHS (`highspy`).
+
+Library entry point: `fplt.optimise.optimize_transfers(candidates, expected_points, state, gameweeks=...)`. Predictions are opaque (`ExpectedPointsSchema`: `player_key`, `gw`, `xpts`); the engine does not call predictors or the data store. `fplt plan` is the CLI wrapper that loads candidates and ledger rows, then calls the same solver.
 
 v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can use `p_haul` / samples as a tiebreak.
 
 ### 10.3 Output
 
-`PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. The same deadline is never overwritten.
+`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. The same deadline is never overwritten.
 
 Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `fplt plan --entry-json` replaces the owned players and the bank from an `entry/{id}/event/{gw}/picks` payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
 

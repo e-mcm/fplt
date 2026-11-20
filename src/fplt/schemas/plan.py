@@ -21,6 +21,19 @@ class CandidateSchema(pa.DataFrameModel):
         unique = ["player_key"]
 
 
+class ExpectedPointsSchema(pa.DataFrameModel):
+    """Opaque expected points for one player in one target gameweek."""
+
+    player_key: int
+    gw: int = pa.Field(ge=1, le=38)
+    xpts: float
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["player_key", "gw"]
+
+
 class HorizonPointsSchema(pa.DataFrameModel):
     """Expected points for one player at one step of the horizon."""
 
