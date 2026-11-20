@@ -66,7 +66,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates, au
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
 | FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | For optimiser state |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
-| Understat (later) | xG / xA per player per match | Needed for OpenFPL parity and stronger features |
+| Understat | xG / xA per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped |
 
 ### 4.2 Identifiers
 
@@ -324,7 +324,7 @@ def rolling_points(view: PITView, window: int = 5) -> pl.LazyFrame:
 ### 6.2 Initial feature set
 
 Team-level: Dixon-Coles attack/defence ratings (as a feature for other models), rolling goals for/against, rest days, home/away.
-Player-level: rolling minutes, starts share, rolling points, per-90 goal and assist involvement, status/chance_of_playing at deadline, price, position, penalty-taker flag, opponent strength.
+Player-level: rolling minutes, starts share, rolling points, per-90 goal and assist involvement, status/chance_of_playing at deadline, price, position, penalty-taker flag, opponent strength. `understat_share` v1 is each mapped player's xG and xA per 90, and their share of team xG and xA, from matches visible at the deadline.
 
 ---
 
