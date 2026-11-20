@@ -75,7 +75,7 @@ def walk_forward(
         if should_refit(model.spec, index):
             model.fit(view)
         predicted = model.predict(view, horizon_for(as_of, steps))
-        recorded = _ledger_rows(predicted, view, as_of, run_kind)
+        recorded = ledger_rows(predicted, view, as_of, run_kind)
         if not recorded.is_empty():
             frames.append(recorded)
     combined = (
@@ -88,9 +88,20 @@ def walk_forward(
     return checked
 
 
-def _ledger_rows(
+def ledger_rows(
     predicted: pl.DataFrame, view: PITView, as_of: GWKey, run_kind: str
 ) -> pl.DataFrame:
+    """Attach ledger columns to a ``PredictionSchema`` frame.
+
+    Args:
+        predicted: Rows from ``PointsPredictor.predict``.
+        view: Point-in-time view used for the prediction.
+        as_of: Deadline the prediction was made at.
+        run_kind: ``backtest`` or ``live``.
+
+    Returns:
+        A ``LedgerSchema`` frame with null actuals. Empty when ``predicted`` is.
+    """
     if predicted.is_empty():
         return pl.DataFrame(schema=LEDGER_COLUMNS)
     players = (

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+from fplt.backtest.predict_live import run_predict
 from fplt.backtest.run import run_backtest
 from fplt.optimise.decisions import run_decisions, run_plan
 from fplt.settings import get_settings
@@ -35,7 +36,11 @@ def main(argv: list[str] | None = None) -> None:
     backtest.add_argument("--refit", choices=_REFITS)
     backtest.add_argument("--seasons-back", type=int)
     backtest.add_argument("--steps", type=int, default=1)
-    sub.add_parser("predict", help="Predict the next gameweeks")
+    predict = sub.add_parser("predict", help="Predict the next gameweeks")
+    predict.add_argument("--model", required=True)
+    predict.add_argument("--horizon", type=int, default=5)
+    predict.add_argument("--season")
+    predict.add_argument("--gw", type=int)
     plan = sub.add_parser("plan", help="Recommend a squad and transfers")
     plan.add_argument("--model", required=True)
     plan.add_argument("--season", required=True)
@@ -51,10 +56,28 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "backtest":
         _backtest(args)
         return
+    if args.command == "predict":
+        _predict(args)
+        return
     if args.command == "plan":
         _plan(args)
         return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _predict(args: argparse.Namespace) -> None:
+    try:
+        path = run_predict(
+            get_settings().data_dir,
+            args.model,
+            args.horizon,
+            season=args.season,
+            gw=args.gw,
+        )
+    except (FileExistsError, FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(path)
 
 
 def _backtest(args: argparse.Namespace) -> None:
