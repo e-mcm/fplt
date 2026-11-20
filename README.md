@@ -65,7 +65,16 @@ tests/           unit, contracts (incl. leakage), integration, recorded fixtures
 
 ## Data
 
-Data lives in `$FPLT_DATA_DIR` (default `./data`, gitignored). Raw FPL API snapshots are captured by `.github/workflows/snapshot.yml` and stored on the `snapshots` branch; local Dagster ingests them. Historical seasons come from [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League).
+Data lives in `$FPLT_DATA_DIR` (default `./data`, gitignored). Raw FPL API snapshots are captured by `.github/workflows/snapshot.yml` and stored on the `snapshots` branch; local Dagster ingests them.
+
+Historical seasons come from [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League). One command places season directories (`2021-22` …) where `import_available` expects them — directly under `$FPLT_DATA_DIR`, each with `gws/merged_gw.csv`:
+
+```bash
+make bootstrap-vaastav
+# or: uv run python scripts/bootstrap_vaastav.py
+```
+
+That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--source` points at an existing vaastav `data/` tree) and copies seasons from `2021-22` onward. Use `--force` to refresh seasons already on disk. Dagster's staged ingest then picks them up via `import_available`.
 
 ## Running unattended
 
