@@ -1,0 +1,382 @@
+"""Fair multi-model comparison under shared train/test windows.
+
+Runs every selected model over the same test gameweeks in two modes:
+
+* ``walk_forward`` — ``refit=every_gw`` (existing backtest style).
+* ``fixed`` — fit once at ``fit_gw`` (start of test / end of train) and hold
+  parameters for the whole test window (``refit=never``).
+
+Predictions land in the usual ledger. A JSON + parquet summary (MAE, RMSE,
+Spearman, top-10 precision, Brier) is written for Streamlit or ad-hoc review.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+import polars as pl
+
+# Side-effect imports so YAML kinds resolve when compare is used alone.
+import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from fplt.backtest.eval_set import (
+    CORE_MODELS,
+    OPENFPL_MODEL,
+    openfpl_skip_note,
+    resolve_eval_models,
+)
+from fplt.backtest.ledger import append_predictions, fill_actuals, read_predictions
+from fplt.backtest.metrics import overall_summary, summarise
+from fplt.backtest.walk_forward import walk_forward
+from fplt.data.pit import PITData
+from fplt.data.store import DataStore
+from fplt.models.contracts import PointsPredictor
+from fplt.models.spec import ModelSpec, get_model, load_model_specs
+from fplt.types import GWKey
+
+logger = logging.getLogger(__name__)
+
+CompareMode = Literal["walk_forward", "fixed"]
+_MODE_REFIT: dict[CompareMode, Literal["every_gw", "never"]] = {
+    "walk_forward": "every_gw",
+    "fixed": "never",
+}
+DEFAULT_MODES: tuple[CompareMode, ...] = ("walk_forward", "fixed")
+
+
+@dataclass(frozen=True)
+class CompareRun:
+    """One model × mode that wrote predictions during a compare."""
+
+    model_name: str
+    mode: CompareMode
+    spec: ModelSpec
+
+
+@dataclass(frozen=True)
+class CompareResult:
+    """Artifacts from ``compare_models``."""
+
+    season: str
+    test_from_gw: int
+    test_to_gw: int
+    fit_gw: int
+    seasons_back: int | None
+    modes: tuple[CompareMode, ...]
+    runs: tuple[CompareRun, ...]
+    summary: pl.DataFrame
+    detail: pl.DataFrame
+    output_dir: Path
+    skipped_openfpl: str | None = None
+
+
+def compare_models(
+    data_dir: Path,
+    season: str,
+    *,
+    models: list[str] | None = None,
+    test_from_gw: int = 1,
+    test_to_gw: int = 38,
+    fit_gw: int | None = None,
+    seasons_back: int | None = None,
+    modes: list[CompareMode] | tuple[CompareMode, ...] | None = None,
+    steps: int = 1,
+    with_openfpl: bool = False,
+    openfpl_model_dir: str | None = None,
+    output_dir: Path | None = None,
+) -> CompareResult:
+    """Backtest selected models under shared windows and both compare modes.
+
+    All models share ``seasons_back``, ``fit_gw``, and the test gameweek range.
+    ``walk_forward`` refits each deadline; ``fixed`` fits once at ``fit_gw`` and
+    reuses that fit. When ``fit_gw`` is before ``test_from_gw``, the fit deadline
+    is included only to train — its prediction rows are dropped from the ledger
+    append for that mode.
+
+    Args:
+        data_dir: Root with ``staged/``; receives ``ledger/`` and compare outputs.
+        season: Evaluation season such as ``"2024-25"``.
+        models: Explicit YAML specs; default is the eval-board core set.
+        test_from_gw: First as-of gameweek scored in the test window.
+        test_to_gw: Last as-of gameweek, inclusive.
+        fit_gw: Deadline used for the fixed-parameter fit. Defaults to
+            ``test_from_gw`` (start of test / end of train).
+        seasons_back: Override each spec's training window length.
+        modes: Subset of ``walk_forward`` / ``fixed``. Default is both.
+        steps: Horizon length passed to ``walk_forward``.
+        with_openfpl: Include OpenFPL even when YAML ``model_dir`` is empty.
+        openfpl_model_dir: Optional OpenFPL ``model_dir`` override.
+        output_dir: Where to write summary JSON/parquet. Defaults under
+            ``data_dir/compare/``.
+
+    Returns:
+        Runs performed plus overall and per-position summary frames.
+
+    Raises:
+        ValueError: Invalid windows, empty models, or OpenFPL season floor.
+        KeyError: A spec kind is not registered.
+    """
+    chosen_modes = _resolve_modes(modes)
+    fit_at = test_from_gw if fit_gw is None else fit_gw
+    _validate_window(test_from_gw, test_to_gw, fit_at, steps, seasons_back)
+
+    chosen = resolve_eval_models(
+        season,
+        models=models,
+        with_openfpl=with_openfpl,
+        openfpl_model_dir=openfpl_model_dir,
+    )
+    skipped = (
+        None
+        if models is not None
+        else openfpl_skip_note(
+            season,
+            chosen,
+            with_openfpl=with_openfpl,
+            openfpl_model_dir=openfpl_model_dir,
+        )
+    )
+
+    specs = load_model_specs()
+    missing = [name for name in chosen if name not in specs]
+    if missing:
+        raise ValueError(f"unknown model spec {missing[0]!r}")
+
+    store = DataStore(data_dir)
+    pit = PITData(store)
+    out = output_dir or _default_output_dir(data_dir, season, test_from_gw, test_to_gw)
+    out.mkdir(parents=True, exist_ok=True)
+
+    runs: list[CompareRun] = []
+    for mode in chosen_modes:
+        for name in chosen:
+            spec = _configured(
+                specs[name],
+                refit=_MODE_REFIT[mode],
+                seasons_back=seasons_back,
+                openfpl_model_dir=openfpl_model_dir if name == OPENFPL_MODEL else None,
+            )
+            model_dir = str(spec.params.get("model_dir") or "").strip()
+            if name == OPENFPL_MODEL and not model_dir:
+                logger.warning(
+                    "openfpl_v1 model_dir is empty; the runner returns zeros "
+                    "(not OpenFPL scores). Set params.model_dir or "
+                    "--openfpl-model-dir."
+                )
+            model = get_model(spec.kind)(spec)
+            frame = _predict_window(
+                model,
+                pit,
+                season,
+                mode=mode,
+                fit_gw=fit_at,
+                test_from_gw=test_from_gw,
+                test_to_gw=test_to_gw,
+                steps=steps,
+            )
+            append_predictions(data_dir, frame)
+            runs.append(CompareRun(model_name=name, mode=mode, spec=spec))
+
+    fill_actuals(data_dir, store)
+    ledger = read_predictions(data_dir)
+    model_ids = {run.spec.model_id for run in runs}
+    scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
+    id_meta = pl.DataFrame(
+        {
+            "model_id": [run.spec.model_id for run in runs],
+            "model_name": [run.model_name for run in runs],
+            "mode": [run.mode for run in runs],
+        }
+    )
+    detail = _attach_meta(summarise(scored), id_meta)
+    summary = _attach_meta(overall_summary(scored), id_meta)
+    result = CompareResult(
+        season=season,
+        test_from_gw=test_from_gw,
+        test_to_gw=test_to_gw,
+        fit_gw=fit_at,
+        seasons_back=seasons_back,
+        modes=chosen_modes,
+        runs=tuple(runs),
+        summary=summary,
+        detail=detail,
+        output_dir=out,
+        skipped_openfpl=skipped,
+    )
+    _write_outputs(result)
+    if skipped:
+        logger.info(skipped)
+    return result
+
+
+def format_summary_table(summary: pl.DataFrame) -> str:
+    """Render the overall summary as a plain-text table for the CLI."""
+    if summary.is_empty():
+        return "(no scored rows — check actuals / data_checked)"
+    cols = [
+        c
+        for c in (
+            "model_name",
+            "mode",
+            "horizon",
+            "mae",
+            "rmse",
+            "spearman",
+            "top10_precision",
+            "brier_haul",
+            "brier_60",
+            "n",
+            "model_id",
+        )
+        if c in summary.columns
+    ]
+    return str(summary.select(cols).sort("mode", "model_name", "horizon"))
+
+
+def _predict_window(
+    model: PointsPredictor,
+    pit: PITData,
+    season: str,
+    *,
+    mode: CompareMode,
+    fit_gw: int,
+    test_from_gw: int,
+    test_to_gw: int,
+    steps: int,
+) -> pl.DataFrame:
+    """Fit/predict one mode; keep only as-of rows inside the test window."""
+    if mode == "walk_forward":
+        as_ofs = [GWKey(season, gw) for gw in range(test_from_gw, test_to_gw + 1)]
+        return walk_forward(model, pit, as_ofs, steps=steps)
+    # Fixed: optionally fit at an earlier deadline, then score the test window.
+    as_ofs = [GWKey(season, gw) for gw in range(fit_gw, test_to_gw + 1)]
+    frame = walk_forward(model, pit, as_ofs, steps=steps)
+    if frame.is_empty() or fit_gw == test_from_gw:
+        return frame
+    return frame.filter(
+        (pl.col("as_of_gw") >= test_from_gw) & (pl.col("as_of_gw") <= test_to_gw)
+    )
+
+
+def _configured(
+    spec: ModelSpec,
+    *,
+    refit: Literal["every_gw", "never"],
+    seasons_back: int | None,
+    openfpl_model_dir: str | None,
+) -> ModelSpec:
+    updates: dict[str, object] = {"refit": refit}
+    if seasons_back is not None:
+        updates["train_window"] = spec.train_window.model_copy(
+            update={"seasons_back": seasons_back}
+        )
+    if openfpl_model_dir is not None:
+        params = dict(spec.params)
+        params["model_dir"] = openfpl_model_dir
+        updates["params"] = params
+    return spec.model_copy(update=updates)
+
+
+def _resolve_modes(
+    modes: list[CompareMode] | tuple[CompareMode, ...] | None,
+) -> tuple[CompareMode, ...]:
+    if modes is None:
+        return DEFAULT_MODES
+    if not modes:
+        raise ValueError("modes must be non-empty")
+    seen: list[CompareMode] = []
+    for mode in modes:
+        if mode not in _MODE_REFIT:
+            raise ValueError(f"unknown compare mode {mode!r}")
+        if mode not in seen:
+            seen.append(mode)
+    return tuple(seen)
+
+
+def _validate_window(
+    test_from_gw: int,
+    test_to_gw: int,
+    fit_gw: int,
+    steps: int,
+    seasons_back: int | None,
+) -> None:
+    if steps < 1:
+        raise ValueError(f"steps must be positive, got {steps}")
+    if seasons_back is not None and seasons_back < 1:
+        raise ValueError(f"seasons_back must be positive, got {seasons_back}")
+    if not 1 <= test_from_gw <= test_to_gw <= 38:
+        raise ValueError(
+            f"test gameweeks must be in 1..38, got {test_from_gw}..{test_to_gw}"
+        )
+    if not 1 <= fit_gw <= 38:
+        raise ValueError(f"fit_gw must be in 1..38, got {fit_gw}")
+    if fit_gw > test_from_gw:
+        raise ValueError(
+            f"fit_gw ({fit_gw}) must be at or before test_from_gw ({test_from_gw})"
+        )
+
+
+def _default_output_dir(
+    data_dir: Path, season: str, test_from_gw: int, test_to_gw: int
+) -> Path:
+    stamp = f"{season}_gw{test_from_gw:02d}-{test_to_gw:02d}"
+    return data_dir / "compare" / stamp
+
+
+def _attach_meta(frame: pl.DataFrame, id_meta: pl.DataFrame) -> pl.DataFrame:
+    if frame.is_empty():
+        return frame
+    return frame.join(id_meta, on="model_id", how="left")
+
+
+def _write_outputs(result: CompareResult) -> None:
+    out = result.output_dir
+    summary_path = out / "summary.parquet"
+    detail_path = out / "detail.parquet"
+    json_path = out / "summary.json"
+    result.summary.write_parquet(summary_path)
+    result.detail.write_parquet(detail_path)
+    payload = {
+        "season": result.season,
+        "test_from_gw": result.test_from_gw,
+        "test_to_gw": result.test_to_gw,
+        "fit_gw": result.fit_gw,
+        "seasons_back": result.seasons_back,
+        "modes": list(result.modes),
+        "models": [run.model_name for run in result.runs],
+        "runs": [
+            {
+                "model_name": run.model_name,
+                "mode": run.mode,
+                "model_id": run.spec.model_id,
+                "refit": run.spec.refit,
+                "seasons_back": run.spec.train_window.seasons_back,
+            }
+            for run in result.runs
+        ],
+        "summary": result.summary.to_dicts(),
+        "skipped_openfpl": result.skipped_openfpl,
+        "files": {
+            "summary_parquet": str(summary_path),
+            "detail_parquet": str(detail_path),
+            "summary_json": str(json_path),
+        },
+    }
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+__all__ = [
+    "CORE_MODELS",
+    "DEFAULT_MODES",
+    "CompareMode",
+    "CompareResult",
+    "CompareRun",
+    "compare_models",
+    "format_summary_table",
+]

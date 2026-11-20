@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+from fplt.backtest.compare import CompareMode, compare_models, format_summary_table
+from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.run import run_backtest
 from fplt.data.fpl_client import FPLAPIError
@@ -17,6 +19,7 @@ from fplt.settings import get_settings
 from fplt.types import GWKey
 
 _REFITS = ("every_gw", "every_n_gw", "never")
+_COMPARE_MODES = ("walk_forward", "fixed")
 
 
 def _not_implemented(name: str) -> int:
@@ -40,6 +43,38 @@ def main(argv: list[str] | None = None) -> None:
     backtest.add_argument("--refit", choices=_REFITS)
     backtest.add_argument("--seasons-back", type=int)
     backtest.add_argument("--steps", type=int, default=1)
+    compare = sub.add_parser(
+        "compare",
+        help="Compare models under shared windows (walk-forward + fixed)",
+    )
+    compare.add_argument("--season", required=True)
+    compare.add_argument("--test-from-gw", type=int, default=1)
+    compare.add_argument("--test-to-gw", type=int, default=38)
+    compare.add_argument(
+        "--fit-gw",
+        type=int,
+        help="Fixed-mode fit deadline (default: test-from-gw)",
+    )
+    compare.add_argument(
+        "--models",
+        nargs="+",
+        help=f"Override the default set ({', '.join(CORE_MODELS)})",
+    )
+    compare.add_argument(
+        "--modes",
+        nargs="+",
+        choices=_COMPARE_MODES,
+        help="Subset of walk_forward / fixed (default: both)",
+    )
+    compare.add_argument("--seasons-back", type=int)
+    compare.add_argument("--steps", type=int, default=1)
+    compare.add_argument("--with-openfpl", action="store_true")
+    compare.add_argument("--openfpl-model-dir")
+    compare.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary JSON/parquet here (default: $FPLT_DATA_DIR/compare/...)",
+    )
     predict = sub.add_parser("predict", help="Predict the next gameweeks")
     predict.add_argument("--model", required=True)
     predict.add_argument("--horizon", type=int, default=5)
@@ -67,6 +102,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "backtest":
         _backtest(args)
+        return
+    if args.command == "compare":
+        _compare(args)
         return
     if args.command == "predict":
         _predict(args)
@@ -114,6 +152,40 @@ def _backtest(args: argparse.Namespace) -> None:
             f"{spec.name} refit={spec.refit} seasons_back={window} "
             f"model_id={spec.model_id}"
         )
+
+
+def _compare(args: argparse.Namespace) -> None:
+    modes: list[CompareMode] | None = (
+        list(args.modes) if args.modes is not None else None
+    )
+    try:
+        result = compare_models(
+            get_settings().data_dir,
+            args.season,
+            models=list(args.models) if args.models else None,
+            test_from_gw=args.test_from_gw,
+            test_to_gw=args.test_to_gw,
+            fit_gw=args.fit_gw,
+            seasons_back=args.seasons_back,
+            modes=modes,
+            steps=args.steps,
+            with_openfpl=bool(args.with_openfpl),
+            openfpl_model_dir=args.openfpl_model_dir,
+            output_dir=args.output_dir,
+        )
+    except (ValueError, KeyError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    for run in result.runs:
+        window = run.spec.train_window.seasons_back
+        print(
+            f"{run.model_name} mode={run.mode} refit={run.spec.refit} "
+            f"seasons_back={window} model_id={run.spec.model_id}"
+        )
+    print(format_summary_table(result.summary))
+    print(f"wrote {result.output_dir / 'summary.json'}")
+    if result.skipped_openfpl:
+        print(result.skipped_openfpl, file=sys.stderr)
 
 
 def _plan(args: argparse.Namespace) -> None:

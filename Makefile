@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -32,6 +32,13 @@ leaderboard:
 eval-board:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-board SEASON=2024-25"; exit 1; fi
 	uv run python scripts/eval_board.py --season $(SEASON) $(ARGS)
+
+# ── Fair model compare (walk-forward + fixed params) ──────────────────────────
+# Usage: make compare-models SEASON=2024-25
+# Optional: ARGS='--models rolling_mean_v1 ep_next_v1 --test-from-gw 1 --test-to-gw 10'
+compare-models:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make compare-models SEASON=2024-25"; exit 1; fi
+	uv run fplt compare --season $(SEASON) $(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:
