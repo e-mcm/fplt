@@ -10,6 +10,8 @@ from fplt.backtest.ledger import read_predictions
 from fplt.backtest.run import run_backtest
 from fplt.cli import main
 from fplt.data.store import DataStore
+from fplt.models.direct import LGBMDirectPredictor
+from fplt.models.spec import get_model, load_model_specs
 from fplt.settings import get_settings
 
 _PRIOR = "2023-24"
@@ -32,6 +34,12 @@ _ZERO = (
     "penalties_saved",
     "penalties_missed",
 )
+
+
+def test_lgbm_direct_is_registered_via_backtest_run() -> None:
+    """Importing run_backtest must register kind lgbm_direct for CLI backtests."""
+    specs = load_model_specs()
+    assert get_model(specs["lgbm_direct_v1"].kind) is LGBMDirectPredictor
 
 
 def test_frozen_fit_ignores_the_test_season(tmp_path: Path) -> None:
