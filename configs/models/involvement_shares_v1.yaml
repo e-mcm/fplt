@@ -1,0 +1,8 @@
+name: involvement_shares_v1
+kind: involvement_shares
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+refit: every_gw
+seed: 0
