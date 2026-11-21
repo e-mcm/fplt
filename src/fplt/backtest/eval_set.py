@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fplt.models.external.openfpl import DEFAULT_MODEL_DIR
 from fplt.models.spec import load_model_specs
 
 CORE_MODELS: tuple[str, ...] = (
@@ -24,8 +25,8 @@ def resolve_eval_models(
     """Choose which YAML specs to backtest for ``season``.
 
     Defaults to ``CORE_MODELS``. OpenFPL is added when ``with_openfpl`` is
-    true, ``openfpl_model_dir`` is set, or ``configs/models/openfpl_v1.yaml``
-    already has a non-empty ``params.model_dir``. Seasons before
+    true, ``openfpl_model_dir`` is set, or the YAML ``params.model_dir`` is a
+    path other than the fetched default checkout. Seasons before
     ``OPENFPL_COMPARE_FROM`` cannot include OpenFPL.
 
     Args:
@@ -73,8 +74,8 @@ def openfpl_skip_note(
             f"skipped {OPENFPL_MODEL}: season {season} is before {OPENFPL_COMPARE_FROM}"
         )
     return (
-        f"skipped {OPENFPL_MODEL}: set params.model_dir in its YAML, "
-        "pass --openfpl-model-dir, or --with-openfpl"
+        f"skipped {OPENFPL_MODEL}: pass --with-openfpl or --openfpl-model-dir "
+        "to include it"
     )
 
 
@@ -84,7 +85,10 @@ def _yaml_openfpl_model_dir_set() -> bool:
     if openfpl is None:
         return False
     value = openfpl.params.get("model_dir")
-    return isinstance(value, str) and bool(value.strip())
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return bool(text) and text != DEFAULT_MODEL_DIR
 
 
 def _reject_early_openfpl(season: str, models: list[str]) -> None:

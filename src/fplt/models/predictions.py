@@ -16,6 +16,28 @@ def empty_predictions() -> pl.DataFrame:
     return pl.DataFrame(schema=PREDICTION_COLUMNS)
 
 
+def require_scored_predictions(frame: pl.DataFrame, model_name: str) -> None:
+    """Reject a non-empty prediction frame whose every ``xpts`` is zero.
+
+    An empty frame is a horizon with no fixtures and is left alone. Walk-forward
+    backtests still record a cold start; this guard is for live ``fplt predict``.
+
+    Args:
+        frame: A ``PredictionSchema`` frame.
+        model_name: Spec name used in the error.
+
+    Raises:
+        ValueError: ``frame`` has rows and every ``xpts`` is 0.
+    """
+    if frame.is_empty():
+        return
+    peak = frame.select(pl.col("xpts").abs().max()).item()
+    if peak is None or float(peak) == 0.0:
+        raise ValueError(
+            f"{model_name} predicted 0 for every player; refusing to record that"
+        )
+
+
 def prediction_frame(
     spec: ModelSpec,
     as_of: GWKey,

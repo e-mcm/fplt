@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,18 +18,27 @@ from fplt.models.universe import player_fixtures
 from fplt.types import GWKey
 
 _RUNNER = Path("external") / "openfpl" / "predict.py"
+DEFAULT_MODEL_DIR = "external/openfpl/OpenFPL"
+_OPENFPL_ORIGIN = "https://github.com/daniegr/OpenFPL.git"
+
+logger = logging.getLogger(__name__)
 
 
 @register_model("openfpl")
 class OpenFPLPredictor:
-    """Call the OpenFPL runner and map its player names onto ``player_key``.
+    """Call the OpenFPL runner and keep each score on its request ``row_id``.
+
+    ``web_name`` is sent as ``openfpl_player_id`` and is not unique. The
+    returned score is joined back by ``row_id``, which already carries
+    ``player_key``.
 
     ``fit`` does nothing: the published ensemble is already fitted. Target
     seasons before ``compare_from`` (2024-25 in the YAML spec) raise, because
-    those seasons are in OpenFPL's training data. Without ``model_dir`` the
-    runner returns zeros; those zeros are not OpenFPL scores. With
-    ``model_dir`` set, each row carries an OpenFPL feature map built from
-    PIT FPL + Understat tables (Deep/PPDA still 0 until match-stats scrape).
+    those seasons are in OpenFPL's training data. ``model_dir`` defaults to
+    ``external/openfpl/OpenFPL``, fetched on first predict. An empty
+    ``model_dir`` or a checkout without ``models/xscaler.save`` raises.
+    Each row carries an OpenFPL feature map built from PIT FPL + Understat
+    tables (Deep/PPDA still 0 until match-stats scrape).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -54,7 +63,7 @@ class OpenFPLPredictor:
         request = joined.with_row_index("row_id")
         features = build_openfpl_features(view, request)
         response = _invoke(self.spec, _payload(request, features))
-        scored = _attach(request, response, names)
+        scored = _attach(request, response)
         return prediction_frame(
             self.spec,
             view.as_of,
@@ -103,8 +112,8 @@ def _season_start(season: str) -> int:
 
 
 def _player_names(view: PITView, seasons: list[str]) -> pl.DataFrame:
-    """Map ``web_name`` to ``player_key`` for the seasons being scored."""
-    players = (
+    """Label each player with ``web_name``. Shared names stay distinct rows."""
+    return (
         view.latest("players", by=["season", "player_key"])
         .filter(pl.col("season").is_in(seasons))
         .select(
@@ -115,15 +124,6 @@ def _player_names(view: PITView, seasons: list[str]) -> pl.DataFrame:
         )
         .collect()
     )
-    counts = players.group_by("season", "openfpl_player_id").len()
-    duplicated = counts.filter(pl.col("len") > 1)
-    if not duplicated.is_empty():
-        season = duplicated["season"][0]
-        name = duplicated["openfpl_player_id"][0]
-        raise ValueError(
-            f"OpenFPL id {name!r} matches more than one player in {season}"
-        )
-    return players
 
 
 def _payload(
@@ -167,13 +167,111 @@ def _command(spec: ModelSpec) -> list[str]:
     command = _string_list(spec.params.get("command"))
     if command is not None:
         return command
+    model_dir = _resolve_model_dir(spec)
     python = spec.params.get("python")
-    executable = python if isinstance(python, str) and python else _default_python()
-    argv = [executable, str(_runner_script())]
-    model_dir = spec.params.get("model_dir")
-    if isinstance(model_dir, str) and model_dir:
-        argv.extend(["--model-dir", model_dir])
-    return argv
+    executable = python if isinstance(python, str) and python else _scoring_python()
+    return [executable, str(_runner_script()), "--model-dir", str(model_dir)]
+
+
+def _resolve_model_dir(spec: ModelSpec) -> Path:
+    """Return the ensemble directory, fetching the default checkout if needed.
+
+    Args:
+        spec: OpenFPL ``ModelSpec``. ``params.model_dir`` is a path, absolute
+            or relative to the repo root.
+
+    Returns:
+        Directory that contains ``models/xscaler.save``.
+
+    Raises:
+        RuntimeError: ``model_dir`` is missing.
+        FileNotFoundError: A non-default directory has no ensemble.
+    """
+    raw = spec.params.get("model_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        raise RuntimeError(
+            "OpenFPL model_dir is not set. The spec should point at "
+            f"{DEFAULT_MODEL_DIR}, which is fetched on first predict."
+        )
+    path = Path(raw.strip())
+    if not path.is_absolute():
+        path = _repo_root() / path
+    if path.resolve() == (_repo_root() / DEFAULT_MODEL_DIR).resolve():
+        return ensure_openfpl_checkout(path)
+    if not (path / "models" / "xscaler.save").is_file():
+        raise FileNotFoundError(f"OpenFPL models not found in {path}")
+    return path
+
+
+def ensure_openfpl_checkout(dest: Path) -> Path:
+    """Fetch the published OpenFPL ensemble into ``dest`` when it is missing.
+
+    A directory that already contains ``models/xscaler.save`` is left alone.
+    The ensemble is about 750MB, so it is gitignored rather than committed.
+
+    Args:
+        dest: Sparse clone of daniegr/OpenFPL. Relative paths are not resolved
+            here; callers pass the absolute checkout path.
+
+    Returns:
+        ``dest``.
+
+    Raises:
+        FileNotFoundError: ``dest`` exists but is not a complete ensemble, or
+            the clone finished without ``models/xscaler.save``.
+        RuntimeError: ``git`` could not fetch the ensemble.
+    """
+    marker = dest / "models" / "xscaler.save"
+    if marker.is_file():
+        return dest
+    if dest.exists() and any(dest.iterdir()):
+        raise FileNotFoundError(
+            f"OpenFPL ensemble at {dest} is incomplete (missing {marker.name})"
+        )
+    if dest.exists():
+        dest.rmdir()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("fetching OpenFPL ensemble into %s", dest)
+    try:
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                _OPENFPL_ORIGIN,
+                str(dest),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "sparse-checkout", "set", "models"],
+            cwd=dest,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"could not fetch OpenFPL ensemble into {dest}") from exc
+    if not marker.is_file():
+        raise FileNotFoundError(f"OpenFPL models not found in {dest}")
+    return dest
+
+
+def _scoring_python() -> str:
+    """Return the isolated runner interpreter, installing it on first use."""
+    root = _repo_root() / "external" / "openfpl"
+    venv_python = root / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    logger.info("installing OpenFPL runner environment in %s", root)
+    try:
+        subprocess.run(["uv", "sync"], cwd=root, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"could not install the OpenFPL runner in {root}") from exc
+    if not venv_python.is_file():
+        raise FileNotFoundError(venv_python)
+    return str(venv_python)
 
 
 def _string_list(value: object) -> list[str] | None:
@@ -189,14 +287,6 @@ def _string_list(value: object) -> list[str] | None:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
-
-
-def _default_python() -> str:
-    """Prefer the isolated OpenFPL venv when ``uv sync`` has been run there."""
-    venv_python = _repo_root() / "external" / "openfpl" / ".venv" / "bin" / "python"
-    if venv_python.is_file():
-        return str(venv_python)
-    return sys.executable
 
 
 def _runner_script() -> Path:
@@ -257,26 +347,22 @@ def _records(parsed: object) -> list[dict[str, Any]]:
     return records
 
 
-def _attach(
-    request: pl.DataFrame, response: pl.DataFrame, names: pl.DataFrame
-) -> pl.DataFrame:
-    """Join runner output back to fixtures by mapping the returned player id."""
+def _attach(request: pl.DataFrame, response: pl.DataFrame) -> pl.DataFrame:
+    """Join runner output back to fixtures by ``row_id``.
+
+    ``player_key`` comes from the request. ``openfpl_player_id`` is only
+    checked so a runner cannot relabel a row.
+    """
     if response.height != request.height:
         raise ValueError("openfpl runner did not return one row per player-fixture")
-    keyed = response.join(
-        names.select("season", "openfpl_player_id", "player_key"),
-        on=["season", "openfpl_player_id"],
-        how="left",
-    )
-    if keyed["player_key"].null_count():
-        raise ValueError("openfpl runner returned a player id that is not mapped")
     aligned = request.select(
         "row_id",
         "season",
         "gw",
         "fixture_id",
+        "player_key",
         pl.col("openfpl_player_id").alias("sent_id"),
-    ).join(keyed, on=["row_id", "season"], how="inner")
+    ).join(response, on=["row_id", "season"], how="inner")
     if aligned.height != request.height:
         raise ValueError("openfpl runner returned a row id that was not requested")
     mismatched = aligned.filter(pl.col("openfpl_player_id") != pl.col("sent_id"))

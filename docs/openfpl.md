@@ -5,55 +5,36 @@ benchmark. `fplt` calls it through `fplt.models.external.openfpl` as a
 subprocess under `external/openfpl/`. Spec: `configs/models/openfpl_v1.yaml`.
 
 OpenFPL is **opt-in** on `make compare-models` / `make eval-board` (not in
-`CORE_MODELS`). Include it with `--with-openfpl`, `--openfpl-model-dir`, or a
-non-empty YAML `params.model_dir` — and only for seasons from **2024-25**
-onwards.
+`CORE_MODELS`). Include it with `--with-openfpl` or `--openfpl-model-dir`.
+A YAML `model_dir` other than the default checkout also opts it in. Only
+seasons from **2024-25** onwards are valid.
 
 ## Setup
 
-1. Sync the isolated runner env (joblib / pandas / sklearn / xgboost). The
-   adapter prefers `external/openfpl/.venv/bin/python` when this exists:
+`configs/models/openfpl_v1.yaml` sets `params.model_dir` to
+`external/openfpl/OpenFPL`. That path is gitignored. The first
+`fplt predict --model openfpl_v1` (or any real score) sparse-clones
+[daniegr/OpenFPL](https://github.com/daniegr/OpenFPL) into it and runs
+`uv sync` in `external/openfpl/` when the runner venv is missing.
 
-   ```bash
-   cd external/openfpl && uv sync
-   ```
+The ensemble is about 750MB, and some files approach GitHub's 100MB limit,
+so it is not committed. `model_dir` must end up containing
+`models/xscaler.save`. An empty `model_dir`, or a directory without that
+file, raises. The runner does not fill in zeros.
 
-2. Clone OpenFPL somewhere outside this repo (it ships the fitted `models/`
-   ensemble). Point the YAML at that clone:
+Override the checkout for one compare / eval run without editing the YAML:
 
-   ```yaml
-   # configs/models/openfpl_v1.yaml
-   params:
-     compare_from: "2024-25"
-     model_dir: "/absolute/path/to/OpenFPL"   # must contain models/
-     timeout_seconds: 120
-   ```
-
-   `model_dir` must contain `models/xscaler.save` (and the rest of the
-   published ensemble). A relative path is fine if your working directory is
-   stable; an absolute path is clearer for Dagster / launchd.
-
-3. Optionally override for one compare / eval run without editing the YAML:
-
-   ```bash
-   make eval-board SEASON=2024-25 ARGS='--openfpl-model-dir /path/to/OpenFPL'
-   make compare-models SEASON=2024-25 ARGS='--with-openfpl --openfpl-model-dir /path/to/OpenFPL'
-   # or: uv run fplt backtest --season 2024-25 --models openfpl_v1
-   # or: uv run fplt compare --season 2024-25 --with-openfpl
-   ```
+```bash
+make eval-board SEASON=2024-25 ARGS='--with-openfpl --from-gw 1 --to-gw 1'
+make compare-models SEASON=2024-25 ARGS='--with-openfpl'
+# or: uv run fplt predict --model openfpl_v1 --season 2024-25 --gw 1 --horizon 1
+```
 
 ## Season floor
 
 OpenFPL was trained on **2020-21 through 2023-24**. Only evaluate on
 **2024-25 onwards**. The adapter raises if `as_of` or a target gameweek is
 earlier (`compare_from` in the YAML, default `2024-25`).
-
-## Empty `model_dir` ⇒ zeros
-
-With `params.model_dir: ""` (the checked-in default), the runner still starts
-and returns **0.0 for every row**. That keeps the contract suite offline; those
-zeros are **not** OpenFPL scores. Do not put an empty-dir run on the
-leaderboard as a real benchmark.
 
 ## Feature matrix
 
@@ -68,13 +49,15 @@ compare/eval set until that smoke looks sane.
 ## Smoke
 
 ```bash
-# Offline zeros only (empty model_dir) — contracts / wiring, not a baseline
-uv run fplt backtest --season 2024-25 --from-gw 1 --to-gw 1 --models openfpl_v1
-
-# Real ensemble (after re-stage + model_dir)
-make eval-board SEASON=2024-25 ARGS='--openfpl-model-dir /path/to/OpenFPL --from-gw 1 --to-gw 1'
-make compare-models SEASON=2024-25 ARGS='--with-openfpl --openfpl-model-dir /path/to/OpenFPL --test-from-gw 1 --test-to-gw 1'
+uv run fplt predict --model openfpl_v1 --season 2024-25 --gw 1 --horizon 1
+make eval-board SEASON=2024-25 ARGS='--with-openfpl --from-gw 1 --to-gw 1'
+make compare-models SEASON=2024-25 ARGS='--with-openfpl --test-from-gw 1 --test-to-gw 1'
 make leaderboard
 ```
+
+`fplt plan` raises when the ledger has no rows for that model and deadline,
+when a horizon week is missing or all zero, or when a week covers fewer than
+half the players. Predict before planning. Live predict also refuses to
+record an all-zero frame.
 
 Architecture notes: [`docs/design.md`](design.md) §7.4.

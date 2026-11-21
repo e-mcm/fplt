@@ -380,8 +380,8 @@ Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snaps
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
-- Requires Understat-derived sample features matching OpenFPL's published `xscaler` schema (~228 columns). Understat ingestion exists in-repo, but the adapter does **not** yet build that matrix (nor call OpenFPL's own sample pipeline); a non-empty `model_dir` with a real checkout raises until that lands. See [`docs/openfpl.md`](openfpl.md).
-- Runs in its own uv environment (`external/openfpl/`) as a subprocess (prefers that project's `.venv` when present). The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, maps its player identifiers (`web_name` until a fuller name map exists) to `player_key`, and returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. Without `model_dir` the runner returns zeros so the contract suite can call this spec, and those zeros are not OpenFPL scores. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / YAML `model_dir`), not in `CORE_MODELS`.
+- Sample features matching OpenFPL's published `xscaler` schema (~228 columns) are built in `fplt.models.external.openfpl_samples` from PIT FPL + Understat tables. Team/opponent Deep and PPDA stay 0 until a match-stats scrape exists. See [`docs/openfpl.md`](openfpl.md).
+- Runs in its own uv environment (`external/openfpl/`) as a subprocess. The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, and joins each score back by request `row_id` (which already carries `player_key`). `web_name` is sent as a label and does not need to be unique. It returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. `params.model_dir` is `external/openfpl/OpenFPL`. That ensemble is about 750MB (files near GitHub's 100MB limit), so the first real predict sparse-clones it there and `uv sync`s the runner env when `.venv` is missing. An empty `model_dir` or a checkout without `models/xscaler.save` raises; the runner does not substitute zeros. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / a `model_dir` other than this default), not in `CORE_MODELS`. The contract suite drives the adapter with an offline echo runner.
 - Operator steps (`uv sync`, season floor, feature gap): [`docs/openfpl.md`](openfpl.md).
 
 ### 7.5 Why no MLflow (yet)
@@ -443,7 +443,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 - Development: `make dagster-dev` (`dagster dev`).
 - Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
-- Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it when `params.model_dir` is set (or via `--with-openfpl` / `--openfpl-model-dir`), and only for seasons from 2024-25 onwards. Empty `model_dir` yields zeros, not OpenFPL scores.
+- Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it with `--with-openfpl`, `--openfpl-model-dir`, or a `model_dir` other than the fetched default checkout, and only for seasons from 2024-25 onwards. Live `fplt predict` refuses to record an all-zero frame. Walk-forward backtests still record a cold start, such as a rolling mean before any appearances.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
 - Operator logging: CLI and scripts call `fplt.utils.logging.configure_logging` (default INFO to stderr; `-v`/`--verbose` for DEBUG including FPL HTTP paths; `-q` for WARNING+). Library modules use `logging.getLogger(__name__)`.
 
@@ -494,7 +494,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 ### 10.3 Output
 
-`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. `<model_id>` is the model-spec hash. `hHH` is the horizon actually covered, capped at gameweek 38. The report labels players with the staged `web_name`, and falls back to `player_key` when that name is missing. The same model, deadline, and horizon are never overwritten. A repeat run still prints the transfer summary, then reports that the parquet already exists.
+`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. `<model_id>` is the model-spec hash. `hHH` is the horizon actually covered, capped at gameweek 38. The report labels players with the staged `web_name`, and falls back to `player_key` when that name is missing. The same model, deadline, and horizon are never overwritten. A repeat run still prints the transfer summary, then reports that the parquet already exists. `fplt plan` raises before solving when this deadline has no ledger rows, when a horizon week is missing or all zero, or when a week covers fewer than half the candidates. Missing rows are not treated as zero.
 
 `fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 
@@ -539,7 +539,7 @@ fplt/
 │   ├── orchestration/           # Dagster definitions, factories, sensors, checks
 │   └── cli.py                   # `fplt backtest`, `fplt compare`, `fplt predict`, ...
 ├── apps/leaderboard.py
-├── external/openfpl/            # isolated env for OpenFPL
+├── external/openfpl/            # isolated env; ensemble fetched into OpenFPL/
 ├── deploy/{launchd/, docker-compose.yml}
 ├── notebooks/
 └── tests/{unit/, contracts/, integration/, fixtures/}

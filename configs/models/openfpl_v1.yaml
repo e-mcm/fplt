@@ -2,7 +2,7 @@ name: openfpl_v1
 kind: openfpl
 params:
   compare_from: "2024-25"
-  model_dir: ""
-  timeout_seconds: 120
+  model_dir: external/openfpl/OpenFPL
+  timeout_seconds: 1800
 refit: never
 seed: 0

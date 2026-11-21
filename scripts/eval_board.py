@@ -8,11 +8,10 @@ Example::
 Core set: rolling_mean_v1, ep_next_v1, dc_layered_v1, lgbm_direct_v1.
 
 OpenFPL (openfpl_v1) is optional. Include it with ``--with-openfpl``,
-``--openfpl-model-dir``, or a non-empty ``params.model_dir`` in
-``configs/models/openfpl_v1.yaml``. Only seasons from 2024-25 onwards are
-valid (earlier seasons are in OpenFPL's training data). An empty model_dir
-makes the runner emit zeros — not real OpenFPL scores. Sync
-``external/openfpl`` first (``cd external/openfpl && uv sync``).
+``--openfpl-model-dir``, or a YAML ``model_dir`` other than the fetched
+default checkout. Only seasons from 2024-25 onwards are valid (earlier
+seasons are in OpenFPL's training data). The first real score fetches the
+ensemble into ``external/openfpl/OpenFPL`` and syncs that project's venv.
 
 After a successful run, open the Streamlit board with ``make leaderboard``.
 
@@ -74,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--with-openfpl",
         action="store_true",
-        help=f"Include {OPENFPL_MODEL} even when YAML model_dir is empty",
+        help=f"Include {OPENFPL_MODEL} in the default set",
     )
     parser.add_argument(
         "--openfpl-model-dir",

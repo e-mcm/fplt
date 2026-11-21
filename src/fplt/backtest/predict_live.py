@@ -16,7 +16,7 @@ from fplt.backtest.walk_forward import allowed_seasons, horizon_for, ledger_rows
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
-from fplt.models.predictions import write_predictions
+from fplt.models.predictions import require_scored_predictions, write_predictions
 from fplt.models.spec import ModelSpec, artifact_dir, get_model, load_model_specs
 from fplt.types import GWKey
 
@@ -112,7 +112,8 @@ def run_predict(
         The parquet path written under ``predictions/``.
 
     Raises:
-        ValueError: The horizon, model name, or as-of resolution is invalid.
+        ValueError: The horizon, model name, or as-of resolution is invalid,
+            or every predicted ``xpts`` is 0.
         KeyError: The model kind is unregistered, or an explicit gameweek is
             missing from staged data.
         FileExistsError: Predictions for this model and deadline already exist.
@@ -136,6 +137,7 @@ def run_predict(
     view = pit.view(as_of).within_seasons(seasons)
     model = _fit_or_load(data_dir, spec, as_of, view)
     predicted = model.predict(view, horizon_for(as_of, horizon))
+    require_scored_predictions(predicted, model_name)
     path = write_predictions(data_dir, spec, as_of, predicted)
     logger.info("wrote %s prediction rows to %s", predicted.height, path)
     if append_ledger:

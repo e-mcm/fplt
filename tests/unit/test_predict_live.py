@@ -10,7 +10,11 @@ from fplt.backtest.ledger import read_predictions
 from fplt.backtest.predict_live import resolve_as_of, run_predict
 from fplt.cli import main
 from fplt.data.store import DataStore
-from fplt.models.predictions import predictions_path
+from fplt.models.predictions import (
+    empty_predictions,
+    predictions_path,
+    require_scored_predictions,
+)
 from fplt.models.spec import artifact_dir, load_model_specs
 from fplt.settings import get_settings
 from fplt.types import GWKey
@@ -50,6 +54,15 @@ def test_run_predict_loads_an_existing_artifact(tmp_path: Path) -> None:
     second = run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
     assert second.exists()
     assert pl.read_parquet(second).height == 2
+
+
+def test_run_predict_rejects_an_all_zero_frame(tmp_path: Path) -> None:
+    build_league(DataStore(tmp_path))
+    spec = load_model_specs()["rolling_mean_v1"]
+    with pytest.raises(ValueError, match="all zero|predicted 0"):
+        run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=1)
+    assert not predictions_path(tmp_path, spec, GWKey(_SEASON, 1)).exists()
+    require_scored_predictions(empty_predictions(), "rolling_mean_v1")
 
 
 def test_resolve_as_of_picks_the_next_deadline(tmp_path: Path) -> None:

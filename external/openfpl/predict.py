@@ -1,8 +1,7 @@
 """Score OpenFPL samples in an isolated interpreter.
 
-Inference follows ``play.ipynb`` in github.com/daniegr/OpenFPL (MIT). The model
-files are not vendored. Without ``--model-dir`` every row is scored 0, which
-keeps the fplt contract suite offline and is not an OpenFPL prediction.
+Inference follows ``play.ipynb`` in github.com/daniegr/OpenFPL (MIT).
+``--model-dir`` must be a checkout that contains ``models/``.
 """
 
 from __future__ import annotations
@@ -29,20 +28,10 @@ def main(argv: list[str] | None = None) -> None:
     rows = [row for row in payload["rows"] if isinstance(row, dict)]
     if len(rows) != len(payload["rows"]):
         raise SystemExit("every request row must be an object")
-    if args.model_dir:
-        scored = _score_with_openfpl(rows, Path(args.model_dir))
-    else:
-        scored = [_zero(row) for row in rows]
+    if not args.model_dir:
+        raise SystemExit("OpenFPL needs --model-dir with models/xscaler.save")
+    scored = _score_with_openfpl(rows, Path(args.model_dir))
     json.dump({"rows": scored}, sys.stdout)
-
-
-def _zero(row: dict[str, Any]) -> dict[str, object]:
-    return {
-        "row_id": row["row_id"],
-        "season": row["season"],
-        "openfpl_player_id": row["openfpl_player_id"],
-        "prediction": 0.0,
-    }
 
 
 def _score_with_openfpl(

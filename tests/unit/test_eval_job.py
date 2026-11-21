@@ -305,6 +305,24 @@ def test_skip_note_for_early_default_season(
     assert "before" in result.skipped_openfpl
 
 
+def test_default_checkout_does_not_auto_include(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fplt.models.external.openfpl import DEFAULT_MODEL_DIR
+
+    spec = ModelSpec(
+        name=OPENFPL_MODEL,
+        kind="openfpl",
+        params={"model_dir": DEFAULT_MODEL_DIR, "compare_from": "2024-25"},
+    )
+    monkeypatch.setattr(
+        "fplt.backtest.eval_set.load_model_specs",
+        lambda: {OPENFPL_MODEL: spec},
+    )
+    assert _yaml_openfpl_model_dir_set() is False
+    assert resolve_eval_models("2024-25") == list(CORE_MODELS)
+
+
 def test_yaml_model_dir_false_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
