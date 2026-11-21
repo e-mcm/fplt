@@ -37,9 +37,10 @@ class InvolvementXg:
     ``[0, 1]`` is the weight on the Understat rate when both signals exist.
     ``penalty_bonus`` is added to the blended goal rate for the primary
     penalty taker (``penalties_order == 1``), falling back to a visible
-    penalty miss when order is null. After ``fit``, ``own_goal_weight`` and
-    ``p_assist`` hold calibrated simulator knobs (defaults when history is
-    empty).
+    penalty miss when order is null. Set ``use_penalties_order: false`` to
+    force the miss-only heuristic for A/B (default ``true``). After ``fit``,
+    ``own_goal_weight`` and ``p_assist`` hold calibrated simulator knobs
+    (defaults when history is empty).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -48,6 +49,7 @@ class InvolvementXg:
         shrinkage = spec.params.get("shrinkage", 5.0)
         penalty = spec.params.get("penalty_bonus", 0.3)
         blend = spec.params.get("xg_blend", 0.7)
+        use_order = spec.params.get("use_penalties_order", True)
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -59,10 +61,13 @@ class InvolvementXg:
             raise ValueError(f"penalty_bonus must be non-negative, got {penalty_value}")
         if not 0.0 <= blend_value <= 1.0:
             raise ValueError(f"xg_blend must be in [0, 1], got {blend_value}")
+        if not isinstance(use_order, bool):
+            raise ValueError(f"use_penalties_order must be a bool, got {use_order!r}")
         self._window = window
         self._shrinkage = shrinkage_value
         self._penalty = penalty_value
         self._xg_blend = blend_value
+        self._use_penalties_order = use_order
         self.own_goal_weight = _DEFAULT_OWN_GOAL
         self.p_assist = _DEFAULT_P_ASSIST
         self._fitted = False
@@ -79,7 +84,9 @@ class InvolvementXg:
         history = appearance_history(view)
         fpl_goal, fpl_assist = _fpl_rates(history, self._window, self._shrinkage)
         xg_goal, xg_assist = _xg_rates(view, history, self._window, self._shrinkage)
-        takers = penalty_takers(view, history)
+        takers = penalty_takers(
+            view, history, use_penalties_order=self._use_penalties_order
+        )
         players = set(fpl_goal) | set(fpl_assist) | set(xg_goal) | set(xg_assist)
         for player in players:
             self._goal[player] = _blend_rate(

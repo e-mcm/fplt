@@ -32,8 +32,10 @@ class InvolvementShares:
     itself uses every visible appearance. The primary penalty taker
     (``penalties_order == 1`` on the latest PIT ``player_status``) gets
     ``penalty_bonus`` goals per 90 before team shares are normalised; when
-    order is null, a visible ``penalties_missed`` is the fallback. Own goals
-    stay out of these weights; the simulator keeps an unattributed bucket.
+    order is null, a visible ``penalties_missed`` is the fallback. Set
+    ``use_penalties_order: false`` to force the miss-only heuristic for A/B
+    (default ``true``). Own goals stay out of these weights; the simulator
+    keeps an unattributed bucket.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -41,6 +43,7 @@ class InvolvementShares:
         window = spec.params.get("window", 10)
         shrinkage = spec.params.get("shrinkage", 5.0)
         penalty = spec.params.get("penalty_bonus", 0.3)
+        use_order = spec.params.get("use_penalties_order", True)
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -49,9 +52,12 @@ class InvolvementShares:
             raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
         if penalty_value < 0:
             raise ValueError(f"penalty_bonus must be non-negative, got {penalty_value}")
+        if not isinstance(use_order, bool):
+            raise ValueError(f"use_penalties_order must be a bool, got {use_order!r}")
         self._window = window
         self._shrinkage = shrinkage_value
         self._penalty = penalty_value
+        self._use_penalties_order = use_order
         self._fitted = False
         self._goal: dict[int, float] = {}
         self._assist: dict[int, float] = {}
@@ -66,7 +72,9 @@ class InvolvementShares:
             return
         prior = position_goal_assist_rates(history)
         recent = latest_rows(history, self._window)
-        takers = penalty_takers(view, history)
+        takers = penalty_takers(
+            view, history, use_penalties_order=self._use_penalties_order
+        )
         grouped = recent.group_by("player_key").agg(
             pl.col("position").last(),
             pl.col("goals_scored").sum(),

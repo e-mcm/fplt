@@ -1,0 +1,11 @@
+# A/B control: miss-only penalty-taker heuristic (pre-W2).
+# Production involvement_shares_v1 keeps use_penalties_order default true.
+name: involvement_shares_nopens_v1
+kind: involvement_shares
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  use_penalties_order: false
+refit: every_gw
+seed: 0

@@ -135,6 +135,49 @@ def test_penalties_order_gates_miss_on_xg(tmp_path: Path) -> None:
     assert weights[1] == pytest.approx(0.0)
 
 
+def test_use_penalties_order_false_ignores_order_on_xg(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "FWD", 1), _row(2, "FWD", 1, pens_missed=1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[_status(1, order=1), _status(2, order=2)],
+    )
+    with_frame = _predict(store, xg_blend=1.0)
+    without_frame = _predict(store, xg_blend=1.0, use_penalties_order=False)
+    with_order = dict(
+        zip(
+            with_frame["player_key"].to_list(),
+            with_frame["goal_weight"].to_list(),
+            strict=True,
+        )
+    )
+    without = dict(
+        zip(
+            without_frame["player_key"].to_list(),
+            without_frame["goal_weight"].to_list(),
+            strict=True,
+        )
+    )
+    assert with_order[1] == pytest.approx(1.0)
+    assert without[2] == pytest.approx(1.0)
+
+
+def test_rejects_non_bool_use_penalties_order_on_xg() -> None:
+    with pytest.raises(ValueError, match="use_penalties_order"):
+        InvolvementXg(_xg_spec(use_penalties_order="no"))
+
+
+def test_nopens_xg_and_layered_specs_load() -> None:
+    specs = load_model_specs()
+    assert specs["involvement_xg_nopens_v1"].params["use_penalties_order"] is False
+    assert (
+        specs["dc_layered_nopens_v1"]
+        .components["involvement"]
+        .params["use_penalties_order"]
+        is False
+    )
+
+
 def test_sim_params_come_from_history(tmp_path: Path) -> None:
     store = _store(
         tmp_path,

@@ -1,0 +1,12 @@
+# A/B control: miss-only penalty-taker heuristic (pre-W2).
+# Production involvement_xg_v1 keeps use_penalties_order default true.
+name: involvement_xg_nopens_v1
+kind: involvement_xg
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  xg_blend: 0.7
+  use_penalties_order: false
+refit: every_gw
+seed: 0

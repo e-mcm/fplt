@@ -86,14 +86,25 @@ def shrunk_rate(
     return (events + shrinkage * prior) / denom
 
 
-def penalty_takers(view: PITView, history: pl.DataFrame) -> set[int]:
+def penalty_takers(
+    view: PITView,
+    history: pl.DataFrame,
+    *,
+    use_penalties_order: bool = True,
+) -> set[int]:
     """Players who should get the penalty-taker goal bonus.
 
-    Prefer the latest PIT ``player_status.penalties_order == 1``. When that
-    order is null (vaastav and other snapshot gaps), fall back to anyone with
-    a visible ``penalties_missed > 0``. A non-null order other than 1 gates
-    off the miss heuristic for that player.
+    When ``use_penalties_order`` is true (default), prefer the latest PIT
+    ``player_status.penalties_order == 1``. When that order is null (vaastav
+    and other snapshot gaps), fall back to anyone with a visible
+    ``penalties_missed > 0``. A non-null order other than 1 gates off the
+    miss heuristic for that player.
+
+    When ``use_penalties_order`` is false, ignore order and use the miss
+    heuristic only (A/B control / pre-W2 behaviour).
     """
+    if not use_penalties_order:
+        return _miss_takers(history)
     status = (
         view.latest("player_status", ["season", "player_key"])
         .collect()
@@ -108,14 +119,20 @@ def penalty_takers(view: PITView, history: pl.DataFrame) -> set[int]:
                 None if order is None else int(order)
             )
     takers = {player for player, order in order_by_player.items() if order == 1}
-    if history.is_empty() or "penalties_missed" not in history.columns:
-        return takers
-    missed = history.filter(pl.col("penalties_missed") > 0)["player_key"].to_list()
-    for player in missed:
-        key = int(player)
-        if order_by_player.get(key) is None:
-            takers.add(key)
+    for player in _miss_takers(history):
+        if order_by_player.get(player) is None:
+            takers.add(player)
     return takers
+
+
+def _miss_takers(history: pl.DataFrame) -> set[int]:
+    """Players with a visible ``penalties_missed > 0``."""
+    if history.is_empty() or "penalties_missed" not in history.columns:
+        return set()
+    return {
+        int(player)
+        for player in history.filter(pl.col("penalties_missed") > 0)["player_key"]
+    }
 
 
 def team_share(rate: str, total: str) -> pl.Expr:

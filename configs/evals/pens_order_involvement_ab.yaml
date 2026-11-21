@@ -1,0 +1,46 @@
+# W8 / FDB-71: involvement ± penalties_order taker bonus.
+name: pens_order_involvement_ab
+kind: config
+description: "Involvement / dc_layered ± penalties_order taker bonus (W8)"
+
+change:
+  lever: hyperparam
+  slot: involvement
+  control_kind: involvement_xg
+  treatment_kind: involvement_xg
+  tables: []
+  features: []
+  diff:
+    - "components.involvement.params.use_penalties_order: false → true"
+  notes: >
+    Control is miss-only (pre-W2). Treatment is production default
+    (penalties_order == 1, miss fallback when order null). Vaastav seasons
+    have null order, so arms may tie until snapshot-backed status exists.
+
+control: dc_layered_nopens_v1
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 38
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  keep_if:
+    components_any: [mae_goal_share]
+    prediction_any: [mae, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "penalties_order involvement lift (W8)"
+  store_doc: penalties-order-involvement-eval.md
