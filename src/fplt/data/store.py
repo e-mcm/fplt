@@ -23,6 +23,29 @@ def _ensure_utc(frame: pl.LazyFrame) -> pl.LazyFrame:
     return frame.with_columns(exprs)
 
 
+def _default_for(dtype: pl.DataType) -> object:
+    if dtype == pl.Utf8:
+        return ""
+    if dtype == pl.Boolean:
+        return False
+    if dtype == pl.Float64:
+        return 0.0
+    if dtype == pl.Int64:
+        return 0
+    return None
+
+
+def _with_schema_columns(frame: pl.DataFrame, name: str) -> pl.DataFrame:
+    """Add missing staged columns (schema widen) before pandera validation."""
+    wanted = POLARS_SCHEMAS[name]
+    extras: list[pl.Expr] = []
+    for column, dtype in wanted.items():
+        if column not in frame.columns:
+            extras.append(pl.lit(_default_for(dtype)).cast(dtype).alias(column))
+    filled = frame.with_columns(extras) if extras else frame
+    return filled.select(list(wanted))
+
+
 class DataStore:
     """Read and append staged parquet under ``root/staged``."""
 
@@ -36,7 +59,7 @@ class DataStore:
     def write(self, name: str, frame: pl.DataFrame) -> pl.DataFrame:
         """Validate ``frame``, append it, and collapse exact key duplicates."""
         schema = STAGED_SCHEMAS[name]
-        frame = _ensure_utc(frame.lazy()).collect()
+        frame = _ensure_utc(_with_schema_columns(frame, name).lazy()).collect()
         checked = schema.validate(frame)
         assert isinstance(checked, pl.DataFrame)
         checked = _ensure_utc(checked.lazy()).collect()
@@ -46,7 +69,7 @@ class DataStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             existing = _ensure_utc(pl.read_parquet(path).lazy()).collect()
-            existing = existing.select(order)
+            existing = _with_schema_columns(existing, name).select(order)
             checked = pl.concat([existing, checked], how="vertical_relaxed")
         keys = TABLE_KEYS[name]
         checked = checked.unique(subset=keys, keep="last").sort(keys)
@@ -56,9 +79,19 @@ class DataStore:
     def table(self, name: str) -> pl.LazyFrame:
         """Lazy scan of a staged table. Missing tables are empty and typed."""
         path = self.path(name)
+        wanted = POLARS_SCHEMAS[name]
         if not path.exists():
-            return pl.DataFrame(schema=POLARS_SCHEMAS[name]).lazy()
-        return _ensure_utc(pl.scan_parquet(path))
+            return pl.DataFrame(schema=wanted).lazy()
+        frame = _ensure_utc(pl.scan_parquet(path))
+        present = set(frame.collect_schema().names())
+        extras = [
+            pl.lit(_default_for(dtype)).cast(dtype).alias(column)
+            for column, dtype in wanted.items()
+            if column not in present
+        ]
+        if extras:
+            frame = frame.with_columns(extras)
+        return frame.select(list(wanted))
 
     def read(self, name: str) -> pl.DataFrame:
         """Collect a staged table."""

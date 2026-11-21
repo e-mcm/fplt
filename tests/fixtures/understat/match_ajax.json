@@ -7,6 +7,10 @@
         "team_id": "83",
         "xG": "0.50",
         "xA": "0.10",
+        "shots": "2",
+        "key_passes": "1",
+        "xGChain": "0.60",
+        "xGBuildup": "0.20",
         "time": "90",
         "player": "Home One"
       },
@@ -16,6 +20,10 @@
         "team_id": "83",
         "xG": "0",
         "xA": "0.20",
+        "shots": "0",
+        "key_passes": "2",
+        "xGChain": "0.20",
+        "xGBuildup": "0.20",
         "time": "45",
         "player": "Home Two"
       }
@@ -27,6 +35,10 @@
         "team_id": "87",
         "xG": "0.10",
         "xA": "0",
+        "shots": "1",
+        "key_passes": "0",
+        "xGChain": "0.10",
+        "xGBuildup": "0",
         "time": "90",
         "player": "Away One"
       }

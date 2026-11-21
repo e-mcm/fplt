@@ -12,6 +12,7 @@ import polars as pl
 import yaml
 
 from fplt.data.store import DataStore
+from fplt.schemas.staged import POLARS_SCHEMAS
 
 _MATCH_LAG = timedelta(hours=3)
 _ID_MAPS = (
@@ -225,7 +226,8 @@ def stage_understat(
         store: Destination for ``understat_player_matches``.
         matches: Understat match rosters. Each has ``id``, ``team_h``,
             ``team_a``, and ``h`` / ``a`` player lists with ``id``, ``xg``,
-            ``xa``, and ``time``.
+            ``xa``, ``time``, and optionally ``shots``, ``key_passes``,
+            ``xg_chain``, ``xg_buildup``.
         season: Season label stored on every row.
         available_at: When this roster became visible. Later deadlines can
             see it; earlier ones cannot.
@@ -260,6 +262,10 @@ def stage_understat(
                         "team_key": team_keys[team_id],
                         "xg": float(player["xg"]),
                         "xa": float(player["xa"]),
+                        "shots": int(player.get("shots", 0) or 0),
+                        "key_passes": int(player.get("key_passes", 0) or 0),
+                        "xg_chain": float(player.get("xg_chain", 0) or 0),
+                        "xg_buildup": float(player.get("xg_buildup", 0) or 0),
                         "minutes": int(player["time"]),
                         "available_at": available_at,
                         "source": "understat",
@@ -316,24 +322,27 @@ def _side_players(rosters: dict[str, Any], side: str) -> list[dict[str, Any]]:
                 "id": int(player["player_id"]),
                 "xg": float(player["xG"]),
                 "xa": float(player["xA"]),
+                "shots": int(_roster_number(player, "shots")),
+                "key_passes": int(_roster_number(player, "key_passes")),
+                "xg_chain": float(
+                    _roster_number(player, "xGChain", "xgChain", "xg_chain")
+                ),
+                "xg_buildup": float(
+                    _roster_number(player, "xGBuildup", "xgBuildup", "xg_buildup")
+                ),
                 "time": int(player["time"]),
             }
         )
     return rows
 
 
+def _roster_number(player: dict[str, Any], *keys: str) -> float:
+    """Read a numeric roster field under any of the known Understat key spellings."""
+    for key in keys:
+        if key in player and player[key] is not None and player[key] != "":
+            return float(player[key])
+    return 0.0
+
+
 def _empty() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "season": pl.Utf8(),
-            "match_id": pl.Int64(),
-            "understat_player_id": pl.Int64(),
-            "player_key": pl.Int64(),
-            "team_key": pl.Int64(),
-            "xg": pl.Float64(),
-            "xa": pl.Float64(),
-            "minutes": pl.Int64(),
-            "available_at": pl.Datetime(time_zone="UTC"),
-            "source": pl.Utf8(),
-        }
-    )
+    return pl.DataFrame(schema=POLARS_SCHEMAS["understat_player_matches"])

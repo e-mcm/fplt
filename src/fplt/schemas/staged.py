@@ -88,10 +88,13 @@ class PlayerStatusSchema(pa.DataFrameModel):
 
 
 class UnderstatPlayerMatchSchema(pa.DataFrameModel):
-    """One player's xG and xA in one Understat match.
+    """One player's Understat match row.
 
     ``player_key`` is null when the Understat id has not been mapped onto an
-    FPL element code. ``minutes`` is the Understat ``time`` field.
+    FPL element code. ``minutes`` is the Understat ``time`` field. ``shots``,
+    ``key_passes``, ``xg_chain``, and ``xg_buildup`` come from the roster when
+    present (else 0) so OpenFPL-style samples can be built without a second
+    scrape.
     """
 
     season: str
@@ -101,6 +104,10 @@ class UnderstatPlayerMatchSchema(pa.DataFrameModel):
     team_key: int
     xg: float = pa.Field(ge=0)
     xa: float = pa.Field(ge=0)
+    shots: int = pa.Field(ge=0)
+    key_passes: int = pa.Field(ge=0)
+    xg_chain: float = pa.Field(ge=0)
+    xg_buildup: float = pa.Field(ge=0)
     minutes: int = pa.Field(ge=0)
     available_at: datetime
     source: str
@@ -129,6 +136,10 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
     penalties_saved: int = pa.Field(ge=0)
     penalties_missed: int = pa.Field(ge=0)
     starts: int = pa.Field(ge=0)
+    influence: float = pa.Field(ge=0)
+    creativity: float = pa.Field(ge=0)
+    threat: float = pa.Field(ge=0)
+    bps: int
     available_at: datetime
     source: str
 
@@ -234,6 +245,10 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "penalties_saved": pl.Int64(),
         "penalties_missed": pl.Int64(),
         "starts": pl.Int64(),
+        "influence": pl.Float64(),
+        "creativity": pl.Float64(),
+        "threat": pl.Float64(),
+        "bps": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },
@@ -245,6 +260,10 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "team_key": pl.Int64(),
         "xg": pl.Float64(),
         "xa": pl.Float64(),
+        "shots": pl.Int64(),
+        "key_passes": pl.Int64(),
+        "xg_chain": pl.Float64(),
+        "xg_buildup": pl.Float64(),
         "minutes": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),

@@ -78,10 +78,24 @@ def test_materialise_keeps_the_first_file(tmp_path: Path) -> None:
 def test_normalize_match_reads_get_match_data() -> None:
     payload = json.loads(_AJAX.read_text(encoding="utf-8"))
     match = normalize_match(42, payload)
+    home = match["h"][0]
+    assert home["shots"] == 2
+    assert home["key_passes"] == 1
+    assert home["xg_chain"] == pytest.approx(0.6)
+    assert home["xg_buildup"] == pytest.approx(0.2)
     assert match["id"] == 42
     assert match["team_h"] == 83
     assert match["team_a"] == 87
-    assert match["h"][0] == {"id": 501, "xg": 0.5, "xa": 0.1, "time": 90}
+    assert match["h"][0] == {
+        "id": 501,
+        "xg": 0.5,
+        "xa": 0.1,
+        "shots": 2,
+        "key_passes": 1,
+        "xg_chain": 0.6,
+        "xg_buildup": 0.2,
+        "time": 90,
+    }
     assert match["a"][0]["id"] == 999
 
 
@@ -115,6 +129,11 @@ def test_ingest_understat_stages_raw_match_files(tmp_path: Path) -> None:
     assert staged.height == 3
     assert staged.filter(pl.col("player_key").is_null()).height == 1
     assert staged["available_at"][0] == datetime(2024, 8, 10, 18, 0, tzinfo=UTC)
+    mapped = staged.filter(pl.col("player_key") == 100).row(0, named=True)
+    assert mapped["shots"] == 2
+    assert mapped["key_passes"] == 1
+    assert mapped["xg_chain"] == pytest.approx(0.6)
+    assert mapped["xg_buildup"] == pytest.approx(0.2)
     assert ingest_understat(store, raw, players, teams) == 1
     assert store.read("understat_player_matches").height == 3
 

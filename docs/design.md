@@ -68,7 +68,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
 | FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
-| Understat | xG / xA per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped |
+| Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped. Team-level Deep/PPDA for OpenFPL samples still need match-stats scrape (not in `getMatchData`) |
 
 ### 4.2 Identifiers
 
