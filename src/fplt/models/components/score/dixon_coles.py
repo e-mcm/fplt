@@ -378,7 +378,11 @@ def _market_rates(
 
 
 def _align_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
-    """Left-join odds onto fixtures; prefer ``fixture_id``, else team keys."""
+    """Left-join odds onto fixtures; prefer ``fixture_id``, else team keys.
+
+    FPL ``fixture_id`` values restart each season, so the id join is always
+    scoped by ``season`` when that column is present on both frames.
+    """
     indexed = fixtures.with_row_index("_row")
     odds_cols = [
         "home_odds",
@@ -392,15 +396,20 @@ def _align_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
     )
     via_id = empty
     if "fixture_id" in fixtures.columns:
-        with_id = odds.filter(pl.col("fixture_id").is_not_null()).unique(
-            subset=["fixture_id"], keep="last"
+        id_keys = ["fixture_id"]
+        if "season" in fixtures.columns and "season" in odds.columns:
+            id_keys = ["season", "fixture_id"]
+        with_id = (
+            odds.filter(pl.col("fixture_id").is_not_null())
+            .sort("available_at")
+            .unique(subset=id_keys, keep="last")
         )
         if not with_id.is_empty():
             via_id = (
-                indexed.select("_row", "fixture_id")
+                indexed.select(["_row", *id_keys])
                 .join(
-                    with_id.select(["fixture_id", *odds_cols]),
-                    on="fixture_id",
+                    with_id.select([*id_keys, *odds_cols]),
+                    on=id_keys,
                     how="left",
                 )
                 .select(["_row", *odds_cols])
