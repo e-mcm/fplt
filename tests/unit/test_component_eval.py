@@ -39,8 +39,16 @@ def test_run_component_eval_writes_summary_and_sims(tmp_path: Path) -> None:
     score = result.summary.filter(
         (pl.col("component") == "score") & (pl.col("metric") == "rps")
     )
-    assert score.height == 2
+    assert score.height == 3
+    assert set(score["model_name"].to_list()) == {
+        "dixon_coles_v1",
+        "poisson_score_v1",
+        "odds_poisson_v1",
+    }
     assert score.filter(pl.col("n") > 0).height >= 1
+    cs = result.summary.filter(pl.col("metric") == "brier_cs_home")
+    assert cs.height == 3
+    assert cs.filter(pl.col("n") > 0).height >= 1
     minutes = result.summary.filter(pl.col("metric") == "brier_60")
     assert minutes.filter(pl.col("slice") == "overall")["n"].item() > 0
     assert set(result.sims["n_sims"].to_list()) == {20, 40}
@@ -239,6 +247,29 @@ def _league(store: DataStore) -> DataStore:
                 }
             )
     store.write("player_fixture_stats", _utc(pl.DataFrame(stats_rows)))
+    # Closing-proxy odds for the eval GW (available_at=kickoff).
+    store.write(
+        "match_odds",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [_SEASON],
+                    "fixture_id": [3],
+                    "team_h_key": [1],
+                    "team_a_key": [2],
+                    "kickoff_time": [kickoffs[2]],
+                    "home_odds": [1.55],
+                    "draw_odds": [4.10],
+                    "away_odds": [5.50],
+                    "over_25_odds": [1.70],
+                    "under_25_odds": [2.20],
+                    "odds_kind": ["closing_proxy"],
+                    "available_at": [kickoffs[2]],
+                    "source": ["football_data"],
+                }
+            )
+        ),
+    )
     return store
 
 

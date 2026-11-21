@@ -6,5 +6,12 @@ from fplt.models.components.score.odds_lambda import (
     de_vig,
     odds_to_lambda,
 )
+from fplt.models.components.score.odds_poisson import OddsPoissonScore
 
-__all__ = ["MatchScoreModel", "blend_lambda", "de_vig", "odds_to_lambda"]
+__all__ = [
+    "MatchScoreModel",
+    "OddsPoissonScore",
+    "blend_lambda",
+    "de_vig",
+    "odds_to_lambda",
+]

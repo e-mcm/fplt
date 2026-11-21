@@ -64,6 +64,17 @@ class PITView:
         """Last visible row for each key in ``by``."""
         return self.table(name).sort("available_at").unique(subset=by, keep="last")
 
+    def closing_proxy_match_odds(self) -> pl.LazyFrame:
+        """``match_odds`` rows with ``odds_kind=closing_proxy``, ignoring cutoff.
+
+        Closing lines are staged with ``available_at = kickoff`` (after the FPL
+        deadline). This escape hatch is for the labelled closing-proxy scoreline
+        baseline and DC market prior only — never claim deadline-safe PIT.
+        Season windows from ``within_seasons`` still apply.
+        """
+        frame = self._source.table("match_odds")
+        return frame.filter(pl.col("odds_kind") == "closing_proxy")
+
 
 class PITData:
     """Build a view of a store as of a gameweek deadline."""

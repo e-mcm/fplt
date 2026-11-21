@@ -7,15 +7,26 @@ It is recorded for the leaderboard. Tests check the formula, not which model win
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.data.store import DataStore
-from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.distributions import ScorelineDist
+from fplt.models.spec import ModelSpec
 from fplt.schemas.ledger import COMPONENT_COLUMNS, ComponentSchema
+
+
+class _ScoreComponent(Protocol):
+    """Minimal scoreline component surface used by the ledger helpers."""
+
+    spec: ModelSpec
+
+    def predict(self, view: PITView, fixtures: pl.DataFrame) -> ScorelineDist:
+        """Joint scorelines for ``fixtures``."""
+        ...
 
 
 def component_path(root: Path) -> Path:
@@ -29,7 +40,7 @@ def empty_components() -> pl.DataFrame:
 
 
 def record_scorelines(
-    model: MatchScoreModel,
+    model: _ScoreComponent,
     view: PITView,
     fixtures: pl.DataFrame,
     run_kind: str = "backtest",
@@ -37,7 +48,7 @@ def record_scorelines(
     """Predict ``fixtures`` and shape the rows for the component ledger.
 
     Args:
-        model: A fitted scoreline model.
+        model: A fitted scoreline model (Dixon-Coles, Poisson, or odds).
         view: Deadline the forecast is made at.
         fixtures: Columns ``season``, ``gw``, ``fixture_id``, ``team_h_key``,
             and ``team_a_key``.

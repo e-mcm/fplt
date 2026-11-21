@@ -1,0 +1,11 @@
+name: odds_poisson_v1
+kind: odds_poisson
+params:
+  # Closing lines are staged with available_at=kickoff (after deadline).
+  # use_closing_proxy admits them for the labelled probe — not deadline PIT.
+  use_closing_proxy: true
+  use_over_under: true
+  fallback_lambda_home: 1.35
+  fallback_lambda_away: 1.1
+refit: never
+seed: 0
