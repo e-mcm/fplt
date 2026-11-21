@@ -2,10 +2,10 @@
 
 Public ``entry/{id}/event/{gw}/picks`` covers finished gameweeks only. The
 live squad (selling prices, bank, free transfers) comes from authenticated
-``my-team/{id}``, which needs the ``pl_profile`` session cookie. Set
-``FPLT_ENTRY_ID`` and, for the live team, ``FPLT_FPL_SESSION``. Free-transfer
-and chip overrides still live in ``configs/squad_state.yaml`` when the cookie
-is unavailable.
+``my-team/{id}``. The live API expects ``x-api-authorization: Bearer`` from
+``FPLT_FPL_API_TOKEN`` (the ``pl_profile`` cookie in ``FPLT_FPL_SESSION`` is
+legacy). Set ``FPLT_ENTRY_ID`` as well. Free-transfer and chip overrides still
+live in ``configs/squad_state.yaml`` when that token is unavailable.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any, Literal, Self, cast
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, bearer_token, get_settings
 
 API_ROOT = "https://fantasy.premierleague.com/api"
 
@@ -71,7 +71,7 @@ class CurrentTeam(BaseModel):
         for pick in self.picks:
             if pick.selling_price is None:
                 raise ValueError(
-                    "selling_price missing; fetch via my-team with FPLT_FPL_SESSION"
+                    "selling_price missing; fetch via my-team with FPLT_FPL_API_TOKEN"
                 )
             owned.append(
                 {
@@ -176,7 +176,9 @@ class FPLClient:
     Args:
         client: Optional shared ``httpx.Client``. When omitted, one is created
             with a 30s timeout and closed by ``close`` / context manager.
-        session: Value of the ``pl_profile`` cookie. Required for ``my_team``.
+        session: Legacy ``pl_profile`` cookie value. Sent when set.
+        api_token: Bearer token for ``x-api-authorization``. This is what
+            ``my-team`` accepts. A leading ``Bearer `` prefix is stripped.
         base_url: API root; override only in tests.
     """
 
@@ -185,10 +187,15 @@ class FPLClient:
         client: httpx.Client | None = None,
         *,
         session: str | None = None,
+        api_token: str | None = None,
         base_url: str = API_ROOT,
     ) -> None:
         self._owns_client = client is None
+        self._session = session or None
+        self._api_token = bearer_token(api_token)
         headers = {"User-Agent": "fplt"}
+        if self._api_token:
+            headers["x-api-authorization"] = f"Bearer {self._api_token}"
         cookies = {"pl_profile": session} if session else None
         self._client = client or httpx.Client(
             timeout=30.0,
@@ -197,7 +204,8 @@ class FPLClient:
         )
         if client is not None and session:
             self._client.cookies.set("pl_profile", session)
-        self._session = session
+        if client is not None and self._api_token:
+            self._client.headers["x-api-authorization"] = f"Bearer {self._api_token}"
         self._base_url = base_url.rstrip("/")
 
     def close(self) -> None:
@@ -249,13 +257,13 @@ class FPLClient:
             Parsed JSON object with ``picks``, ``transfers``, and ``chips``.
 
         Raises:
-            FPLAPIError: No session cookie was configured, or the API refused
-                the request.
+            FPLAPIError: No API token or legacy session was configured, or the
+                API refused the request.
         """
-        if not self._session:
+        if not self._api_token and not self._session:
             raise FPLAPIError(
-                "my-team needs FPLT_FPL_SESSION (pl_profile cookie from "
-                "fantasy.premierleague.com)"
+                "my-team needs FPLT_FPL_API_TOKEN (Bearer token from the "
+                "x-api-authorization header on fantasy.premierleague.com)"
             )
         return self._get_json(f"/my-team/{entry_id}/")
 
@@ -268,15 +276,15 @@ class FPLClient:
     ) -> CurrentTeam:
         """Load the current (or historical) team for an entry.
 
-        Prefers authenticated ``my-team`` when a session cookie is set. Falls
-        back to public ``entry/.../picks`` for a finished ``event`` (resolved
-        from the entry summary when omitted).
+        Prefers authenticated ``my-team`` when an API token or legacy session
+        cookie is set. Falls back to public ``entry/.../picks`` for a finished
+        ``event`` (resolved from the entry summary when omitted).
 
         Args:
             entry_id: FPL manager entry id.
             event: Gameweek for the public picks path. Ignored when
                 ``my-team`` succeeds.
-            prefer_my_team: Try ``my-team`` first when a session is present.
+            prefer_my_team: Try ``my-team`` first when a token or session is present.
 
         Returns:
             Typed ``CurrentTeam``.
@@ -284,7 +292,7 @@ class FPLClient:
         Raises:
             FPLAPIError: Neither path can load a squad.
         """
-        if prefer_my_team and self._session:
+        if prefer_my_team and (self._api_token or self._session):
             return CurrentTeam.from_my_team(entry_id, self.my_team(entry_id))
         gw = event
         if gw is None:
@@ -302,9 +310,10 @@ class FPLClient:
             response = self._client.get(url)
         except httpx.HTTPError as exc:
             raise FPLAPIError(f"request failed for {path}") from exc
-        if response.status_code == 403:
+        if response.status_code in {401, 403}:
             raise FPLAPIError(
-                f"FPL API forbidden for {path}; live picks need FPLT_FPL_SESSION"
+                f"FPL API forbidden for {path}; live picks need a fresh "
+                "FPLT_FPL_API_TOKEN"
             )
         if response.status_code == 404:
             raise FPLAPIError(f"FPL API not found: {path}")
@@ -344,7 +353,7 @@ def load_current_team(
     resolved = entry_id if entry_id is not None else cfg.entry_id
     if resolved is None:
         raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
-    api = FPLClient(client, session=cfg.fpl_session)
+    api = FPLClient(client, session=cfg.fpl_session, api_token=cfg.fpl_api_token)
     try:
         return api.current_team(resolved, event=event)
     finally:

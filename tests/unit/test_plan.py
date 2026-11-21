@@ -9,13 +9,20 @@ import pytest
 from fplt.cli import main
 from fplt.data.store import DataStore
 from fplt.optimise.decisions import (
+    PlanExistsError,
     points_from_ledger,
     run_decisions,
     run_plan,
     simulate_decisions,
     write_decisions,
 )
-from fplt.optimise.plan import plan_squad, plan_table, render_report, write_plan
+from fplt.optimise.plan import (
+    covered_horizon,
+    plan_squad,
+    plan_table,
+    render_report,
+    write_plan,
+)
 from fplt.optimise.squad import select_squad
 from fplt.optimise.state import (
     OwnedPlayer,
@@ -64,6 +71,13 @@ def test_a_free_transfer_is_banked_for_a_better_week() -> None:
     report = render_report(plan, "2024-25", [1, 2])
     assert "GW 2" in report
     assert "hit 0" in report
+    captain = int(
+        plan.picks.filter((pl.col("step") == 0) & pl.col("captain"))["player_key"][0]
+    )
+    named = render_report(plan, "2024-25", [1, 2], names={captain: "Saka"})
+    assert "captain Saka" in named
+    blank = render_report(plan, "2024-25", [1, 2], names={captain: "  "})
+    assert f"captain {captain}" in blank
 
 
 def test_bad_plans_are_rejected() -> None:
@@ -120,9 +134,19 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
     plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
     frame = plan_table(plan, "model", "2024-25", 1, [1])
     path = write_plan(tmp_path, frame)
-    assert path.name == "part.parquet"
+    assert path.parent.name == "as_of=2024-25_gw01_h01"
     with pytest.raises(FileExistsError):
         write_plan(path.parents[3], frame)
+    longer = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=2)
+    other = write_plan(tmp_path, plan_table(longer, "model", "2024-25", 1, [1, 2]))
+    assert other.parent.name == "as_of=2024-25_gw01_h02"
+    assert covered_horizon(11, 2) == 2
+    assert covered_horizon(38, 2) == 1
+    assert covered_horizon(1, 0) == 0
+    assert covered_horizon(39, 1) == 0
+    broken = frame.with_columns(pl.lit(2).alias("step"))
+    with pytest.raises(ValueError, match="horizon step"):
+        write_plan(tmp_path, broken)
 
 
 def test_two_gameweeks_record_a_decision_row_set(tmp_path: Path) -> None:
@@ -226,7 +250,9 @@ def test_run_plan_skips_resolve_when_squad_passed(
 
 
 def test_plan_command_writes_the_report_and_rejects_unknown_models(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _stage(tmp_path)
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
@@ -245,10 +271,31 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
                 "1",
             ]
         )
+        printed = capsys.readouterr().out
         saved = list((tmp_path / "plans").rglob("report.md"))
         assert len(saved) == 1
-        assert "captain" in saved[0].read_text(encoding="utf-8")
-        with pytest.raises(FileExistsError):
+        assert str(saved[0]) in printed
+        text = saved[0].read_text(encoding="utf-8")
+        assert "captain p" in text
+        with pytest.raises(SystemExit) as raised:
+            main(
+                [
+                    "plan",
+                    "--model",
+                    "rolling_mean_v1",
+                    "--season",
+                    "2024-25",
+                    "--gw",
+                    "1",
+                    "--horizon",
+                    "1",
+                ]
+            )
+        assert raised.value.code == 2
+        again = capsys.readouterr()
+        assert "captain p" in again.out
+        assert "plan already exists" in again.err
+        with pytest.raises(PlanExistsError):
             run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1)
         path = run_decisions(tmp_path, "rolling_mean_v1", "2024-25", 1, 2, 1)
         decisions = pl.read_parquet(path)

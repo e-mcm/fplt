@@ -37,12 +37,13 @@ Useful env vars (all optional except where noted; see `.env.example`):
 |---|---|
 | `FPLT_DATA_DIR` | Data root (default `./data`) |
 | `FPLT_ENTRY_ID` | Manager entry for live-team plans (`fplt plan --from-api` / automation) |
-| `FPLT_FPL_SESSION` | `pl_profile` cookie for authenticated `/api/my-team/{id}/` (selling prices, bank, FT) |
+| `FPLT_FPL_API_TOKEN` | Bearer token for authenticated `/api/my-team/{id}/` (selling prices, bank, FT) |
+| `FPLT_FPL_SESSION` | Legacy `pl_profile` cookie; the live API uses `FPLT_FPL_API_TOKEN` |
 | `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts |
 | `FPLT_SMTP_HOST` / `FPLT_SMTP_FROM` / `FPLT_SMTP_TO` | Recommendation email (all three required or email is a no-op) |
 | `FPLT_SMTP_PORT` / `FPLT_SMTP_USER` / `FPLT_SMTP_PASSWORD` / `FPLT_SMTP_USE_TLS` | Optional SMTP details |
 
-`FPLT_FPL_SESSION` is the `pl_profile` cookie from fantasy.premierleague.com. Without it, use a saved picks JSON (`fplt plan --entry-json …`) or public finished-gameweek picks via `--from-api` / `FPLT_ENTRY_ID` (no selling prices). Never commit a real session cookie. Missing ntfy/SMTP config is a no-op.
+`FPLT_FPL_API_TOKEN` is the Bearer value from the `x-api-authorization` header on a logged-in `my-team` request (DevTools → Network). Paste the token only, not the `Bearer ` prefix. It expires about every 8 hours. Without it, use a saved picks JSON (`fplt plan --entry-json …`) or public finished-gameweek picks via `--from-api` / `FPLT_ENTRY_ID` (no selling prices). Never commit a real token. Missing ntfy/SMTP config is a no-op.
 
 ## Common tasks
 
@@ -59,7 +60,7 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
 | Leaderboard app | `make leaderboard` |
 
-Set `FPLT_ENTRY_ID` in `.env` so `make plan` / `fplt plan` load your squad (public finished-GW picks without a session; live selling prices need `FPLT_FPL_SESSION` in local `.env` / Cursor secrets — never commit it). `--entry-json` still wins over the API. Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
+Set `FPLT_ENTRY_ID` and `FPLT_FPL_API_TOKEN` in `.env` so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
 
 ## Adding things
 
@@ -97,4 +98,4 @@ That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--so
 
 `deploy/launchd/` contains service definitions for `dagster-webserver` and `dagster-daemon` so sensors run whenever the machine is on. The post-gameweek sensor processes every missing gameweek, so downtime self-heals; the pre-deadline refresh can also be launched manually from the UI.
 
-Wire live-squad and alert secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_SESSION`, `FPLT_NTFY_URL`, SMTP) via `~/.config/fplt/env` (launchd) or `deploy/.env` (compose) — see [`deploy/README.md`](deploy/README.md). Never commit those values.
+Wire live-squad and alert secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) via `~/.config/fplt/env` (launchd) or `deploy/.env` (compose) — see [`deploy/README.md`](deploy/README.md). Never commit those values.

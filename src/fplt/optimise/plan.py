@@ -9,6 +9,7 @@ initial draft and those buys are not transfers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -178,24 +179,42 @@ def plan_table(
     )
 
 
-def plan_parquet(root: Path, model_id: str, season: str, gameweek: int) -> Path:
-    """Parquet path for one model's plan at one deadline.
+def covered_horizon(gameweek: int, horizon: int) -> int:
+    """Weeks a plan actually covers, stopping at gameweek 38.
+
+    Args:
+        gameweek: Deadline the plan is built at.
+        horizon: Weeks requested, including that deadline.
+
+    Returns:
+        The number of steps written into the plan file.
+    """
+    if horizon < 1 or gameweek > 38:
+        return 0
+    return sum(1 for offset in range(horizon) if gameweek + offset <= 38)
+
+
+def plan_parquet(
+    root: Path, model_id: str, season: str, gameweek: int, horizon: int
+) -> Path:
+    """Parquet path for one model's plan at one deadline and horizon.
 
     Args:
         root: Data directory that contains ``plans/``.
-        model_id: Predictor id.
+        model_id: Predictor id. This is a hash of the model spec, not the plan.
         season: Season label.
         gameweek: Deadline the plan was built at.
+        horizon: Weeks the plan covers, including that deadline.
 
     Returns:
-        ``plans/<model_id>/as_of=<season>_gwNN/part.parquet``.
+        ``plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet``.
     """
-    stamp = f"as_of={season}_gw{gameweek:02d}"
+    stamp = f"as_of={season}_gw{gameweek:02d}_h{horizon:02d}"
     return root / "plans" / model_id / stamp / "part.parquet"
 
 
 def write_plan(root: Path, frame: pl.DataFrame) -> Path:
-    """Write a plan parquet. The same ``as_of`` is never replaced.
+    """Write a plan parquet. The same deadline and horizon are never replaced.
 
     Args:
         root: Data directory that contains ``plans/``.
@@ -205,8 +224,8 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
         The parquet path.
 
     Raises:
-        FileExistsError: That deadline was already written.
-        ValueError: The frame mixes deadlines.
+        FileExistsError: That deadline and horizon were already written.
+        ValueError: The frame mixes deadlines or skips a horizon step.
     """
     checked = _frame(frame, PlanSchema)
     seasons = checked["as_of_season"].unique().to_list()
@@ -214,7 +233,13 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
     models = checked["model_id"].unique().to_list()
     if len(seasons) != 1 or len(gameweeks) != 1 or len(models) != 1:
         raise ValueError("a plan file is one model and one deadline")
-    path = plan_parquet(root, str(models[0]), str(seasons[0]), int(gameweeks[0]))
+    steps = sorted(int(step) for step in checked["step"].unique().to_list())
+    horizon = max(steps) + 1 if steps else 0
+    if steps != list(range(horizon)):
+        raise ValueError("a plan file needs one row set per horizon step")
+    path = plan_parquet(
+        root, str(models[0]), str(seasons[0]), int(gameweeks[0]), horizon
+    )
     if path.exists():
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,13 +247,19 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
     return path
 
 
-def render_report(plan: GameweekPlan, season: str, gameweeks: list[int]) -> str:
+def render_report(
+    plan: GameweekPlan,
+    season: str,
+    gameweeks: list[int],
+    names: Mapping[int, str] | None = None,
+) -> str:
     """Describe the squad, the armbands, and the transfers for each week.
 
     Args:
         plan: Solved horizon.
         season: Season label used as the title.
         gameweeks: Target gameweek of each step, in order.
+        names: ``player_key`` to FPL ``web_name``. Missing names stay as the key.
 
     Returns:
         Markdown text.
@@ -243,10 +274,10 @@ def render_report(plan: GameweekPlan, season: str, gameweeks: list[int]) -> str:
         lines.append(f"## GW {gameweek}")
         lines.append(f"free transfers {plan.free_transfers[step]}")
         lines.append(f"hit {plan.hits[step]:.0f}")
-        lines.append(f"captain {captain[0] if captain else '-'}")
-        lines.append("in " + _keys(bought))
-        lines.append("out " + _keys(sold))
-        lines.append("xi " + _keys(playing))
+        lines.append(f"captain {_label(captain[0], names) if captain else '-'}")
+        lines.append("in " + _keys(bought, names))
+        lines.append("out " + _keys(sold, names))
+        lines.append("xi " + _keys(playing, names))
     return "\n".join(lines) + "\n"
 
 
@@ -676,10 +707,17 @@ def _on(values: np.ndarray, columns: np.ndarray) -> np.ndarray:
     return values[columns] > 0.5
 
 
-def _keys(player_keys: list[int]) -> str:
+def _keys(player_keys: list[int], names: Mapping[int, str] | None = None) -> str:
     if not player_keys:
         return "-"
-    return ", ".join(str(key) for key in player_keys)
+    return ", ".join(_label(key, names) for key in player_keys)
+
+
+def _label(player_key: int, names: Mapping[int, str] | None) -> str:
+    if names is None:
+        return str(player_key)
+    name = names.get(int(player_key), "").strip()
+    return name or str(player_key)
 
 
 def _frame(frame: pl.DataFrame, schema: _Schema) -> pl.DataFrame:
