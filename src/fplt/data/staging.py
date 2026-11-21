@@ -185,6 +185,7 @@ def _status(
     for element in bootstrap.get("elements", []):
         chance = element.get("chance_of_playing_next_round")
         ep = element.get("ep_next")
+        order = element.get("penalties_order")
         rows.append(
             {
                 "season": season,
@@ -194,12 +195,18 @@ def _status(
                 "price": int(element.get("now_cost", 0)),
                 "ep_next": float(ep) if ep not in (None, "") else None,
                 "chance_of_playing": float(chance) if chance is not None else None,
+                "penalties_order": (int(order) if order not in (None, "") else None),
                 "available_at": moment,
                 "source": source,
             }
         )
+    if not rows:
+        from fplt.schemas.staged import POLARS_SCHEMAS
+
+        return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
     return pl.DataFrame(rows).with_columns(
-        pl.col("available_at").cast(pl.Datetime("us", "UTC"))
+        pl.col("available_at").cast(pl.Datetime("us", "UTC")),
+        pl.col("penalties_order").cast(pl.Int64),
     )
 
 

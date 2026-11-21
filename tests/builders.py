@@ -107,6 +107,7 @@ def build_league(root: DataStore) -> DataStore:
                     "price": [100, 80],
                     "ep_next": [6.5, 4.0],
                     "chance_of_playing": [100.0, 75.0],
+                    "penalties_order": [1, None],
                     "available_at": [_START, _START],
                     "source": ["fpl_api", "fpl_api"],
                 }

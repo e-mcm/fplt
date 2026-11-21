@@ -60,7 +60,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 
 | Source | Use | Notes |
 |---|---|---|
-| FPL API `bootstrap-static/` | Players, teams, gameweeks (deadlines, `finished`, `data_checked`), prices, status, news, `ep_next` | Overwritten continuously — must be snapshotted |
+| FPL API `bootstrap-static/` | Players, teams, gameweeks (deadlines, `finished`, `data_checked`), prices, status, news, `ep_next`, `penalties_order` | Overwritten continuously — must be snapshotted |
 | FPL API `fixtures/` | Fixtures, kickoff times, results, per-fixture stats | |
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
@@ -96,7 +96,7 @@ data/
 │       └── match_id=<id>/match.json.gz   # getMatchData AJAX payload
 ├── staged/                      # typed parquet, one table per entity, derived from raw
 │   ├── players/  teams/  fixtures/  gameweeks/
-│   ├── player_status/           # status/news/price/ep_next per snapshot (time series)
+│   ├── player_status/           # status/news/price/ep_next/penalties_order per snapshot (time series)
 │   ├── player_fixture_stats/    # actuals from event_live
 │   ├── understat_player_matches/
 │   └── understat_team_matches/  # Deep / PPDA / team xG per match
@@ -115,7 +115,7 @@ Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`pla
 
 Every staged table carries an `available_at` timestamp (UTC):
 
-- Snapshotted attributes (status, news, price, `ep_next`): `available_at = captured_at`.
+- Snapshotted attributes (status, news, price, `ep_next`, `penalties_order`): `available_at = captured_at`.
 - Match results and stats: `available_at` = time the GW was marked `data_checked` (or kickoff + 3h as a historical proxy).
 - Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that date.
 
@@ -146,7 +146,7 @@ Availability and news cannot be recovered after the fact, so capture runs indepe
 - Snapshots are committed to an orphan branch `snapshots` of this repo (path layout as `data/raw/fpl_api/...`).
 - Local Dagster has a sensor that fetches the `snapshots` branch and ingests new files into `data/raw`.
 
-Historical seasons (vaastav) lack per-deadline status/news/chance snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind.
+Historical seasons (vaastav) lack per-deadline status/news/chance/`penalties_order` snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order` is null for vaastav rows.
 
 ### 4.6 Schemas
 

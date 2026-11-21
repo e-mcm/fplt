@@ -23,7 +23,9 @@ def _ensure_utc(frame: pl.LazyFrame) -> pl.LazyFrame:
     return frame.with_columns(exprs)
 
 
-def _default_for(dtype: pl.DataType) -> object:
+def _default_for(dtype: pl.DataType, *, nullable: bool = False) -> object:
+    if nullable:
+        return None
     if dtype == pl.Utf8:
         return ""
     if dtype == pl.Boolean:
@@ -35,13 +37,23 @@ def _default_for(dtype: pl.DataType) -> object:
     return None
 
 
+def _nullable_columns(name: str) -> set[str]:
+    schema = STAGED_SCHEMAS[name].to_schema()
+    return {column for column, info in schema.columns.items() if info.nullable}
+
+
 def _with_schema_columns(frame: pl.DataFrame, name: str) -> pl.DataFrame:
     """Add missing staged columns (schema widen) before pandera validation."""
     wanted = POLARS_SCHEMAS[name]
+    nullable = _nullable_columns(name)
     extras: list[pl.Expr] = []
     for column, dtype in wanted.items():
         if column not in frame.columns:
-            extras.append(pl.lit(_default_for(dtype)).cast(dtype).alias(column))
+            extras.append(
+                pl.lit(_default_for(dtype, nullable=column in nullable))
+                .cast(dtype)
+                .alias(column)
+            )
     filled = frame.with_columns(extras) if extras else frame
     return filled.select(list(wanted))
 
@@ -84,8 +96,11 @@ class DataStore:
             return pl.DataFrame(schema=wanted).lazy()
         frame = _ensure_utc(pl.scan_parquet(path))
         present = set(frame.collect_schema().names())
+        nullable = _nullable_columns(name)
         extras = [
-            pl.lit(_default_for(dtype)).cast(dtype).alias(column)
+            pl.lit(_default_for(dtype, nullable=column in nullable))
+            .cast(dtype)
+            .alias(column)
             for column, dtype in wanted.items()
             if column not in present
         ]
