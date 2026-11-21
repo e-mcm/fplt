@@ -126,6 +126,33 @@ def test_null_penalties_order_falls_back_to_miss(tmp_path: Path) -> None:
     assert weights[2] == pytest.approx(0.0)
 
 
+def test_use_penalties_order_false_ignores_order(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "FWD", 1), _row(2, "FWD", 1, pens_missed=1)],
+        status=[_status(1, order=1), _status(2, order=2)],
+    )
+    with_order = _weights(_shares(store))
+    without = _weights(_shares(store, use_penalties_order=False))
+    assert with_order[1] == pytest.approx(1.0)
+    assert with_order[2] == pytest.approx(0.0)
+    assert without[2] == pytest.approx(1.0)
+    assert without[1] == pytest.approx(0.0)
+
+
+def test_rejects_non_bool_use_penalties_order() -> None:
+    with pytest.raises(ValueError, match="use_penalties_order"):
+        InvolvementShares(_share_spec(use_penalties_order="yes"))
+
+
+def test_nopens_control_spec_loads() -> None:
+    specs = load_model_specs()
+    control = specs["involvement_shares_nopens_v1"].params["use_penalties_order"]
+    treatment = specs["involvement_shares_v1"].params.get("use_penalties_order", True)
+    assert control is False
+    assert treatment is True
+
+
 def test_penalty_takers_respect_pit_cutoff(tmp_path: Path) -> None:
     store = _store(
         tmp_path,
