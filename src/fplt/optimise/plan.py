@@ -247,6 +247,9 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
     return path
 
 
+_POSITION_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+
+
 def render_report(
     plan: GameweekPlan,
     season: str,
@@ -254,6 +257,9 @@ def render_report(
     names: Mapping[int, str] | None = None,
 ) -> str:
     """Describe the squad, the armbands, and the transfers for each week.
+
+    Each gameweek is a markdown section with transfer, XI, and bench tables.
+    Captain and vice are marked ``(C)`` / ``(V)`` on the Starting XI name.
 
     Args:
         plan: Solved horizon.
@@ -264,21 +270,107 @@ def render_report(
     Returns:
         Markdown text.
     """
-    lines = [f"# {season}"]
+    lines = [f"# {season}", ""]
     for step, gameweek in enumerate(gameweeks):
         part = plan.picks.filter(pl.col("step") == step)
-        captain = part.filter(pl.col("captain"))["player_key"].to_list()
-        bought = part.filter(pl.col("bought"))["player_key"].to_list()
-        sold = part.filter(pl.col("sold"))["player_key"].to_list()
-        playing = part.filter(pl.col("in_xi"))["player_key"].to_list()
         lines.append(f"## GW {gameweek}")
-        lines.append(f"free transfers {plan.free_transfers[step]}")
-        lines.append(f"hit {plan.hits[step]:.0f}")
-        lines.append(f"captain {_label(captain[0], names) if captain else '-'}")
-        lines.append("in " + _keys(bought, names))
-        lines.append("out " + _keys(sold, names))
-        lines.append("xi " + _keys(playing, names))
-    return "\n".join(lines) + "\n"
+        lines.append("")
+        lines.append(f"Free transfers: {plan.free_transfers[step]}")
+        lines.append(f"Hit: {plan.hits[step]:.0f}")
+        lines.append("")
+        lines.extend(
+            _report_section(
+                "Transfers out",
+                part.filter(pl.col("sold")),
+                names,
+                armbands=False,
+            )
+        )
+        lines.extend(
+            _report_section(
+                "Transfers in",
+                part.filter(pl.col("bought")),
+                names,
+                armbands=False,
+            )
+        )
+        lines.extend(
+            _report_section(
+                "Starting XI",
+                part.filter(pl.col("in_xi")),
+                names,
+                armbands=True,
+            )
+        )
+        lines.extend(
+            _report_section(
+                "Bench",
+                part.filter(~pl.col("sold") & ~pl.col("in_xi")),
+                names,
+                armbands=False,
+            )
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _report_section(
+    title: str,
+    rows: pl.DataFrame,
+    names: Mapping[int, str] | None,
+    *,
+    armbands: bool,
+) -> list[str]:
+    """Render one headed block: an empty note or a player table."""
+    lines = [f"### {title}", ""]
+    if rows.is_empty():
+        lines.append("_None_")
+        lines.append("")
+        return lines
+    lines.extend(_player_table(rows, names, armbands=armbands))
+    lines.append("")
+    return lines
+
+
+def _player_table(
+    rows: pl.DataFrame,
+    names: Mapping[int, str] | None,
+    *,
+    armbands: bool,
+) -> list[str]:
+    """Build a markdown table from plan pick rows."""
+    ordered = sorted(
+        rows.iter_rows(named=True),
+        key=lambda row: (
+            _POSITION_ORDER.get(str(row["position"]), 99),
+            -float(row["xpts"]),
+            int(row["player_key"]),
+        ),
+    )
+    lines = [
+        "| Name | Pos | Team | Price | xPts |",
+        "| --- | --- | ---: | ---: | ---: |",
+    ]
+    for row in ordered:
+        label = _label(int(row["player_key"]), names)
+        if armbands:
+            if bool(row["captain"]):
+                label = f"{label} (C)"
+            elif bool(row["vice"]):
+                label = f"{label} (V)"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    label,
+                    str(row["position"]),
+                    str(int(row["team_key"])),
+                    f"{int(row['price']) / 10:.1f}",
+                    f"{float(row['xpts']):.1f}",
+                ]
+            )
+            + " |"
+        )
+    return lines
 
 
 class _Columns:
@@ -705,12 +797,6 @@ def _equal(
 
 def _on(values: np.ndarray, columns: np.ndarray) -> np.ndarray:
     return values[columns] > 0.5
-
-
-def _keys(player_keys: list[int], names: Mapping[int, str] | None = None) -> str:
-    if not player_keys:
-        return "-"
-    return ", ".join(_label(key, names) for key in player_keys)
 
 
 def _label(player_key: int, names: Mapping[int, str] | None) -> str:
