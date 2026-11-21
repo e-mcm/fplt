@@ -79,6 +79,7 @@ class PlayerStatusSchema(pa.DataFrameModel):
     price: int = pa.Field(ge=0)
     ep_next: float = pa.Field(nullable=True)
     chance_of_playing: float = pa.Field(nullable=True, ge=0, le=100)
+    penalties_order: int = pa.Field(nullable=True, ge=1)
     available_at: datetime
     source: str
 
@@ -255,6 +256,7 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "price": pl.Int64(),
         "ep_next": pl.Float64(),
         "chance_of_playing": pl.Float64(),
+        "penalties_order": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

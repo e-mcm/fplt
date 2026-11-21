@@ -2,9 +2,10 @@
 
 Availability is not observed per deadline in this source, so every row is
 flagged ``source = "vaastav"``. Result rows become visible at kickoff + 3h.
-Status still lacks news and chance-of-playing, but per-gameweek ``value``
-from ``merged_gw.csv`` is staged as ``player_status.price`` at that GW's
-deadline so historical transfer budgets bind.
+Status still lacks news, chance-of-playing, and ``penalties_order``, but
+per-gameweek ``value`` from ``merged_gw.csv`` is staged as
+``player_status.price`` at that GW's deadline so historical transfer budgets
+bind.
 """
 
 from __future__ import annotations
@@ -309,7 +310,7 @@ def _status(
     start: datetime,
     deadlines: dict[int, datetime],
 ) -> pl.DataFrame:
-    """Stage per-GW prices from vaastav ``value``; news/chance stay unknown."""
+    """Stage per-GW prices from vaastav ``value``; news/chance/pens stay unknown."""
     if gw.is_empty() or "element" not in gw.columns:
         return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
     has_value = "value" in gw.columns
@@ -356,6 +357,7 @@ def _status(
         pl.col("available_at").cast(pl.Datetime("us", "UTC")),
         pl.col("ep_next").cast(pl.Float64),
         pl.col("chance_of_playing").cast(pl.Float64),
+        pl.col("penalties_order").cast(pl.Int64),
     )
 
 
@@ -370,6 +372,7 @@ def _status_row(
         "price": price,
         "ep_next": None,
         "chance_of_playing": None,
+        "penalties_order": None,
         "available_at": available_at,
         "source": "vaastav",
     }
