@@ -14,6 +14,7 @@ from fplt.data.pit import PITView
 from fplt.models.components.involvement.shares import InvolvementShares
 from fplt.models.components.involvement.xg import InvolvementXg
 from fplt.models.components.minutes.empirical import EmpiricalMinutes
+from fplt.models.components.minutes.empirical_v2 import EmpiricalMinutesV2
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
@@ -33,6 +34,7 @@ _PARTS = ("score", "minutes", "involvement", "other")
 _REGISTERED = (
     MatchScoreModel,
     EmpiricalMinutes,
+    EmpiricalMinutesV2,
     InvolvementShares,
     InvolvementXg,
     OtherPointsPriors,
