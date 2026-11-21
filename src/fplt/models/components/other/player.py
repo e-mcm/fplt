@@ -4,7 +4,9 @@ Bonus uses realised bonus points blended with a BPS→bonus proxy when the
 player has few samples in a bucket. Saves, cards, defensive contribution,
 and the residual ``other`` bucket follow the same shrink. Defensive points
 use staged ``defensive_contribution`` action counts when the season's
-scoring rules award them; older seasons stay at zero.
+scoring rules award them; older seasons stay at zero. Set
+``use_defensive_contribution: false`` to force that channel to zero for
+A/B evals (default ``true``).
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ class OtherPlayerPriors:
     ``shrinkage`` is a pseudo-count of the position × bucket mean.
     ``bps_bonus_weight`` blends a BPS→bonus lookup into the bonus estimate
     when samples are scarce (weight decays as ``n / (n + shrinkage)`` grows).
+    ``use_defensive_contribution`` (default true) scores staged defensive
+    action counts when the season rules award them; false zeros that channel.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -43,6 +47,7 @@ class OtherPlayerPriors:
         window = spec.params.get("window", 10)
         shrinkage = spec.params.get("shrinkage", 5.0)
         bps_weight = spec.params.get("bps_bonus_weight", 0.5)
+        use_defensive = spec.params.get("use_defensive_contribution", True)
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -51,9 +56,14 @@ class OtherPlayerPriors:
             raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
         if not 0.0 <= bps_value <= 1.0:
             raise ValueError(f"bps_bonus_weight must be in [0, 1], got {bps_value}")
+        if not isinstance(use_defensive, bool):
+            raise ValueError(
+                f"use_defensive_contribution must be a bool, got {use_defensive!r}"
+            )
         self._window = window
         self._shrinkage = shrinkage_value
         self._bps_weight = bps_value
+        self._use_defensive = use_defensive
         self._fitted = False
         self._prior: dict[_PosKey, _Points] = {}
         self._player: dict[_Key, _Points] = {}
@@ -65,7 +75,7 @@ class OtherPlayerPriors:
         self._prior = {}
         self._player = {}
         self._bps_bonus = {}
-        history = _scored_history(view)
+        history = _scored_history(view, use_defensive=self._use_defensive)
         if history.is_empty():
             return
         self._bps_bonus = _bps_bonus_lookup(history)
@@ -144,7 +154,7 @@ class OtherPlayerPriors:
         return _validated(pl.DataFrame(rows, schema=OTHER_POINTS_COLUMNS))
 
 
-def _scored_history(view: PITView) -> pl.DataFrame:
+def _scored_history(view: PITView, *, use_defensive: bool = True) -> pl.DataFrame:
     stats = view.latest(
         "player_fixture_stats", ["season", "player_key", "fixture_id"]
     ).collect()
@@ -165,7 +175,10 @@ def _scored_history(view: PITView) -> pl.DataFrame:
         if season not in rules_cache:
             rules_cache[season] = Rules.for_season(season)
         bonus, saves, cards, defensive, other = _components(
-            rules_cache[season], str(row["position"]), row
+            rules_cache[season],
+            str(row["position"]),
+            row,
+            use_defensive=use_defensive,
         )
         rows.append(
             {
@@ -183,7 +196,13 @@ def _scored_history(view: PITView) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
-def _components(rules: Rules, position: str, row: dict[str, Any]) -> _Points:
+def _components(
+    rules: Rules,
+    position: str,
+    row: dict[str, Any],
+    *,
+    use_defensive: bool = True,
+) -> _Points:
     def points(**fields: int) -> float:
         return float(rules.score(MatchStats(position=position, **fields)))  # type: ignore[arg-type]
 
@@ -192,7 +211,7 @@ def _components(rules: Rules, position: str, row: dict[str, Any]) -> _Points:
     cards = points(
         yellow_cards=int(row["yellow_cards"]), red_cards=int(row["red_cards"])
     )
-    defensive = _defensive_points(rules, position, row)
+    defensive = _defensive_points(rules, position, row, use_defensive=use_defensive)
     # Appearance points are not part of "other"; isolate residual awards.
     other = points(
         penalties_saved=int(row["penalties_saved"]),
@@ -202,16 +221,22 @@ def _components(rules: Rules, position: str, row: dict[str, Any]) -> _Points:
     return (bonus, saves, cards, defensive, other)
 
 
-def _defensive_points(rules: Rules, position: str, row: dict[str, Any]) -> float:
+def _defensive_points(
+    rules: Rules,
+    position: str,
+    row: dict[str, Any],
+    *,
+    use_defensive: bool = True,
+) -> float:
     """Map staged defensive contribution to points for ``position``.
 
-    When the season table has no defensive rules, return 0. Otherwise prefer
-    the live ``defensive_contribution`` action count (CBI+T for defenders,
-    CBI+T+R for midfielders/forwards) against that position's threshold.
-    Frames that predate the staged column fall back to summing the action
-    columns through ``Rules.score``.
+    When ``use_defensive`` is false or the season table has no defensive rules,
+    return 0. Otherwise prefer the live ``defensive_contribution`` action count
+    (CBI+T for defenders, CBI+T+R for midfielders/forwards) against that
+    position's threshold. Frames that predate the staged column fall back to
+    summing the action columns through ``Rules.score``.
     """
-    if not rules.defensive_contributions:
+    if not use_defensive or not rules.defensive_contributions:
         return 0.0
     if "defensive_contribution" in row:
         count = int(row["defensive_contribution"] or 0)

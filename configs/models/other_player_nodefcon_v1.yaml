@@ -1,0 +1,11 @@
+name: other_player_nodefcon_v1
+kind: other_player
+params:
+  window: 10
+  shrinkage: 5
+  bps_bonus_weight: 0.5
+  # A/B control: zero the defensive-contribution channel even when season
+  # rules award it (2025-26+). Production other_player_v1 keeps the default.
+  use_defensive_contribution: false
+refit: every_gw
+seed: 0
