@@ -31,7 +31,8 @@ class OtherPointsSchema(pa.DataFrameModel):
 
     One row per player, fixture, and minutes bucket. ``cards`` and ``other``
     are already in points, so a yellow card is negative. Defensive
-    contribution stays zero until the staged stats carry the action counts.
+    contribution is non-zero when staged clearances, tackles, and recoveries
+    are present and the season awards those points.
     """
 
     player_key: int

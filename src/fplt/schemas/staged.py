@@ -140,6 +140,9 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
     creativity: float = pa.Field(ge=0)
     threat: float = pa.Field(ge=0)
     bps: int
+    clearances_blocks_interceptions: int = pa.Field(ge=0)
+    tackles: int = pa.Field(ge=0)
+    recoveries: int = pa.Field(ge=0)
     available_at: datetime
     source: str
 
@@ -249,6 +252,9 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "creativity": pl.Float64(),
         "threat": pl.Float64(),
         "bps": pl.Int64(),
+        "clearances_blocks_interceptions": pl.Int64(),
+        "tackles": pl.Int64(),
+        "recoveries": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

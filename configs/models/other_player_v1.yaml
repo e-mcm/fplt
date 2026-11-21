@@ -1,0 +1,8 @@
+name: other_player_v1
+kind: other_player
+params:
+  window: 10
+  shrinkage: 5
+  bps_bonus_weight: 0.5
+refit: every_gw
+seed: 0
