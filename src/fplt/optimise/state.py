@@ -46,6 +46,23 @@ class SquadState(BaseModel):
         return self
 
 
+def rebuild_squad_state(state: SquadState) -> SquadState:
+    """Clear ownership and fold selling prices into the bank.
+
+    Used for a wildcard-style draft: pick fifteen from scratch with today's
+    available funds (``bank + Σ selling_price``), ignoring transfer hits.
+
+    Args:
+        state: Current squad (often from ``resolve_squad_state``).
+
+    Returns:
+        A copy with ``owned`` empty and ``bank`` equal to the previous bank
+        plus every owned selling price. Free transfers and rules are unchanged.
+    """
+    total = state.bank + sum(player.selling_price for player in state.owned)
+    return state.model_copy(update={"owned": [], "bank": total})
+
+
 def load_squad_state(path: Path | None = None) -> SquadState:
     """Load squad state from YAML.
 

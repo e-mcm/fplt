@@ -1,5 +1,6 @@
 # Starting squad for `fplt plan`. An empty owned list is an initial draft.
 # `fplt plan --entry-json` replaces owned and bank from an entry picks payload.
+# `fplt plan --rebuild` clears owned and sets bank = ITB + Σ selling prices.
 bank: 1000
 free_transfers: 1
 ft_bank_cap: 5

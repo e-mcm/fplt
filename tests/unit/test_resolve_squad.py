@@ -12,7 +12,12 @@ from fplt.data.fpl_client import CurrentTeam
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.optimise.decisions import resolve_squad_state
-from fplt.optimise.state import load_squad_state
+from fplt.optimise.state import (
+    OwnedPlayer,
+    SquadState,
+    load_squad_state,
+    rebuild_squad_state,
+)
 from fplt.settings import Settings
 from fplt.types import GWKey
 
@@ -102,6 +107,26 @@ def test_resolve_keeps_yaml_free_transfers_for_public_picks(tmp_path: Path) -> N
     assert state.bank == int(payload["entry_history"]["bank"])
     assert len(state.owned) == 15
     assert state.free_transfers == yaml_state.free_transfers
+
+
+def test_rebuild_folds_selling_prices_into_bank() -> None:
+    state = SquadState(
+        bank=21,
+        free_transfers=2,
+        ft_bank_cap=5,
+        hit_cost=4,
+        decay=0.9,
+        bench_weight=0.0001,
+        owned=[
+            OwnedPlayer(player_key=1, selling_price=100),
+            OwnedPlayer(player_key=2, selling_price=55),
+        ],
+    )
+    rebuilt = rebuild_squad_state(state)
+    assert rebuilt.owned == []
+    assert rebuilt.bank == 176
+    assert rebuilt.free_transfers == 2
+    assert rebuild_squad_state(rebuilt) == rebuilt
 
 
 def test_resolve_ignores_free_transfers_outside_cap(tmp_path: Path) -> None:

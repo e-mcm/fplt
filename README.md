@@ -61,11 +61,12 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
 | Verbose CLI logs | `uv run fplt -v plan …` / `uv run fplt backtest -v …` (DEBUG; default is INFO) |
 | Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
+| Draft from empty (today's budget) | `uv run fplt plan --model … --season … --gw … --rebuild` (bank + selling prices; needs `my-team` / `--entry-json`) |
 | Apply plan to FPL (dry-run) | `make apply SEASON=2025-26 GW=10` or `uv run fplt apply --model … --season … --gw …` |
 | Apply plan to FPL (POST) | `make apply SEASON=2025-26 GW=10 CONFIRM=1` (needs `FPLT_FPL_API_TOKEN`) |
 | Leaderboard app | `make leaderboard` |
 
-Set `FPLT_ENTRY_ID` and `FPLT_FPL_API_TOKEN` in `.env` so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
+Set `FPLT_ENTRY_ID` and `FPLT_FPL_API_TOKEN` in `.env` so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
 
 ## Adding things
 
