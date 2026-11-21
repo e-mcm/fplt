@@ -164,7 +164,7 @@ def test_payload_includes_openfpl_feature_matrix(tmp_path: Path) -> None:
     _store, data = _named(tmp_path)
     model = OpenFPLPredictor(_spec(command=_command("features")))
     got = model.predict(data.view(_AS_OF), _HORIZON).sort("player_key")
-    assert got["xpts"].to_list() == [228.0, 228.0]
+    assert got["xpts"].to_list() == [7.0, 7.0]
 
 
 def test_default_python_prefers_isolated_venv(

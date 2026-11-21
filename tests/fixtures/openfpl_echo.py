@@ -23,7 +23,8 @@ def main() -> None:
         elif mode == "rename":
             name = "Saka"
         if mode == "features":
-            score = float(len(row.get("features") or {}))
+            # Stay inside PredictionSchema xpts bounds; 7 = “full matrix present”.
+            score = 7.0 if len(row.get("features") or {}) == 228 else 0.0
         else:
             score = float(len(row["openfpl_player_id"]))
         rows.append(
