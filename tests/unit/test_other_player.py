@@ -85,7 +85,8 @@ def test_bps_proxy_lifts_bonus_when_weight_is_on(tmp_path: Path) -> None:
     assert _cell(with_proxy, 2, "60+")["bonus"] > _cell(without, 2, "60+")["bonus"]
 
 
-def test_defensive_contribution_uses_staged_actions(tmp_path: Path) -> None:
+def test_defensive_contribution_uses_staged_count(tmp_path: Path) -> None:
+    # Action columns alone would miss the threshold; the staged aggregate is 10.
     store = _store(
         tmp_path,
         [
@@ -94,9 +95,10 @@ def test_defensive_contribution_uses_staged_actions(tmp_path: Path) -> None:
                 "DEF",
                 1,
                 minutes=90,
-                clearances=8,
-                tackles=2,
-                recoveries=1,
+                clearances=0,
+                tackles=0,
+                recoveries=0,
+                defensive_contribution=10,
             )
         ],
         season="2025-26",
@@ -109,10 +111,35 @@ def test_defensive_contribution_uses_staged_actions(tmp_path: Path) -> None:
     assert _cell(frame, 1, "60+")["defensive_contribution"] == pytest.approx(2.0)
 
 
+def test_defensive_contribution_below_threshold_is_zero(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "DEF", 1, minutes=90, defensive_contribution=9)],
+        season="2025-26",
+    )
+    frame = _predict(
+        store,
+        pl.DataFrame({"player_key": [1], "fixture_id": [9]}),
+        season="2025-26",
+    )
+    assert _cell(frame, 1, "60+")["defensive_contribution"] == pytest.approx(0.0)
+
+
 def test_older_seasons_keep_defensive_at_zero(tmp_path: Path) -> None:
     store = _store(
         tmp_path,
-        [_row(1, "DEF", 1, minutes=90, clearances=20, tackles=20, recoveries=20)],
+        [
+            _row(
+                1,
+                "DEF",
+                1,
+                minutes=90,
+                clearances=20,
+                tackles=20,
+                recoveries=20,
+                defensive_contribution=20,
+            )
+        ],
     )
     frame = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [9]}))
     assert _cell(frame, 1, "60+")["defensive_contribution"] == pytest.approx(0.0)
@@ -217,6 +244,7 @@ def _row(
     clearances: int = 0,
     tackles: int = 0,
     recoveries: int = 0,
+    defensive_contribution: int = 0,
 ) -> dict[str, object]:
     return {
         "player": player,
@@ -231,6 +259,7 @@ def _row(
         "clearances": clearances,
         "tackles": tackles,
         "recoveries": recoveries,
+        "defensive_contribution": defensive_contribution,
     }
 
 
@@ -302,6 +331,9 @@ def _store(
                     ],
                     "tackles": [row["tackles"] for row in rows],
                     "recoveries": [row["recoveries"] for row in rows],
+                    "defensive_contribution": [
+                        row["defensive_contribution"] for row in rows
+                    ],
                     "available_at": when,
                     "source": ["fpl_api"] * len(rows),
                 }
