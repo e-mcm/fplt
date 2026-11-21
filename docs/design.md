@@ -445,6 +445,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it when `params.model_dir` is set (or via `--with-openfpl` / `--openfpl-model-dir`), and only for seasons from 2024-25 onwards. Empty `model_dir` yields zeros, not OpenFPL scores.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
+- Operator logging: CLI and scripts call `fplt.utils.logging.configure_logging` (default INFO to stderr; `-v`/`--verbose` for DEBUG including FPL HTTP paths; `-q` for WARNING+). Library modules use `logging.getLogger(__name__)`.
 
 ---
 

@@ -25,6 +25,7 @@ works before that merge.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from typing import Literal
 
@@ -35,8 +36,10 @@ from fplt.orchestration.eval_job import (
     run_eval_board,
 )
 from fplt.settings import get_settings
+from fplt.utils.logging import configure_logging
 
 _REFITS = ("every_gw", "every_n_gw", "never")
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +50,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Walk-forward backtest the core models into the prediction ledger "
             f"(optional {OPENFPL_MODEL} from {OPENFPL_COMPARE_FROM}+)."
         ),
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="DEBUG logs",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="WARNING+ only",
     )
     parser.add_argument("--season", required=True, help="Evaluation season")
     parser.add_argument("--from-gw", type=int, default=1)
@@ -74,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Parse args, run the eval board, print model ids."""
     args = build_parser().parse_args(argv)
+    configure_logging(verbose=bool(args.verbose), quiet=bool(args.quiet))
     refit: Literal["every_gw", "every_n_gw", "never"] | None = args.refit
     try:
         result = run_eval_board(
@@ -89,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             steps=args.steps,
         )
     except (ValueError, KeyError) as exc:
+        logger.error("eval_board failed: %s", exc)
         print(str(exc), file=sys.stderr)
         return 2
     for spec in result.specs:

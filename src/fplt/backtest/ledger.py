@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import polars as pl
 
 from fplt.data.store import DataStore
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
+
+logger = logging.getLogger(__name__)
 
 
 def ledger_path(root: Path) -> Path:
@@ -28,6 +31,7 @@ def append_predictions(root: Path, frame: pl.DataFrame) -> None:
         frame: Rows matching ``LedgerSchema``.
     """
     if frame.is_empty():
+        logger.debug("append_predictions skipped empty frame")
         return
     checked = LedgerSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
@@ -36,6 +40,7 @@ def append_predictions(root: Path, frame: pl.DataFrame) -> None:
     if path.exists():
         checked = pl.concat([pl.read_parquet(path), checked], how="vertical_relaxed")
     checked.write_parquet(path)
+    logger.info("appended %s rows to %s (total=%s)", frame.height, path, checked.height)
 
 
 def read_predictions(root: Path) -> pl.DataFrame:
@@ -58,8 +63,10 @@ def fill_actuals(root: Path, store: DataStore) -> None:
     """
     path = ledger_path(root)
     if not path.exists():
+        logger.debug("fill_actuals: no ledger at %s", path)
         return
     ledger = pl.read_parquet(path)
+    logger.info("fill_actuals: scoring %s ledger rows", ledger.height)
     stats = (
         store.read("player_fixture_stats")
         .sort("available_at")
@@ -108,4 +115,10 @@ def fill_actuals(root: Path, store: DataStore) -> None:
     )
     validated = LedgerSchema.validate(filled)
     assert isinstance(validated, pl.DataFrame)
+    scored = validated.filter(pl.col("actual_pts").is_not_null()).height
     validated.write_parquet(path)
+    logger.info(
+        "fill_actuals complete: %s/%s rows have actual_pts",
+        scored,
+        validated.height,
+    )

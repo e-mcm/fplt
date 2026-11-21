@@ -13,6 +13,7 @@ than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from fplt.types import GWKey
 
 PRODUCTION_MODELS = ["rolling_mean_v1"]
 _WINDOW = timedelta(hours=3)
+logger = logging.getLogger(__name__)
 
 
 def pending_checked(
@@ -96,8 +98,15 @@ def catch_up(
         The gameweeks processed by this call, in play order.
     """
     chosen = PRODUCTION_MODELS if models is None else models
+    waiting = pending_checked(DataStore(data_dir), data_dir, chosen, horizon)
+    logger.info(
+        "catch_up models=%s pending=%s horizon=%s",
+        chosen,
+        [str(key) for key in waiting],
+        horizon,
+    )
     done: list[GWKey] = []
-    for key in pending_checked(DataStore(data_dir), data_dir, chosen, horizon):
+    for key in waiting:
         _play(data_dir, chosen, key, horizon)
         done.append(key)
     return done
@@ -122,8 +131,13 @@ def pre_deadline(
     """
     chosen = PRODUCTION_MODELS if models is None else models
     key = due_gameweek(DataStore(data_dir), now)
-    if key is None or plans_exist(data_dir, chosen, key, horizon):
+    if key is None:
+        logger.info("pre_deadline: nothing due within %s", _WINDOW)
         return None
+    if plans_exist(data_dir, chosen, key, horizon):
+        logger.info("pre_deadline: plan already exists for %s", key)
+        return None
+    logger.info("pre_deadline: planning %s models=%s", key, chosen)
     _play(data_dir, chosen, key, horizon)
     return key
 
@@ -147,6 +161,7 @@ def reports(root: Path) -> str:
 
 
 def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
+    logger.info("automation play %s models=%s horizon=%s", key, models, horizon)
     run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
     # Live squad when FPLT_ENTRY_ID is set; otherwise YAML draft / empty owned.
     view = PITData(DataStore(data_dir)).view(key)
@@ -155,6 +170,7 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
         try:
             run_plan(data_dir, name, key.season, key.gw, horizon, squad=squad)
         except FileExistsError:
+            logger.info("plan already exists for %s / %s; skipping", name, key)
             continue
 
 

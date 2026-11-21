@@ -8,6 +8,7 @@ can be banked. Predictions are whatever the ledger recorded at that deadline.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
 
 TeamLoader = Callable[..., CurrentTeam]
+logger = logging.getLogger(__name__)
 
 
 class PlanExistsError(FileExistsError):
@@ -246,17 +248,42 @@ def resolve_squad_state(
     state = load_squad_state()
     keys = _element_keys(view)
     if entry_json is not None:
+        logger.info("resolving squad from entry_json=%s", entry_json)
         payload = json.loads(entry_json.read_text(encoding="utf-8"))
-        return apply_entry_picks(state, payload, keys)
+        resolved = apply_entry_picks(state, payload, keys)
+        logger.info(
+            "squad from JSON: owned=%s bank=%s",
+            len(resolved.owned),
+            resolved.bank,
+        )
+        return resolved
 
     cfg = settings if settings is not None else get_settings()
     if cfg.entry_id is None:
+        logger.info(
+            "no FPLT_ENTRY_ID; using YAML squad (owned=%s bank=%s)",
+            len(state.owned),
+            state.bank,
+        )
         return state
 
+    logger.info(
+        "resolving squad via FPL API entry_id=%s event=%s",
+        cfg.entry_id,
+        event,
+    )
     loader = load_current_team if load_team is None else load_team
     team = loader(event=event, settings=cfg)
     state = apply_entry_picks(state, team.picks_payload(), keys)
-    return _with_live_free_transfers(state, team)
+    state = _with_live_free_transfers(state, team)
+    logger.info(
+        "squad ready: owned=%s bank=%s free_transfers=%s source=%s",
+        len(state.owned),
+        state.bank,
+        state.free_transfers,
+        team.source,
+    )
+    return state
 
 
 def run_plan(
@@ -295,10 +322,18 @@ def run_plan(
         FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
             ``entry_json`` / ``squad`` was provided.
     """
+    logger.info(
+        "run_plan model=%s season=%s gw=%s horizon=%s",
+        model_name,
+        season,
+        gameweek,
+        horizon,
+    )
     spec = load_model_specs()[model_name]
     view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
     if squad is not None:
         state = squad
+        logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
     else:
         state = resolve_squad_state(
             view,
@@ -306,11 +341,28 @@ def run_plan(
             event=gameweek,
         )
     window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
+    candidates = candidates_as_of(view)
+    points = points_from_ledger(
+        read_predictions(data_dir), spec.model_id, season, gameweek, window
+    )
+    logger.info(
+        "optimiser inputs: candidates=%s prediction_rows=%s window=%s initial=%s",
+        candidates.height,
+        points.height,
+        window,
+        not state.owned,
+    )
+    if points.is_empty():
+        logger.warning(
+            "no ledger predictions for model_id=%s as_of=%s gw=%s; "
+            "plan will use missing xPts as zero",
+            spec.model_id,
+            gameweek,
+            window,
+        )
     solved = plan_squad(
-        candidates_as_of(view),
-        points_from_ledger(
-            read_predictions(data_dir), spec.model_id, season, gameweek, window
-        ),
+        candidates,
+        points,
         state,
         initial=not state.owned,
         horizon=len(window),
@@ -322,6 +374,12 @@ def run_plan(
     except FileExistsError as exc:
         raise PlanExistsError(Path(str(exc)), report) from exc
     (path.parent / "report.md").write_text(report, encoding="utf-8")
+    logger.info(
+        "plan written path=%s hits=%s points=%.2f",
+        path,
+        solved.hits,
+        solved.points,
+    )
     return solved, path, report
 
 

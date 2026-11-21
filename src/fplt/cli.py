@@ -24,9 +24,11 @@ from fplt.optimise.decisions import (
 )
 from fplt.settings import get_settings
 from fplt.types import GWKey
+from fplt.utils.logging import configure_logging
 
 _REFITS = ("every_gw", "every_n_gw", "never")
 _COMPARE_MODES = ("walk_forward", "fixed")
+logger = logging.getLogger(__name__)
 
 
 def _not_implemented(name: str) -> int:
@@ -36,9 +38,26 @@ def _not_implemented(name: str) -> int:
 
 def main(argv: list[str] | None = None) -> None:
     """Parse arguments and dispatch a subcommand."""
-    parser = argparse.ArgumentParser(prog="fplt")
+    log_flags = argparse.ArgumentParser(add_help=False)
+    log_flags.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="DEBUG logs (HTTP paths, per-gameweek steps)",
+    )
+    log_flags.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="WARNING+ only",
+    )
+    parser = argparse.ArgumentParser(prog="fplt", parents=[log_flags])
     sub = parser.add_subparsers(dest="command")
-    backtest = sub.add_parser("backtest", help="Walk-forward backtest a model")
+    backtest = sub.add_parser(
+        "backtest",
+        parents=[log_flags],
+        help="Walk-forward backtest a model",
+    )
     backtest.add_argument("--season", required=True)
     backtest.add_argument("--from-gw", type=int, default=1)
     backtest.add_argument("--to-gw", type=int, default=38)
@@ -52,6 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     backtest.add_argument("--steps", type=int, default=1)
     compare = sub.add_parser(
         "compare",
+        parents=[log_flags],
         help="Compare models under shared windows (walk-forward + fixed)",
     )
     compare.add_argument("--season", required=True)
@@ -82,12 +102,20 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet here (default: $FPLT_DATA_DIR/compare/...)",
     )
-    predict = sub.add_parser("predict", help="Predict the next gameweeks")
+    predict = sub.add_parser(
+        "predict",
+        parents=[log_flags],
+        help="Predict the next gameweeks",
+    )
     predict.add_argument("--model", required=True)
     predict.add_argument("--horizon", type=int, default=5)
     predict.add_argument("--season")
     predict.add_argument("--gw", type=int)
-    plan = sub.add_parser("plan", help="Recommend a squad and transfers")
+    plan = sub.add_parser(
+        "plan",
+        parents=[log_flags],
+        help="Recommend a squad and transfers",
+    )
     plan.add_argument("--model", required=True)
     plan.add_argument("--season", required=True)
     plan.add_argument("--gw", type=int)
@@ -135,6 +163,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command is None:
         return
+    configure_logging(verbose=bool(args.verbose), quiet=bool(args.quiet))
+    logger.info("fplt %s (data_dir=%s)", args.command, get_settings().data_dir)
     if args.command == "backtest":
         _backtest(args)
         return
@@ -163,6 +193,7 @@ def _predict(args: argparse.Namespace) -> None:
             gw=args.gw,
         )
     except (FileExistsError, FileNotFoundError, KeyError, ValueError) as exc:
+        logger.error("predict failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(path)
@@ -182,6 +213,7 @@ def _backtest(args: argparse.Namespace) -> None:
             steps=args.steps,
         )
     except (ValueError, KeyError) as exc:
+        logger.error("backtest failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     for spec in ran:
@@ -227,6 +259,7 @@ def _compare(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (ValueError, KeyError) as exc:
+        logger.error("compare failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     for run in result.runs:
@@ -267,6 +300,12 @@ def _plan(args: argparse.Namespace) -> None:
             raise ValueError("fplt plan --from-api needs FPLT_ENTRY_ID or --entry-json")
         if use_resolve:
             # Same helper as automation catch_up / pre_deadline.
+            logger.info(
+                "resolving squad (entry_id=%s session=%s entry_json=%s)",
+                settings.entry_id,
+                "set" if settings.fpl_session else "unset",
+                args.entry_json,
+            )
             view = PITData(DataStore(data_dir)).view(GWKey(args.season, args.gw))
             squad = resolve_squad_state(
                 view,
@@ -283,6 +322,7 @@ def _plan(args: argparse.Namespace) -> None:
                 squad=squad,
             )
         else:
+            logger.info("planning from YAML squad (no FPLT_ENTRY_ID)")
             _solved, path, report = run_plan(
                 data_dir,
                 args.model,
@@ -301,6 +341,7 @@ def _plan(args: argparse.Namespace) -> None:
         ValueError,
         FPLAPIError,
     ) as exc:
+        logger.error("plan failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(report, end="")

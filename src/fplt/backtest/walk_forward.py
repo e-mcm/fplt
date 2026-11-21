@@ -73,6 +73,13 @@ def walk_forward(
     Returns:
         A ``LedgerSchema`` frame. ``actual_pts`` and ``actual_minutes`` are null.
     """
+    logger.info(
+        "walk_forward model=%s as_ofs=%s steps=%s run_kind=%s",
+        model.spec.name,
+        len(as_ofs),
+        steps,
+        run_kind,
+    )
     frames: list[pl.DataFrame] = []
     total = len(as_ofs)
     for index, as_of in enumerate(as_ofs):
@@ -90,7 +97,10 @@ def walk_forward(
         seasons = allowed_seasons(as_of, model.spec.train_window.seasons_back)
         view = pit.view(as_of).within_seasons(seasons)
         if refitting:
+            logger.debug("fit at %s (index=%s)", as_of, index)
             model.fit(view)
+        else:
+            logger.debug("reuse fit at %s (index=%s)", as_of, index)
         predicted = model.predict(view, horizon_for(as_of, steps))
         recorded = ledger_rows(predicted, view, as_of, run_kind)
         logger.info(

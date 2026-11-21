@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from fplt.models.contracts import PointsPredictor
 from fplt.models.predictions import write_predictions
 from fplt.models.spec import ModelSpec, artifact_dir, get_model, load_model_specs
 from fplt.types import GWKey
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_as_of(
@@ -122,12 +125,19 @@ def run_predict(
     spec = specs[model_name]
     store = DataStore(data_dir)
     as_of = resolve_as_of(store, season=season, gw=gw, now=now)
+    logger.info(
+        "predict model=%s as_of=%s horizon=%s",
+        model_name,
+        as_of,
+        horizon,
+    )
     pit = PITData(store)
     seasons = allowed_seasons(as_of, spec.train_window.seasons_back)
     view = pit.view(as_of).within_seasons(seasons)
     model = _fit_or_load(data_dir, spec, as_of, view)
     predicted = model.predict(view, horizon_for(as_of, horizon))
     path = write_predictions(data_dir, spec, as_of, predicted)
+    logger.info("wrote %s prediction rows to %s", predicted.height, path)
     if append_ledger:
         append_predictions(data_dir, ledger_rows(predicted, view, as_of, "live"))
     return path
@@ -139,8 +149,10 @@ def _fit_or_load(
     dest = artifact_dir(data_dir, spec, as_of)
     cls = get_model(spec.kind)
     if (dest / "spec.json").exists():
+        logger.info("loading artifact from %s", dest)
         loaded: PointsPredictor = cls.load(dest, spec)
         return loaded
+    logger.info("fitting %s and saving to %s", spec.name, dest)
     model: PointsPredictor = cls(spec)
     model.fit(view)
     model.save(dest)
