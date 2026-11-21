@@ -90,6 +90,11 @@ def stage_event_live(
                     "creativity": _stat_float(stats, "creativity"),
                     "threat": _stat_float(stats, "threat"),
                     "bps": int(float(stats.get("bps") or 0)),
+                    "clearances_blocks_interceptions": int(
+                        stats.get("clearances_blocks_interceptions") or 0
+                    ),
+                    "tackles": int(stats.get("tackles") or 0),
+                    "recoveries": int(stats.get("recoveries") or 0),
                     "available_at": available_at.astimezone(UTC),
                     "source": source,
                 }

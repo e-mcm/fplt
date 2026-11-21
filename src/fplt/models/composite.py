@@ -13,6 +13,7 @@ import polars as pl
 from fplt.data.pit import PITView
 from fplt.models.components.involvement.shares import InvolvementShares
 from fplt.models.components.minutes.empirical import EmpiricalMinutes
+from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.predictions import prediction_frame
@@ -28,7 +29,13 @@ logger = logging.getLogger(__name__)
 _BUCKETS = ("0", "1-59", "60+")
 _PARTS = ("score", "minutes", "involvement", "other")
 # Importing the classes registers them. The tuple keeps those imports live.
-_REGISTERED = (MatchScoreModel, EmpiricalMinutes, InvolvementShares, OtherPointsPriors)
+_REGISTERED = (
+    MatchScoreModel,
+    EmpiricalMinutes,
+    InvolvementShares,
+    OtherPointsPriors,
+    OtherPlayerPriors,
+)
 
 
 @register_model("dc_layered")

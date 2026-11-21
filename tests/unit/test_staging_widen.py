@@ -35,6 +35,9 @@ def test_stage_event_live_keeps_ict_and_bps() -> None:
                         "creativity": "8.2",
                         "threat": "3.0",
                         "bps": "24",
+                        "clearances_blocks_interceptions": 8,
+                        "tackles": 3,
+                        "recoveries": 5,
                     },
                     "explain": [{"fixture": 99}],
                 }
@@ -50,6 +53,9 @@ def test_stage_event_live_keeps_ict_and_bps() -> None:
     assert row["creativity"] == 8.2
     assert row["threat"] == 3.0
     assert row["bps"] == 24
+    assert row["clearances_blocks_interceptions"] == 8
+    assert row["tackles"] == 3
+    assert row["recoveries"] == 5
 
 
 def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
@@ -84,3 +90,6 @@ def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
     got = store.read("player_fixture_stats")
     assert got["influence"].to_list() == [0.0]
     assert got["bps"].to_list() == [0]
+    assert got["clearances_blocks_interceptions"].to_list() == [0]
+    assert got["tackles"].to_list() == [0]
+    assert got["recoveries"].to_list() == [0]

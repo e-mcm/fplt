@@ -286,7 +286,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 | `TeamScoreModel` | Dixon-Coles. ξ, home advantage, and ρ come from the model spec. Attack and defence are fit from finished fixtures visible at the deadline. ρ = 0 is the independent Poisson baseline. |
 | `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. Rotation features are later |
 | `InvolvementModel` | Shrunk per-90 shares of team goals/assists (later xG/xA shares from Understat); penalty-taker override |
-| `OtherPointsModel` | Position-level priors conditioned on minutes bucket; later GBM |
+| `OtherPointsModel` | v1: position-level priors by minutes bucket. `other_player_v1`: player-level means shrunk toward that prior, with a BPS→bonus proxy and defensive contribution when staged action counts are present; later GBM |
 
 ### 5.5 Scoring rules
 

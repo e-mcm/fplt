@@ -2,9 +2,9 @@
 
 Goals, assists, appearance, clean sheets, and goals conceded are left to
 the scoring rules. What remains is the mean, by position and minutes
-bucket, of bonus, save points, card points, and the rest. Staged match
-stats do not carry clearances, tackles, or recoveries, so the defensive
-contribution prior is zero.
+bucket, of bonus, save points, card points, and the rest. This v1 prior
+keeps defensive contribution at zero; ``other_player`` uses staged
+clearances, tackles, and recoveries when present.
 """
 
 from __future__ import annotations

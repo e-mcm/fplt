@@ -421,6 +421,11 @@ def _stats(
                 "creativity": _as_float(row.get("creativity")),
                 "threat": _as_float(row.get("threat")),
                 "bps": _as_int(row.get("bps")),
+                "clearances_blocks_interceptions": _as_int(
+                    row.get("clearances_blocks_interceptions")
+                ),
+                "tackles": _as_int(row.get("tackles")),
+                "recoveries": _as_int(row.get("recoveries")),
                 "available_at": kickoff + _RESULT_LAG,
                 "source": "vaastav",
             }
