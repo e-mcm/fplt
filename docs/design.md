@@ -222,7 +222,7 @@ class ModelSpec(BaseModel):
     params: dict[str, Any]
     components: dict[str, "ModelSpec"] = {}   # for composites
     features: list[str] = []       # "name@version"
-    train_window: TrainWindow      # e.g. seasons back, time-decay
+    train_window: TrainWindow      # seasons_back + optional time_decay
     refit: Literal["every_gw", "every_n_gw", "never"] = "every_gw"
     seed: int = 0
 
@@ -231,6 +231,8 @@ class ModelSpec(BaseModel):
         """Short stable hash of the canonical JSON of this spec + package version.
         Changing any param, component, feature version or window changes the id."""
 ```
+
+`TrainWindow.time_decay` is an optional calendar rate λ (inverse days). Trainers that honour it weight each training row by `exp(-λ × days_before_as_of)` relative to the PIT cutoff (`PITView.cutoff`). Default `null` keeps equal weights so bakeoffs stay unchanged until a sweep. **LightGBM (`lgbm_direct`) applies it as LightGBM sample weights.** Dixon–Coles keeps its own `xi` (days before latest finished kickoff in the fit) and **ignores** `TrainWindow.time_decay` — do not set both intending a single decay. Minutes / involvement / other layered fits still use equal weights within their last-N (or unweighted logistic) windows; wiring decay there is a follow-up. Override via YAML `train_window.time_decay` or `fplt backtest/compare --time-decay`.
 
 - Specs live in `configs/models/*.yaml` and are loaded into a registry at import time.
 - Implementing classes register with `@register_model("kind")`.
@@ -285,7 +287,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 
 | Component | v1 implementation |
 |---|---|
-| `TeamScoreModel` | Dixon-Coles. ξ always comes from the model spec. v1 also fixes home advantage and ρ in YAML and identifies only attack/defence. v2 (`dixon_coles_v2`) jointly estimates ρ and/or home advantage when `fit_rho` / `fit_home_advantage` are set, and shrinks sparse or promoted-team ratings toward the league mean via `new_team_prior_strength` / `promoted_prior_strength`. ρ = 0 is the independent Poisson baseline. |
+| `TeamScoreModel` | Dixon-Coles. ξ (`xi`) always comes from the model spec and is the only DC calendar decay — `TrainWindow.time_decay` is ignored here. v1 also fixes home advantage and ρ in YAML and identifies only attack/defence. v2 (`dixon_coles_v2`) jointly estimates ρ and/or home advantage when `fit_rho` / `fit_home_advantage` are set, and shrinks sparse or promoted-team ratings toward the league mean via `new_team_prior_strength` / `promoted_prior_strength`. ρ = 0 is the independent Poisson baseline. |
 | `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. v2 (`empirical_minutes_v2`): multi-window start shares, logistic P(start) / P(≥60\|start) with home/rest/DGW/price/opponent context, histogram residuals, and optional soft projection of expected starters toward ~11 per team-fixture |
 | `InvolvementModel` | `involvement_shares_v1`: shrunk per-90 shares of team goals/assists; penalty-taker override. `involvement_xg_v1`: blend Understat xG/xA per-90 with FPL goals/assists (`xg_blend`), same penalty override; fits `own_goal_weight` and `p_assist` from visible history for the simulator |
 | `OtherPointsModel` | v1: position-level priors by minutes bucket. `other_player_v1`: player-level means shrunk toward that prior, with a BPS→bonus proxy and defensive contribution when staged action counts are present; later GBM |
@@ -342,7 +344,7 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 ### 7.1 Walk-forward protocol
 
-For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see.
+For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see. Optional `train_window.time_decay` down-weights older rows inside that window for trainers that implement it (see §5.2); it does not expand or shrink the season set.
 
 Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes MAE/RMSE/Spearman/top-10/Brier summary JSON + parquet under `$FPLT_DATA_DIR/compare/` for the leaderboard or a later Streamlit view.
 

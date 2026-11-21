@@ -31,14 +31,15 @@ def run_backtest(
     *,
     refit: Refit | None = None,
     seasons_back: int | None = None,
+    time_decay: float | None = None,
     steps: int = 1,
 ) -> list[ModelSpec]:
     """Fit and score ``models`` across one season, then fill checked actuals.
 
-    A copied spec is used when ``refit`` or ``seasons_back`` is set, so the
-    ledger id differs from the YAML spec. ``refit="never"`` fits at the first
-    requested deadline and reuses that fit. ``steps`` is the horizon length
-    passed to ``walk_forward``; the library default of 5 is left unchanged.
+    A copied spec is used when ``refit``, ``seasons_back``, or ``time_decay`` is
+    set, so the ledger id differs from the YAML spec. ``refit="never"`` fits at
+    the first requested deadline and reuses that fit. ``steps`` is the horizon
+    length passed to ``walk_forward``; the library default of 5 is left unchanged.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``ledger/``.
@@ -48,6 +49,10 @@ def run_backtest(
         models: Spec names from ``configs/models``.
         refit: Override the spec's refit policy.
         seasons_back: Override how many seasons the fit may see.
+        time_decay: Override calendar decay λ (inverse days) on
+            ``TrainWindow.time_decay``. Trainers that honour it (LightGBM)
+            weight rows by ``exp(-λ × days_before_as_of)``; Dixon–Coles keeps
+            using ``xi`` and ignores this field.
         steps: Horizon length. Horizon 1 is the as-of gameweek.
 
     Returns:
@@ -62,6 +67,8 @@ def run_backtest(
         raise ValueError(f"steps must be positive, got {steps}")
     if seasons_back is not None and seasons_back < 1:
         raise ValueError(f"seasons_back must be positive, got {seasons_back}")
+    if time_decay is not None and time_decay < 0:
+        raise ValueError(f"time_decay must be non-negative, got {time_decay}")
     if not 1 <= from_gw <= to_gw <= 38:
         raise ValueError(f"gameweeks must be in 1..38, got {from_gw}..{to_gw}")
     specs = load_model_specs()
@@ -72,7 +79,8 @@ def run_backtest(
     pit = PITData(store)
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
     logger.info(
-        "backtest season=%s gw=%s..%s models=%s steps=%s refit=%s seasons_back=%s",
+        "backtest season=%s gw=%s..%s models=%s steps=%s refit=%s "
+        "seasons_back=%s time_decay=%s",
         season,
         from_gw,
         to_gw,
@@ -80,10 +88,11 @@ def run_backtest(
         steps,
         refit,
         seasons_back,
+        time_decay,
     )
     ran: list[ModelSpec] = []
     for name in models:
-        spec = _configured(specs[name], refit, seasons_back)
+        spec = _configured(specs[name], refit, seasons_back, time_decay)
         logger.info(
             "fitting %s kind=%s refit=%s model_id=%s",
             spec.name,
@@ -106,15 +115,21 @@ def run_backtest(
 
 
 def _configured(
-    spec: ModelSpec, refit: Refit | None, seasons_back: int | None
+    spec: ModelSpec,
+    refit: Refit | None,
+    seasons_back: int | None,
+    time_decay: float | None = None,
 ) -> ModelSpec:
     updates: dict[str, object] = {}
     if refit is not None:
         updates["refit"] = refit
+    window_updates: dict[str, object] = {}
     if seasons_back is not None:
-        updates["train_window"] = spec.train_window.model_copy(
-            update={"seasons_back": seasons_back}
-        )
+        window_updates["seasons_back"] = seasons_back
+    if time_decay is not None:
+        window_updates["time_decay"] = time_decay
+    if window_updates:
+        updates["train_window"] = spec.train_window.model_copy(update=window_updates)
     if not updates:
         return spec
     return spec.model_copy(update=updates)

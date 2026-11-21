@@ -15,6 +15,7 @@ from fplt.features.form import FEATURE_COLUMNS, training_frame
 from fplt.features.registry import build_feature_matrix
 from fplt.models.predictions import prediction_frame
 from fplt.models.spec import ModelSpec, register_model, write_identity
+from fplt.models.time_decay import calendar_sample_weights
 from fplt.models.universe import player_fixtures
 from fplt.types import GWKey
 
@@ -44,14 +45,28 @@ class LGBMDirectPredictor:
         self._features = list(spec.features) or list(_DEFAULT_FEATURES)
 
     def fit(self, view: PITView) -> None:
-        """Train on visible appearances. A tiny sample leaves the model unfitted."""
+        """Train on visible appearances. A tiny sample leaves the model unfitted.
+
+        When ``spec.train_window.time_decay`` is set, rows are weighted by
+        ``exp(-λ × days_before_cutoff)`` via ``calendar_sample_weights``.
+        """
         train = training_frame(view)
         if train.height < 2:
             self._booster = None
             return
         matrix = train.select(FEATURE_COLUMNS).to_numpy()
         label = train["total_points"].to_numpy().astype(float)
-        dataset = lgb.Dataset(matrix, label=label, feature_name=list(FEATURE_COLUMNS))
+        weights = calendar_sample_weights(
+            train["kickoff_time"].to_numpy(),
+            view.cutoff,
+            self.spec.train_window.time_decay,
+        )
+        dataset = lgb.Dataset(
+            matrix,
+            label=label,
+            weight=weights,
+            feature_name=list(FEATURE_COLUMNS),
+        )
         booster = lgb.train(  # pyright: ignore[reportUnknownMemberType]
             _params(self.spec),
             dataset,

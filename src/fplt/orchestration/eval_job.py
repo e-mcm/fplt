@@ -89,6 +89,7 @@ def run_eval_board(
     openfpl_model_dir: str | None = None,
     refit: Refit | None = None,
     seasons_back: int | None = None,
+    time_decay: float | None = None,
     steps: int = 1,
 ) -> EvalResult:
     """Walk-forward backtest the eval set into ``data_dir``'s ledger.
@@ -107,6 +108,7 @@ def run_eval_board(
         openfpl_model_dir: Optional override for OpenFPL's fitted ensemble.
         refit: Override each spec's refit policy.
         seasons_back: Override each spec's training window.
+        time_decay: Override ``TrainWindow.time_decay`` (calendar λ).
         steps: Horizon length passed to ``walk_forward``.
 
     Returns:
@@ -145,6 +147,7 @@ def run_eval_board(
                 others,
                 refit=refit,
                 seasons_back=seasons_back,
+                time_decay=time_decay,
                 steps=steps,
             )
         )
@@ -158,6 +161,7 @@ def run_eval_board(
                 model_dir=openfpl_model_dir,
                 refit=refit,
                 seasons_back=seasons_back,
+                time_decay=time_decay,
                 steps=steps,
             )
         )
@@ -177,18 +181,21 @@ def _run_openfpl(
     refit: Refit | None,
     seasons_back: int | None,
     steps: int,
+    time_decay: float | None = None,
 ) -> ModelSpec:
     """Backtest OpenFPL, optionally overriding ``params.model_dir``."""
     if steps < 1:
         raise ValueError(f"steps must be positive, got {steps}")
     if seasons_back is not None and seasons_back < 1:
         raise ValueError(f"seasons_back must be positive, got {seasons_back}")
+    if time_decay is not None and time_decay < 0:
+        raise ValueError(f"time_decay must be non-negative, got {time_decay}")
     if not 1 <= from_gw <= to_gw <= 38:
         raise ValueError(f"gameweeks must be in 1..38, got {from_gw}..{to_gw}")
     specs = load_model_specs()
     if OPENFPL_MODEL not in specs:
         raise ValueError(f"unknown model spec {OPENFPL_MODEL!r}")
-    spec = _configured(specs[OPENFPL_MODEL], refit, seasons_back)
+    spec = _configured(specs[OPENFPL_MODEL], refit, seasons_back, time_decay)
     if model_dir is not None:
         params = dict(spec.params)
         params["model_dir"] = model_dir
@@ -208,15 +215,21 @@ def _run_openfpl(
 
 
 def _configured(
-    spec: ModelSpec, refit: Refit | None, seasons_back: int | None
+    spec: ModelSpec,
+    refit: Refit | None,
+    seasons_back: int | None,
+    time_decay: float | None = None,
 ) -> ModelSpec:
     updates: dict[str, object] = {}
     if refit is not None:
         updates["refit"] = refit
+    window_updates: dict[str, object] = {}
     if seasons_back is not None:
-        updates["train_window"] = spec.train_window.model_copy(
-            update={"seasons_back": seasons_back}
-        )
+        window_updates["seasons_back"] = seasons_back
+    if time_decay is not None:
+        window_updates["time_decay"] = time_decay
+    if window_updates:
+        updates["train_window"] = spec.train_window.model_copy(update=window_updates)
     if not updates:
         return spec
     return spec.model_copy(update=updates)

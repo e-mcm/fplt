@@ -74,6 +74,7 @@ class CompareResult:
     summary: pl.DataFrame
     detail: pl.DataFrame
     output_dir: Path
+    time_decay: float | None = None
     skipped_openfpl: str | None = None
 
 
@@ -86,6 +87,7 @@ def compare_models(
     test_to_gw: int = 38,
     fit_gw: int | None = None,
     seasons_back: int | None = None,
+    time_decay: float | None = None,
     modes: list[CompareMode] | tuple[CompareMode, ...] | None = None,
     steps: int = 1,
     with_openfpl: bool = False,
@@ -94,11 +96,11 @@ def compare_models(
 ) -> CompareResult:
     """Backtest selected models under shared windows and both compare modes.
 
-    All models share ``seasons_back``, ``fit_gw``, and the test gameweek range.
-    ``walk_forward`` refits each deadline; ``fixed`` fits once at ``fit_gw`` and
-    reuses that fit. When ``fit_gw`` is before ``test_from_gw``, the fit deadline
-    is included only to train — its prediction rows are dropped from the ledger
-    append for that mode.
+    All models share ``seasons_back``, ``time_decay``, ``fit_gw``, and the test
+    gameweek range. ``walk_forward`` refits each deadline; ``fixed`` fits once at
+    ``fit_gw`` and reuses that fit. When ``fit_gw`` is before ``test_from_gw``,
+    the fit deadline is included only to train — its prediction rows are dropped
+    from the ledger append for that mode.
 
     Args:
         data_dir: Root with ``staged/``; receives ``ledger/`` and compare outputs.
@@ -109,6 +111,8 @@ def compare_models(
         fit_gw: Deadline used for the fixed-parameter fit. Defaults to
             ``test_from_gw`` (start of test / end of train).
         seasons_back: Override each spec's training window length.
+        time_decay: Override ``TrainWindow.time_decay`` (calendar λ). Honoured
+            by LightGBM sample weights; ignored by Dixon–Coles (use ``xi``).
         modes: Subset of ``walk_forward`` / ``fixed``. Default is both.
         steps: Horizon length passed to ``walk_forward``.
         with_openfpl: Include OpenFPL in the default set.
@@ -125,7 +129,7 @@ def compare_models(
     """
     chosen_modes = _resolve_modes(modes)
     fit_at = test_from_gw if fit_gw is None else fit_gw
-    _validate_window(test_from_gw, test_to_gw, fit_at, steps, seasons_back)
+    _validate_window(test_from_gw, test_to_gw, fit_at, steps, seasons_back, time_decay)
 
     chosen = resolve_eval_models(
         season,
@@ -172,6 +176,7 @@ def compare_models(
                 specs[name],
                 refit=_MODE_REFIT[mode],
                 seasons_back=seasons_back,
+                time_decay=time_decay,
                 openfpl_model_dir=openfpl_model_dir if name == OPENFPL_MODEL else None,
             )
             model_dir = str(spec.params.get("model_dir") or "").strip()
@@ -242,6 +247,7 @@ def compare_models(
         summary=summary,
         detail=detail,
         output_dir=out,
+        time_decay=time_decay,
         skipped_openfpl=skipped,
     )
     logger.info("writing %s", out)
@@ -305,13 +311,17 @@ def _configured(
     *,
     refit: Literal["every_gw", "never"],
     seasons_back: int | None,
+    time_decay: float | None = None,
     openfpl_model_dir: str | None,
 ) -> ModelSpec:
     updates: dict[str, object] = {"refit": refit}
+    window_updates: dict[str, object] = {}
     if seasons_back is not None:
-        updates["train_window"] = spec.train_window.model_copy(
-            update={"seasons_back": seasons_back}
-        )
+        window_updates["seasons_back"] = seasons_back
+    if time_decay is not None:
+        window_updates["time_decay"] = time_decay
+    if window_updates:
+        updates["train_window"] = spec.train_window.model_copy(update=window_updates)
     if openfpl_model_dir is not None:
         params = dict(spec.params)
         params["model_dir"] = openfpl_model_dir
@@ -341,11 +351,14 @@ def _validate_window(
     fit_gw: int,
     steps: int,
     seasons_back: int | None,
+    time_decay: float | None = None,
 ) -> None:
     if steps < 1:
         raise ValueError(f"steps must be positive, got {steps}")
     if seasons_back is not None and seasons_back < 1:
         raise ValueError(f"seasons_back must be positive, got {seasons_back}")
+    if time_decay is not None and time_decay < 0:
+        raise ValueError(f"time_decay must be non-negative, got {time_decay}")
     if not 1 <= test_from_gw <= test_to_gw <= 38:
         raise ValueError(
             f"test gameweeks must be in 1..38, got {test_from_gw}..{test_to_gw}"
@@ -384,6 +397,7 @@ def _write_outputs(result: CompareResult) -> None:
         "test_to_gw": result.test_to_gw,
         "fit_gw": result.fit_gw,
         "seasons_back": result.seasons_back,
+        "time_decay": result.time_decay,
         "modes": list(result.modes),
         "models": [run.model_name for run in result.runs],
         "runs": [
@@ -393,6 +407,7 @@ def _write_outputs(result: CompareResult) -> None:
                 "model_id": run.spec.model_id,
                 "refit": run.spec.refit,
                 "seasons_back": run.spec.train_window.seasons_back,
+                "time_decay": run.spec.train_window.time_decay,
             }
             for run in result.runs
         ],
