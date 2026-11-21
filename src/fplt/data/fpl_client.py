@@ -297,14 +297,24 @@ class FPLClient:
             FPLAPIError: Neither path can load a squad.
         """
         if prefer_my_team and (self._api_token or self._session):
+            logger.info("loading live squad via my-team for entry_id=%s", entry_id)
             return CurrentTeam.from_my_team(entry_id, self.my_team(entry_id))
         gw = event
         if gw is None:
+            logger.info(
+                "no token/session; resolving current_event for entry_id=%s",
+                entry_id,
+            )
             summary = self.entry(entry_id)
             current = summary.get("current_event")
             if current is None:
                 raise FPLAPIError("entry summary has no current_event")
             gw = int(current)
+        logger.info(
+            "loading public entry picks for entry_id=%s event=%s",
+            entry_id,
+            gw,
+        )
         picks = self.entry_picks(entry_id, gw)
         return CurrentTeam.from_entry_picks(entry_id, gw, picks)
 
@@ -355,34 +365,44 @@ class FPLClient:
 
     def _get_json(self, path: str) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
+        logger.debug("GET %s", url)
         try:
             response = self._client.get(url)
         except httpx.HTTPError as exc:
-            raise FPLAPIError(f"request failed for {path}") from exc
+            logger.error("FPL API request failed for %s: %s", path, exc)
+            raise FPLAPIError(f"request failed for {path}: {exc}") from exc
         return self._parse_response(path, response, empty_ok=False)
 
     def _post_json(
         self, path: str, payload: dict[str, Any], *, empty_ok: bool
     ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
+        logger.debug("POST %s", url)
         try:
             response = self._client.post(url, json=payload)
         except httpx.HTTPError as exc:
-            raise FPLAPIError(f"request failed for {path}") from exc
+            logger.error("FPL API POST failed for %s: %s", path, exc)
+            raise FPLAPIError(f"request failed for {path}: {exc}") from exc
         return self._parse_response(path, response, empty_ok=empty_ok)
 
     def _parse_response(
         self, path: str, response: httpx.Response, *, empty_ok: bool
     ) -> dict[str, Any]:
+        logger.debug("FPL API %s -> HTTP %s", path, response.status_code)
         if response.status_code in {401, 403}:
+            logger.error(
+                "FPL API forbidden for %s (need valid FPLT_FPL_API_TOKEN?)", path
+            )
             raise FPLAPIError(
                 f"FPL API forbidden for {path}; live picks need a fresh "
                 "FPLT_FPL_API_TOKEN"
             )
         if response.status_code == 404:
+            logger.error("FPL API not found: %s", path)
             raise FPLAPIError(f"FPL API not found: {path}")
         if response.status_code >= 400:
             body = response.text[:500]
+            logger.error("FPL API HTTP %s for %s: %s", response.status_code, path, body)
             raise FPLAPIError(f"FPL API HTTP {response.status_code} for {path}: {body}")
         if not response.content:
             if empty_ok:
@@ -391,6 +411,7 @@ class FPLClient:
         try:
             payload = response.json()
         except ValueError as exc:
+            logger.error("FPL API returned non-JSON for %s", path)
             raise FPLAPIError(f"FPL API returned non-JSON for {path}") from exc
         if not isinstance(payload, dict):
             raise FPLAPIError(f"FPL API expected object for {path}")
@@ -422,11 +443,26 @@ def load_current_team(
     resolved = entry_id if entry_id is not None else cfg.entry_id
     if resolved is None:
         raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
+    logger.info(
+        "load_current_team entry_id=%s event=%s token=%s session=%s",
+        resolved,
+        event,
+        "set" if cfg.fpl_api_token else "unset",
+        "set" if cfg.fpl_session else "unset",
+    )
     api = FPLClient(client, session=cfg.fpl_session, api_token=cfg.fpl_api_token)
     try:
-        return api.current_team(resolved, event=event)
+        team = api.current_team(resolved, event=event)
     finally:
         api.close()
+    logger.info(
+        "loaded team source=%s picks=%s bank=%s free_transfers=%s",
+        team.source,
+        len(team.picks),
+        team.bank,
+        team.free_transfers,
+    )
+    return team
 
 
 def _optional_int(value: object) -> int | None:

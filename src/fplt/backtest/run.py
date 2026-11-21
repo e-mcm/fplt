@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +19,7 @@ from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.types import GWKey
 
 Refit = Literal["every_gw", "every_n_gw", "never"]
+logger = logging.getLogger(__name__)
 
 
 def run_backtest(
@@ -69,13 +71,36 @@ def run_backtest(
     store = DataStore(data_dir)
     pit = PITData(store)
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
+    logger.info(
+        "backtest season=%s gw=%s..%s models=%s steps=%s refit=%s seasons_back=%s",
+        season,
+        from_gw,
+        to_gw,
+        models,
+        steps,
+        refit,
+        seasons_back,
+    )
     ran: list[ModelSpec] = []
     for name in models:
         spec = _configured(specs[name], refit, seasons_back)
+        logger.info(
+            "fitting %s kind=%s refit=%s model_id=%s",
+            spec.name,
+            spec.kind,
+            spec.refit,
+            spec.model_id,
+        )
         model = get_model(spec.kind)(spec)
         frame = walk_forward(model, pit, as_ofs, steps=steps)
+        logger.info(
+            "%s wrote %s prediction rows",
+            spec.name,
+            frame.height,
+        )
         append_predictions(data_dir, frame)
         ran.append(spec)
+    logger.info("filling actuals for checked gameweeks")
     fill_actuals(data_dir, store)
     return ran
 

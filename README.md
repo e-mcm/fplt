@@ -57,6 +57,7 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
+| Verbose CLI logs | `uv run fplt -v plan …` / `uv run fplt backtest -v …` (DEBUG; default is INFO) |
 | Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
 | Apply plan to FPL (dry-run) | `make apply SEASON=2025-26 GW=10` or `uv run fplt apply --model … --season … --gw …` |
 | Apply plan to FPL (POST) | `make apply SEASON=2025-26 GW=10 CONFIRM=1` (needs `FPLT_FPL_API_TOKEN`) |

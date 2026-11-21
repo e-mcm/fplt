@@ -154,7 +154,7 @@ def compare_models(
     out = output_dir or _default_output_dir(data_dir, season, test_from_gw, test_to_gw)
     out.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "compare %s gw %s-%s fit_gw=%s steps=%s modes=%s models=%s",
+        "compare %s gw %s-%s fit_gw=%s steps=%s modes=%s models=%s out=%s",
         season,
         test_from_gw,
         test_to_gw,
@@ -162,6 +162,7 @@ def compare_models(
         steps,
         ",".join(chosen_modes),
         ",".join(chosen),
+        out,
     )
 
     runs: list[CompareRun] = []
@@ -180,6 +181,13 @@ def compare_models(
                     "(not OpenFPL scores). Set params.model_dir or "
                     "--openfpl-model-dir."
                 )
+            logger.info(
+                "compare run model=%s mode=%s refit=%s model_id=%s",
+                name,
+                mode,
+                spec.refit,
+                spec.model_id,
+            )
             model = get_model(spec.kind)(spec)
             logger.info(
                 "%s %s starting refit=%s seasons_back=%s",
@@ -199,6 +207,7 @@ def compare_models(
                 test_to_gw=test_to_gw,
                 steps=steps,
             )
+            logger.info("%s/%s wrote %s rows", name, mode, frame.height)
             append_predictions(data_dir, frame)
             logger.info(
                 "%s %s wrote %s rows in %.1fs",
@@ -209,7 +218,7 @@ def compare_models(
             )
             runs.append(CompareRun(model_name=name, mode=mode, spec=spec))
 
-    logger.info("filling actuals")
+    logger.info("filling actuals and writing summary under %s", out)
     fill_actuals(data_dir, store)
     ledger = read_predictions(data_dir)
     model_ids = {run.spec.model_id for run in runs}
