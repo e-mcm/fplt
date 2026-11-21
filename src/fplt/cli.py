@@ -262,7 +262,10 @@ def main(argv: list[str] | None = None) -> None:
     eval_components.add_argument(
         "--score-models",
         nargs="+",
-        help="Score YAML specs (default: dixon_coles_v1 poisson_score_v1)",
+        help=(
+            "Score YAML specs "
+            "(default: dixon_coles_v1 poisson_score_v1 odds_poisson_v1)"
+        ),
     )
     eval_components.add_argument(
         "--minutes-model",

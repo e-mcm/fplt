@@ -1,9 +1,10 @@
 """Walk-forward eval for layered components and an ``n_sims`` stability sweep.
 
-Scorelines: mean RPS and categorical log-loss (home/draw/away) for Dixon-Coles
-vs independent Poisson. Minutes: Brier on P(played) and P(≥60), sliced by
-stats ``source``. Involvement: MAE of predicted goal share vs realised share
-among players with minutes. The sims sweep refits ``dc_layered`` once and
+Scorelines: mean RPS, categorical log-loss (home/draw/away), and clean-sheet
+Brier (home & away) for Dixon-Coles, independent Poisson, and the odds
+Poisson baseline. Minutes: Brier on P(played) and P(≥60), sliced by stats
+``source``. Involvement: MAE of predicted goal share vs realised share among
+players with minutes. The sims sweep refits ``dc_layered`` once and
 re-predicts one deadline under several ``n_sims`` values.
 """
 
@@ -76,7 +77,7 @@ def run_component_eval(
         from_gw: First as-of gameweek scored.
         to_gw: Last as-of gameweek, inclusive.
         fit_gw: Deadline used for the sims sweep fit (default: ``from_gw``).
-        score_models: YAML score specs; default Dixon-Coles and Poisson.
+        score_models: YAML score specs; default DC, Poisson, and odds Poisson.
         minutes_model: Minutes component YAML name.
         involvement_model: Involvement component YAML name.
         layered_model: Composite YAML used for the ``n_sims`` sweep.
@@ -93,7 +94,11 @@ def run_component_eval(
     if from_gw > to_gw:
         raise ValueError(f"from_gw ({from_gw}) must be <= to_gw ({to_gw})")
     specs = load_model_specs()
-    score_names = score_models or ["dixon_coles_v1", "poisson_score_v1"]
+    score_names = score_models or [
+        "dixon_coles_v1",
+        "poisson_score_v1",
+        "odds_poisson_v1",
+    ]
     for name in [*score_names, minutes_model, involvement_model, layered_model]:
         if name not in specs:
             raise ValueError(f"unknown model spec {name!r}")
@@ -162,6 +167,8 @@ def _eval_scorelines(
         model = get_component(spec.kind)(spec)
         rps_vals: list[float] = []
         logloss_vals: list[float] = []
+        cs_home_vals: list[float] = []
+        cs_away_vals: list[float] = []
         for index, as_of in enumerate(as_ofs):
             view = _view(pit, as_of, spec)
             if should_refit(spec, index):
@@ -170,6 +177,7 @@ def _eval_scorelines(
             if fixtures.is_empty():
                 continue
             frame = record_scorelines(model, view, fixtures)
+            dist = model.predict(view, fixtures)
             # Actuals come from the store (post-deadline), not the PIT view.
             actuals = _score_actuals(store, as_of)
             joined = frame.join(actuals, on="fixture_id", how="inner")
@@ -194,8 +202,20 @@ def _eval_scorelines(
                     away,
                 )
             )
+            order = {int(fid): i for i, fid in enumerate(dist.fixture_ids.tolist())}
+            idx = [order[int(fid)] for fid in joined["fixture_id"].to_list()]
+            p_cs_home = dist.p_clean_sheet("home")[idx]
+            p_cs_away = dist.p_clean_sheet("away")[idx]
+            cs_home_vals.extend(((p_cs_home - (away == 0.0)) ** 2).tolist())
+            cs_away_vals.extend(((p_cs_away - (home == 0.0)) ** 2).tolist())
         rows.append(_metric("score", "rps", spec.name, "overall", rps_vals))
         rows.append(_metric("score", "logloss", spec.name, "overall", logloss_vals))
+        rows.append(
+            _metric("score", "brier_cs_home", spec.name, "overall", cs_home_vals)
+        )
+        rows.append(
+            _metric("score", "brier_cs_away", spec.name, "overall", cs_away_vals)
+        )
     return rows
 
 
