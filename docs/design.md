@@ -65,7 +65,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates, au
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
 | FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | Public finished-GW picks only; live GW is 403 without auth |
-| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit | Requires `pl_profile` cookie (`FPLT_FPL_SESSION`); see `fplt.data.fpl_client` |
+| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped |
 
@@ -440,7 +440,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 8.6 Running locally
 
 - Development: `make dagster-dev` (`dagster dev`).
-- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_SESSION`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
+- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it when `params.model_dir` is set (or via `--with-openfpl` / `--openfpl-model-dir`), and only for seasons from 2024-25 onwards. Empty `model_dir` yields zeros, not OpenFPL scores.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
@@ -479,7 +479,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 10.1 Inputs
 
 - Predictions for horizon H from one predictor (expected points; optionally samples).
-- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_SESSION` / `pl_profile`; else public finished-GW picks, no selling prices). `run_plan` (and thus `make plan` / CLI / automation) calls this whenever a pre-built `squad` is not passed. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
+- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_API_TOKEN`, the Bearer value from `x-api-authorization`; else public finished-GW picks, no selling prices). `run_plan` (and thus `make plan` / CLI / automation) calls this whenever a pre-built `squad` is not passed. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
 - Rules for the season (squad limits, FT banking cap, hit cost).
 
 ### 10.2 Formulation (multi-period ILP)
@@ -492,7 +492,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 ### 10.3 Output
 
-`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. The same deadline is never overwritten.
+`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. `<model_id>` is the model-spec hash. `hHH` is the horizon actually covered, capped at gameweek 38. The report labels players with the staged `web_name`, and falls back to `player_key` when that name is missing. The same model, deadline, and horizon are never overwritten. A repeat run still prints the transfer summary, then reports that the parquet already exists.
 
 Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
 

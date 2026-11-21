@@ -31,12 +31,13 @@ def _client(
     handler: httpx.MockTransport | None = None,
     *,
     session: str | None = None,
+    api_token: str | None = None,
 ) -> tuple[FPLClient, httpx.Client]:
     transport = handler
     if transport is None:
         transport = httpx.MockTransport(lambda _r: httpx.Response(500))
     http = httpx.Client(transport=transport, base_url=_API)
-    return FPLClient(http, session=session, base_url=_API), http
+    return FPLClient(http, session=session, api_token=api_token, base_url=_API), http
 
 
 def test_my_team_loads_selling_prices_and_free_transfers() -> None:
@@ -62,6 +63,25 @@ def test_my_team_loads_selling_prices_and_free_transfers() -> None:
     assert len(team.picks) == 15
     assert team.picks[0].selling_price == 46
     assert team.picks[0].element == payload["picks"][0]["element"]
+
+
+def test_my_team_sends_bearer_token_without_cookie() -> None:
+    payload = _load("my_team.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("x-api-authorization") == "Bearer eyJabc"
+        assert "pl_profile" not in request.headers.get("cookie", "")
+        return httpx.Response(200, json=payload)
+
+    api, http = _client(httpx.MockTransport(handler), api_token="Bearer eyJabc")
+    try:
+        team = api.current_team(42)
+    finally:
+        api.close()
+        http.close()
+
+    assert team.source == "my_team"
+    assert team.bank == 21
 
 
 def test_picks_payload_feeds_apply_entry_picks() -> None:
@@ -129,9 +149,9 @@ def test_live_picks_forbidden_without_session() -> None:
 
     api, http = _client(httpx.MockTransport(handler))
     try:
-        with pytest.raises(FPLAPIError, match="forbidden|FPLT_FPL_SESSION"):
+        with pytest.raises(FPLAPIError, match="forbidden|FPLT_FPL_API_TOKEN"):
             api.entry_picks(1, 10)
-        with pytest.raises(FPLAPIError, match="FPLT_FPL_SESSION"):
+        with pytest.raises(FPLAPIError, match="FPLT_FPL_API_TOKEN"):
             api.my_team(1)
     finally:
         api.close()
@@ -160,6 +180,52 @@ def test_load_current_team_uses_settings(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert team.entry_id == 42
     assert team.source == "my_team"
+
+
+def test_load_current_team_uses_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.delenv("FPLT_FPL_SESSION", raising=False)
+    monkeypatch.setenv("FPLT_ENTRY_ID", "42")
+    monkeypatch.setenv("FPLT_FPL_API_TOKEN", '"Bearer eyJfrom-env"')
+    get_settings.cache_clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("x-api-authorization") == "Bearer eyJfrom-env"
+        return httpx.Response(200, json=_load("my_team.json"))
+
+    http = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://fantasy.premierleague.com/api",
+    )
+    try:
+        team = load_current_team(client=http)
+    finally:
+        http.close()
+        get_settings.cache_clear()
+
+    assert team.source == "my_team"
+    assert team.entry_id == 42
+
+
+def test_blank_api_token_is_unset() -> None:
+    assert Settings(fpl_api_token=None).fpl_api_token is None
+    assert Settings(fpl_api_token="  ").fpl_api_token is None
+    assert Settings(fpl_api_token="Bearer eyJabc").fpl_api_token == "eyJabc"
+
+
+def test_pytest_ignores_repo_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text(
+        "FPLT_ENTRY_ID=999\nFPLT_FPL_API_TOKEN=eyJfile\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
+    monkeypatch.delenv("FPLT_FPL_API_TOKEN", raising=False)
+    loaded = Settings()
+    assert loaded.entry_id is None
+    assert loaded.fpl_api_token is None
 
 
 def test_load_current_team_requires_entry_id() -> None:

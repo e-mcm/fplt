@@ -9,7 +9,8 @@ never committed.
 | Variable | Purpose | Required? |
 |---|---|---|
 | `FPLT_ENTRY_ID` | FPL manager entry for live squad plans | For live team |
-| `FPLT_FPL_SESSION` | `pl_profile` cookie (selling prices / FT) | For authenticated my-team |
+| `FPLT_FPL_API_TOKEN` | Bearer token from `x-api-authorization` (selling prices / FT) | For authenticated my-team |
+| `FPLT_FPL_SESSION` | Legacy `pl_profile` cookie | Unused by the current API |
 | `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts | Optional |
 | `FPLT_SMTP_HOST` | SMTP host for recommendation email | Optional\* |
 | `FPLT_SMTP_PORT` | SMTP port (default `587`) | Optional |
@@ -31,7 +32,7 @@ real cookie or password values in git.
    mkdir -p ~/.config/fplt
    cp .env.example ~/.config/fplt/env   # from the repo root
    chmod 600 ~/.config/fplt/env
-   # edit: set FPLT_ENTRY_ID, FPLT_FPL_SESSION, FPLT_NTFY_URL and/or SMTP_*
+   # edit: set FPLT_ENTRY_ID, FPLT_FPL_API_TOKEN, FPLT_NTFY_URL and/or SMTP_*
    ```
 
    Override the path with `FPLT_ENV_FILE` if needed.

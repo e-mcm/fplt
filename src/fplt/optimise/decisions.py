@@ -39,6 +39,23 @@ from fplt.types import GWKey
 TeamLoader = Callable[..., CurrentTeam]
 
 
+class PlanExistsError(FileExistsError):
+    """The plan parquet for this model, deadline, and horizon is already on disk.
+
+    ``report`` is the transfer summary computed before the write was refused.
+    """
+
+    def __init__(self, path: Path, report: str) -> None:
+        """Remember the existing path and the summary that could not be saved.
+
+        Args:
+            path: Parquet path that already exists.
+            report: Markdown summary of the plan.
+        """
+        super().__init__(str(path))
+        self.report = report
+
+
 def candidates_as_of(view: PITView) -> pl.DataFrame:
     """Players and prices visible at ``view``'s deadline.
 
@@ -273,7 +290,8 @@ def run_plan(
 
     Raises:
         KeyError: The spec name or the gameweek is unknown.
-        FileExistsError: This deadline was already written.
+        PlanExistsError: This deadline and horizon were already written.
+            ``report`` on the exception is the summary.
         FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
             ``entry_json`` / ``squad`` was provided.
     """
@@ -298,8 +316,11 @@ def run_plan(
         horizon=len(window),
     )
     table = plan_table(solved, spec.model_id, season, gameweek, window)
-    path = write_plan(data_dir, table)
-    report = render_report(solved, season, window)
+    report = render_report(solved, season, window, names=_player_names(view))
+    try:
+        path = write_plan(data_dir, table)
+    except FileExistsError as exc:
+        raise PlanExistsError(Path(str(exc)), report) from exc
     (path.parent / "report.md").write_text(report, encoding="utf-8")
     return solved, path, report
 
@@ -491,6 +512,17 @@ def _actuals(frame: pl.DataFrame) -> pl.DataFrame:
             }
         )
     return frame.group_by("gw", "player_key").agg(pl.col("actual_pts").sum())
+
+
+def _player_names(view: PITView) -> dict[int, str]:
+    """Map ``player_key`` to the latest visible ``web_name`` for this season."""
+    frame = (
+        view.latest("players", ["season", "player_key"])
+        .filter(pl.col("season") == view.as_of.season)
+        .select("player_key", "web_name")
+        .collect()
+    )
+    return {int(key): str(name) for key, name in frame.iter_rows()}
 
 
 def _element_keys(view: PITView) -> dict[int, int]:

@@ -11,6 +11,7 @@ from fplt.automation.cycle import (
     catch_up,
     due_gameweek,
     pending_checked,
+    plans_exist,
     pre_deadline,
     reports,
 )
@@ -21,6 +22,7 @@ from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
 from fplt.orchestration.sensors import catchup_sensor, pre_deadline_sensor
 from fplt.settings import get_settings
+from fplt.types import GWKey
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
@@ -36,6 +38,7 @@ def test_a_deadline_is_due_only_inside_three_hours(tmp_path: Path) -> None:
     assert due.gw == 3
     waiting = pending_checked(store, tmp_path, ["rolling_mean_v1"])
     assert [key.gw for key in waiting] == [1, 2]
+    assert plans_exist(tmp_path, ["rolling_mean_v1"], GWKey("2024-25", 1), 0) is False
 
 
 def test_catch_up_plans_a_skipped_checked_week(tmp_path: Path) -> None:

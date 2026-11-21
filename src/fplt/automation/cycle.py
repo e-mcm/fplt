@@ -1,12 +1,12 @@
 """Catch up checked gameweeks, and refresh the one deadline inside three hours.
 
 A gameweek counts as done when every requested model has a plan parquet for
-that deadline. Catch-up walks the missing checked gameweeks in order, so a
-week that was skipped while the process was down is picked up on the next
-run. The pre-deadline refresh does the same for a single upcoming deadline
+that deadline and horizon. Catch-up walks the missing checked gameweeks in
+order, so a week that was skipped while the process was down is picked up on
+the next run. The pre-deadline refresh does the same for a single upcoming deadline
 and does not walk earlier weeks.
 
-When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_SESSION`` for the live squad),
+When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_API_TOKEN`` for the live squad),
 each plan starts from ``resolve_squad_state`` / ``load_current_team`` rather
 than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
 """
@@ -23,20 +23,23 @@ from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import resolve_squad_state, run_plan
-from fplt.optimise.plan import plan_parquet
+from fplt.optimise.plan import covered_horizon, plan_parquet
 from fplt.types import GWKey
 
 PRODUCTION_MODELS = ["rolling_mean_v1"]
 _WINDOW = timedelta(hours=3)
 
 
-def pending_checked(store: DataStore, root: Path, models: list[str]) -> list[GWKey]:
+def pending_checked(
+    store: DataStore, root: Path, models: list[str], horizon: int = 1
+) -> list[GWKey]:
     """Checked gameweeks that are still missing a plan, earliest first.
 
     Args:
         store: Staged tables, including ``gameweeks``.
         root: Data directory that contains ``plans/``.
         models: YAML spec names that must each have a plan.
+        horizon: Weeks the missing plan would cover.
 
     Returns:
         Deadlines whose ``data_checked`` flag is set and whose plan is absent.
@@ -46,7 +49,7 @@ def pending_checked(store: DataStore, root: Path, models: list[str]) -> list[GWK
     seen: set[GWKey] = set()
     for season, gameweek in frame.select("season", "gw").iter_rows():
         key = GWKey(str(season), int(gameweek))
-        if key in seen or plans_exist(root, models, key):
+        if key in seen or plans_exist(root, models, key, horizon):
             continue
         seen.add(key)
         waiting.append(key)
@@ -94,7 +97,7 @@ def catch_up(
     """
     chosen = PRODUCTION_MODELS if models is None else models
     done: list[GWKey] = []
-    for key in pending_checked(DataStore(data_dir), data_dir, chosen):
+    for key in pending_checked(DataStore(data_dir), data_dir, chosen, horizon):
         _play(data_dir, chosen, key, horizon)
         done.append(key)
     return done
@@ -119,7 +122,7 @@ def pre_deadline(
     """
     chosen = PRODUCTION_MODELS if models is None else models
     key = due_gameweek(DataStore(data_dir), now)
-    if key is None or plans_exist(data_dir, chosen, key):
+    if key is None or plans_exist(data_dir, chosen, key, horizon):
         return None
     _play(data_dir, chosen, key, horizon)
     return key
@@ -155,20 +158,24 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
             continue
 
 
-def plans_exist(root: Path, models: list[str], key: GWKey) -> bool:
-    """Whether every model already has a plan for ``key``.
+def plans_exist(root: Path, models: list[str], key: GWKey, horizon: int = 1) -> bool:
+    """Whether every model already has a plan for ``key`` at ``horizon``.
 
     Args:
         root: Data directory that contains ``plans/``.
         models: YAML spec names.
         key: Deadline to look up.
+        horizon: Weeks the plan covers. Weeks past 38 are not part of the file.
 
     Returns:
         True when each model's parquet is already on disk.
     """
+    weeks = covered_horizon(key.gw, horizon)
+    if weeks < 1:
+        return False
     specs = load_model_specs()
     return all(
-        plan_parquet(root, specs[name].model_id, key.season, key.gw).exists()
+        plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks).exists()
         for name in models
     )
 

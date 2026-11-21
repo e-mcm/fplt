@@ -14,7 +14,12 @@ from fplt.backtest.run import run_backtest
 from fplt.data.fpl_client import FPLAPIError
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.optimise.decisions import resolve_squad_state, run_decisions, run_plan
+from fplt.optimise.decisions import (
+    PlanExistsError,
+    resolve_squad_state,
+    run_decisions,
+    run_plan,
+)
 from fplt.settings import get_settings
 from fplt.types import GWKey
 
@@ -237,6 +242,10 @@ def _plan(args: argparse.Namespace) -> None:
                 args.gw,
                 args.horizon,
             )
+    except PlanExistsError as exc:
+        print(exc.report, end="")
+        print(f"plan already exists: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
     except (
         FileExistsError,
         FileNotFoundError,
@@ -248,3 +257,4 @@ def _plan(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(report, end="")
     print(path)
+    print(path.parent / "report.md")
