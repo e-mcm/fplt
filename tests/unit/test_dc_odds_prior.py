@@ -10,7 +10,7 @@ import pytest
 import fplt.models.components.score  # noqa: F401 — registers the component
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.models.components.score.dixon_coles import MatchScoreModel
+from fplt.models.components.score.dixon_coles import MatchScoreModel, _align_odds
 from fplt.models.components.score.odds_lambda import blend_lambda, odds_to_lambda
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.types import GWKey
@@ -187,6 +187,45 @@ def test_negative_market_prior_strength_raises() -> None:
                 params={"market_prior_strength": -0.1},
             )
         )
+
+
+def test_align_odds_scopes_fixture_id_by_season() -> None:
+    """FPL fixture_ids restart each season — do not join cross-season odds."""
+    fixtures = pl.DataFrame(
+        {
+            "season": ["2024-25"],
+            "fixture_id": [1],
+            "team_h_key": [10],
+            "team_a_key": [20],
+        }
+    )
+    odds = pl.DataFrame(
+        {
+            "season": ["2021-22", "2024-25"],
+            "fixture_id": [1, 1],
+            "team_h_key": [99, 10],
+            "team_a_key": [88, 20],
+            "kickoff_time": [
+                datetime(2021, 8, 14, tzinfo=UTC),
+                datetime(2024, 8, 16, tzinfo=UTC),
+            ],
+            "home_odds": [9.0, 1.50],
+            "draw_odds": [5.0, 4.0],
+            "away_odds": [1.20, 6.0],
+            "over_25_odds": [None, None],
+            "under_25_odds": [None, None],
+            "available_at": [
+                datetime(2021, 8, 14, tzinfo=UTC),
+                datetime(2024, 8, 16, tzinfo=UTC),
+            ],
+        }
+    )
+    aligned = _align_odds(fixtures, odds)
+    assert aligned["home_odds"][0] == pytest.approx(1.50)
+    # Prior-season-only odds with the same fixture_id must not match.
+    prior_only = odds.filter(pl.col("season") == "2021-22")
+    empty = _align_odds(fixtures, prior_only)
+    assert empty["home_odds"][0] is None
 
 
 def test_dixon_coles_odds_yaml_predicts(tmp_path: Path) -> None:
