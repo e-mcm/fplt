@@ -26,7 +26,8 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 
 ```bash
 uv sync                      # install
-cp .env.example .env         # set FPLT_DATA_DIR (+ entry / session / alerts as needed)
+cp .env.example .env         # optional: FPLT_DATA_DIR only — never paste the API token here
+uv run fplt auth set --entry-id YOUR_ID   # paste DevTools Bearer into ~/.config/fplt/env
 make check                   # lint, types, fast tests
 make dagster-dev             # Dagster UI at http://localhost:3000
 ```
@@ -43,7 +44,15 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | `FPLT_SMTP_HOST` / `FPLT_SMTP_FROM` / `FPLT_SMTP_TO` | Recommendation email (all three required or email is a no-op) |
 | `FPLT_SMTP_PORT` / `FPLT_SMTP_USER` / `FPLT_SMTP_PASSWORD` / `FPLT_SMTP_USE_TLS` | Optional SMTP details |
 
-`FPLT_FPL_API_TOKEN` is the Bearer value from the `x-api-authorization` header on a logged-in `my-team` request (DevTools → Network). Paste the token only, not the `Bearer ` prefix. It expires about every 8 hours. Without it, use a saved picks JSON (`fplt plan --entry-json …`) or public finished-gameweek picks via `--from-api` / `FPLT_ENTRY_ID` (no selling prices). Never commit a real token. Missing ntfy/SMTP config is a no-op.
+**Live team auth:** `FPLT_FPL_API_TOKEN` is the Bearer value from the `x-api-authorization` header on a logged-in `my-team` request (DevTools → Network). Paste the token only, not the `Bearer ` prefix. It expires about every 8 hours. **Never paste it into the repo `.env`.** Store it outside the checkout:
+
+```bash
+uv run fplt auth set --entry-id YOUR_ID    # prompts for the token → ~/.config/fplt/env
+uv run fplt auth status                    # shows expiry; warns when expired
+uv run fplt auth clear                     # drops the token
+```
+
+Settings load `~/.config/fplt/env` (or `$FPLT_ENV_FILE`) before the repo `.env`, same file launchd already uses. Without a token, use a saved picks JSON (`fplt plan --entry-json …`) or public finished-gameweek picks via `--from-api` / `FPLT_ENTRY_ID` (no selling prices). Missing ntfy/SMTP config is a no-op.
 
 ## Common tasks
 
@@ -64,9 +73,10 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Draft from empty (today's budget) | `uv run fplt plan --model … --season … --gw … --rebuild` (bank + selling prices; needs `my-team` / `--entry-json`) |
 | Apply plan to FPL (dry-run) | `make apply SEASON=2025-26 GW=10` or `uv run fplt apply --model … --season … --gw …` |
 | Apply plan to FPL (POST) | `make apply SEASON=2025-26 GW=10 CONFIRM=1` (needs `FPLT_FPL_API_TOKEN`) |
+| Store / refresh live-team token | `uv run fplt auth set --entry-id …` (writes `~/.config/fplt/env`) |
 | Leaderboard app | `make leaderboard` |
 
-Set `FPLT_ENTRY_ID` and `FPLT_FPL_API_TOKEN` in `.env` so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
+Run `fplt auth set` (or set `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` in `~/.config/fplt/env`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
 
 ## Adding things
 

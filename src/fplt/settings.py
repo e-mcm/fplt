@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
@@ -29,6 +30,19 @@ def bearer_token(value: str | None) -> str | None:
     return token or None
 
 
+def user_env_file() -> Path:
+    """Return the out-of-repo secrets file path.
+
+    Honours ``FPLT_ENV_FILE`` (same as ``deploy/launchd/run-with-env.sh``),
+    otherwise ``~/.config/fplt/env``. Prefer ``fplt auth set`` over editing
+    the repo ``.env``.
+    """
+    override = os.environ.get("FPLT_ENV_FILE")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".config" / "fplt" / "env"
+
+
 class Settings(BaseSettings):
     """Paths and the FPL entry this install optimises for.
 
@@ -37,7 +51,8 @@ class Settings(BaseSettings):
     ``/api/my-team/{entry_id}/`` (selling prices and free transfers) and is
     required for ``fplt apply --confirm`` (``POST /transfers/``, lineup).
     ``fpl_session`` is the retired ``pl_profile`` cookie and is still sent
-    when set. Never commit a real token or cookie.
+    when set. Never commit a real token or cookie; store them with
+    ``fplt auth`` under ``~/.config/fplt/env``.
     """
 
     model_config = SettingsConfigDict(
@@ -76,7 +91,11 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Skip the repo ``.env`` under pytest so a local entry id cannot leak in.
+        """Load process env, then ``~/.config/fplt/env``, then repo ``.env``.
+
+        User config beats the checkout ``.env`` so ``fplt auth set`` wins over
+        a stale or accidental repo paste. Pytest keeps init and process env
+        only so a local entry id cannot leak into tests.
 
         Args:
             settings_cls: The settings class being built.
@@ -86,11 +105,22 @@ class Settings(BaseSettings):
             file_secret_settings: File-based secrets source.
 
         Returns:
-            Sources in priority order. Pytest keeps init and process env only.
+            Sources in priority order (first wins).
         """
         if os.environ.get("PYTEST_CURRENT_TEST"):
             return init_settings, env_settings
-        return init_settings, env_settings, dotenv_settings, file_secret_settings
+        user_dotenv = DotEnvSettingsSource(
+            settings_cls,
+            env_file=user_env_file(),
+            env_file_encoding="utf-8",
+        )
+        return (
+            init_settings,
+            env_settings,
+            user_dotenv,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
 
 @lru_cache(maxsize=1)
