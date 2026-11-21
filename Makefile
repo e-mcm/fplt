@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain plan apply dagster-dev clean bootstrap-vaastav fetch-understat
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -64,6 +64,22 @@ eval-components:
 decisions-board:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make decisions-board SEASON=2024-25"; exit 1; fi
 	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),2) $(ARGS)
+
+# Multi-horizon decision bakeoff. Prediction ledger must already cover max H
+# (backtest --steps >= max HORIZONS). Archives each run because ledger/decisions
+# overwrites by model×gw (no horizon key).
+# Usage: make horizon-decisions SEASON=2024-25
+# Optional: HORIZONS='1 2 3 4' ARGS='--models openfpl_v1 dc_layered_v2 --from-gw 1 --to-gw 38'
+horizon-decisions:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make horizon-decisions SEASON=2024-25"; exit 1; fi
+	@data="$${FPLT_DATA_DIR:-./data}"; \
+	mkdir -p "$$data/sweep"; \
+	for H in $(or $(HORIZONS),1 2 3 4); do \
+		echo "=== horizon $$H ==="; \
+		rm -f "$$data/ledger/decisions/part.parquet"; \
+		uv run fplt decisions --season $(SEASON) --horizon $$H $(ARGS); \
+		cp "$$data/ledger/decisions/part.parquet" "$$data/sweep/decisions_h$$H.parquet"; \
+	done
 
 # Dump one model × GW realised arithmetic from ledger/decisions
 # Usage: make decisions-explain SEASON=2024-25 GW=2 MODEL=openfpl_v1
