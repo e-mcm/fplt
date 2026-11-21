@@ -15,8 +15,10 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
+from fplt.backtest.ledger import append_predictions
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
+from fplt.models.spec import load_model_specs
 from fplt.optimise.state import SquadState
 from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
@@ -287,4 +289,41 @@ def _league(root: Path) -> DataStore:
             }
         ),
     )
+    _predictions(root, players)
     return store
+
+
+def _predictions(root: Path, players: list[dict[str, object]]) -> None:
+    """Give each checked week a non-zero score so catch-up can plan."""
+    model_id = load_model_specs()["rolling_mean_v1"].model_id
+    records: list[dict[str, object]] = []
+    for gameweek in (1, 2, 3):
+        for row in players:
+            records.append(
+                {
+                    "model_id": model_id,
+                    "run_kind": "live",
+                    "as_of_season": "2024-25",
+                    "as_of_gw": gameweek,
+                    "target_season": "2024-25",
+                    "target_gw": gameweek,
+                    "horizon": 1,
+                    "player_key": row["player_key"],
+                    "position": row["position"],
+                    "fixture_id": row["player_key"],
+                    "xpts": float(row["player_key"]),
+                    "xpts_sd": None,
+                    "p_haul": None,
+                    "p_60": None,
+                    "actual_pts": None,
+                    "actual_minutes": None,
+                }
+            )
+    frame = pl.DataFrame(records).with_columns(
+        pl.col("xpts_sd").cast(pl.Float64()),
+        pl.col("p_haul").cast(pl.Float64()),
+        pl.col("p_60").cast(pl.Float64()),
+        pl.col("actual_pts").cast(pl.Int64()),
+        pl.col("actual_minutes").cast(pl.Int64()),
+    )
+    append_predictions(root, frame)
