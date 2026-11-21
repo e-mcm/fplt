@@ -2,9 +2,10 @@
 
 Fantasy Premier League authenticates ``/api/my-team/{id}/`` with a Bearer JWT
 from the ``x-api-authorization`` header (typically ~8 hours). There is no
-supported password login for third-party tools. This module stores a
-DevTools-pasted token (and optional entry id) under ``~/.config/fplt/env`` so
-operators never commit secrets into the checkout.
+supported password login for third-party tools. Prefer
+``fplt auth from-browser`` (reads local browser ``oidc.user`` localStorage) or
+``fplt auth set``; both write under ``~/.config/fplt/env`` so operators never
+commit secrets into the checkout.
 """
 
 from __future__ import annotations

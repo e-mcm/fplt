@@ -65,7 +65,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
 | FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | Public finished-GW picks only; live GW is 403 without auth |
-| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`, ~8h JWT). Store via `fplt auth` → `~/.config/fplt/env` — never the repo `.env`. `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` / `fplt.auth` |
+| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`, ~8h JWT from browser `oidc.user` localStorage). Prefer `fplt auth from-browser` → `~/.config/fplt/env` — never the repo `.env`. `pl_profile` cookies are legacy. See `fplt.browser_auth` / `fplt.auth` |
 | FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match; team Deep / PPDA / xG per match | Player rows in `understat_player_matches` (`player_key` null until mapped). Team Deep/PPDA/xG in `understat_team_matches` from league-page `teamsData` (not `getMatchData`) |
@@ -528,6 +528,7 @@ fplt/
 ├── src/fplt/
 │   ├── settings.py              # pydantic-settings (paths, FPL entry id; loads ~/.config/fplt/env)
 │   ├── auth.py                  # fplt auth: store Bearer token outside the repo
+│   ├── browser_auth.py          # fplt auth from-browser: local Chrome/Firefox localStorage
 │   ├── types.py                 # GWKey, enums
 │   ├── data/                    # FPL client, raw writer, staging, DataStore, PITData
 │   ├── schemas/                 # pandera.polars schemas

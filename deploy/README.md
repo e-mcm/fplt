@@ -30,7 +30,7 @@ real cookie or password values in git.
    (never paste `FPLT_FPL_API_TOKEN` into the repo `.env`):
 
    ```bash
-   uv run fplt auth set --entry-id YOUR_ID   # prompts; writes ~/.config/fplt/env
+   uv run fplt auth from-browser --entry-id YOUR_ID   # local Chrome/Firefox localStorage
    # optional alerts still go in the same file:
    mkdir -p ~/.config/fplt
    chmod 600 ~/.config/fplt/env
