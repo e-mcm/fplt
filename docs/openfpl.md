@@ -41,10 +41,17 @@ earlier (`compare_from` in the YAML, default `2024-25`).
 `fplt.models.external.openfpl_samples` builds the 228 OpenFPL xscaler columns
 from PIT FPL + Understat tables and checks names via `OPENFPL_FEATURE_NAMES`.
 The adapter attaches that map as each runner row's `features` object.
-Team/opponent **Deep** and **PPDA** are still 0.0 (those metrics are on
-Understat match HTML, not `getMatchData`). Re-stage after the ICT/Understat
-widen before a real `model_dir` smoke. Keep OpenFPL out of the default
-compare/eval set until that smoke looks sane.
+Team/opponent **Deep** and **PPDA** come from staged `understat_team_matches`
+(league-page `teamsData`); without that table they stay 0.0. Fetch + ingest:
+
+```bash
+make fetch-understat SEASON=2024-25
+# then materialise the understat_ingest Dagster asset/job, or call
+# fplt.data.understat.ingest_understat on $FPLT_DATA_DIR.
+```
+
+Keep OpenFPL out of the default compare/eval set until a real `model_dir`
+smoke looks sane.
 
 ## Smoke
 

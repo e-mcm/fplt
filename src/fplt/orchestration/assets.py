@@ -115,9 +115,10 @@ pre_deadline_job = dg.define_asset_job(
 
 @dg.asset(name="understat_ingest")
 def understat_ingest() -> int:
-    """Stage Understat xG/xA from write-once raw match JSON.
+    """Stage Understat player xG and team Deep/PPDA from write-once raw JSON.
 
-    Reads ``$FPLT_DATA_DIR/raw/understat/...`` and the repo id maps at
+    Reads ``$FPLT_DATA_DIR/raw/understat/...`` (match payloads + league
+    ``teamsData`` snapshots) and the repo id maps at
     ``configs/understat/id_maps.yaml``. Does not touch FPL snapshot ingest.
     """
     settings = get_settings()

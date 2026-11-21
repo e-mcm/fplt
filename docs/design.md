@@ -68,7 +68,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
 | FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
-| Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped. Team-level Deep/PPDA for OpenFPL samples still need match-stats scrape (not in `getMatchData`) |
+| Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match; team Deep / PPDA / xG per match | Player rows in `understat_player_matches` (`player_key` null until mapped). Team Deep/PPDA/xG in `understat_team_matches` from league-page `teamsData` (not `getMatchData`) |
 
 ### 4.2 Identifiers
 
@@ -92,12 +92,14 @@ data/
 │   │   └── event_live/gw=12/captured_at=.../event_live.json.gz
 │   └── understat/season=2026-27/
 │       ├── dates/captured_at=.../dates.json.gz
+│       ├── teams/captured_at=.../teams.json.gz  # league teamsData (Deep/PPDA)
 │       └── match_id=<id>/match.json.gz   # getMatchData AJAX payload
 ├── staged/                      # typed parquet, one table per entity, derived from raw
 │   ├── players/  teams/  fixtures/  gameweeks/
 │   ├── player_status/           # status/news/price/ep_next per snapshot (time series)
 │   ├── player_fixture_stats/    # actuals from event_live
-│   └── understat_player_matches/
+│   ├── understat_player_matches/
+│   └── understat_team_matches/  # Deep / PPDA / team xG per match
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
@@ -107,7 +109,7 @@ data/
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet.
 
-Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON onto the `snapshots` branch; the Dagster `understat_ingest` asset stages them with `available_at = kickoff + 3h`.
+Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON plus league `teamsData` onto the `snapshots` branch; the Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
 
 ### 4.4 Point-in-time access (`PITData`)
 
@@ -383,7 +385,7 @@ Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snaps
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
-- Sample features matching OpenFPL's published `xscaler` schema (~228 columns) are built in `fplt.models.external.openfpl_samples` from PIT FPL + Understat tables. Team/opponent Deep and PPDA stay 0 until a match-stats scrape exists. See [`docs/openfpl.md`](openfpl.md).
+- Sample features matching OpenFPL's published `xscaler` schema (~228 columns) are built in `fplt.models.external.openfpl_samples` from PIT FPL + Understat tables (`understat_team_matches` supplies Deep/PPDA). See [`docs/openfpl.md`](openfpl.md).
 - Runs in its own uv environment (`external/openfpl/`) as a subprocess. The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, and joins each score back by request `row_id` (which already carries `player_key`). `web_name` is sent as a label and does not need to be unique. It returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. `params.model_dir` is `external/openfpl/OpenFPL`. That ensemble is about 750MB (files near GitHub's 100MB limit), so the first real predict sparse-clones it there and `uv sync`s the runner env when `.venv` is missing. An empty `model_dir` or a checkout without `models/xscaler.save` raises; the runner does not substitute zeros. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / a `model_dir` other than this default), not in `CORE_MODELS`. The contract suite drives the adapter with an offline echo runner.
 - Operator steps (`uv sync`, season floor, feature gap): [`docs/openfpl.md`](openfpl.md).
 

@@ -38,7 +38,7 @@ class OpenFPLPredictor:
     ``external/openfpl/OpenFPL``, fetched on first predict. An empty
     ``model_dir`` or a checkout without ``models/xscaler.save`` raises.
     Each row carries an OpenFPL feature map built from PIT FPL + Understat
-    tables (Deep/PPDA still 0 until match-stats scrape).
+    tables (including Deep/PPDA when ``understat_team_matches`` is staged).
     """
 
     def __init__(self, spec: ModelSpec) -> None:

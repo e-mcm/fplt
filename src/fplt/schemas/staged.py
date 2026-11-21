@@ -117,6 +117,32 @@ class UnderstatPlayerMatchSchema(pa.DataFrameModel):
         coerce = True
 
 
+class UnderstatTeamMatchSchema(pa.DataFrameModel):
+    """One team's Understat match row (Deep / PPDA / xG).
+
+    Sourced from the league-page ``teamsData`` history (not ``getMatchData``).
+    ``match_id`` is joined from the season dates list on kickoff + side.
+    """
+
+    season: str
+    match_id: int
+    team_key: int
+    deep: float = pa.Field(ge=0)
+    deep_allowed: float = pa.Field(ge=0)
+    ppda_att: float = pa.Field(ge=0)
+    ppda_def: float = pa.Field(ge=0)
+    ppda_allowed_att: float = pa.Field(ge=0)
+    ppda_allowed_def: float = pa.Field(ge=0)
+    xg: float = pa.Field(ge=0)
+    xga: float = pa.Field(ge=0)
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 class PlayerFixtureStatsSchema(pa.DataFrameModel):
     season: str
     gw: int = pa.Field(ge=1, le=38)
@@ -159,6 +185,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "player_status": PlayerStatusSchema,
     "player_fixture_stats": PlayerFixtureStatsSchema,
     "understat_player_matches": UnderstatPlayerMatchSchema,
+    "understat_team_matches": UnderstatTeamMatchSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -174,6 +201,7 @@ TABLE_KEYS: dict[str, list[str]] = {
         "understat_player_id",
         "available_at",
     ],
+    "understat_team_matches": ["season", "match_id", "team_key", "available_at"],
 }
 
 POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
@@ -271,6 +299,21 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "xg_chain": pl.Float64(),
         "xg_buildup": pl.Float64(),
         "minutes": pl.Int64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "understat_team_matches": {
+        "season": pl.Utf8(),
+        "match_id": pl.Int64(),
+        "team_key": pl.Int64(),
+        "deep": pl.Float64(),
+        "deep_allowed": pl.Float64(),
+        "ppda_att": pl.Float64(),
+        "ppda_def": pl.Float64(),
+        "ppda_allowed_att": pl.Float64(),
+        "ppda_allowed_def": pl.Float64(),
+        "xg": pl.Float64(),
+        "xga": pl.Float64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

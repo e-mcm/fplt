@@ -24,11 +24,17 @@ season-local `element_id` / team `id`.
 ## Fetch → stage
 
 ```bash
-# Write-once raw match JSON under $FPLT_DATA_DIR/raw/understat/...
-python scripts/fetch_understat.py --out "$FPLT_DATA_DIR/raw" --season 2024-25
+# Write-once raw match JSON + league teamsData (Deep/PPDA) under raw/understat/...
+make fetch-understat SEASON=2024-25
+# equivalent: python scripts/fetch_understat.py --out "$FPLT_DATA_DIR/raw" --season 2024-25
 
-# Or materialise the understat_ingest asset / understat_ingest job in Dagster.
+# Stage player matches + understat_team_matches (Dagster understat_ingest job).
 make dagster-dev
 ```
+
+`teams/captured_at=.../teams.json.gz` holds league-page `teamsData` (Deep,
+PPDA, team xG history). Ingest joins `match_id` from the dates snapshot.
+Default delay between match requests is 0.2s — raise `--delay` if Understat
+rate-limits. Offline tests use fixtures under `tests/fixtures/understat/`.
 
 Raw files are never overwritten. Maps live in git so reviews catch bad joins.

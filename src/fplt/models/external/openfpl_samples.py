@@ -66,10 +66,10 @@ def build_openfpl_features(
     """Build one OpenFPL feature dict per ``request`` row.
 
     Rolling means use the last 1/3/5/10/38 visible appearances before the
-    view cutoff. Team/opponent Deep and PPDA are filled with 0.0 until
-    Understat match-stats scrape lands; team xG/xGA use summed player xG
-    when Understat rows exist. Availability is ``chance_of_playing / 100``
-    (default 1.0 when unknown).
+    view cutoff. Team/opponent Deep and PPDA come from
+    ``understat_team_matches`` when staged; otherwise they stay 0.0. Team
+    xG/xGA prefer that table too, else summed player xG. Availability is
+    ``chance_of_playing / 100`` (default 1.0 when unknown).
 
     Args:
         view: Point-in-time tables at one deadline.
@@ -257,18 +257,40 @@ def _team_fpl_history(view: PITView) -> pl.DataFrame:
 
 
 def _team_understat_history(view: PITView) -> pl.DataFrame:
-    """Team xG per Understat match (sum of player xG). Deep/PPDA stay absent."""
+    """Team xG / Deep / PPDA per Understat match visible at the cutoff."""
+    empty = pl.DataFrame(
+        schema={
+            "team_key": pl.Int64(),
+            "match_id": pl.Int64(),
+            "available_at": pl.Datetime(time_zone="UTC"),
+            "xg": pl.Float64(),
+            "xga": pl.Float64(),
+            "deep": pl.Float64(),
+            "deep_allowed": pl.Float64(),
+            "ppda_att": pl.Float64(),
+            "ppda_def": pl.Float64(),
+            "ppda_allowed_att": pl.Float64(),
+            "ppda_allowed_def": pl.Float64(),
+        }
+    )
+    staged = view.table("understat_team_matches").collect()
+    if not staged.is_empty():
+        return staged.select(
+            "team_key",
+            "match_id",
+            "available_at",
+            pl.col("xg").cast(pl.Float64),
+            pl.col("xga").cast(pl.Float64),
+            pl.col("deep").cast(pl.Float64),
+            pl.col("deep_allowed").cast(pl.Float64),
+            pl.col("ppda_att").cast(pl.Float64),
+            pl.col("ppda_def").cast(pl.Float64),
+            pl.col("ppda_allowed_att").cast(pl.Float64),
+            pl.col("ppda_allowed_def").cast(pl.Float64),
+        )
     players = view.table("understat_player_matches").collect()
     if players.is_empty():
-        return pl.DataFrame(
-            schema={
-                "team_key": pl.Int64(),
-                "match_id": pl.Int64(),
-                "available_at": pl.Datetime(time_zone="UTC"),
-                "xg": pl.Float64(),
-                "xga": pl.Float64(),
-            }
-        )
+        return empty
     team = players.group_by("team_key", "match_id", "available_at", "season").agg(
         pl.col("xg").sum().alias("xg")
     )
@@ -282,7 +304,16 @@ def _team_understat_history(view: PITView) -> pl.DataFrame:
         on="match_id",
         how="left",
     ).filter(pl.col("team_key") != pl.col("other_team"))
-    return sides.select("team_key", "match_id", "available_at", "xg", "xga")
+    return sides.select(
+        "team_key", "match_id", "available_at", "xg", "xga"
+    ).with_columns(
+        pl.lit(0.0).alias("deep"),
+        pl.lit(0.0).alias("deep_allowed"),
+        pl.lit(0.0).alias("ppda_att"),
+        pl.lit(0.0).alias("ppda_def"),
+        pl.lit(0.0).alias("ppda_allowed_att"),
+        pl.lit(0.0).alias("ppda_allowed_def"),
+    )
 
 
 def _league_ranks_by_fixture(view: PITView) -> dict[tuple[str, int, int], float]:
@@ -433,7 +464,22 @@ def _fill_team_understat(
     for window in _HORIZONS:
         features[f"{prefix} xg {window}"] = _mean(hist["xg"].to_list(), window)
         features[f"{prefix} xga {window}"] = _mean(hist["xga"].to_list(), window)
-        # Deep / PPDA not available from getMatchData — leave at 0.0
+        features[f"{prefix} deep {window}"] = _mean(hist["deep"].to_list(), window)
+        features[f"{prefix} deep allowed {window}"] = _mean(
+            hist["deep_allowed"].to_list(), window
+        )
+        features[f"{prefix} ppda att {window}"] = _mean(
+            hist["ppda_att"].to_list(), window
+        )
+        features[f"{prefix} ppda def {window}"] = _mean(
+            hist["ppda_def"].to_list(), window
+        )
+        features[f"{prefix} ppda allowed att {window}"] = _mean(
+            hist["ppda_allowed_att"].to_list(), window
+        )
+        features[f"{prefix} ppda allowed def {window}"] = _mean(
+            hist["ppda_allowed_def"].to_list(), window
+        )
 
 
 def _fill_means(
