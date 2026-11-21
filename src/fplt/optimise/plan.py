@@ -72,6 +72,9 @@ def plan_squad(
     Args:
         players: Candidates matching ``CandidateSchema``.
         points: ``HorizonPointsSchema``. A missing step is zero points.
+            Rows for ``player_key`` values absent from ``players`` are
+            ignored (common for mid-season additions that appear in the
+            prediction universe before they have a PIT price).
         state: Bank, free transfers, and owned selling prices.
         initial: The owned list is empty and the first week is a draft.
         horizon: Number of gameweeks, including the one to act on.
@@ -760,6 +763,7 @@ def _expected(
     count: int,
     horizon: int,
 ) -> np.ndarray:
+    """Accumulate xpts onto the candidate index; skip non-candidates."""
     expected = np.zeros((count, horizon), dtype=np.float64)
     for row in points.iter_rows(named=True):
         step = int(row["step"])
@@ -767,7 +771,8 @@ def _expected(
             raise ValueError(f"point step {step} is outside the horizon")
         key = int(row["player_key"])
         if key not in index:
-            raise ValueError(f"points refer to unknown player {key}")
+            # Not priced at this deadline — cannot be selected.
+            continue
         expected[index[key], step] += float(row["xpts"])
     return expected
 
