@@ -19,8 +19,7 @@ onwards.
    ```
 
 2. Clone OpenFPL somewhere outside this repo (it ships the fitted `models/`
-   ensemble). Point the YAML at that clone when the feature matrix is ready
-   (see **Feature matrix gap** below):
+   ensemble). Point the YAML at that clone:
 
    ```yaml
    # configs/models/openfpl_v1.yaml
@@ -56,16 +55,15 @@ and returns **0.0 for every row**. That keeps the contract suite offline; those
 zeros are **not** OpenFPL scores. Do not put an empty-dir run on the
 leaderboard as a real benchmark.
 
-## Feature matrix gap
+## Feature matrix
 
-Real OpenFPL inference needs the wide sample columns expected by
-`models/xscaler.save` (~228 features: rolling FPL stats, Understat/xG-style
-fields, opponent context, availability, … — the same schema as OpenFPL’s
-`data/samples.csv`). The fplt adapter currently sends only identity fields
-(`season`, `gw`, `position`, `openfpl_player_id`). Until a feature builder
-lands (rebuild from PIT/Understat, or call OpenFPL’s own pipeline), a
-non-empty `model_dir` that contains the published ensemble **raises** rather
-than inventing scores. Keep OpenFPL out of the default compare/eval set.
+`fplt.models.external.openfpl_samples` builds the 228 OpenFPL xscaler columns
+from PIT FPL + Understat tables and checks names via `OPENFPL_FEATURE_NAMES`.
+The adapter attaches that map as each runner row's `features` object.
+Team/opponent **Deep** and **PPDA** are still 0.0 (those metrics are on
+Understat match HTML, not `getMatchData`). Re-stage after the ICT/Understat
+widen before a real `model_dir` smoke. Keep OpenFPL out of the default
+compare/eval set until that smoke looks sane.
 
 ## Smoke
 
@@ -73,9 +71,9 @@ than inventing scores. Keep OpenFPL out of the default compare/eval set.
 # Offline zeros only (empty model_dir) — contracts / wiring, not a baseline
 uv run fplt backtest --season 2024-25 --from-gw 1 --to-gw 1 --models openfpl_v1
 
-# Opt into the compare / eval set (still zeros until features exist)
-make eval-board SEASON=2024-25 ARGS='--with-openfpl --from-gw 1 --to-gw 1'
-make compare-models SEASON=2024-25 ARGS='--with-openfpl --test-from-gw 1 --test-to-gw 1'
+# Real ensemble (after re-stage + model_dir)
+make eval-board SEASON=2024-25 ARGS='--openfpl-model-dir /path/to/OpenFPL --from-gw 1 --to-gw 1'
+make compare-models SEASON=2024-25 ARGS='--with-openfpl --openfpl-model-dir /path/to/OpenFPL --test-from-gw 1 --test-to-gw 1'
 make leaderboard
 ```
 

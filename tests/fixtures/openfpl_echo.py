@@ -22,12 +22,17 @@ def main() -> None:
             name = "Nobody"
         elif mode == "rename":
             name = "Saka"
+        if mode == "features":
+            # Stay inside PredictionSchema xpts bounds; 7 = “full matrix present”.
+            score = 7.0 if len(row.get("features") or {}) == 228 else 0.0
+        else:
+            score = float(len(row["openfpl_player_id"]))
         rows.append(
             {
                 "row_id": row["row_id"],
                 "season": row["season"],
                 "openfpl_player_id": name,
-                "prediction": float(len(row["openfpl_player_id"])),
+                "prediction": score,
             }
         )
     json.dump({"rows": rows}, sys.stdout)

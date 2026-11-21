@@ -160,14 +160,11 @@ def test_missing_model_checkout_raises(tmp_path: Path) -> None:
         model.predict(data.view(_AS_OF), _HORIZON)
 
 
-def test_real_checkout_without_features_raises(tmp_path: Path) -> None:
+def test_payload_includes_openfpl_feature_matrix(tmp_path: Path) -> None:
     _store, data = _named(tmp_path)
-    checkout = tmp_path / "openfpl"
-    (checkout / "models").mkdir(parents=True)
-    (checkout / "models" / "xscaler.save").write_bytes(b"stub")
-    model = OpenFPLPredictor(_spec(model_dir=str(checkout)))
-    with pytest.raises(ValueError, match="feature matrix"):
-        model.predict(data.view(_AS_OF), _HORIZON)
+    model = OpenFPLPredictor(_spec(command=_command("features")))
+    got = model.predict(data.view(_AS_OF), _HORIZON).sort("player_key")
+    assert got["xpts"].to_list() == [7.0, 7.0]
 
 
 def test_default_python_prefers_isolated_venv(

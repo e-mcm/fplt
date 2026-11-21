@@ -11,6 +11,7 @@ from typing import Any, cast
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.external.openfpl_samples import build_openfpl_features
 from fplt.models.predictions import prediction_frame
 from fplt.models.spec import ModelSpec, register_model, write_identity
 from fplt.models.universe import player_fixtures
@@ -26,9 +27,9 @@ class OpenFPLPredictor:
     ``fit`` does nothing: the published ensemble is already fitted. Target
     seasons before ``compare_from`` (2024-25 in the YAML spec) raise, because
     those seasons are in OpenFPL's training data. Without ``model_dir`` the
-    runner returns zeros; those zeros are not OpenFPL scores. A non-empty
-    ``model_dir`` still cannot produce real scores until the adapter builds
-    OpenFPL's sample feature matrix (see ``docs/openfpl.md``).
+    runner returns zeros; those zeros are not OpenFPL scores. With
+    ``model_dir`` set, each row carries an OpenFPL feature map built from
+    PIT FPL + Understat tables (Deep/PPDA still 0 until match-stats scrape).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -51,8 +52,8 @@ class OpenFPLPredictor:
         if joined["openfpl_player_id"].null_count():
             raise ValueError("a player-fixture has no OpenFPL player id")
         request = joined.with_row_index("row_id")
-        _require_feature_path(self.spec)
-        response = _invoke(self.spec, _payload(request))
+        features = build_openfpl_features(view, request)
+        response = _invoke(self.spec, _payload(request, features))
         scored = _attach(request, response, names)
         return prediction_frame(
             self.spec,
@@ -125,9 +126,13 @@ def _player_names(view: PITView, seasons: list[str]) -> pl.DataFrame:
     return players
 
 
-def _payload(request: pl.DataFrame) -> dict[str, list[dict[str, object]]]:
+def _payload(
+    request: pl.DataFrame, features: list[dict[str, float]]
+) -> dict[str, list[dict[str, object]]]:
+    if len(features) != request.height:
+        raise ValueError("OpenFPL feature rows must align with player-fixtures")
     rows: list[dict[str, object]] = []
-    for row in request.iter_rows(named=True):
+    for row, feature_row in zip(request.iter_rows(named=True), features, strict=True):
         rows.append(
             {
                 "row_id": int(row["row_id"]),
@@ -135,6 +140,7 @@ def _payload(request: pl.DataFrame) -> dict[str, list[dict[str, object]]]:
                 "gw": int(row["gw"]),
                 "position": row["position"],
                 "openfpl_player_id": row["openfpl_player_id"],
+                "features": feature_row,
             }
         )
     return {"rows": rows}
@@ -155,29 +161,6 @@ def _invoke(
         detail = completed.stderr.strip() or "openfpl runner failed"
         raise RuntimeError(detail)
     return _response_frame(completed.stdout)
-
-
-def _require_feature_path(spec: ModelSpec) -> None:
-    """Refuse a real OpenFPL checkout until sample features are wired.
-
-    Empty ``model_dir`` keeps the zero path for the contract suite. A custom
-    ``params.command`` (tests) bypasses this check. A missing checkout still
-    raises as before; a present checkout raises until the adapter builds the
-    OpenFPL sample feature matrix.
-    """
-    if _string_list(spec.params.get("command")) is not None:
-        return
-    model_dir = spec.params.get("model_dir")
-    if not isinstance(model_dir, str) or not model_dir.strip():
-        return
-    scaler = Path(model_dir) / "models" / "xscaler.save"
-    if not scaler.is_file():
-        raise RuntimeError(f"OpenFPL models not found in {model_dir}")
-    raise ValueError(
-        "OpenFPL model_dir is set but the adapter does not build the OpenFPL "
-        "sample feature matrix yet (xscaler expects ~228 columns). Leave "
-        "model_dir empty for offline zeros, or see docs/openfpl.md."
-    )
 
 
 def _command(spec: ModelSpec) -> list[str]:
