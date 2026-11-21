@@ -14,6 +14,7 @@ from fplt.models.components.involvement.rates import (
     appearance_history,
     current_teams,
     latest_rows,
+    penalty_takers,
     position_goal_assist_rates,
     shrunk_rate,
     team_share,
@@ -28,10 +29,11 @@ class InvolvementShares:
 
     ``window`` is how many of the player's latest appearances set the rate.
     ``shrinkage`` is pseudo-nineties of the position's per-90 rate, which
-    itself uses every visible appearance. A penalty miss anywhere in the
-    visible history marks the taker and adds ``penalty_bonus`` goals per 90
-    before the team shares are normalised. Own goals stay out of these
-    weights; the simulator keeps an unattributed bucket for them.
+    itself uses every visible appearance. The primary penalty taker
+    (``penalties_order == 1`` on the latest PIT ``player_status``) gets
+    ``penalty_bonus`` goals per 90 before team shares are normalised; when
+    order is null, a visible ``penalties_missed`` is the fallback. Own goals
+    stay out of these weights; the simulator keeps an unattributed bucket.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -64,9 +66,7 @@ class InvolvementShares:
             return
         prior = position_goal_assist_rates(history)
         recent = latest_rows(history, self._window)
-        takers = set(
-            history.filter(pl.col("penalties_missed") > 0)["player_key"].to_list()
-        )
+        takers = penalty_takers(view, history)
         grouped = recent.group_by("player_key").agg(
             pl.col("position").last(),
             pl.col("goals_scored").sum(),

@@ -17,6 +17,7 @@ from fplt.models.components.involvement.rates import (
     appearance_history,
     current_teams,
     latest_rows,
+    penalty_takers,
     position_goal_assist_rates,
     shrunk_rate,
     team_share,
@@ -34,9 +35,11 @@ class InvolvementXg:
 
     ``window`` and ``shrinkage`` match ``InvolvementShares``. ``xg_blend`` in
     ``[0, 1]`` is the weight on the Understat rate when both signals exist.
-    ``penalty_bonus`` is added to the blended goal rate for anyone with a
-    visible penalty miss. After ``fit``, ``own_goal_weight`` and ``p_assist``
-    hold calibrated simulator knobs (defaults when history is empty).
+    ``penalty_bonus`` is added to the blended goal rate for the primary
+    penalty taker (``penalties_order == 1``), falling back to a visible
+    penalty miss when order is null. After ``fit``, ``own_goal_weight`` and
+    ``p_assist`` hold calibrated simulator knobs (defaults when history is
+    empty).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -74,10 +77,9 @@ class InvolvementXg:
         self.own_goal_weight = _DEFAULT_OWN_GOAL
         self.p_assist = _DEFAULT_P_ASSIST
         history = appearance_history(view)
-        fpl_goal, fpl_assist, takers = _fpl_rates(
-            history, self._window, self._shrinkage
-        )
+        fpl_goal, fpl_assist = _fpl_rates(history, self._window, self._shrinkage)
         xg_goal, xg_assist = _xg_rates(view, history, self._window, self._shrinkage)
+        takers = penalty_takers(view, history)
         players = set(fpl_goal) | set(fpl_assist) | set(xg_goal) | set(xg_assist)
         for player in players:
             self._goal[player] = _blend_rate(
@@ -139,12 +141,11 @@ class InvolvementXg:
 
 def _fpl_rates(
     history: pl.DataFrame, window: int, shrinkage: float
-) -> tuple[dict[int, float], dict[int, float], set[int]]:
+) -> tuple[dict[int, float], dict[int, float]]:
     if history.is_empty():
-        return {}, {}, set()
+        return {}, {}
     prior = position_goal_assist_rates(history)
     recent = latest_rows(history, window)
-    takers = set(history.filter(pl.col("penalties_missed") > 0)["player_key"].to_list())
     goal: dict[int, float] = {}
     assist: dict[int, float] = {}
     grouped = recent.group_by("player_key").agg(
@@ -164,7 +165,7 @@ def _fpl_rates(
         assist[player] = shrunk_rate(
             float(row["assists"]), nineties, assist_prior, shrinkage
         )
-    return goal, assist, takers
+    return goal, assist
 
 
 def _xg_rates(

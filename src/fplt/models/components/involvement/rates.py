@@ -86,6 +86,38 @@ def shrunk_rate(
     return (events + shrinkage * prior) / denom
 
 
+def penalty_takers(view: PITView, history: pl.DataFrame) -> set[int]:
+    """Players who should get the penalty-taker goal bonus.
+
+    Prefer the latest PIT ``player_status.penalties_order == 1``. When that
+    order is null (vaastav and other snapshot gaps), fall back to anyone with
+    a visible ``penalties_missed > 0``. A non-null order other than 1 gates
+    off the miss heuristic for that player.
+    """
+    status = (
+        view.latest("player_status", ["season", "player_key"])
+        .collect()
+        .sort("available_at")
+        .unique(subset=["player_key"], keep="last")
+    )
+    order_by_player: dict[int, int | None] = {}
+    if not status.is_empty() and "penalties_order" in status.columns:
+        for row in status.select("player_key", "penalties_order").iter_rows(named=True):
+            order = row["penalties_order"]
+            order_by_player[int(row["player_key"])] = (
+                None if order is None else int(order)
+            )
+    takers = {player for player, order in order_by_player.items() if order == 1}
+    if history.is_empty() or "penalties_missed" not in history.columns:
+        return takers
+    missed = history.filter(pl.col("penalties_missed") > 0)["player_key"].to_list()
+    for player in missed:
+        key = int(player)
+        if order_by_player.get(key) is None:
+            takers.add(key)
+    return takers
+
+
 def team_share(rate: str, total: str) -> pl.Expr:
     """Normalise ``rate`` within the team, or split evenly when the total is 0."""
     even = 1.0 / pl.col("squad")
