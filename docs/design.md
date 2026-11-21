@@ -17,7 +17,7 @@ The system must:
 5. **Benchmark easily.** Compare any set of predictors (internal or external, e.g. OpenFPL) on identical walk-forward backtests, at prediction level and at decision level.
 6. **Validate data visibly.** Schema and domain checks at every stage boundary, visible in a UI.
 
-Non-goals (for now): mini-league rival modelling, real-time in-match updates, auto-submitting transfers to FPL.
+Non-goals (for now): mini-league rival modelling, real-time in-match updates. Gated opt-in apply of a saved plan to FPL (`fplt apply`, dry-run by default, `--confirm` to POST) is supported; Dagster sensors never auto-submit.
 
 ---
 
@@ -65,7 +65,8 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates, au
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
 | FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | Public finished-GW picks only; live GW is 403 without auth |
-| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
+| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
+| FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA per player per match | Staged as `understat_player_matches`. `player_key` is null until the Understat id is mapped |
 
@@ -493,6 +494,8 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 ### 10.3 Output
 
 `optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`), plus a markdown report in the same directory. `<model_id>` is the model-spec hash. `hHH` is the horizon actually covered, capped at gameweek 38. The report labels players with the staged `web_name`, and falls back to `player_key` when that name is missing. The same model, deadline, and horizon are never overwritten. A repeat run still prints the transfer summary, then reports that the parquet already exists.
+
+`fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 
 Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
 

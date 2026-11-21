@@ -4,12 +4,14 @@ Public ``entry/{id}/event/{gw}/picks`` covers finished gameweeks only. The
 live squad (selling prices, bank, free transfers) comes from authenticated
 ``my-team/{id}``. The live API expects ``x-api-authorization: Bearer`` from
 ``FPLT_FPL_API_TOKEN`` (the ``pl_profile`` cookie in ``FPLT_FPL_SESSION`` is
-legacy). Set ``FPLT_ENTRY_ID`` as well. Free-transfer and chip overrides still
-live in ``configs/squad_state.yaml`` when that token is unavailable.
+legacy). Writes (``POST /transfers/``, lineup) need the same Bearer token.
+Set ``FPLT_ENTRY_ID`` as well. Free-transfer and chip overrides still live in
+``configs/squad_state.yaml`` when that token is unavailable.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, Self, cast
 
 import httpx
@@ -18,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from fplt.settings import Settings, bearer_token, get_settings
 
 API_ROOT = "https://fantasy.premierleague.com/api"
+logger = logging.getLogger(__name__)
 
 
 class FPLAPIError(RuntimeError):
@@ -171,14 +174,15 @@ class CurrentTeam(BaseModel):
 
 
 class FPLClient:
-    """HTTP client for FPL entry and my-team endpoints.
+    """HTTP client for FPL entry, my-team, transfers, and lineup.
 
     Args:
         client: Optional shared ``httpx.Client``. When omitted, one is created
             with a 30s timeout and closed by ``close`` / context manager.
         session: Legacy ``pl_profile`` cookie value. Sent when set.
-        api_token: Bearer token for ``x-api-authorization``. This is what
-            ``my-team`` accepts. A leading ``Bearer `` prefix is stripped.
+        api_token: Bearer token for ``x-api-authorization``. Required for
+            ``my-team`` reads and for transfer / lineup writes. A leading
+            ``Bearer `` prefix is stripped.
         base_url: API root; override only in tests.
     """
 
@@ -304,12 +308,72 @@ class FPLClient:
         picks = self.entry_picks(entry_id, gw)
         return CurrentTeam.from_entry_picks(entry_id, gw, picks)
 
+    def submit_transfers(self, payload: dict[str, Any]) -> None:
+        """POST transfers to ``/transfers/``.
+
+        Args:
+            payload: Body with ``entry``, ``event``, ``transfers``, ``chip``.
+
+        Raises:
+            FPLAPIError: Bearer token missing, or the API refused the write.
+        """
+        self._require_api_token("POST /transfers/")
+        transfers = cast(list[Any], payload.get("transfers") or [])
+        logger.info(
+            "POST /transfers/ entry=%s event=%s n=%s",
+            payload.get("entry"),
+            payload.get("event"),
+            len(transfers),
+        )
+        self._post_json("/transfers/", payload, empty_ok=True)
+
+    def submit_lineup(self, entry_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST captain / XI / bench to ``/my-team/{id}/``.
+
+        Args:
+            entry_id: FPL manager entry id.
+            payload: Body with ``picks`` (15 rows) and optional ``chip``.
+
+        Returns:
+            Parsed JSON object from a successful response.
+
+        Raises:
+            FPLAPIError: Bearer token missing, or the API refused the write.
+        """
+        self._require_api_token(f"POST /my-team/{entry_id}/")
+        picks = cast(list[Any], payload.get("picks") or [])
+        logger.info("POST /my-team/%s/ lineup picks=%s", entry_id, len(picks))
+        return self._post_json(f"/my-team/{entry_id}/", payload, empty_ok=False)
+
+    def _require_api_token(self, action: str) -> None:
+        if self._api_token:
+            return
+        raise FPLAPIError(
+            f"{action} needs FPLT_FPL_API_TOKEN (Bearer token from the "
+            "x-api-authorization header on fantasy.premierleague.com)"
+        )
+
     def _get_json(self, path: str) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         try:
             response = self._client.get(url)
         except httpx.HTTPError as exc:
             raise FPLAPIError(f"request failed for {path}") from exc
+        return self._parse_response(path, response, empty_ok=False)
+
+    def _post_json(
+        self, path: str, payload: dict[str, Any], *, empty_ok: bool
+    ) -> dict[str, Any]:
+        url = f"{self._base_url}{path}"
+        try:
+            response = self._client.post(url, json=payload)
+        except httpx.HTTPError as exc:
+            raise FPLAPIError(f"request failed for {path}") from exc
+        return self._parse_response(path, response, empty_ok=empty_ok)
+
+    def _parse_response(
+        self, path: str, response: httpx.Response, *, empty_ok: bool
+    ) -> dict[str, Any]:
         if response.status_code in {401, 403}:
             raise FPLAPIError(
                 f"FPL API forbidden for {path}; live picks need a fresh "
@@ -318,7 +382,12 @@ class FPLClient:
         if response.status_code == 404:
             raise FPLAPIError(f"FPL API not found: {path}")
         if response.status_code >= 400:
-            raise FPLAPIError(f"FPL API HTTP {response.status_code} for {path}")
+            body = response.text[:500]
+            raise FPLAPIError(f"FPL API HTTP {response.status_code} for {path}: {body}")
+        if not response.content:
+            if empty_ok:
+                return {}
+            raise FPLAPIError(f"FPL API returned empty body for {path}")
         try:
             payload = response.json()
         except ValueError as exc:

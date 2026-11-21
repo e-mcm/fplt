@@ -269,3 +269,73 @@ def test_http_errors_are_wrapped() -> None:
     finally:
         api.close()
         http.close()
+
+
+def test_submit_transfers_posts_empty_ok_body() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert request.method == "POST"
+        assert request.url.path.endswith("/transfers/")
+        assert request.headers.get("x-api-authorization") == "Bearer eyJwrite"
+        return httpx.Response(200, content=b"")
+
+    api, http = _client(httpx.MockTransport(handler), api_token="eyJwrite")
+    try:
+        api.submit_transfers(
+            {
+                "entry": 42,
+                "event": 11,
+                "transfers": [
+                    {
+                        "element_in": 2,
+                        "element_out": 1,
+                        "purchase_price": 50,
+                        "selling_price": 45,
+                    }
+                ],
+                "chip": None,
+            }
+        )
+    finally:
+        api.close()
+        http.close()
+    assert len(seen) == 1
+
+
+def test_submit_lineup_requires_token() -> None:
+    api, http = _client()
+    try:
+        with pytest.raises(FPLAPIError, match="FPLT_FPL_API_TOKEN"):
+            api.submit_lineup(1, {"picks": [], "chip": None})
+    finally:
+        api.close()
+        http.close()
+
+
+def test_submit_lineup_returns_json() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/my-team/7/")
+        return httpx.Response(200, json={"ok": True})
+
+    api, http = _client(httpx.MockTransport(handler), api_token="eyJwrite")
+    try:
+        body = api.submit_lineup(
+            7,
+            {
+                "chip": None,
+                "picks": [
+                    {
+                        "element": 1,
+                        "position": 1,
+                        "is_captain": True,
+                        "is_vice_captain": False,
+                    }
+                ],
+            },
+        )
+    finally:
+        api.close()
+        http.close()
+    assert body == {"ok": True}

@@ -15,6 +15,7 @@ from fplt.backtest.run import run_backtest
 from fplt.data.fpl_client import FPLAPIError
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
+from fplt.optimise.apply import ApplyError, apply_plan, format_apply_preview
 from fplt.optimise.decisions import (
     PlanExistsError,
     resolve_squad_state,
@@ -103,6 +104,34 @@ def main(argv: list[str] | None = None) -> None:
             "(default when FPLT_ENTRY_ID is set; --entry-json still wins)"
         ),
     )
+    apply = sub.add_parser(
+        "apply",
+        help="Dry-run or POST a saved plan's transfers/lineup to FPL",
+    )
+    apply.add_argument("--model", required=True)
+    apply.add_argument("--season", required=True)
+    apply.add_argument("--gw", type=int, required=True)
+    apply.add_argument(
+        "--horizon",
+        type=int,
+        default=2,
+        help="Horizon used when the plan was written (default: 2)",
+    )
+    apply.add_argument(
+        "--confirm",
+        action="store_true",
+        help="POST to FPL (default is dry-run). Needs FPLT_FPL_API_TOKEN.",
+    )
+    apply.add_argument(
+        "--transfers-only",
+        action="store_true",
+        help="Skip the lineup POST",
+    )
+    apply.add_argument(
+        "--lineup-only",
+        action="store_true",
+        help="Skip the transfers POST",
+    )
     args = parser.parse_args(argv)
     if args.command is None:
         return
@@ -117,6 +146,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "plan":
         _plan(args)
+        return
+    if args.command == "apply":
+        _apply(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -274,3 +306,27 @@ def _plan(args: argparse.Namespace) -> None:
     print(report, end="")
     print(path)
     print(path.parent / "report.md")
+
+
+def _apply(args: argparse.Namespace) -> None:
+    try:
+        result = apply_plan(
+            get_settings().data_dir,
+            args.model,
+            args.season,
+            args.gw,
+            horizon=int(args.horizon),
+            confirm=bool(args.confirm),
+            transfers_only=bool(args.transfers_only),
+            lineup_only=bool(args.lineup_only),
+        )
+    except (
+        ApplyError,
+        FPLAPIError,
+        FileNotFoundError,
+        KeyError,
+        ValueError,
+    ) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_apply_preview(result), end="")
