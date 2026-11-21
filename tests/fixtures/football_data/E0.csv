@@ -1,0 +1,4 @@
+Div,Date,Time,HomeTeam,AwayTeam,FTHG,FTAG,FTR,AvgH,AvgD,AvgA,Avg>2.5,Avg<2.5,AvgCH,AvgCD,AvgCA,AvgC>2.5,AvgC<2.5
+E0,17/08/2024,15:00,Arsenal,Tottenham,2,0,H,1.55,4.20,6.00,1.70,2.20,1.60,4.10,5.50,1.65,2.30
+E0,17/08/2024,17:30,Man United,Fulham,1,0,H,1.70,3.90,5.00,1.80,2.05,1.66,4.20,5.02,1.61,2.37
+E0,18/08/2024,,Liverpool,Ipswich,2,0,H,1.20,7.00,15.00,1.40,3.00,1.22,6.50,14.00,,

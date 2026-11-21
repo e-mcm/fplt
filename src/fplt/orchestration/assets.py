@@ -18,6 +18,11 @@ import polars as pl
 
 from fplt.automation.cycle import PRODUCTION_MODELS, catch_up, pre_deadline, reports
 from fplt.automation.notify import notify_recommendation
+from fplt.data.football_data import (
+    default_team_map_path,
+    ingest_football_data,
+    load_team_names,
+)
 from fplt.data.raw import ingest_raw
 from fplt.data.store import DataStore
 from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
@@ -134,4 +139,28 @@ def understat_ingest() -> int:
 understat_ingest_job = dg.define_asset_job(
     name="understat_ingest",
     selection=dg.AssetSelection.assets(understat_ingest),
+)
+
+
+@dg.asset(name="match_odds_ingest")
+def match_odds_ingest() -> int:
+    """Stage football-data E0 closing odds from write-once raw CSVs.
+
+    Reads ``$FPLT_DATA_DIR/raw/football_data/season=*/E0.csv`` and the repo
+    team map at ``configs/football_data/team_names.yaml``. Rows are labelled
+    ``odds_kind=closing_proxy`` with ``available_at=kickoff`` (close ≠
+    deadline). Does not touch FPL snapshot ingest.
+    """
+    settings = get_settings()
+    team_keys = load_team_names(default_team_map_path())
+    return ingest_football_data(
+        DataStore(settings.data_dir),
+        settings.data_dir / "raw",
+        team_keys,
+    )
+
+
+match_odds_ingest_job = dg.define_asset_job(
+    name="match_odds_ingest",
+    selection=dg.AssetSelection.assets(match_odds_ingest),
 )

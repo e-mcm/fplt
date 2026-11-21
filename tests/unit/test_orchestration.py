@@ -12,6 +12,7 @@ from fplt.data.snapshots import SnapshotFetchError
 from fplt.data.store import DataStore
 from fplt.orchestration import defs
 from fplt.orchestration.assets import (
+    match_odds_ingest,
     raw_snapshots,
     staged_assets,
     staged_ingest,
@@ -176,4 +177,30 @@ def test_understat_ingest_stages_raw_matches(
     graph = defs.get_repository_def().asset_graph
     names = {key.path[-1] for key in graph.get_all_asset_keys()}
     assert "understat_ingest" in names
+    get_settings.cache_clear()
+
+
+def test_match_odds_ingest_stages_raw_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "football_data"
+    maps = fixtures / "team_names.yaml"
+    raw_csv = tmp_path / "raw" / "football_data" / "season=2024-25" / "E0.csv"
+    raw_csv.parent.mkdir(parents=True)
+    raw_csv.write_text(
+        (fixtures / "E0.csv").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    monkeypatch.setattr("fplt.orchestration.assets.default_team_map_path", lambda: maps)
+    result = dg.materialize([match_odds_ingest])
+    assert result.success
+    assert result.output_for_node("match_odds_ingest") == 1
+    frame = DataStore(tmp_path).read("match_odds")
+    assert schema_check_result("match_odds", frame).passed is True
+    assert frame.height == 3
+    assert set(frame["odds_kind"].unique()) == {"closing_proxy"}
+    graph = defs.get_repository_def().asset_graph
+    names = {key.path[-1] for key in graph.get_all_asset_keys()}
+    assert "match_odds_ingest" in names
+    assert "staged_match_odds" in names
     get_settings.cache_clear()

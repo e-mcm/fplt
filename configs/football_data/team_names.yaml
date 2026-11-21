@@ -1,0 +1,39 @@
+# football-data.co.uk HomeTeam/AwayTeam → FPL team_key (team code).
+#
+# Names must match the E0 CSV spelling exactly (e.g. "Man United", "Nott'm Forest").
+# FPL element/team ids change every season; codes do not. Never map to season-local ids.
+#
+# See configs/football_data/README.md for how to maintain this file.
+
+teams:
+  Arsenal: 3
+  Aston Villa: 7
+  Bournemouth: 91
+  Brentford: 94
+  Brighton: 36
+  Burnley: 90
+  Cardiff: 97
+  Chelsea: 8
+  Crystal Palace: 31
+  Everton: 11
+  Fulham: 54
+  Huddersfield: 38
+  Ipswich: 40
+  Leeds: 2
+  Leicester: 13
+  Liverpool: 14
+  Luton: 102
+  Man City: 43
+  Man United: 1
+  Newcastle: 4
+  Norwich: 45
+  "Nott'm Forest": 17
+  Sheffield United: 49
+  Southampton: 20
+  Sunderland: 56
+  Tottenham: 6
+  Watford: 57
+  West Brom: 35
+  West Ham: 21
+  Wolves: 39
+

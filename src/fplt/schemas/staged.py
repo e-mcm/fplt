@@ -179,6 +179,35 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
         coerce = True
 
 
+class MatchOddsSchema(pa.DataFrameModel):
+    """Closing bookmaker 1X2 (+ O/U 2.5) for one EPL match.
+
+    Sourced from football-data.co.uk E0 CSVs. ``odds_kind`` is always
+    ``closing_proxy``: closing lines are pre-kickoff, **not** FPL deadline.
+    ``available_at`` is therefore kickoff (UTC). Do not treat these rows as
+    deadline-safe PIT. ``fixture_id`` is null until joined to staged FPL
+    fixtures on ``(season, team_h_key, team_a_key, kickoff date)``.
+    """
+
+    season: str
+    fixture_id: int = pa.Field(nullable=True)
+    team_h_key: int
+    team_a_key: int
+    kickoff_time: datetime
+    home_odds: float = pa.Field(gt=1.0)
+    draw_odds: float = pa.Field(gt=1.0)
+    away_odds: float = pa.Field(gt=1.0)
+    over_25_odds: float = pa.Field(nullable=True, gt=1.0)
+    under_25_odds: float = pa.Field(nullable=True, gt=1.0)
+    odds_kind: str
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "players": PlayersSchema,
     "teams": TeamsSchema,
@@ -188,6 +217,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "player_fixture_stats": PlayerFixtureStatsSchema,
     "understat_player_matches": UnderstatPlayerMatchSchema,
     "understat_team_matches": UnderstatTeamMatchSchema,
+    "match_odds": MatchOddsSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -204,6 +234,7 @@ TABLE_KEYS: dict[str, list[str]] = {
         "available_at",
     ],
     "understat_team_matches": ["season", "match_id", "team_key", "available_at"],
+    "match_odds": ["season", "team_h_key", "team_a_key", "kickoff_time"],
 }
 
 POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
@@ -318,6 +349,21 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "ppda_allowed_def": pl.Float64(),
         "xg": pl.Float64(),
         "xga": pl.Float64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "match_odds": {
+        "season": pl.Utf8(),
+        "fixture_id": pl.Int64(),
+        "team_h_key": pl.Int64(),
+        "team_a_key": pl.Int64(),
+        "kickoff_time": pl.Datetime(time_zone="UTC"),
+        "home_odds": pl.Float64(),
+        "draw_odds": pl.Float64(),
+        "away_odds": pl.Float64(),
+        "over_25_odds": pl.Float64(),
+        "under_25_odds": pl.Float64(),
+        "odds_kind": pl.Utf8(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

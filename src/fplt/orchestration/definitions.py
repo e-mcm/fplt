@@ -10,6 +10,8 @@ import dagster as dg
 
 from fplt.orchestration.assets import (
     catch_up_job,
+    match_odds_ingest,
+    match_odds_ingest_job,
     pre_deadline_job,
     pre_deadline_plan,
     raw_snapshots,
@@ -42,6 +44,7 @@ defs = dg.Definitions(
         staged_ingest,
         *staged_assets,
         understat_ingest,
+        match_odds_ingest,
         *feature_assets,
         *model_assets,
         *predictions_assets,
@@ -52,6 +55,7 @@ defs = dg.Definitions(
     jobs=[
         refresh_staged,
         understat_ingest_job,
+        match_odds_ingest_job,
         catch_up_job,
         pre_deadline_job,
         eval_board_job,
