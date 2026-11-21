@@ -1,0 +1,15 @@
+name: dixon_coles_v2
+kind: dixon_coles
+params:
+  # ξ stays on a grid; ρ and home advantage are MLE'd each fit (starts below).
+  xi: 0.0065
+  home_advantage: 1.3
+  rho: -0.1
+  fit_rho: true
+  fit_home_advantage: true
+  # Pseudo-matches toward the league mean after attack/defence rescaling.
+  new_team_prior_strength: 3.0
+  # Stronger pull for clubs absent from earlier seasons in the train window.
+  promoted_prior_strength: 8.0
+refit: every_gw
+seed: 0

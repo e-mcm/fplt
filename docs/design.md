@@ -283,7 +283,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 
 | Component | v1 implementation |
 |---|---|
-| `TeamScoreModel` | Dixon-Coles. ξ, home advantage, and ρ come from the model spec. Attack and defence are fit from finished fixtures visible at the deadline. ρ = 0 is the independent Poisson baseline. |
+| `TeamScoreModel` | Dixon-Coles. ξ always comes from the model spec. v1 also fixes home advantage and ρ in YAML and identifies only attack/defence. v2 (`dixon_coles_v2`) jointly estimates ρ and/or home advantage when `fit_rho` / `fit_home_advantage` are set, and shrinks sparse or promoted-team ratings toward the league mean via `new_team_prior_strength` / `promoted_prior_strength`. ρ = 0 is the independent Poisson baseline. |
 | `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. Rotation features are later |
 | `InvolvementModel` | Shrunk per-90 shares of team goals/assists (later xG/xA shares from Understat); penalty-taker override |
 | `OtherPointsModel` | Position-level priors conditioned on minutes bucket; later GBM |

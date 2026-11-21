@@ -1,7 +1,9 @@
 """Dixon-Coles scorelines fitted from fixtures visible at a deadline.
 
-ξ, home advantage, and ρ are spec parameters. Attack and defence are what the
-fit identifies. ρ = 0 is independent Poisson, the baseline on the component ledger.
+v1 holds ξ, home advantage, and ρ fixed in the model spec and identifies only
+attack and defence. v2 can jointly estimate ρ and/or home advantage, and
+shrinks sparse or promoted-team ratings toward the league mean so fixed-mode
+and early-season forecasts degrade less than a hard neutral prior.
 """
 
 # scipy does not ship type stubs.
@@ -23,6 +25,8 @@ from fplt.models.spec import ModelSpec, register_component
 # so a rate near the attack/defence bound is not silently cut off.
 _GRID = MAX_GOALS + 9
 _NEUTRAL = 1.0
+_RHO_BOUNDS = (-0.5, 0.5)
+_HOME_BOUNDS = (0.8, 2.0)
 
 
 def _dc_correction(
@@ -50,10 +54,18 @@ def _neg_log_likelihood(
     n_teams: int,
     home_advantage: float,
     rho: float,
+    fit_home: bool,
+    fit_rho: bool,
 ) -> float:
-    """Weighted negative log-likelihood with home advantage and ρ held fixed."""
+    """Weighted negative log-likelihood; ρ / HA may sit in ``params``."""
     attack = params[:n_teams]
-    defence = params[n_teams:]
+    defence = params[n_teams : 2 * n_teams]
+    offset = 2 * n_teams
+    if fit_home:
+        home_advantage = float(params[offset])
+        offset += 1
+    if fit_rho:
+        rho = float(params[offset])
     lambda_h = attack[home_idx] * defence[away_idx] * home_advantage
     lambda_a = attack[away_idx] * defence[home_idx]
     lambda_h = np.clip(lambda_h, 1e-6, None)
@@ -74,13 +86,29 @@ def _neg_log_likelihood(
 
 
 class MatchScoreModel:
-    """Fit attack and defence, then return a ``ScorelineDist``."""
+    """Fit attack and defence, then return a ``ScorelineDist``.
+
+    Spec params:
+
+    - ``xi``, ``home_advantage``, ``rho`` — time decay and (optional) starts
+      for home advantage and the Dixon-Coles low-score factor.
+    - ``fit_rho`` / ``fit_home_advantage`` — when true, estimate that scalar
+      jointly with attack and defence (v2).
+    - ``new_team_prior_strength`` — pseudo-matches pulling every team toward
+      the league mean; effective strength is larger for promoted sides.
+    - ``promoted_prior_strength`` — extra pseudo-matches for teams absent from
+      earlier seasons visible at the deadline.
+    """
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
         self._xi = float(spec.params.get("xi", 0.0))
         self._home = float(spec.params.get("home_advantage", 1.0))
         self._rho = float(spec.params.get("rho", 0.0))
+        self._fit_rho = bool(spec.params.get("fit_rho", False))
+        self._fit_home = bool(spec.params.get("fit_home_advantage", False))
+        self._new_prior = float(spec.params.get("new_team_prior_strength", 0.0))
+        self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}
         self._defence: dict[int, float] = {}
@@ -105,7 +133,13 @@ class MatchScoreModel:
         weights = np.exp(-self._xi * days.astype(np.float64))
         n_teams = len(teams)
         start = np.ones(2 * n_teams)
-        bounds = [(0.2, 3.0)] * (2 * n_teams)
+        bounds: list[tuple[float, float]] = [(0.2, 3.0)] * (2 * n_teams)
+        if self._fit_home:
+            start = np.append(start, self._home)
+            bounds.append(_HOME_BOUNDS)
+        if self._fit_rho:
+            start = np.append(start, self._rho)
+            bounds.append(_RHO_BOUNDS)
         result = minimize(
             _neg_log_likelihood,
             start,
@@ -118,17 +152,38 @@ class MatchScoreModel:
                 n_teams,
                 self._home,
                 self._rho,
+                self._fit_home,
+                self._fit_rho,
             ),
             method="L-BFGS-B",
             bounds=bounds,
-            options={"maxiter": 200, "ftol": 1e-8},
+            options={"maxiter": 300, "ftol": 1e-8},
         )
         fitted = np.asarray(result.x, dtype=np.float64)
         attack = fitted[:n_teams]
-        defence = fitted[n_teams:]
+        defence = fitted[n_teams : 2 * n_teams]
+        offset = 2 * n_teams
+        if self._fit_home:
+            self._home = float(fitted[offset])
+            offset += 1
+        if self._fit_rho:
+            self._rho = float(fitted[offset])
         scale = float(attack.mean())
+        if scale <= 0:
+            scale = 1.0
         attack = attack / scale
         defence = defence * scale
+        counts = _match_counts(played, teams)
+        promoted = _promoted_teams(view, teams)
+        attack, defence = _shrink_ratings(
+            attack,
+            defence,
+            counts,
+            teams,
+            promoted,
+            self._new_prior,
+            self._promoted_prior,
+        )
         self._teams = teams
         self._attack = dict(zip(teams, attack.tolist(), strict=True))
         self._defence = dict(zip(teams, defence.tolist(), strict=True))
@@ -167,6 +222,72 @@ def _finished(view: PITView) -> pl.DataFrame:
         .filter(pl.col("finished") & pl.col("team_h_score").is_not_null())
         .collect()
     )
+
+
+def _match_counts(played: pl.DataFrame, teams: list[int]) -> np.ndarray:
+    """Finished appearances per team, aligned with ``teams``."""
+    order = {team: index for index, team in enumerate(teams)}
+    counts = np.zeros(len(teams), dtype=np.float64)
+    for team in played["team_h_key"].to_list():
+        counts[order[int(team)]] += 1.0
+    for team in played["team_a_key"].to_list():
+        counts[order[int(team)]] += 1.0
+    return counts
+
+
+def _promoted_teams(view: PITView, teams: list[int]) -> set[int]:
+    """Team keys present in the as-of season but not in any earlier season."""
+    seasons = _visible_seasons(view)
+    current = view.as_of.season
+    earlier = [season for season in seasons if season != current]
+    if not earlier:
+        return set()
+    prior = (
+        view.latest("fixtures", by=["season", "fixture_id"])
+        .filter(pl.col("season").is_in(earlier))
+        .select("team_h_key", "team_a_key")
+        .collect()
+    )
+    if prior.is_empty():
+        return set(teams)
+    seen = set(prior["team_h_key"].to_list()) | set(prior["team_a_key"].to_list())
+    return {team for team in teams if team not in seen}
+
+
+def _visible_seasons(view: PITView) -> list[str]:
+    frame = (
+        view.latest("fixtures", by=["season", "fixture_id"]).select("season").collect()
+    )
+    if frame.is_empty():
+        return []
+    return sorted(set(frame["season"].to_list()))
+
+
+def _shrink_ratings(
+    attack: np.ndarray,
+    defence: np.ndarray,
+    counts: np.ndarray,
+    teams: list[int],
+    promoted: set[int],
+    new_prior: float,
+    promoted_prior: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pull sparse / promoted ratings toward the league mean (1 after rescale)."""
+    if new_prior <= 0 and promoted_prior <= 0:
+        return attack, defence
+    strengths = np.full(len(teams), max(new_prior, 0.0), dtype=np.float64)
+    if promoted_prior > 0:
+        for index, team in enumerate(teams):
+            if team in promoted:
+                strengths[index] = max(strengths[index], promoted_prior)
+    denom = counts + strengths
+    shrunk_attack = np.where(
+        denom > 0, (counts * attack + strengths * _NEUTRAL) / denom, attack
+    )
+    shrunk_defence = np.where(
+        denom > 0, (counts * defence + strengths * _NEUTRAL) / denom, defence
+    )
+    return shrunk_attack, shrunk_defence
 
 
 def _joint(lambda_h: np.ndarray, lambda_a: np.ndarray, rho: float) -> np.ndarray:
