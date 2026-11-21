@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board plan apply dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain plan apply dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -53,9 +53,18 @@ eval-components:
 # Optional: ARGS='--models rolling_mean_v1 dc_layered_v1 --from-gw 1 --to-gw 10'
 # Optional: ARGS='--summarise-only' to score ledger/decisions without re-simulating
 # Horizon should match the backtest --steps used when writing predictions.
+# Sanity: fails if mean pts/GW > 90 unless ARGS includes --max-mean-ppg 0
 decisions-board:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make decisions-board SEASON=2024-25"; exit 1; fi
 	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),2) $(ARGS)
+
+# Dump one model × GW realised arithmetic from ledger/decisions
+# Usage: make decisions-explain SEASON=2024-25 GW=2 MODEL=openfpl_v1
+decisions-explain:
+	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
+		echo "Usage: make decisions-explain SEASON=2024-25 GW=2 MODEL=openfpl_v1"; exit 1; fi
+	uv run fplt decisions --season $(SEASON) --summarise-only \
+		--explain-gw $(GW) --explain-model $(or $(MODEL),rolling_mean_v1) $(ARGS)
 
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10

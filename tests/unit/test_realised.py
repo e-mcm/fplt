@@ -4,6 +4,8 @@ import polars as pl
 import pytest
 
 from fplt.optimise.realised import (
+    assert_sane_mean_ppg,
+    explain_gameweek,
     format_decision_scoreboard,
     score_gameweek,
     summarise_decisions,
@@ -19,6 +21,26 @@ def test_captain_doubles_and_hit_is_applied_once() -> None:
     )
     # XI sum 26 + captain extra 6 - hit 4 = 28
     assert score_gameweek(picks, hit=4) == 28
+    dump = explain_gameweek(picks, hit=4, names={11: "Haul"})
+    assert "XI sum (after autosub, mins>0): 26" in dump
+    assert "captain extra (+6): Haul ×2 armband" in dump
+    assert "hit: -4" in dump
+    assert "net: 28" in dump
+
+
+def test_assert_sane_mean_ppg_rejects_inflated_totals() -> None:
+    summary = pl.DataFrame(
+        {
+            "model_id": ["hot", "ok"],
+            "season": ["2024-25", "2024-25"],
+            "total_points": [4062, 2000],
+            "gameweeks": [38, 38],
+            "per_gw": [[100] * 38, [50] * 38],
+        }
+    )
+    with pytest.raises(ValueError, match="mean pts/GW"):
+        assert_sane_mean_ppg(summary, max_mean=90.0)
+    assert_sane_mean_ppg(summary.filter(pl.col("model_id") == "ok"), max_mean=90.0)
 
 
 def test_vice_receives_armband_when_captain_blanks() -> None:
@@ -105,6 +127,7 @@ def test_summarise_ranks_models_and_formats_table() -> None:
     table = format_decision_scoreboard(summary)
     assert "| 1 | b |" in table
     assert "| 2 | a |" in table
+    assert "Mean/GW" in table
     assert format_decision_scoreboard(summary.clear()) == "_No decision rows to score._"
 
 
