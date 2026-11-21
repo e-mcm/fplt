@@ -152,6 +152,26 @@ def test_zero_starts_are_kept(tmp_path: Path) -> None:
     assert stats["minutes"].to_list() == [90, 10]
 
 
+def test_defensive_contribution_defaults_to_zero_when_absent(
+    tmp_path: Path,
+) -> None:
+    store = DataStore(tmp_path / "store")
+    import_season(store, _write_season(tmp_path), "2021-22")
+    stats = store.read("player_fixture_stats")
+    assert stats["defensive_contribution"].to_list() == [0, 0]
+
+
+def test_defensive_contribution_staged_when_present(tmp_path: Path) -> None:
+    season = _write_season(tmp_path)
+    gw = pl.read_csv(season / "gws" / "merged_gw.csv")
+    gw = gw.with_columns(pl.Series("defensive_contribution", [2, 0]))
+    gw.write_csv(season / "gws" / "merged_gw.csv")
+    store = DataStore(tmp_path / "store")
+    import_season(store, season, "2021-22")
+    stats = store.read("player_fixture_stats").sort("gw")
+    assert stats["defensive_contribution"].to_list() == [2, 0]
+
+
 def test_seasons_before_2021_and_missing_files_are_skipped(tmp_path: Path) -> None:
     store = DataStore(tmp_path / "store")
     early = tmp_path / "2020-21"
