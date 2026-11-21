@@ -13,7 +13,7 @@ import fplt.models.direct  # noqa: F401 — runs @register_model
 import fplt.models.external.openfpl  # noqa: F401 — runs @register_model
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.models.spec import get_model, load_model_specs, registered_kinds
+from fplt.models.spec import ModelSpec, get_model, load_model_specs, registered_kinds
 from fplt.models.universe import player_fixtures
 from fplt.schemas.predictions import PredictionSchema
 from fplt.types import GWKey
@@ -25,22 +25,27 @@ _HORIZON = [GWKey("2024-25", 1), GWKey("2024-25", 2)]
 _KEYS = ["target_season", "target_gw", "player_key", "fixture_id"]
 
 
-def _spec(kind: str):
-    matches = [spec for spec in load_model_specs().values() if spec.kind == kind]
-    if len(matches) != 1:
-        raise AssertionError(f"{kind} needs one YAML spec, found {len(matches)}")
-    spec = matches[0]
-    if kind != "openfpl":
-        return spec
-    # The published ensemble is fetched on first real predict and is too large
-    # for this suite. The echo runner still exercises schema, horizon, and leakage.
-    params = dict(spec.params)
-    params["command"] = [sys.executable, str(_ECHO), "length"]
-    return spec.model_copy(update={"params": params})
+def _contract_specs() -> list[ModelSpec]:
+    """Every PointsPredictor YAML. Multiple versions of one kind are allowed."""
+    kinds = set(registered_kinds())
+    specs: list[ModelSpec] = []
+    for spec in load_model_specs().values():
+        if spec.kind not in kinds:
+            continue
+        if spec.kind == "openfpl":
+            # The published ensemble is fetched on first real predict and is too
+            # large for this suite. The echo runner still exercises schema,
+            # horizon, and leakage.
+            params = dict(spec.params)
+            params["command"] = [sys.executable, str(_ECHO), "length"]
+            specs.append(spec.model_copy(update={"params": params}))
+        else:
+            specs.append(spec)
+    return specs
 
 
-def _predict(kind: str, store: DataStore) -> pl.DataFrame:
-    model = get_model(kind)(_spec(kind))
+def _predict(spec: ModelSpec, store: DataStore) -> pl.DataFrame:
+    model = get_model(spec.kind)(spec)
     view = PITData(store).view(_AS_OF)
     model.fit(view)
     return model.predict(view, _HORIZON)
@@ -50,12 +55,12 @@ def _sorted(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.sort(_KEYS)
 
 
-@pytest.mark.parametrize("kind", registered_kinds())
+@pytest.mark.parametrize("spec", _contract_specs(), ids=lambda item: item.name)
 def test_predictions_match_the_schema_and_cover_the_horizon(
-    kind: str, tmp_path: Path
+    spec: ModelSpec, tmp_path: Path
 ) -> None:
     store = build_league(DataStore(tmp_path))
-    frame = _predict(kind, store)
+    frame = _predict(spec, store)
     checked = PredictionSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
     view = PITData(store).view(_AS_OF)
@@ -70,33 +75,32 @@ def test_predictions_match_the_schema_and_cover_the_horizon(
     assert not got.is_empty()
 
 
-@pytest.mark.parametrize("kind", registered_kinds())
-def test_predictions_are_deterministic(kind: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("spec", _contract_specs(), ids=lambda item: item.name)
+def test_predictions_are_deterministic(spec: ModelSpec, tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path))
-    first = _sorted(_predict(kind, store))
-    second = _sorted(_predict(kind, store))
+    first = _sorted(_predict(spec, store))
+    second = _sorted(_predict(spec, store))
     assert first.equals(second)
 
 
-@pytest.mark.parametrize("kind", registered_kinds())
-def test_save_and_load_round_trip(kind: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("spec", _contract_specs(), ids=lambda item: item.name)
+def test_save_and_load_round_trip(spec: ModelSpec, tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path / "league"))
-    spec = _spec(kind)
-    model = get_model(kind)(spec)
+    model = get_model(spec.kind)(spec)
     view = PITData(store).view(_AS_OF)
     model.fit(view)
     expected = _sorted(model.predict(view, _HORIZON))
     dest = tmp_path / "artifact"
     model.save(dest)
-    loaded = get_model(kind).load(dest, spec)
+    loaded = get_model(spec.kind).load(dest, spec)
     assert _sorted(loaded.predict(view, _HORIZON)).equals(expected)
     with pytest.raises(FileExistsError):
         model.save(dest)
 
 
-@pytest.mark.parametrize("kind", registered_kinds())
+@pytest.mark.parametrize("spec", _contract_specs(), ids=lambda item: item.name)
 def test_rows_after_the_cutoff_do_not_change_predictions(
-    kind: str, tmp_path: Path
+    spec: ModelSpec, tmp_path: Path
 ) -> None:
     store = build_league(DataStore(tmp_path))
     cutoff = store.deadline(_AS_OF)
@@ -106,7 +110,7 @@ def test_rows_after_the_cutoff_do_not_change_predictions(
         (pl.col("ep_next") + 5).alias("ep_next"),
     )
     store.write("player_status", status)
-    before = _sorted(_predict(kind, store))
+    before = _sorted(_predict(spec, store))
     future_points = _future_values(
         store, "player_fixture_stats", "total_points", cutoff
     )
@@ -115,7 +119,7 @@ def test_rows_after_the_cutoff_do_not_change_predictions(
     assert _future_values(store, "player_fixture_stats", "total_points", cutoff) != (
         future_points
     )
-    after = _sorted(_predict(kind, store))
+    after = _sorted(_predict(spec, store))
     assert after.equals(before)
 
 
