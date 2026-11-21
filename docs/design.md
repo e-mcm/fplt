@@ -394,7 +394,9 @@ Component level (layered models):
 
 ### 7.4 Promote-eval (control vs treatment)
 
-Any lever — new staged data, feature version, hyperparam / `train_window` fork, layered **component registry swap** (e.g. minutes empirical → LightGBM / handwritten), or full **predictor fork** (e.g. `lgbm_direct` → XGBoost) — is evaluated as two `ModelSpec` YAMLs plus an EvalSpec under `configs/evals/`. CLI: `fplt promote-eval --eval <name>` (scaffold dry-run prints the compare / eval-components / decisions plan; later phases execute). See [`docs/feature-eval-pipeline.md`](feature-eval-pipeline.md). Never silently edit the control default; treatment forks get a new `model_id`. Recommendation does not flip `PRODUCTION_MODELS`.
+Any lever — new staged data, feature version, hyperparam / `train_window` fork, layered **component registry swap** (e.g. minutes empirical → LightGBM / handwritten), or full **predictor fork** (e.g. `lgbm_direct` → XGBoost) — is two `ModelSpec` YAMLs plus an EvalSpec under `configs/evals/`. CLI: `fplt promote-eval --eval <name>` (dry-run plans the suites; execute is later). Full rules: [`docs/feature-eval-pipeline.md`](feature-eval-pipeline.md).
+
+Control is the off state and treatment is the on state. Production stays whichever of those it already is; fork the other arm, and never edit that production YAML to manufacture the contrast. `use_penalties_order` and `use_defensive_contribution` default on, so the control is `dc_layered_nopens_v1` / `dc_layered_nodefcon_v1` and the treatment is `dc_layered_v2`. `market_prior_strength` defaults to 0, so the control is `dc_layered_v2` and the treatment is `dc_layered_odds_v1`. Coverage is the model's real PIT read (`available_at <= deadline`). Closing odds (`available_at = kickoff`) are a labelled side rate, not a second cutoff. A recommendation does not flip `PRODUCTION_MODELS`. Decision bakeoffs are opt-in and are not required for these config promos. The metric loop calls `compare` / `eval-components` / `decisions`; no external eval library is at ~90% of that job (§7.6).
 
 ### 7.5 Benchmarks
 
@@ -406,9 +408,9 @@ External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Runs in its own uv environment (`external/openfpl/`) as a subprocess. The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, and joins each score back by request `row_id` (which already carries `player_key`). `web_name` is sent as a label and does not need to be unique. It returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. `params.model_dir` is `external/openfpl/OpenFPL`. That ensemble is about 750MB (files near GitHub's 100MB limit), so the first real predict sparse-clones it there and `uv sync`s the runner env when `.venv` is missing. An empty `model_dir` or a checkout without `models/xscaler.save` raises; the runner does not substitute zeros. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / a `model_dir` other than this default), not in `CORE_MODELS`. The contract suite drives the adapter with an offline echo runner.
 - Operator steps (`uv sync`, season floor, feature gap): [`docs/openfpl.md`](openfpl.md).
 
-### 7.6 Why no MLflow (yet)
+### 7.6 Eval libraries
 
-The comparisons we need are slices over model × GW × horizon × position. A long parquet ledger queried with polars/DuckDB does this directly. Dagster already provides lineage, run history and per-materialisation metadata; `ModelSpec` hashing provides model identity and artifacts are content-addressed. Revisit MLflow only if large hyperparameter sweeps start.
+Prefer an existing library when it already does about 90% of the job. For promote-eval, none does. [`mlflow.models.evaluate`](https://mlflow.org/docs/latest/ml/evaluation/) is the closest: one fitted pyfunc, one static frame, optional `baseline_model`, and `MetricThreshold`. Deepchecks' `ModelComparisonSuite` is the same shape (fitted scikit-learn models, one test set, MAE/RMSE/R²). Neither walks gameweeks, refits on a deadline, nor knows coverage or `available_at`. The walk-forward, the slices, and the component metrics already live in `fplt compare`, `eval-components`, and `fplt decisions`; the runner calls those. The ledger stays the metric store. M10 removed the `mlflow` dependency; do not add it back for a scalar UI. Per-library gaps: [`docs/feature-eval-pipeline.md`](feature-eval-pipeline.md).
 
 ### 7.7 Leaderboard app
 
@@ -599,5 +601,5 @@ These are settled. Change them here before changing the code.
 1. **Training window.** Train from the 2021-22 season onward.
 2. **Snapshot storage.** An orphan git branch named `snapshots`. Object storage (for example Cloudflare R2) is only worth revisiting if that branch grows unwieldy.
 3. **Leaderboard.** Streamlit (`apps/leaderboard.py`).
-4. **Experiment tracking.** No MLflow. The parquet ledger, Dagster metadata, and `ModelSpec` hashing cover comparison and lineage (§7.5).
+4. **Experiment tracking.** No MLflow, Deepchecks, Giskard, Evidently, Feast, or TFX as the promote-eval runner. Reconsidered against a "use it at ~90%" bar: those APIs score one fitted model on one static frame. The walk-forward and the parquet ledger stay the implementation (§7.6).
 5. **Minutes model.** v1 draws each player's minutes independently. v2 may soft-project expected starters toward ~11 in the distribution; enforcing a hard 11-starter draw constraint per team is a later version.
