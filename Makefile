@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models decisions-board plan apply dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board plan apply dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -40,6 +40,13 @@ eval-board:
 compare-models:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make compare-models SEASON=2024-25"; exit 1; fi
 	uv run fplt compare --season $(SEASON) $(ARGS)
+
+# ── Layered component eval (RPS / minutes Brier / involvement / n_sims) ────────
+# Usage: make eval-components SEASON=2024-25
+# Optional: ARGS='--from-gw 1 --to-gw 10 --skip-sims'
+eval-components:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-components SEASON=2024-25"; exit 1; fi
+	uv run fplt eval-components --season $(SEASON) $(ARGS)
 
 # ── Decision bakeoff (season totals after backtest fills the prediction ledger)
 # Usage: make decisions-board SEASON=2024-25

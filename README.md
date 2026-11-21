@@ -54,6 +54,7 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Dagster UI (dev) | `make dagster-dev` |
 | Backtest models | `uv run fplt backtest --models dc_layered_v1 lgbm_direct_v1 --season 2025-26` |
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
+| Layered component metrics + `n_sims` sweep | `make eval-components SEASON=2024-25` or `uv run fplt eval-components --season 2024-25` |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |

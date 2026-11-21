@@ -372,7 +372,10 @@ Decision level — what actually matters:
 
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline
-- Minutes: Brier score on P(start), P(60+)
+- Minutes: Brier score on P(played) and P(60+), reported by stats `source` (snapshot vs vaastav)
+- Involvement: MAE of predicted team goal share vs realised share among players with minutes
+- Monte Carlo: `n_sims` stability sweep (mean/max \|Δxpts\| vs a high-`n` reference, wall time, analytic SE)
+- CLI: `fplt eval-components` / `make eval-components` (P0 harness)
 
 ### 7.4 Benchmarks
 
@@ -445,6 +448,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it with `--with-openfpl`, `--openfpl-model-dir`, or a `model_dir` other than the fetched default checkout, and only for seasons from 2024-25 onwards. Live `fplt predict` refuses to record an all-zero frame. Walk-forward backtests still record a cold start, such as a rolling mean before any appearances.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
+- Component eval (CLI): `make eval-components SEASON=2024-25` / `uv run fplt eval-components …` walk-forwards scoreline RPS/log-loss (Dixon-Coles vs Poisson), minutes Brier on P(played) and P(≥60) sliced by `source`, involvement goal-share MAE, and an optional `n_sims` stability sweep for `dc_layered_v1`. Writes `$FPLT_DATA_DIR/component_eval/.../summary.json` (see §7.3).
 - Operator logging: CLI and scripts call `fplt.utils.logging.configure_logging` (default INFO to stderr; `-v`/`--verbose` for DEBUG including FPL HTTP paths; `-q` for WARNING+). Library modules use `logging.getLogger(__name__)`.
 
 ---

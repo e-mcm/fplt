@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Literal
 
 from fplt.backtest.compare import CompareMode, compare_models, format_summary_table
+from fplt.backtest.component_eval import (
+    DEFAULT_SIMS,
+    format_component_table,
+    run_component_eval,
+)
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.run import run_backtest
@@ -182,6 +187,58 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Score existing ledger/decisions rows; skip re-simulating",
     )
+    eval_components = sub.add_parser(
+        "eval-components",
+        parents=[log_flags],
+        help="Layered component metrics (RPS, minutes Brier, involvement, n_sims)",
+    )
+    eval_components.add_argument("--season", required=True)
+    eval_components.add_argument("--from-gw", type=int, default=1)
+    eval_components.add_argument("--to-gw", type=int, default=10)
+    eval_components.add_argument(
+        "--fit-gw",
+        type=int,
+        help="Deadline for the n_sims sweep fit (default: from-gw)",
+    )
+    eval_components.add_argument(
+        "--score-models",
+        nargs="+",
+        help="Score YAML specs (default: dixon_coles_v1 poisson_score_v1)",
+    )
+    eval_components.add_argument(
+        "--minutes-model",
+        default="empirical_minutes_v1",
+        help="Minutes component YAML name",
+    )
+    eval_components.add_argument(
+        "--involvement-model",
+        default="involvement_shares_v1",
+        help="Involvement component YAML name",
+    )
+    eval_components.add_argument(
+        "--layered-model",
+        default="dc_layered_v1",
+        help="Composite YAML for the n_sims sweep",
+    )
+    eval_components.add_argument(
+        "--sims",
+        nargs="+",
+        type=int,
+        help=(
+            "n_sims values to sweep "
+            f"(default: {' '.join(str(n) for n in DEFAULT_SIMS)})"
+        ),
+    )
+    eval_components.add_argument(
+        "--skip-sims",
+        action="store_true",
+        help="Skip the Monte Carlo n_sims sweep",
+    )
+    eval_components.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary JSON/parquet here",
+    )
     args = parser.parse_args(argv)
     if args.command is None:
         return
@@ -204,6 +261,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "decisions":
         _decisions(args)
+        return
+    if args.command == "eval-components":
+        _eval_components(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -372,6 +432,38 @@ def _plan(args: argparse.Namespace) -> None:
     print(report, end="")
     print(path)
     print(path.parent / "report.md")
+
+
+def _eval_components(args: argparse.Namespace) -> None:
+    sims: list[int] | tuple[int, ...] | None
+    if args.skip_sims:
+        sims = []
+    elif args.sims is not None:
+        sims = list(args.sims)
+    else:
+        sims = None
+    try:
+        result = run_component_eval(
+            get_settings().data_dir,
+            args.season,
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            fit_gw=args.fit_gw,
+            score_models=list(args.score_models) if args.score_models else None,
+            minutes_model=str(args.minutes_model),
+            involvement_model=str(args.involvement_model),
+            layered_model=str(args.layered_model),
+            sims=sims,
+            output_dir=args.output_dir,
+        )
+    except (ValueError, KeyError) as exc:
+        logger.error("eval-components failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_component_table(result.summary))
+    if not result.sims.is_empty():
+        print(result.sims)
+    print(f"wrote {result.output_dir / 'summary.json'}")
 
 
 def _decisions(args: argparse.Namespace) -> None:
