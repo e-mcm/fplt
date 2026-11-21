@@ -23,6 +23,15 @@ def test_the_spec_builds_the_layered_model() -> None:
     assert spec.params["n_sims"] == 5000
 
 
+def test_dc_layered_odds_v1_wires_odds_score_component() -> None:
+    spec = load_model_specs()["dc_layered_odds_v1"]
+    assert spec.kind == "dc_layered"
+    assert spec.components["score"].name == "dixon_coles_odds_v1"
+    assert spec.components["score"].params["market_prior_strength"] == 1.0
+    vanilla = load_model_specs()["dc_layered_v2"]
+    assert "market_prior_strength" not in vanilla.components["score"].params
+
+
 def test_dc_layered_v2_wires_improved_components() -> None:
     spec = load_model_specs()["dc_layered_v2"]
     assert spec.kind == "dc_layered"

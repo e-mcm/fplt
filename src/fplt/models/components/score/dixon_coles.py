@@ -4,6 +4,9 @@ v1 holds ξ, home advantage, and ρ fixed in the model spec and identifies only
 attack and defence. v2 can jointly estimate ρ and/or home advantage, and
 shrinks sparse or promoted-team ratings toward the league mean so fixed-mode
 and early-season forecasts degrade less than a hard neutral prior.
+
+When ``market_prior_strength`` > 0, ``predict`` shrinks per-match λ toward
+odds-implied rates from PIT ``match_odds``. Missing odds leave pure DC.
 """
 
 # scipy does not ship type stubs.
@@ -18,6 +21,7 @@ from scipy.optimize import minimize
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
+from fplt.models.components.score.odds_lambda import blend_lambda, odds_to_lambda
 from fplt.models.distributions import MAX_GOALS, ScorelineDist
 from fplt.models.spec import ModelSpec, register_component
 
@@ -100,6 +104,8 @@ class MatchScoreModel:
       the league mean; effective strength is larger for promoted sides.
     - ``promoted_prior_strength`` — extra pseudo-matches for teams absent from
       earlier seasons visible at the deadline.
+    - ``market_prior_strength`` — pseudo-count shrink of per-match λ toward
+      PIT ``match_odds`` (0 = off / vanilla). Missing odds → pure DC.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -111,6 +117,11 @@ class MatchScoreModel:
         self._fit_home = bool(spec.params.get("fit_home_advantage", False))
         self._new_prior = float(spec.params.get("new_team_prior_strength", 0.0))
         self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
+        self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
+        if self._market_prior < 0:
+            raise ValueError(
+                f"market_prior_strength must be >= 0, got {self._market_prior}"
+            )
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}
         self._defence: dict[int, float] = {}
@@ -195,12 +206,14 @@ class MatchScoreModel:
 
         Args:
             view: Deadline the ratings belong to. Ratings come from ``fit``.
+                When ``market_prior_strength`` > 0, also supplies PIT
+                ``match_odds`` for the per-match λ blend.
             fixtures: Columns ``fixture_id``, ``team_h_key``, and ``team_a_key``.
+                ``season`` helps the odds join when ``fixture_id`` is missing.
 
         Returns:
             A truncated ``ScorelineDist``.
         """
-        del view
         if fixtures.is_empty():
             empty = np.zeros((0, MAX_GOALS + 1, MAX_GOALS + 1))
             return ScorelineDist(np.array([], dtype=np.int64), empty)
@@ -208,6 +221,27 @@ class MatchScoreModel:
         lambda_h, lambda_a = self._rates(
             fixtures["team_h_key"].to_list(), fixtures["team_a_key"].to_list()
         )
+        if self._market_prior > 0:
+            market_h, market_a = _market_rates(view, fixtures)
+            blended_h = np.empty_like(lambda_h)
+            blended_a = np.empty_like(lambda_a)
+            for index, (dc_h, dc_a, mkt_h, mkt_a) in enumerate(
+                zip(lambda_h, lambda_a, market_h, market_a, strict=True)
+            ):
+                market_home = None if np.isnan(mkt_h) else float(mkt_h)
+                market_away = None if np.isnan(mkt_a) else float(mkt_a)
+                # Blend only when both sides have market λ; else keep pure DC.
+                if market_home is None or market_away is None:
+                    blended_h[index] = dc_h
+                    blended_a[index] = dc_a
+                else:
+                    blended_h[index] = blend_lambda(
+                        float(dc_h), market_home, self._market_prior
+                    )
+                    blended_a[index] = blend_lambda(
+                        float(dc_a), market_away, self._market_prior
+                    )
+            lambda_h, lambda_a = blended_h, blended_a
         return ScorelineDist(ids, _joint(lambda_h, lambda_a, self._rho))
 
     def _rates(self, home: list[int], away: list[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -305,6 +339,93 @@ def _joint(lambda_h: np.ndarray, lambda_a: np.ndarray, rho: float) -> np.ndarray
         ]
         joint[:, home_goals, away_goals] *= np.asarray(factor)
     return np.clip(joint, 0, None)
+
+
+def _market_rates(
+    view: PITView, fixtures: pl.DataFrame
+) -> tuple[np.ndarray, np.ndarray]:
+    """Odds-implied λ aligned with ``fixtures``; NaN where odds are missing."""
+    n = fixtures.height
+    missing = np.full(n, np.nan, dtype=np.float64)
+    odds = view.latest(
+        "match_odds",
+        by=["season", "team_h_key", "team_a_key", "kickoff_time"],
+    ).collect()
+    if odds.is_empty():
+        return missing.copy(), missing.copy()
+    aligned = _align_odds(fixtures, odds)
+    lambda_h = missing.copy()
+    lambda_a = missing.copy()
+    for index, row in enumerate(aligned.iter_rows(named=True)):
+        home_odds = row.get("home_odds")
+        draw_odds = row.get("draw_odds")
+        away_odds = row.get("away_odds")
+        if home_odds is None or draw_odds is None or away_odds is None:
+            continue
+        over = row.get("over_25_odds")
+        under = row.get("under_25_odds")
+        try:
+            lambda_h[index], lambda_a[index] = odds_to_lambda(
+                float(home_odds),
+                float(draw_odds),
+                float(away_odds),
+                None if over is None else float(over),
+                None if under is None else float(under),
+            )
+        except ValueError:
+            continue
+    return lambda_h, lambda_a
+
+
+def _align_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
+    """Left-join odds onto fixtures; prefer ``fixture_id``, else team keys."""
+    indexed = fixtures.with_row_index("_row")
+    odds_cols = [
+        "home_odds",
+        "draw_odds",
+        "away_odds",
+        "over_25_odds",
+        "under_25_odds",
+    ]
+    empty = indexed.select("_row").with_columns(
+        [pl.lit(None).cast(pl.Float64).alias(name) for name in odds_cols]
+    )
+    via_id = empty
+    if "fixture_id" in fixtures.columns:
+        with_id = odds.filter(pl.col("fixture_id").is_not_null()).unique(
+            subset=["fixture_id"], keep="last"
+        )
+        if not with_id.is_empty():
+            via_id = (
+                indexed.select("_row", "fixture_id")
+                .join(
+                    with_id.select(["fixture_id", *odds_cols]),
+                    on="fixture_id",
+                    how="left",
+                )
+                .select(["_row", *odds_cols])
+            )
+    keys = ["team_h_key", "team_a_key"]
+    if "season" in fixtures.columns and "season" in odds.columns:
+        keys = ["season", *keys]
+    team_odds = odds.sort("available_at").unique(subset=keys, keep="last")
+    via_teams = (
+        indexed.select(["_row", *keys])
+        .join(team_odds.select([*keys, *odds_cols]), on=keys, how="left")
+        .select(["_row", *odds_cols])
+    )
+    merged = (
+        empty.select("_row")
+        .join(via_id, on="_row", how="left")
+        .join(via_teams, on="_row", how="left", suffix="_team")
+        .sort("_row")
+    )
+    return merged.select(
+        [
+            pl.coalesce([pl.col(name), pl.col(f"{name}_team")]).alias(name)
+            for name in odds_cols
+        ]
+    )
 
 
 register_component("dixon_coles")(MatchScoreModel)

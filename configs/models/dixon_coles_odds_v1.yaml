@@ -1,0 +1,15 @@
+name: dixon_coles_odds_v1
+kind: dixon_coles
+params:
+  # Same identification as dixon_coles_v2, plus a market λ prior from match_odds.
+  xi: 0.0065
+  home_advantage: 1.3
+  rho: -0.1
+  fit_rho: true
+  fit_home_advantage: true
+  new_team_prior_strength: 3.0
+  promoted_prior_strength: 8.0
+  # Pseudo-count shrink of per-match λ toward odds-implied rates (0 = vanilla).
+  market_prior_strength: 1.0
+refit: every_gw
+seed: 0
