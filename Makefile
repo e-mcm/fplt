@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models plan dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -39,6 +39,19 @@ eval-board:
 compare-models:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make compare-models SEASON=2024-25"; exit 1; fi
 	uv run fplt compare --season $(SEASON) $(ARGS)
+
+# ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
+# Usage: make plan SEASON=2025-26 GW=10
+# Optional: MODEL=rolling_mean_v1 HORIZON=2 ARGS='--entry-json picks.json'
+plan:
+	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
+		echo "Usage: make plan SEASON=2025-26 GW=10"; exit 1; fi
+	uv run fplt plan \
+		--model $(or $(MODEL),rolling_mean_v1) \
+		--season $(SEASON) \
+		--gw $(GW) \
+		--horizon $(or $(HORIZON),2) \
+		$(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:

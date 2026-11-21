@@ -176,6 +176,55 @@ def test_ledger_points_keep_the_deadline_that_issued_them() -> None:
     assert points_from_ledger(ledger.clear(), "m", "2024-25", 1, [1]).is_empty()
 
 
+def test_run_plan_resolves_squad_when_entry_id_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stage(tmp_path)
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FPLT_ENTRY_ID", "42")
+    get_settings.cache_clear()
+    resolved = _state()
+    calls: list[object] = []
+
+    def fake_resolve(view, **kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return resolved
+
+    monkeypatch.setattr("fplt.optimise.decisions.resolve_squad_state", fake_resolve)
+    try:
+        solved, _path, _report = run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1)
+    finally:
+        get_settings.cache_clear()
+    assert len(calls) == 1
+    assert calls[0]["entry_json"] is None
+    assert calls[0]["event"] == 1
+    assert solved.picks.filter(~pl.col("sold")).height == 15
+
+
+def test_run_plan_skips_resolve_when_squad_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stage(tmp_path)
+    monkeypatch.setenv("FPLT_ENTRY_ID", "42")
+    get_settings.cache_clear()
+
+    def boom(*_a, **_k):  # noqa: ANN001
+        raise AssertionError("resolve_squad_state must not run when squad is set")
+
+    monkeypatch.setattr("fplt.optimise.decisions.resolve_squad_state", boom)
+    try:
+        run_plan(
+            tmp_path,
+            "rolling_mean_v1",
+            "2024-25",
+            1,
+            1,
+            squad=_state(),
+        )
+    finally:
+        get_settings.cache_clear()
+
+
 def test_plan_command_writes_the_report_and_rejects_unknown_models(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
