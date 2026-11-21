@@ -209,4 +209,56 @@ def test_plan_without_entry_skips_resolve(
     finally:
         get_settings.cache_clear()
     resolve.assert_not_called()
-    assert "squad" not in run.call_args.kwargs
+    squad = run.call_args.kwargs["squad"]
+    assert squad.owned == []
+    assert squad.bank == 1000
+
+
+def test_plan_rebuild_clears_owned_and_folds_selling_prices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FPLT_ENTRY_ID", "42")
+    get_settings.cache_clear()
+    owned = SquadState.model_validate(
+        {
+            "bank": 21,
+            "free_transfers": 2,
+            "ft_bank_cap": 5,
+            "hit_cost": 4,
+            "decay": 0.9,
+            "bench_weight": 0.0001,
+            "owned": [
+                {"player_key": 1, "selling_price": 100},
+                {"player_key": 2, "selling_price": 55},
+            ],
+        }
+    )
+    resolve = MagicMock(return_value=owned)
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    monkeypatch.setattr(
+        "fplt.cli.PITData",
+        lambda store: MagicMock(view=MagicMock(return_value=object())),
+    )
+    monkeypatch.setattr("fplt.cli.DataStore", lambda root: object())
+    monkeypatch.setattr("fplt.cli.resolve_squad_state", resolve)
+    monkeypatch.setattr("fplt.cli.run_plan", run)
+    try:
+        main(
+            [
+                "plan",
+                "--model",
+                "rolling_mean_v1",
+                "--season",
+                "2024-25",
+                "--gw",
+                "3",
+                "--rebuild",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+    squad = run.call_args.kwargs["squad"]
+    assert squad.owned == []
+    assert squad.bank == 176
+    assert squad.free_transfers == 2

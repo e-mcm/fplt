@@ -29,6 +29,7 @@ from fplt.optimise.decisions import (
     run_decisions,
     run_plan,
 )
+from fplt.optimise.state import load_squad_state, rebuild_squad_state
 from fplt.settings import get_settings
 from fplt.types import GWKey
 from fplt.utils.logging import configure_logging
@@ -137,6 +138,15 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Load the live / public squad via resolve_squad_state "
             "(default when FPLT_ENTRY_ID is set; --entry-json still wins)"
+        ),
+    )
+    plan.add_argument(
+        "--rebuild",
+        action="store_true",
+        help=(
+            "Draft fifteen from an empty squad using today's budget "
+            "(bank + selling prices). Ignores transfer hits; needs selling "
+            "prices from my-team or --entry-json when not using YAML owned"
         ),
     )
     apply = sub.add_parser(
@@ -398,23 +408,25 @@ def _plan(args: argparse.Namespace) -> None:
                 event=args.gw,
                 settings=settings,
             )
-            _solved, path, report = run_plan(
-                data_dir,
-                args.model,
-                args.season,
-                args.gw,
-                args.horizon,
-                squad=squad,
-            )
         else:
             logger.info("planning from YAML squad (no FPLT_ENTRY_ID)")
-            _solved, path, report = run_plan(
-                data_dir,
-                args.model,
-                args.season,
-                args.gw,
-                args.horizon,
+            squad = load_squad_state()
+        if args.rebuild:
+            owned_n = len(squad.owned)
+            squad = rebuild_squad_state(squad)
+            logger.info(
+                "rebuild draft: cleared %s owned; bank=%s (ITB + selling prices)",
+                owned_n,
+                squad.bank,
             )
+        _solved, path, report = run_plan(
+            data_dir,
+            args.model,
+            args.season,
+            args.gw,
+            args.horizon,
+            squad=squad,
+        )
     except PlanExistsError as exc:
         print(exc.report, end="")
         print(f"plan already exists: {exc}", file=sys.stderr)
