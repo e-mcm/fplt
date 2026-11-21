@@ -479,7 +479,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 10.1 Inputs
 
 - Predictions for horizon H from one predictor (expected points; optionally samples).
-- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_SESSION` / `pl_profile`; else public finished-GW picks, no selling prices). Automation `catch_up` / `pre_deadline` call this before `run_plan`. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
+- Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_SESSION` / `pl_profile`; else public finished-GW picks, no selling prices). `run_plan` (and thus `make plan` / CLI / automation) calls this whenever a pre-built `squad` is not passed. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
 - Rules for the season (squad limits, FT banking cap, hit cost).
 
 ### 10.2 Formulation (multi-period ILP)

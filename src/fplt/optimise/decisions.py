@@ -253,6 +253,10 @@ def run_plan(
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
+    When ``squad`` is omitted, squad state comes from ``resolve_squad_state``:
+    ``entry_json`` if provided, else the live / public team when
+    ``FPLT_ENTRY_ID`` is set, else the YAML draft.
+
     Args:
         data_dir: Root that contains ``staged/`` and ``ledger/``.
         model_name: YAML spec name.
@@ -262,7 +266,7 @@ def run_plan(
         entry_json: Optional ``entry/{id}/event/{gw}/picks`` payload. It
             replaces the owned squad and the bank when ``squad`` is omitted.
         squad: Pre-resolved squad state (e.g. from ``resolve_squad_state``).
-            When set, ``entry_json`` is ignored.
+            When set, ``entry_json`` and ``FPLT_ENTRY_ID`` are ignored.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -270,15 +274,19 @@ def run_plan(
     Raises:
         KeyError: The spec name or the gameweek is unknown.
         FileExistsError: This deadline was already written.
+        FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
+            ``entry_json`` / ``squad`` was provided.
     """
     spec = load_model_specs()[model_name]
     view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
     if squad is not None:
         state = squad
-    elif entry_json is not None:
-        state = resolve_squad_state(view, entry_json=entry_json)
     else:
-        state = load_squad_state()
+        state = resolve_squad_state(
+            view,
+            entry_json=entry_json,
+            event=gameweek,
+        )
     window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
     solved = plan_squad(
         candidates_as_of(view),

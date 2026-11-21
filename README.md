@@ -55,11 +55,11 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
-| Recommend transfers (live team) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --from-api` |
+| Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
 | Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
 | Leaderboard app | `make leaderboard` |
 
-`plan --from-api` is the default whenever `FPLT_ENTRY_ID` is set; `--entry-json` still wins over the API.
+Set `FPLT_ENTRY_ID` in `.env` so `make plan` / `fplt plan` load your squad (public finished-GW picks without a session; live selling prices need `FPLT_FPL_SESSION` in local `.env` / Cursor secrets — never commit it). `--entry-json` still wins over the API. Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
 
 ## Adding things
 
