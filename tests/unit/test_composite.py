@@ -47,8 +47,28 @@ def test_a_gameweek_is_scored_and_written(
 def test_bad_layered_specs_are_rejected() -> None:
     with pytest.raises(ValueError, match="n_sims"):
         CompositePredictor(_spec(n_sims=0))
+    with pytest.raises(ValueError, match="cs_red_void_prob"):
+        CompositePredictor(_spec(cs_red_void_prob=2.0))
+    with pytest.raises(ValueError, match="conceded_mode"):
+        CompositePredictor(_spec(conceded_mode="half"))
+    with pytest.raises(ValueError, match="sample_other"):
+        CompositePredictor(_spec(sample_other="yes"))
     with pytest.raises(ValueError, match="components"):
         CompositePredictor(ModelSpec(name="bare", kind="dc_layered"))
+
+
+def test_fidelity_params_are_accepted_on_the_layered_spec() -> None:
+    model = CompositePredictor(
+        _spec(
+            n_sims=50,
+            cs_red_void_prob=0.02,
+            conceded_mode="played",
+            sample_other=True,
+        )
+    )
+    assert model._cs_red_void_prob == pytest.approx(0.02)
+    assert model._conceded_mode == "played"
+    assert model._sample_other is True
 
 
 def _spec(**params: object) -> ModelSpec:
