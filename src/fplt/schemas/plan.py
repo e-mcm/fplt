@@ -100,6 +100,7 @@ class DecisionSchema(pa.DataFrameModel):
     season: str
     gw: int = pa.Field(ge=1, le=38)
     player_key: int
+    position: str = pa.Field(isin=_POSITIONS)
     in_xi: bool
     captain: bool
     vice: bool
@@ -107,6 +108,7 @@ class DecisionSchema(pa.DataFrameModel):
     sold: bool
     xpts: float
     actual_pts: int = pa.Field(nullable=True)
+    actual_minutes: int = pa.Field(nullable=True, ge=0)
     hit: float = pa.Field(ge=0)
     free_transfers: int = pa.Field(ge=0)
 

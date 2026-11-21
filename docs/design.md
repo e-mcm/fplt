@@ -144,7 +144,7 @@ Availability and news cannot be recovered after the fact, so capture runs indepe
 - Snapshots are committed to an orphan branch `snapshots` of this repo (path layout as `data/raw/fpl_api/...`).
 - Local Dagster has a sensor that fetches the `snapshots` branch and ingests new files into `data/raw`.
 
-Historical seasons (vaastav) lack per-deadline status snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons.
+Historical seasons (vaastav) lack per-deadline status/news/chance snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind.
 
 ### 4.6 Schemas
 
@@ -357,7 +357,7 @@ Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same 
 | `actual_pts`, `actual_minutes` | filled when the target GW is `data_checked` |
 
 `ledger/components` — one row per model, deadline, and fixture. Scorelines store `p_home`, `p_draw`, `p_away`, `expected_home`, `expected_away`, and, once the target gameweek is `data_checked`, `actual_home`, `actual_away`, and ranked probability score over home/draw/away. Minutes rows join this table later.
-`ledger/decisions` — one row per model, gameweek, and player kept or sold that week: `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `actual_pts`, `hit`, and `free_transfers` available at the deadline. A re-run replaces rows for the same model and gameweek.
+`ledger/decisions` — one row per model, gameweek, and player kept or sold that week: `position`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `actual_pts`, `actual_minutes`, `hit`, and `free_transfers` available at the deadline. A re-run replaces rows for the same model and gameweek.
 
 ### 7.3 Metrics
 
@@ -368,7 +368,7 @@ Prediction level (by model × horizon × position × season):
 - Calibration of `p_haul` and `p_60` (reliability curves, Brier score)
 
 Decision level — what actually matters:
-- Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Report total realised points and per-GW points.
+- Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`.
 
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline

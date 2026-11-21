@@ -27,6 +27,7 @@ from fplt.optimise.plan import (
     render_report,
     write_plan,
 )
+from fplt.optimise.realised import format_decision_scoreboard, summarise_decisions
 from fplt.optimise.state import (
     OwnedPlayer,
     SquadState,
@@ -39,6 +40,21 @@ from fplt.types import GWKey
 
 TeamLoader = Callable[..., CurrentTeam]
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "PlanExistsError",
+    "candidates_as_of",
+    "format_decision_scoreboard",
+    "points_from_ledger",
+    "read_decisions",
+    "resolve_squad_state",
+    "run_decision_bakeoff",
+    "run_decisions",
+    "run_plan",
+    "simulate_decisions",
+    "summarise_decisions",
+    "write_decisions",
+]
 
 
 class PlanExistsError(FileExistsError):
@@ -146,7 +162,8 @@ def simulate_decisions(
     Args:
         candidates: ``gw``, ``player_key``, ``position``, ``team_key``, ``price``.
         predictions: ``as_of_gw``, ``target_gw``, ``player_key``, ``xpts``.
-        actuals: ``gw``, ``player_key``, ``actual_pts``. A sold player scores nothing.
+        actuals: ``gw``, ``player_key``, ``actual_pts``, and optional
+            ``actual_minutes``. A sold player scores nothing.
         state: Starting bank, free transfers, and owned players.
         model_id: Written onto every row.
         season: Season label.
@@ -177,8 +194,17 @@ def simulate_decisions(
             horizon=len(window),
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
+        # Selling stays at purchase price (accepted bakeoff approx; no rises).
         current = _advance(current, solved, pool)
     return _decisions(pl.DataFrame(rows) if rows else _empty_decisions())
+
+
+def read_decisions(root: Path) -> pl.DataFrame:
+    """Load ``ledger/decisions/part.parquet``, or an empty decision frame."""
+    path = root / "ledger" / "decisions" / "part.parquet"
+    if not path.exists():
+        return _empty_decisions()
+    return _decisions(pl.read_parquet(path))
 
 
 def write_decisions(root: Path, frame: pl.DataFrame) -> Path:
@@ -438,6 +464,57 @@ def run_decisions(
     return write_decisions(data_dir, frame)
 
 
+def run_decision_bakeoff(
+    data_dir: Path,
+    models: list[str],
+    season: str,
+    from_gw: int,
+    to_gw: int,
+    horizon: int,
+    *,
+    simulate: bool = True,
+) -> pl.DataFrame:
+    """Simulate decisions for each model (optional) and return a season scoreboard.
+
+    Args:
+        data_dir: Root with ``staged/`` and ``ledger/``.
+        models: YAML spec names to compare.
+        season: Season label.
+        from_gw: First gameweek.
+        to_gw: Last gameweek, inclusive.
+        horizon: Planner horizon (must match the backtest ``--steps`` used).
+        simulate: When true, call ``run_decisions`` for each model first.
+
+    Returns:
+        Summary from ``summarise_decisions`` for ``season`` and ``models``.
+
+    Raises:
+        KeyError: An unknown model name.
+        ValueError: ``models`` is empty.
+    """
+    if not models:
+        raise ValueError("models must be non-empty")
+    if simulate:
+        for name in models:
+            logger.info(
+                "decision bakeoff simulate model=%s season=%s gw=%s-%s horizon=%s",
+                name,
+                season,
+                from_gw,
+                to_gw,
+                horizon,
+            )
+            run_decisions(data_dir, name, season, from_gw, to_gw, horizon)
+    specs = load_model_specs()
+    model_ids = {specs[name].model_id for name in models}
+    frame = read_decisions(data_dir).filter(
+        (pl.col("season") == season) & pl.col("model_id").is_in(list(model_ids))
+    )
+    if from_gw > 1 or to_gw < 38:
+        frame = frame.filter((pl.col("gw") >= from_gw) & (pl.col("gw") <= to_gw))
+    return summarise_decisions(frame)
+
+
 def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFrame:
     empty = pl.DataFrame(
         schema={
@@ -463,7 +540,12 @@ def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.Dat
 
 def _actual_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFrame:
     empty = pl.DataFrame(
-        schema={"gw": pl.Int64(), "player_key": pl.Int64(), "actual_pts": pl.Int64()}
+        schema={
+            "gw": pl.Int64(),
+            "player_key": pl.Int64(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+        }
     )
     if ledger.is_empty():
         return empty
@@ -472,10 +554,17 @@ def _actual_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFra
     )
     if chosen.is_empty():
         return empty
+    if "actual_minutes" in chosen.columns:
+        return (
+            chosen.group_by("target_gw", "player_key")
+            .agg(pl.col("actual_pts").sum(), pl.col("actual_minutes").sum())
+            .rename({"target_gw": "gw"})
+        )
     return (
         chosen.group_by("target_gw", "player_key")
         .agg(pl.col("actual_pts").sum())
         .rename({"target_gw": "gw"})
+        .with_columns(pl.lit(None).cast(pl.Int64).alias("actual_minutes"))
     )
 
 
@@ -507,20 +596,28 @@ def _decision_rows(
 ) -> list[dict[str, object]]:
     played = plan.picks.filter(pl.col("step") == 0)
     scored = actuals.filter(pl.col("gw") == gameweek)
-    by_player = {
-        int(key): value
-        for key, value in scored.select("player_key", "actual_pts").iter_rows()
+    points_by = {
+        int(key): pts
+        for key, pts in scored.select("player_key", "actual_pts").iter_rows()
     }
+    minutes_by: dict[int, int | None] = {}
+    if "actual_minutes" in scored.columns:
+        minutes_by = {
+            int(key): (None if mins is None else int(mins))
+            for key, mins in scored.select("player_key", "actual_minutes").iter_rows()
+        }
     rows: list[dict[str, object]] = []
     for row in played.iter_rows(named=True):
         key = int(row["player_key"])
-        points = None if row["sold"] else by_player.get(key)
+        points = None if row["sold"] else points_by.get(key)
+        minutes = None if row["sold"] else minutes_by.get(key)
         rows.append(
             {
                 "model_id": model_id,
                 "season": season,
                 "gw": gameweek,
                 "player_key": key,
+                "position": str(row["position"]),
                 "in_xi": bool(row["in_xi"]),
                 "captain": bool(row["captain"]),
                 "vice": bool(row["vice"]),
@@ -528,6 +625,7 @@ def _decision_rows(
                 "sold": bool(row["sold"]),
                 "xpts": float(row["xpts"]),
                 "actual_pts": points,
+                "actual_minutes": minutes,
                 "hit": float(plan.hits[0]),
                 "free_transfers": int(plan.free_transfers[0]),
             }
@@ -561,15 +659,25 @@ def _advance(state: SquadState, plan: GameweekPlan, pool: pl.DataFrame) -> Squad
 
 
 def _actuals(frame: pl.DataFrame) -> pl.DataFrame:
+    empty = pl.DataFrame(
+        schema={
+            "gw": pl.Int64(),
+            "player_key": pl.Int64(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+        }
+    )
     if frame.is_empty():
-        return pl.DataFrame(
-            schema={
-                "gw": pl.Int64(),
-                "player_key": pl.Int64(),
-                "actual_pts": pl.Int64(),
-            }
+        return empty
+    if "actual_minutes" in frame.columns:
+        return frame.group_by("gw", "player_key").agg(
+            pl.col("actual_pts").sum(), pl.col("actual_minutes").sum()
         )
-    return frame.group_by("gw", "player_key").agg(pl.col("actual_pts").sum())
+    return (
+        frame.group_by("gw", "player_key")
+        .agg(pl.col("actual_pts").sum())
+        .with_columns(pl.lit(None).cast(pl.Int64).alias("actual_minutes"))
+    )
 
 
 def _player_names(view: PITView) -> dict[int, str]:
@@ -608,6 +716,7 @@ def _empty_decisions() -> pl.DataFrame:
             "season": pl.Utf8(),
             "gw": pl.Int64(),
             "player_key": pl.Int64(),
+            "position": pl.Utf8(),
             "in_xi": pl.Boolean(),
             "captain": pl.Boolean(),
             "vice": pl.Boolean(),
@@ -615,6 +724,7 @@ def _empty_decisions() -> pl.DataFrame:
             "sold": pl.Boolean(),
             "xpts": pl.Float64(),
             "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
             "hit": pl.Float64(),
             "free_transfers": pl.Int64(),
         }

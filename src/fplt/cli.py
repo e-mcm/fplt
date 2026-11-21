@@ -18,7 +18,9 @@ from fplt.data.store import DataStore
 from fplt.optimise.apply import ApplyError, apply_plan, format_apply_preview
 from fplt.optimise.decisions import (
     PlanExistsError,
+    format_decision_scoreboard,
     resolve_squad_state,
+    run_decision_bakeoff,
     run_decisions,
     run_plan,
 )
@@ -160,6 +162,26 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the transfers POST",
     )
+    decisions = sub.add_parser(
+        "decisions",
+        parents=[log_flags],
+        help="Multi-model historical decision bakeoff scoreboard",
+    )
+    decisions.add_argument("--season", required=True)
+    decisions.add_argument("--from-gw", type=int, default=1)
+    decisions.add_argument("--to-gw", type=int, default=38)
+    decisions.add_argument("--horizon", type=int, default=2)
+    decisions.add_argument(
+        "--models",
+        nargs="+",
+        default=list(CORE_MODELS),
+        help="YAML spec names (default: CORE_MODELS)",
+    )
+    decisions.add_argument(
+        "--summarise-only",
+        action="store_true",
+        help="Score existing ledger/decisions rows; skip re-simulating",
+    )
     args = parser.parse_args(argv)
     if args.command is None:
         return
@@ -179,6 +201,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "apply":
         _apply(args)
+        return
+    if args.command == "decisions":
+        _decisions(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -347,6 +372,26 @@ def _plan(args: argparse.Namespace) -> None:
     print(report, end="")
     print(path)
     print(path.parent / "report.md")
+
+
+def _decisions(args: argparse.Namespace) -> None:
+    try:
+        summary = run_decision_bakeoff(
+            get_settings().data_dir,
+            list(args.models),
+            args.season,
+            args.from_gw,
+            args.to_gw,
+            args.horizon,
+            simulate=not bool(args.summarise_only),
+        )
+    except (KeyError, ValueError) as exc:
+        logger.error("decisions failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_decision_scoreboard(summary))
+    path = get_settings().data_dir / "ledger" / "decisions" / "part.parquet"
+    print(path)
 
 
 def _apply(args: argparse.Namespace) -> None:

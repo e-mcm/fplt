@@ -1,0 +1,270 @@
+"""Realised FPL points from a decision-ledger gameweek.
+
+Applies automatic substitutions and vice-captain-on-blank captaincy, then
+deducts transfer hits once per gameweek. Bench order is deterministic
+(position then ``player_key``) because the optimiser does not store FPL
+bench slots. Selling-price rises are out of scope: decision sims already
+freeze selling at purchase price.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import polars as pl
+
+_POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+_XI_MIN = {"GK": 1, "DEF": 3, "MID": 2, "FWD": 1}
+_XI_SIZE = 11
+
+
+@dataclass(frozen=True)
+class RealisedGameweek:
+    """Points for one model × season × gameweek after FPL scoring rules."""
+
+    model_id: str
+    season: str
+    gw: int
+    points: int
+    hit: float
+    net_points: int
+
+
+@dataclass(frozen=True)
+class _Pick:
+    """One kept player in a gameweek for realised scoring."""
+
+    player_key: int
+    position: str
+    in_xi: bool
+    captain: bool
+    vice: bool
+    pts: int
+    minutes: int
+
+
+def score_gameweek(
+    picks: pl.DataFrame,
+    *,
+    hit: float = 0.0,
+) -> int:
+    """Score one gameweek's kept squad with autosub and vice-on-blank.
+
+    Args:
+        picks: Non-sold players for one GW with ``player_key``, ``position``,
+            ``in_xi``, ``captain``, ``vice``, ``actual_pts``, and
+            ``actual_minutes``. Null points are 0; null minutes assume played.
+        hit: Transfer hit cost to subtract once (non-negative).
+
+    Returns:
+        Net realised points (XI after autosub, captain ×2 or vice ×2, minus
+        ``hit``).
+
+    Raises:
+        ValueError: The frame is missing required columns or has no XI.
+    """
+    required = {
+        "player_key",
+        "position",
+        "in_xi",
+        "captain",
+        "vice",
+        "actual_pts",
+        "actual_minutes",
+    }
+    missing = required - set(picks.columns)
+    if missing:
+        raise ValueError(f"picks missing columns: {sorted(missing)}")
+    kept = picks.filter(~pl.col("sold")) if "sold" in picks.columns else picks
+    if kept.filter(pl.col("in_xi")).is_empty():
+        raise ValueError("picks need at least one in_xi player")
+    rows = [_pick_from_row(row) for row in kept.iter_rows(named=True)]
+    starters = sorted(
+        (row for row in rows if row.in_xi),
+        key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
+    )
+    bench = sorted(
+        (row for row in rows if not row.in_xi),
+        key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
+    )
+    active_keys = {row.player_key for row in starters}
+    counts = _position_counts(starters)
+    used_bench: set[int] = set()
+    for starter in starters:
+        if starter.minutes > 0:
+            continue
+        for sub in bench:
+            if sub.player_key in used_bench or sub.minutes <= 0:
+                continue
+            if not _eligible_sub(starter.position, sub.position, counts):
+                continue
+            active_keys.discard(starter.player_key)
+            active_keys.add(sub.player_key)
+            used_bench.add(sub.player_key)
+            counts[starter.position] -= 1
+            counts[sub.position] += 1
+            break
+    by_key = {row.player_key: row for row in rows}
+    # Only players who appeared (minutes > 0) contribute; a blanked starter
+    # with no eligible autosub scores nothing.
+    total = sum(by_key[key].pts for key in active_keys if by_key[key].minutes > 0)
+    captain = next((row for row in rows if row.captain), None)
+    vice = next((row for row in rows if row.vice), None)
+    if captain is not None and captain.minutes > 0:
+        total += captain.pts
+    elif vice is not None and vice.minutes > 0:
+        if vice.player_key in active_keys:
+            total += vice.pts
+        else:
+            total += 2 * vice.pts
+    return int(total - max(hit, 0.0))
+
+
+def summarise_decisions(frame: pl.DataFrame) -> pl.DataFrame:
+    """Aggregate decision-ledger rows into model × season totals and per-GW nets.
+
+    Args:
+        frame: Rows with decision columns plus ``position`` and
+            ``actual_minutes``. Sold rows are ignored for scoring; ``hit`` is
+            taken once per gameweek from any kept row.
+
+    Returns:
+        ``model_id``, ``season``, ``total_points``, ``gameweeks``, and
+        ``per_gw`` (sorted gw→net list) for each model × season present.
+    """
+    if frame.is_empty():
+        return pl.DataFrame(
+            schema={
+                "model_id": pl.Utf8(),
+                "season": pl.Utf8(),
+                "total_points": pl.Int64(),
+                "gameweeks": pl.Int64(),
+                "per_gw": pl.List(pl.Int64()),
+            }
+        )
+    required = {
+        "model_id",
+        "season",
+        "gw",
+        "player_key",
+        "position",
+        "in_xi",
+        "captain",
+        "vice",
+        "actual_pts",
+        "actual_minutes",
+        "hit",
+    }
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"decisions missing columns: {sorted(missing)}")
+    realised: list[RealisedGameweek] = []
+    keys = (
+        frame.select("model_id", "season", "gw")
+        .unique()
+        .sort("model_id", "season", "gw")
+    )
+    for model_id, season, gameweek in keys.iter_rows():
+        part = frame.filter(
+            (pl.col("model_id") == model_id)
+            & (pl.col("season") == season)
+            & (pl.col("gw") == gameweek)
+        )
+        hit = float(part["hit"][0]) if part.height else 0.0
+        net = score_gameweek(part, hit=hit)
+        realised.append(
+            RealisedGameweek(
+                model_id=str(model_id),
+                season=str(season),
+                gw=int(gameweek),
+                points=net + int(hit),
+                hit=hit,
+                net_points=net,
+            )
+        )
+    if not realised:
+        return summarise_decisions(frame.clear())
+    detail = pl.DataFrame(
+        {
+            "model_id": [row.model_id for row in realised],
+            "season": [row.season for row in realised],
+            "gw": [row.gw for row in realised],
+            "net_points": [row.net_points for row in realised],
+        }
+    )
+    return (
+        detail.group_by("model_id", "season")
+        .agg(
+            pl.col("net_points").sum().alias("total_points"),
+            pl.col("gw").n_unique().alias("gameweeks"),
+            pl.col("net_points").sort_by("gw").alias("per_gw"),
+        )
+        .sort("total_points", descending=True)
+    )
+
+
+def format_decision_scoreboard(summary: pl.DataFrame) -> str:
+    """Render a markdown table of season totals ranked by realised points."""
+    if summary.is_empty():
+        return "_No decision rows to score._"
+    lines = [
+        "| Rank | Model | Season | Points | GWs |",
+        "| ---: | --- | --- | ---: | ---: |",
+    ]
+    for index, row in enumerate(summary.iter_rows(named=True), start=1):
+        lines.append(
+            f"| {index} | {row['model_id']} | {row['season']} | "
+            f"{row['total_points']} | {row['gameweeks']} |"
+        )
+    return "\n".join(lines)
+
+
+def _pick_from_row(row: dict[str, object]) -> _Pick:
+    raw_minutes = row["actual_minutes"]
+    minutes = 0 if raw_minutes == 0 else _as_int(raw_minutes, default=1)
+    return _Pick(
+        player_key=_as_int(row["player_key"]),
+        position=str(row["position"]),
+        in_xi=bool(row["in_xi"]),
+        captain=bool(row["captain"]),
+        vice=bool(row["vice"]),
+        pts=_as_int(row["actual_pts"]),
+        minutes=minutes,
+    )
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value != "":
+        return int(value)
+    return default
+
+
+def _position_counts(players: list[_Pick]) -> dict[str, int]:
+    counts = {"GK": 0, "DEF": 0, "MID": 0, "FWD": 0}
+    for player in players:
+        if player.position in counts:
+            counts[player.position] += 1
+    return counts
+
+
+def _eligible_sub(
+    blank_position: str, sub_position: str, counts: dict[str, int]
+) -> bool:
+    if blank_position == "GK":
+        return sub_position == "GK"
+    if sub_position == "GK":
+        return False
+    trial = dict(counts)
+    trial[blank_position] -= 1
+    trial[sub_position] += 1
+    if sum(trial.values()) != _XI_SIZE:
+        return False
+    return all(trial[position] >= minimum for position, minimum in _XI_MIN.items())

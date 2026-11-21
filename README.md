@@ -55,6 +55,7 @@ Useful env vars (all optional except where noted; see `.env.example`):
 | Backtest models | `uv run fplt backtest --models dc_layered_v1 lgbm_direct_v1 --season 2025-26` |
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
+| Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
 | Verbose CLI logs | `uv run fplt -v plan …` / `uv run fplt backtest -v …` (DEBUG; default is INFO) |
@@ -95,7 +96,25 @@ make bootstrap-vaastav
 # or: uv run python scripts/bootstrap_vaastav.py
 ```
 
-That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--source` points at an existing vaastav `data/` tree) and copies seasons from `2021-22` onward. Use `--force` to refresh seasons already on disk. Dagster's staged ingest then picks them up via `import_available`.
+That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--source` points at an existing vaastav `data/` tree) and copies seasons from `2021-22` onward. Use `--force` to refresh seasons already on disk. Dagster's staged ingest then picks them up via `import_available`. Per-gameweek `value` is staged as `player_status.price` at that GW's deadline (news/chance stay unknown).
+
+### Historical decision bakeoff
+
+Chips-off season sim from an optimal GW1 draft, ranked by realised FPL points (autosub + vice-on-blank; captain ×2; hits once; selling frozen at purchase):
+
+```bash
+# 1) Predictions + actuals into the ledger (horizon == decisions --horizon / --steps)
+uv run fplt backtest \
+  --models rolling_mean_v1 dc_layered_v1 lgbm_direct_v1 \
+  --season 2024-25 --from-gw 1 --to-gw 38 --steps 2
+
+# 2) Multi-model decision sim + season-total scoreboard
+make decisions-board SEASON=2024-25
+# or: uv run fplt decisions --season 2024-25 --horizon 2 \
+#        --models rolling_mean_v1 dc_layered_v1 lgbm_direct_v1
+```
+
+Re-score an existing `ledger/decisions` without re-simulating: `uv run fplt decisions --season 2024-25 --summarise-only`. Single-model path remains `fplt plan --decisions --model …`.
 
 ## Running unattended
 

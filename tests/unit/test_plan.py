@@ -11,6 +11,7 @@ from fplt.data.store import DataStore
 from fplt.optimise.decisions import (
     PlanExistsError,
     points_from_ledger,
+    run_decision_bakeoff,
     run_decisions,
     run_plan,
     simulate_decisions,
@@ -178,6 +179,56 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
         write_plan(tmp_path, broken)
 
 
+def test_decision_bakeoff_summarises_existing_ledger(tmp_path: Path) -> None:
+    pool = _pool().drop("xpts")
+    candidates = pl.concat([pool.with_columns(pl.lit(gw).alias("gw")) for gw in (1, 2)])
+    predictions = pl.DataFrame(
+        {
+            "as_of_gw": [1, 2],
+            "target_gw": [1, 2],
+            "player_key": [1, 1],
+            "xpts": [4.0, 4.0],
+        }
+    )
+    actuals = pl.DataFrame(
+        {
+            "gw": [1, 2],
+            "player_key": [1, 1],
+            "actual_pts": [3, 5],
+            "actual_minutes": [90, 90],
+        }
+    )
+    frame = simulate_decisions(
+        candidates,
+        predictions,
+        actuals,
+        _state(),
+        model_id="rolling_mean",
+        season="2024-25",
+        gameweeks=[1, 2],
+        horizon=1,
+    )
+    write_decisions(tmp_path, frame)
+    from fplt.models.spec import load_model_specs
+
+    spec = load_model_specs()["rolling_mean_v1"]
+    tagged = frame.with_columns(pl.lit(spec.model_id).alias("model_id"))
+    write_decisions(tmp_path, tagged)
+    summary = run_decision_bakeoff(
+        tmp_path,
+        ["rolling_mean_v1"],
+        "2024-25",
+        1,
+        2,
+        1,
+        simulate=False,
+    )
+    assert summary.height == 1
+    assert summary["gameweeks"].to_list() == [2]
+    with pytest.raises(ValueError, match="non-empty"):
+        run_decision_bakeoff(tmp_path, [], "2024-25", 1, 2, 1, simulate=False)
+
+
 def test_two_gameweeks_record_a_decision_row_set(tmp_path: Path) -> None:
     pool = _pool().drop("xpts")
     candidates = pl.concat([pool.with_columns(pl.lit(gw).alias("gw")) for gw in (1, 2)])
@@ -189,7 +240,14 @@ def test_two_gameweeks_record_a_decision_row_set(tmp_path: Path) -> None:
             "xpts": [1.0, 4.0, 4.0],
         }
     )
-    actuals = pl.DataFrame({"gw": [1, 2], "player_key": [1, 1], "actual_pts": [3, 5]})
+    actuals = pl.DataFrame(
+        {
+            "gw": [1, 2],
+            "player_key": [1, 1],
+            "actual_pts": [3, 5],
+            "actual_minutes": [90, 90],
+        }
+    )
     frame = simulate_decisions(
         candidates,
         predictions,

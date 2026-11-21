@@ -2,7 +2,9 @@
 
 Availability is not observed per deadline in this source, so every row is
 flagged ``source = "vaastav"``. Result rows become visible at kickoff + 3h.
-Status is a single degraded row per player: no price, news, or chance.
+Status still lacks news and chance-of-playing, but per-gameweek ``value``
+from ``merged_gw.csv`` is staged as ``player_status.price`` at that GW's
+deadline so historical transfer budgets bind.
 """
 
 from __future__ import annotations
@@ -55,10 +57,19 @@ def import_season(store: DataStore, season_dir: Path, season: str) -> None:
     )
     if teams is not None:
         store.write("teams", _teams(teams, season, start))
+    deadlines: dict[int, datetime] = {}
     if fixtures is not None:
         store.write("fixtures", _fixtures(fixtures, team_code, season))
-        store.write("gameweeks", _gameweeks(fixtures, season, start))
-    store.write("player_status", _status(gameweeks, code_by_element, season, start))
+        gw_meta = _gameweeks(fixtures, season, start)
+        store.write("gameweeks", gw_meta)
+        deadlines = {
+            int(row["gw"]): row["deadline_time"]
+            for row in gw_meta.iter_rows(named=True)
+        }
+    store.write(
+        "player_status",
+        _status(gameweeks, code_by_element, season, start, deadlines),
+    )
     store.write(
         "player_fixture_stats",
         _stats(gameweeks, code_by_element, fixtures, season),
@@ -285,29 +296,76 @@ def _gameweeks(fixtures: pl.DataFrame, season: str, start: datetime) -> pl.DataF
 
 
 def _status(
-    gw: pl.DataFrame, codes: dict[int, int], season: str, start: datetime
+    gw: pl.DataFrame,
+    codes: dict[int, int],
+    season: str,
+    start: datetime,
+    deadlines: dict[int, datetime],
 ) -> pl.DataFrame:
+    """Stage per-GW prices from vaastav ``value``; news/chance stay unknown."""
     if gw.is_empty() or "element" not in gw.columns:
         return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
-    rows: list[dict[str, Any]] = [
-        {
-            "season": season,
-            "player_key": codes.get(_as_int(row["element"]), _as_int(row["element"])),
-            "status": "a",
-            "news": "",
-            "price": 0,
-            "ep_next": None,
-            "chance_of_playing": None,
-            "available_at": start,
-            "source": "vaastav",
-        }
-        for row in gw.select("element").unique().iter_rows(named=True)
-    ]
+    has_value = "value" in gw.columns
+    has_gw = "GW" in gw.columns
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for row in gw.iter_rows(named=True):
+        element = _as_int(row["element"])
+        gameweek = _as_int(row.get("GW"), 0) if has_gw else 0
+        if gameweek < 1:
+            key = (element, 0)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                _status_row(
+                    season,
+                    codes.get(element, element),
+                    price=0,
+                    available_at=start,
+                )
+            )
+            continue
+        key = (element, gameweek)
+        if key in seen:
+            continue
+        seen.add(key)
+        price = _as_int(row.get("value"), 0) if has_value else 0
+        available = deadlines.get(gameweek)
+        if available is None:
+            raw_kick = row.get("kickoff_time")
+            available = _kickoff(raw_kick) - timedelta(hours=2) if raw_kick else start
+        rows.append(
+            _status_row(
+                season,
+                codes.get(element, element),
+                price=price,
+                available_at=available,
+            )
+        )
+    if not rows:
+        return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
     return pl.DataFrame(rows).with_columns(
         pl.col("available_at").cast(pl.Datetime("us", "UTC")),
         pl.col("ep_next").cast(pl.Float64),
         pl.col("chance_of_playing").cast(pl.Float64),
     )
+
+
+def _status_row(
+    season: str, player_key: int, *, price: int, available_at: datetime
+) -> dict[str, Any]:
+    return {
+        "season": season,
+        "player_key": player_key,
+        "status": "a",
+        "news": "",
+        "price": price,
+        "ep_next": None,
+        "chance_of_playing": None,
+        "available_at": available_at,
+        "source": "vaastav",
+    }
 
 
 def _stats(
