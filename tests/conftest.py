@@ -9,7 +9,6 @@ _DATA = (
 )
 _NEEDS_VAASTAV = {
     "test_data.py",
-    "test_dixon_coles.py",
     "test_features.py",
     "test_predict.py",
     "test_predict_strategies.py",
