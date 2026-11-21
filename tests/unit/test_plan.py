@@ -22,6 +22,7 @@ from fplt.optimise.decisions import (
     write_decisions,
 )
 from fplt.optimise.plan import (
+    DEFAULT_PLAN_HORIZON,
     covered_horizon,
     plan_squad,
     plan_table,
@@ -518,6 +519,45 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
             main(["plan", "--model", "missing", "--season", "2024-25", "--gw", "1"])
     finally:
         get_settings.cache_clear()
+
+
+def test_decisions_cli_default_horizon_is_three(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``fplt decisions`` without ``--horizon`` uses ``DEFAULT_PLAN_HORIZON``."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    seen: dict[str, object] = {}
+
+    def _bakeoff(*args: object, **kwargs: object) -> pl.DataFrame:
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return pl.DataFrame(
+            {
+                "model_id": ["x"],
+                "season": ["2024-25"],
+                "total_points": [0],
+                "gameweeks": [1],
+                "per_gw": [[0]],
+            }
+        )
+
+    monkeypatch.setattr("fplt.cli.run_decision_bakeoff", _bakeoff)
+    try:
+        main(
+            [
+                "decisions",
+                "--season",
+                "2024-25",
+                "--models",
+                "rolling_mean_v1",
+                "--summarise-only",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+    assert seen["args"][5] == DEFAULT_PLAN_HORIZON
+    assert DEFAULT_PLAN_HORIZON == 3
 
 
 def test_run_plan_rejects_missing_or_blank_predictions(tmp_path: Path) -> None:

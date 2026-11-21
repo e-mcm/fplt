@@ -25,7 +25,7 @@ from fplt.optimise.apply import (
     build_apply_payload,
     format_apply_preview,
 )
-from fplt.optimise.plan import plan_parquet, write_plan
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, plan_parquet, write_plan
 from fplt.settings import Settings
 from fplt.types import GWKey
 
@@ -385,11 +385,18 @@ def test_cli_apply_dry_run(
         posted_lineup=False,
         mode="dry_run",
     )
-    monkeypatch.setattr("fplt.cli.apply_plan", lambda *a, **k: canned)
+    seen: dict[str, object] = {}
+
+    def _capture(*_a: object, **kwargs: object) -> ApplyResult:
+        seen.update(kwargs)
+        return canned
+
+    monkeypatch.setattr("fplt.cli.apply_plan", _capture)
     main(["apply", "--model", _MODEL, "--season", _SEASON, "--gw", "1"])
     out = capsys.readouterr().out
     assert "mode=dry_run" in out
     assert "dry-run: nothing posted" in out
+    assert seen["horizon"] == DEFAULT_PLAN_HORIZON
 
 
 def test_plan_parquet_path_matches_write(tmp_path: Path) -> None:

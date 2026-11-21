@@ -48,6 +48,11 @@ _Schema = (
 _MAX_MOVES = 15
 _SQUAD_SIZE = 15
 
+# Default look-ahead for ``fplt plan`` / ``fplt decisions`` / ``fplt apply``.
+# Chosen from the 2024-25 chips-off H∈{1..4} season-points sweep (H=3 best
+# cross-model mean; H=4 matched H=3 actions at higher MILP cost).
+DEFAULT_PLAN_HORIZON = 3
+
 
 @dataclass(frozen=True)
 class GameweekPlan:
