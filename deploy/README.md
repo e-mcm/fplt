@@ -26,16 +26,20 @@ real cookie or password values in git.
 
 ## launchd (macOS always-on)
 
-1. Create the secrets file (mode `600`):
+1. Create the secrets file (mode `600`). Prefer the CLI for the live-team token
+   (never paste `FPLT_FPL_API_TOKEN` into the repo `.env`):
 
    ```bash
+   uv run fplt auth from-browser --entry-id YOUR_ID   # local Chrome/Firefox localStorage
+   # optional alerts still go in the same file:
    mkdir -p ~/.config/fplt
-   cp .env.example ~/.config/fplt/env   # from the repo root
    chmod 600 ~/.config/fplt/env
-   # edit: set FPLT_ENTRY_ID, FPLT_FPL_API_TOKEN, FPLT_NTFY_URL and/or SMTP_*
+   # edit: set FPLT_NTFY_URL and/or SMTP_* (token/entry already set by fplt auth)
    ```
 
-   Override the path with `FPLT_ENV_FILE` if needed.
+   Or copy `.env.example` to `~/.config/fplt/env` and edit there. Override the
+   path with `FPLT_ENV_FILE` if needed. `fplt` Settings also loads this file for
+   local CLI use (not only launchd).
 
 2. Copy the plists from `deploy/launchd/`, replace `__FPLT_REPO__` with the
    absolute path to this checkout, and ensure `dagster-webserver` /

@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from getpass import getpass
 from pathlib import Path
 from typing import Literal
 
+from fplt.auth import clear_credentials, format_status, set_credentials
+from fplt.auth import status as auth_status
 from fplt.backtest.compare import CompareMode, compare_models, format_summary_table
 from fplt.backtest.component_eval import (
     DEFAULT_SIMS,
@@ -17,6 +20,7 @@ from fplt.backtest.component_eval import (
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.run import run_backtest
+from fplt.browser_auth import BrowserAuthError, auth_from_browser
 from fplt.data.fpl_client import FPLAPIError
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
@@ -288,10 +292,78 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet here",
     )
+    auth = sub.add_parser(
+        "auth",
+        parents=[log_flags],
+        help="Store FPL live-team token outside the repo (~/.config/fplt/env)",
+    )
+    auth_sub = auth.add_subparsers(dest="auth_command")
+    auth_sub.add_parser(
+        "status",
+        parents=[log_flags],
+        help="Show stored entry id and token expiry (default)",
+    )
+    auth_set = auth_sub.add_parser(
+        "set",
+        parents=[log_flags],
+        help="Paste DevTools Bearer token into ~/.config/fplt/env (never the repo)",
+    )
+    auth_set.add_argument(
+        "--token",
+        help="Bearer value (or - to read stdin). Prompted when omitted.",
+    )
+    auth_set.add_argument(
+        "--entry-id",
+        type=int,
+        help="FPL manager entry id (FPLT_ENTRY_ID)",
+    )
+    auth_clear = auth_sub.add_parser(
+        "clear",
+        parents=[log_flags],
+        help="Remove FPLT_FPL_API_TOKEN from the user env file",
+    )
+    auth_clear.add_argument(
+        "--also-entry-id",
+        action="store_true",
+        help="Also remove FPLT_ENTRY_ID",
+    )
+    auth_browser = auth_sub.add_parser(
+        "from-browser",
+        parents=[log_flags],
+        help=(
+            "Read FPL oidc.user access_token from local Chrome/Firefox "
+            "localStorage into ~/.config/fplt/env (no password; close "
+            "browser if the DB is locked)"
+        ),
+    )
+    auth_browser.add_argument(
+        "--browser",
+        choices=("auto", "chrome", "chromium", "edge", "brave", "firefox"),
+        default="auto",
+        help="Browser to search (default: auto)",
+    )
+    auth_browser.add_argument(
+        "--profile",
+        help="Profile directory name (e.g. Default, Profile 1)",
+    )
+    auth_browser.add_argument(
+        "--entry-id",
+        type=int,
+        help="FPL manager entry id (FPLT_ENTRY_ID)",
+    )
+    auth_browser.add_argument(
+        "--no-copy",
+        action="store_true",
+        help="Read Chromium LevelDB in place (default copies to avoid locks)",
+    )
     args = parser.parse_args(argv)
     if args.command is None:
         return
     configure_logging(verbose=bool(args.verbose), quiet=bool(args.quiet))
+    if args.command == "auth":
+        logger.info("fplt auth")
+        _auth(args)
+        return
     logger.info("fplt %s (data_dir=%s)", args.command, get_settings().data_dir)
     if args.command == "backtest":
         _backtest(args)
@@ -580,3 +652,69 @@ def _apply(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_apply_preview(result), end="")
+
+
+def _auth(args: argparse.Namespace) -> None:
+    command = getattr(args, "auth_command", None) or "status"
+    try:
+        if command == "status":
+            print(format_status(auth_status()), end="")
+            return
+        if command == "set":
+            token = _read_auth_token(args.token)
+            result = set_credentials(token=token, entry_id=args.entry_id)
+            get_settings.cache_clear()
+            print(format_status(result), end="")
+            if result.token is not None and result.token.expired is True:
+                print(
+                    "warning: pasted token already looks expired",
+                    file=sys.stderr,
+                )
+            return
+        if command == "clear":
+            result = clear_credentials(
+                clear_entry_id=bool(args.also_entry_id),
+            )
+            get_settings.cache_clear()
+            print(format_status(result), end="")
+            return
+        if command == "from-browser":
+            result = auth_from_browser(
+                browser=args.browser,
+                profile=args.profile,
+                entry_id=args.entry_id,
+                copy_locked=not bool(args.no_copy),
+            )
+            get_settings.cache_clear()
+            print(format_status(result), end="")
+            if result.token is not None and result.token.expired is True:
+                print(
+                    "warning: browser token already looks expired; "
+                    "refresh FPL in the browser and retry",
+                    file=sys.stderr,
+                )
+            return
+    except (BrowserAuthError, OSError, ValueError) as exc:
+        logger.error("auth failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    raise SystemExit(_not_implemented(f"auth {command}"))
+
+
+def _read_auth_token(raw: str | None) -> str:
+    if raw == "-":
+        token = sys.stdin.read()
+    elif raw is not None:
+        token = raw
+    elif sys.stdin.isatty():
+        print(
+            "Paste the Bearer value from DevTools → Network → my-team → "
+            "request header x-api-authorization (token only, not 'Bearer ').",
+            file=sys.stderr,
+        )
+        token = getpass("FPL API token: ")
+    else:
+        token = sys.stdin.read()
+    if not token or not token.strip():
+        raise ValueError("empty token")
+    return token
