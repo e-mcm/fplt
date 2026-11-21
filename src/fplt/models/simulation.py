@@ -8,10 +8,10 @@ v1 defaults (``cs_red_void_prob=0``, ``conceded_mode="scaled"``,
 - Goals-conceded penalty is the full-match table value times minutes/90.
 - Other points are the bucket expectation with no noise.
 
-Fidelity options (for a later layered spec) can void clean sheets at a red-card
-rate, apply the full conceded penalty whenever the player appears, and sample
-other points around their expectation so ``xpts_sd`` / ``p_haul`` see that
-variance. Minutes are taken as drawn; this module does not force eleven
+Fidelity options (enabled on ``dc_layered_v2``) can void clean sheets at a
+red-card rate, apply the full conceded penalty whenever the player appears, and
+sample other points around their expectation so ``xpts_sd`` / ``p_haul`` see
+that variance. Minutes are taken as drawn; this module does not force eleven
 starters.
 """
 

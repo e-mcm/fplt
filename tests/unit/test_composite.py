@@ -23,6 +23,38 @@ def test_the_spec_builds_the_layered_model() -> None:
     assert spec.params["n_sims"] == 5000
 
 
+def test_dc_layered_v2_wires_improved_components() -> None:
+    spec = load_model_specs()["dc_layered_v2"]
+    assert spec.kind == "dc_layered"
+    assert spec.params["n_sims"] == 10000
+    assert spec.params["cs_red_void_prob"] == pytest.approx(0.02)
+    assert spec.params["conceded_mode"] == "played"
+    assert spec.params["sample_other"] is True
+    assert spec.components["score"].name == "dixon_coles_v2"
+    assert spec.components["minutes"].kind == "empirical_minutes_v2"
+    assert spec.components["involvement"].kind == "involvement_xg"
+    assert spec.components["other"].kind == "other_player"
+    model = CompositePredictor(spec)
+    assert model._n_sims == 10000
+    assert model._cs_red_void_prob == pytest.approx(0.02)
+    assert model._conceded_mode == "played"
+    assert model._sample_other is True
+
+
+def test_dc_layered_v2_scores_a_gameweek(tmp_path: Path) -> None:
+    spec = load_model_specs()["dc_layered_v2"].model_copy(
+        update={"params": {**load_model_specs()["dc_layered_v2"].params, "n_sims": 80}}
+    )
+    store = build_league(DataStore(tmp_path / "league"))
+    view = PITData(store).view(GWKey("2024-25", 1))
+    model = CompositePredictor(spec)
+    model.fit(view)
+    frame = model.predict(view, [GWKey("2024-25", 1)])
+    checked = PredictionSchema.validate(frame)
+    assert checked.height == 2
+    assert checked["xpts"].is_not_null().all()
+
+
 def test_a_gameweek_is_scored_and_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

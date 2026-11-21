@@ -66,6 +66,7 @@ def test_defs_registers_factory_assets_and_lineage_job() -> None:
         "rolling_mean_v1",
         "ep_next_v1",
         "dc_layered_v1",
+        "dc_layered_v2",
         "lgbm_direct_v1",
         "openfpl_v1",
     }

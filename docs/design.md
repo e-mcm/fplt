@@ -306,7 +306,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 6. **Other points**: add the `OtherPointsModel` expectation for the player's drawn minutes bucket. With `sample_other: true`, draw Poisson / signed-Poisson noise around that mean so `xpts_sd` and `p_haul` see residual variance.
 7. **Score**: apply `Rules` for the season to get points per player per sim.
 
-Output: `xpts` = mean, `xpts_sd`, `p_haul`, `p_60`, plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures. `dc_layered_v1` keeps the v1 defaults; a later layered spec (e.g. `dc_layered_v2`) enables the fidelity knobs.
+Output: `xpts` = mean, `xpts_sd`, `p_haul`, `p_60`, plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures. `dc_layered_v1` keeps the v1 defaults. `dc_layered_v2` composes `dixon_coles_v2`, `empirical_minutes_v2`, `involvement_xg_v1`, and `other_player_v1` with fidelity knobs on (`cs_red_void_prob`, `conceded_mode: played`, `sample_other`) and `n_sims: 10000`.
 
 A unit test checks simulation against analytics: mean simulated team goals equals the `ScorelineDist` expectation, and simulated P(clean sheet) equals `p_clean_sheet` within Monte Carlo error.
 
