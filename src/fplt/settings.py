@@ -34,7 +34,8 @@ class Settings(BaseSettings):
 
     ``fpl_api_token`` is the Bearer value from the ``x-api-authorization``
     header on a logged-in ``my-team`` request. It authenticates
-    ``/api/my-team/{entry_id}/`` (selling prices and free transfers).
+    ``/api/my-team/{entry_id}/`` (selling prices and free transfers) and is
+    required for ``fplt apply --confirm`` (``POST /transfers/``, lineup).
     ``fpl_session`` is the retired ``pl_profile`` cookie and is still sent
     when set. Never commit a real token or cookie.
     """
