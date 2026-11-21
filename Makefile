@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models plan apply dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models decisions-board plan apply dagster-dev clean bootstrap-vaastav
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -40,6 +40,15 @@ eval-board:
 compare-models:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make compare-models SEASON=2024-25"; exit 1; fi
 	uv run fplt compare --season $(SEASON) $(ARGS)
+
+# ── Decision bakeoff (season totals after backtest fills the prediction ledger)
+# Usage: make decisions-board SEASON=2024-25
+# Optional: ARGS='--models rolling_mean_v1 dc_layered_v1 --from-gw 1 --to-gw 10'
+# Optional: ARGS='--summarise-only' to score ledger/decisions without re-simulating
+# Horizon should match the backtest --steps used when writing predictions.
+decisions-board:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make decisions-board SEASON=2024-25"; exit 1; fi
+	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),2) $(ARGS)
 
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10

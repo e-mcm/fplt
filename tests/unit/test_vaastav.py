@@ -74,6 +74,7 @@ def _write_season(
             "penalties_saved": [0, 0],
             "penalties_missed": [0, 0],
             "starts": gw_starts,
+            "value": [45, 51],
             "kickoff_time": [
                 _KICKOFF.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 _KICKOFF_GW2.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -111,16 +112,36 @@ def test_named_club_uses_the_team_code(tmp_path: Path) -> None:
     assert store.read("players")["team_key"].sort().to_list() == [3, 7]
 
 
-def test_status_is_a_single_degraded_row(tmp_path: Path) -> None:
+def test_status_stages_per_gw_value_as_price(tmp_path: Path) -> None:
     store = DataStore(tmp_path / "store")
     import_season(store, _write_season(tmp_path), "2021-22")
     status = store.read("player_status").sort("player_key")
     assert status["status"].to_list() == ["a", "a"]
     assert status["ep_next"].to_list() == [None, None]
     assert status["chance_of_playing"].to_list() == [None, None]
-    assert status["price"].to_list() == [0, 0]
+    assert status["price"].to_list() == [51, 45]
+    assert status["available_at"].to_list() == [
+        _KICKOFF_GW2 - timedelta(hours=2),
+        _KICKOFF - timedelta(hours=2),
+    ]
     players = store.read("players").sort("element_id")
     assert players["position"].to_list() == ["MID", "MID"]
+    gw1 = PITData(store).view(GWKey("2021-22", 1))
+    prices = (
+        gw1.latest("player_status", ["season", "player_key"])
+        .collect()
+        .sort("player_key")
+    )
+    assert prices["price"].to_list() == [45]
+    assert prices["player_key"].to_list() == [100]
+    gw2 = PITData(store).view(GWKey("2021-22", 2))
+    later = (
+        gw2.latest("player_status", ["season", "player_key"])
+        .collect()
+        .sort("player_key")
+    )
+    assert later["price"].to_list() == [51, 45]
+    assert later["player_key"].to_list() == [2, 100]
 
 
 def test_zero_starts_are_kept(tmp_path: Path) -> None:
