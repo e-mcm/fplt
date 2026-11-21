@@ -26,7 +26,9 @@ class OpenFPLPredictor:
     ``fit`` does nothing: the published ensemble is already fitted. Target
     seasons before ``compare_from`` (2024-25 in the YAML spec) raise, because
     those seasons are in OpenFPL's training data. Without ``model_dir`` the
-    runner returns zeros; those zeros are not OpenFPL scores.
+    runner returns zeros; those zeros are not OpenFPL scores. A non-empty
+    ``model_dir`` still cannot produce real scores until the adapter builds
+    OpenFPL's sample feature matrix (see ``docs/openfpl.md``).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -49,6 +51,7 @@ class OpenFPLPredictor:
         if joined["openfpl_player_id"].null_count():
             raise ValueError("a player-fixture has no OpenFPL player id")
         request = joined.with_row_index("row_id")
+        _require_feature_path(self.spec)
         response = _invoke(self.spec, _payload(request))
         scored = _attach(request, response, names)
         return prediction_frame(
@@ -154,12 +157,35 @@ def _invoke(
     return _response_frame(completed.stdout)
 
 
+def _require_feature_path(spec: ModelSpec) -> None:
+    """Refuse a real OpenFPL checkout until sample features are wired.
+
+    Empty ``model_dir`` keeps the zero path for the contract suite. A custom
+    ``params.command`` (tests) bypasses this check. A missing checkout still
+    raises as before; a present checkout raises until the adapter builds the
+    OpenFPL sample feature matrix.
+    """
+    if _string_list(spec.params.get("command")) is not None:
+        return
+    model_dir = spec.params.get("model_dir")
+    if not isinstance(model_dir, str) or not model_dir.strip():
+        return
+    scaler = Path(model_dir) / "models" / "xscaler.save"
+    if not scaler.is_file():
+        raise RuntimeError(f"OpenFPL models not found in {model_dir}")
+    raise ValueError(
+        "OpenFPL model_dir is set but the adapter does not build the OpenFPL "
+        "sample feature matrix yet (xscaler expects ~228 columns). Leave "
+        "model_dir empty for offline zeros, or see docs/openfpl.md."
+    )
+
+
 def _command(spec: ModelSpec) -> list[str]:
     command = _string_list(spec.params.get("command"))
     if command is not None:
         return command
     python = spec.params.get("python")
-    executable = python if isinstance(python, str) and python else sys.executable
+    executable = python if isinstance(python, str) and python else _default_python()
     argv = [executable, str(_runner_script())]
     model_dir = spec.params.get("model_dir")
     if isinstance(model_dir, str) and model_dir:
@@ -178,9 +204,20 @@ def _string_list(value: object) -> list[str] | None:
     return command
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _default_python() -> str:
+    """Prefer the isolated OpenFPL venv when ``uv sync`` has been run there."""
+    venv_python = _repo_root() / "external" / "openfpl" / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    return sys.executable
+
+
 def _runner_script() -> Path:
-    root = Path(__file__).resolve().parents[4]
-    script = root / _RUNNER
+    script = _repo_root() / _RUNNER
     if not script.is_file():
         raise FileNotFoundError(script)
     return script

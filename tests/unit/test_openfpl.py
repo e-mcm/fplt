@@ -160,6 +160,31 @@ def test_missing_model_checkout_raises(tmp_path: Path) -> None:
         model.predict(data.view(_AS_OF), _HORIZON)
 
 
+def test_real_checkout_without_features_raises(tmp_path: Path) -> None:
+    _store, data = _named(tmp_path)
+    checkout = tmp_path / "openfpl"
+    (checkout / "models").mkdir(parents=True)
+    (checkout / "models" / "xscaler.save").write_bytes(b"stub")
+    model = OpenFPLPredictor(_spec(model_dir=str(checkout)))
+    with pytest.raises(ValueError, match="feature matrix"):
+        model.predict(data.view(_AS_OF), _HORIZON)
+
+
+def test_default_python_prefers_isolated_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.models.external import openfpl as mod
+
+    root = tmp_path / "repo"
+    venv_python = root / "external" / "openfpl" / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+    monkeypatch.setattr(mod, "_repo_root", lambda: root)
+    assert mod._default_python() == str(venv_python)
+    monkeypatch.setattr(mod, "_repo_root", lambda: tmp_path / "empty")
+    assert mod._default_python() == sys.executable
+
+
 def test_unconfigured_runner_returns_zeros(tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path))
     model = OpenFPLPredictor(_spec())
