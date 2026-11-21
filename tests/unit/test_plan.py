@@ -12,6 +12,7 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
     PlanExistsError,
+    _actual_rows,
     _require_usable_points,
     points_from_ledger,
     run_decision_bakeoff,
@@ -210,6 +211,54 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
         write_plan(tmp_path, broken)
 
 
+def test_decision_bakeoff_rejects_inflated_mean_ppg(tmp_path: Path) -> None:
+    pool = _pool().drop("xpts")
+    candidates = pl.concat([pool.with_columns(pl.lit(gw).alias("gw")) for gw in (1,)])
+    predictions = pl.DataFrame(
+        {
+            "as_of_gw": [1],
+            "target_gw": [1],
+            "player_key": [1],
+            "xpts": [4.0],
+        }
+    )
+    # Huge actuals → mean well above the sanity band after captain ×2.
+    actuals = pl.DataFrame(
+        {
+            "gw": [1],
+            "player_key": [1],
+            "actual_pts": [80],
+            "actual_minutes": [90],
+        }
+    )
+    frame = simulate_decisions(
+        candidates,
+        predictions,
+        actuals,
+        _state(),
+        model_id="rolling_mean",
+        season="2024-25",
+        gameweeks=[1],
+        horizon=1,
+    )
+    from fplt.models.spec import load_model_specs
+
+    spec = load_model_specs()["rolling_mean_v1"]
+    tagged = frame.with_columns(pl.lit(spec.model_id).alias("model_id"))
+    write_decisions(tmp_path, tagged)
+    with pytest.raises(ValueError, match="mean pts/GW"):
+        run_decision_bakeoff(
+            tmp_path,
+            ["rolling_mean_v1"],
+            "2024-25",
+            1,
+            1,
+            1,
+            simulate=False,
+            max_mean_ppg=90.0,
+        )
+
+
 def test_decision_bakeoff_summarises_existing_ledger(tmp_path: Path) -> None:
     pool = _pool().drop("xpts")
     candidates = pl.concat([pool.with_columns(pl.lit(gw).alias("gw")) for gw in (1, 2)])
@@ -316,6 +365,46 @@ def test_ledger_points_keep_the_deadline_that_issued_them() -> None:
     points = points_from_ledger(ledger, "m", "2024-25", 1, [1])
     assert points["xpts"].to_list() == [3.0]
     assert points_from_ledger(ledger.clear(), "m", "2024-25", 1, [1]).is_empty()
+
+
+def test_actual_rows_do_not_double_count_horizon_duplicates() -> None:
+    """steps=2 writes the same fixture twice; realised pts must stay once."""
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["m"] * 4,
+            "as_of_gw": [1, 2, 1, 2],
+            "horizon": [2, 1, 2, 1],
+            "target_season": ["2024-25"] * 4,
+            "target_gw": [2, 2, 2, 2],
+            "player_key": [7, 7, 8, 8],
+            "fixture_id": [100, 100, 100, 100],
+            "actual_pts": [6, 6, 3, 3],
+            "actual_minutes": [90, 90, 75, 75],
+        }
+    )
+    out = _actual_rows(ledger, "m", "2024-25").sort("player_key")
+    assert out["actual_pts"].to_list() == [6, 3]
+    assert out["actual_minutes"].to_list() == [90, 75]
+
+
+def test_actual_rows_still_sum_distinct_fixtures_in_a_dgw() -> None:
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["m"] * 4,
+            "as_of_gw": [10, 10, 11, 11],
+            "horizon": [2, 2, 1, 1],
+            "target_season": ["2024-25"] * 4,
+            "target_gw": [11, 11, 11, 11],
+            "player_key": [7, 7, 7, 7],
+            "fixture_id": [200, 201, 200, 201],
+            "actual_pts": [5, 4, 5, 4],
+            "actual_minutes": [90, 90, 90, 90],
+        }
+    )
+    out = _actual_rows(ledger, "m", "2024-25")
+    assert out.height == 1
+    assert out["actual_pts"].to_list() == [9]
+    assert out["actual_minutes"].to_list() == [180]
 
 
 def test_run_plan_resolves_squad_when_entry_id_set(

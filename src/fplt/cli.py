@@ -23,12 +23,14 @@ from fplt.data.store import DataStore
 from fplt.optimise.apply import ApplyError, apply_plan, format_apply_preview
 from fplt.optimise.decisions import (
     PlanExistsError,
+    explain_decision_gameweek,
     format_decision_scoreboard,
     resolve_squad_state,
     run_decision_bakeoff,
     run_decisions,
     run_plan,
 )
+from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
 from fplt.settings import get_settings
 from fplt.types import GWKey
@@ -196,6 +198,24 @@ def main(argv: list[str] | None = None) -> None:
         "--summarise-only",
         action="store_true",
         help="Score existing ledger/decisions rows; skip re-simulating",
+    )
+    decisions.add_argument(
+        "--explain-gw",
+        type=int,
+        help="Dump XI / captain arithmetic for one gameweek and exit",
+    )
+    decisions.add_argument(
+        "--explain-model",
+        help="YAML model name for --explain-gw (default: first --models entry)",
+    )
+    decisions.add_argument(
+        "--max-mean-ppg",
+        type=float,
+        default=DEFAULT_MAX_MEAN_PPG,
+        help=(
+            "Fail when any model's mean pts/GW exceeds this "
+            f"(default: {DEFAULT_MAX_MEAN_PPG:.0f}; 0 disables)"
+        ),
     )
     eval_components = sub.add_parser(
         "eval-components",
@@ -479,22 +499,38 @@ def _eval_components(args: argparse.Namespace) -> None:
 
 
 def _decisions(args: argparse.Namespace) -> None:
+    data_dir = get_settings().data_dir
+    if args.explain_gw is not None:
+        model_name = args.explain_model or list(args.models)[0]
+        try:
+            print(
+                explain_decision_gameweek(
+                    data_dir, model_name, args.season, int(args.explain_gw)
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            logger.error("decisions explain failed: %s", exc)
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
+        return
+    max_mean = float(args.max_mean_ppg)
     try:
         summary = run_decision_bakeoff(
-            get_settings().data_dir,
+            data_dir,
             list(args.models),
             args.season,
             args.from_gw,
             args.to_gw,
             args.horizon,
             simulate=not bool(args.summarise_only),
+            max_mean_ppg=None if max_mean <= 0 else max_mean,
         )
     except (KeyError, ValueError) as exc:
         logger.error("decisions failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_decision_scoreboard(summary))
-    path = get_settings().data_dir / "ledger" / "decisions" / "part.parquet"
+    path = data_dir / "ledger" / "decisions" / "part.parquet"
     print(path)
 
 

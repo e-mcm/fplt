@@ -27,7 +27,12 @@ from fplt.optimise.plan import (
     render_report,
     write_plan,
 )
-from fplt.optimise.realised import format_decision_scoreboard, summarise_decisions
+from fplt.optimise.realised import (
+    assert_sane_mean_ppg,
+    explain_gameweek,
+    format_decision_scoreboard,
+    summarise_decisions,
+)
 from fplt.optimise.state import (
     OwnedPlayer,
     SquadState,
@@ -47,7 +52,9 @@ _MIN_COVERAGE = 0.5
 
 __all__ = [
     "PlanExistsError",
+    "assert_sane_mean_ppg",
     "candidates_as_of",
+    "explain_decision_gameweek",
     "format_decision_scoreboard",
     "points_from_ledger",
     "read_decisions",
@@ -522,6 +529,7 @@ def run_decision_bakeoff(
     horizon: int,
     *,
     simulate: bool = True,
+    max_mean_ppg: float | None = None,
 ) -> pl.DataFrame:
     """Simulate decisions for each model (optional) and return a season scoreboard.
 
@@ -533,13 +541,14 @@ def run_decision_bakeoff(
         to_gw: Last gameweek, inclusive.
         horizon: Planner horizon (must match the backtest ``--steps`` used).
         simulate: When true, call ``run_decisions`` for each model first.
+        max_mean_ppg: When set, fail if any model's mean pts/GW exceeds this.
 
     Returns:
         Summary from ``summarise_decisions`` for ``season`` and ``models``.
 
     Raises:
         KeyError: An unknown model name.
-        ValueError: ``models`` is empty.
+        ValueError: ``models`` is empty, or mean pts/GW exceeds ``max_mean_ppg``.
     """
     if not models:
         raise ValueError("models must be non-empty")
@@ -561,7 +570,51 @@ def run_decision_bakeoff(
     )
     if from_gw > 1 or to_gw < 38:
         frame = frame.filter((pl.col("gw") >= from_gw) & (pl.col("gw") <= to_gw))
-    return summarise_decisions(frame)
+    summary = summarise_decisions(frame)
+    if max_mean_ppg is not None:
+        assert_sane_mean_ppg(summary, max_mean=max_mean_ppg)
+    return summary
+
+
+def explain_decision_gameweek(
+    data_dir: Path,
+    model_name: str,
+    season: str,
+    gameweek: int,
+) -> str:
+    """Explain one model × gameweek net from ``ledger/decisions``.
+
+    Args:
+        data_dir: Root that contains ``ledger/decisions``.
+        model_name: YAML spec name.
+        season: Season label.
+        gameweek: Gameweek to dump.
+
+    Returns:
+        Text from ``explain_gameweek`` for that squad.
+
+    Raises:
+        KeyError: Unknown model name.
+        ValueError: No decision rows for that model × gameweek.
+    """
+    spec = load_model_specs()[model_name]
+    part = read_decisions(data_dir).filter(
+        (pl.col("model_id") == spec.model_id)
+        & (pl.col("season") == season)
+        & (pl.col("gw") == gameweek)
+    )
+    if part.is_empty():
+        raise ValueError(
+            f"no decision rows for {model_name} ({spec.model_id}) {season} GW{gameweek}"
+        )
+    hit = float(part["hit"][0])
+    store = DataStore(data_dir)
+    names = _player_names(PITData(store).view(GWKey(season, gameweek)))
+    header = (
+        f"# {model_name} ({spec.model_id}) {season} GW{gameweek}\n"
+        f"hit={hit:.0f} free_transfers={int(part['free_transfers'][0])}\n"
+    )
+    return header + explain_gameweek(part, hit=hit, names=names)
 
 
 def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFrame:
@@ -588,6 +641,13 @@ def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.Dat
 
 
 def _actual_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFrame:
+    """Collapse ledger actuals to one row per player-gameweek.
+
+    Walk-forward ledgers store the same fixture under every ``as_of`` that
+    predicted it (``steps=2`` → two rows). Summing those raw rows doubles
+    realised points. Deduplicate per fixture first, then sum across fixtures
+    so double gameweeks still accumulate correctly.
+    """
     empty = pl.DataFrame(
         schema={
             "gw": pl.Int64(),
@@ -603,14 +663,25 @@ def _actual_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFra
     )
     if chosen.is_empty():
         return empty
-    if "actual_minutes" in chosen.columns:
+    scored = chosen.filter(pl.col("actual_pts").is_not_null())
+    if scored.is_empty():
+        return empty
+    # Same fixture appears once per predicting deadline; keep one copy.
+    if "fixture_id" in scored.columns:
+        scored = scored.sort("as_of_gw", "horizon").unique(
+            subset=["target_gw", "player_key", "fixture_id"],
+            keep="last",
+        )
+    elif "horizon" in scored.columns:
+        scored = scored.filter(pl.col("horizon") == 1)
+    if "actual_minutes" in scored.columns:
         return (
-            chosen.group_by("target_gw", "player_key")
+            scored.group_by("target_gw", "player_key")
             .agg(pl.col("actual_pts").sum(), pl.col("actual_minutes").sum())
             .rename({"target_gw": "gw"})
         )
     return (
-        chosen.group_by("target_gw", "player_key")
+        scored.group_by("target_gw", "player_key")
         .agg(pl.col("actual_pts").sum())
         .rename({"target_gw": "gw"})
         .with_columns(pl.lit(None).cast(pl.Int64).alias("actual_minutes"))

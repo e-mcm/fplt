@@ -368,7 +368,7 @@ Prediction level (by model × horizon × position × season):
 - Calibration of `p_haul` and `p_60` (reliability curves, Brier score)
 
 Decision level — what actually matters:
-- Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`.
+- Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. Actuals are loaded from the prediction ledger **deduplicated per fixture** before summing a gameweek (walk-forward `steps>1` re-states the same fixture under later `as_of` rows; summing those raw rows double-counts). `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`, fails by default when mean pts/GW exceeds 90, and supports `fplt decisions --explain-gw` / `make decisions-explain` for per-GW XI arithmetic.
 
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline

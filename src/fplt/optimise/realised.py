@@ -63,6 +63,88 @@ def score_gameweek(
     Raises:
         ValueError: The frame is missing required columns or has no XI.
     """
+    return _score_parts(picks, hit=hit).net
+
+
+def explain_gameweek(
+    picks: pl.DataFrame,
+    *,
+    hit: float = 0.0,
+    names: dict[int, str] | None = None,
+) -> str:
+    """Render XI / autosub / captain arithmetic for one gameweek's picks.
+
+    Args:
+        picks: Decision rows for a single model × season × gameweek.
+        hit: Transfer hit cost to subtract once.
+        names: Optional ``player_key`` → display name map.
+
+    Returns:
+        A multi-line explanation ending in the net total.
+
+    Raises:
+        ValueError: The frame is missing required columns or has no XI.
+    """
+    parts = _score_parts(picks, hit=hit)
+    label = names or {}
+
+    def _name(key: int) -> str:
+        return label.get(key, str(key))
+
+    lines = [
+        "role | player | pos | mins | pts | note",
+        "--- | --- | --- | ---: | ---: | ---",
+    ]
+    for row in parts.active:
+        notes: list[str] = []
+        if row.player_key in parts.autosubbed_on:
+            notes.append("autosub")
+        if row.captain:
+            notes.append("captain")
+        if row.vice:
+            notes.append("vice")
+        lines.append(
+            f"XI | {_name(row.player_key)} | {row.position} | "
+            f"{row.minutes} | {row.pts} | {', '.join(notes) or '-'}"
+        )
+    for row in parts.inactive_bench:
+        lines.append(
+            f"bench | {_name(row.player_key)} | {row.position} | "
+            f"{row.minutes} | {row.pts} | -"
+        )
+    lines.append(f"XI sum (after autosub, mins>0): {parts.xi_sum}")
+    if parts.captain_extra:
+        lines.append(
+            f"captain extra (+{parts.captain_extra}): "
+            f"{_name(parts.armband_key)} ×2 armband"
+        )
+    elif parts.vice_extra:
+        lines.append(
+            f"vice armband extra (+{parts.vice_extra}): "
+            f"{_name(parts.armband_key)} (captain blanked)"
+        )
+    else:
+        lines.append("armband extra: 0 (captain and vice blanked)")
+    lines.append(f"hit: -{int(max(hit, 0.0))}")
+    lines.append(f"net: {parts.net}")
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class _ScoreParts:
+    """Breakdown of one ``score_gameweek`` result for explain dumps."""
+
+    active: tuple[_Pick, ...]
+    inactive_bench: tuple[_Pick, ...]
+    autosubbed_on: frozenset[int]
+    xi_sum: int
+    captain_extra: int
+    vice_extra: int
+    armband_key: int
+    net: int
+
+
+def _score_parts(picks: pl.DataFrame, *, hit: float) -> _ScoreParts:
     required = {
         "player_key",
         "position",
@@ -107,17 +189,46 @@ def score_gameweek(
     by_key = {row.player_key: row for row in rows}
     # Only players who appeared (minutes > 0) contribute; a blanked starter
     # with no eligible autosub scores nothing.
-    total = sum(by_key[key].pts for key in active_keys if by_key[key].minutes > 0)
+    active = tuple(
+        by_key[key]
+        for key in sorted(
+            active_keys,
+            key=lambda key: (
+                _POS_ORDER.get(by_key[key].position, 99),
+                key,
+            ),
+        )
+        if by_key[key].minutes > 0
+    )
+    xi_sum = sum(row.pts for row in active)
     captain = next((row for row in rows if row.captain), None)
     vice = next((row for row in rows if row.vice), None)
+    captain_extra = 0
+    vice_extra = 0
+    armband_key = 0
+    total = xi_sum
     if captain is not None and captain.minutes > 0:
-        total += captain.pts
+        captain_extra = captain.pts
+        armband_key = captain.player_key
+        total += captain_extra
     elif vice is not None and vice.minutes > 0:
+        armband_key = vice.player_key
         if vice.player_key in active_keys:
-            total += vice.pts
+            vice_extra = vice.pts
         else:
-            total += 2 * vice.pts
-    return int(total - max(hit, 0.0))
+            vice_extra = 2 * vice.pts
+        total += vice_extra
+    inactive_bench = tuple(row for row in bench if row.player_key not in used_bench)
+    return _ScoreParts(
+        active=active,
+        inactive_bench=inactive_bench,
+        autosubbed_on=frozenset(used_bench),
+        xi_sum=xi_sum,
+        captain_extra=captain_extra,
+        vice_extra=vice_extra,
+        armband_key=armband_key,
+        net=int(total - max(hit, 0.0)),
+    )
 
 
 def summarise_decisions(frame: pl.DataFrame) -> pl.DataFrame:
@@ -208,15 +319,53 @@ def format_decision_scoreboard(summary: pl.DataFrame) -> str:
     if summary.is_empty():
         return "_No decision rows to score._"
     lines = [
-        "| Rank | Model | Season | Points | GWs |",
-        "| ---: | --- | --- | ---: | ---: |",
+        "| Rank | Model | Season | Points | GWs | Mean/GW |",
+        "| ---: | --- | --- | ---: | ---: | ---: |",
     ]
     for index, row in enumerate(summary.iter_rows(named=True), start=1):
+        gameweeks = int(row["gameweeks"])
+        mean = float(row["total_points"]) / gameweeks if gameweeks else 0.0
         lines.append(
             f"| {index} | {row['model_id']} | {row['season']} | "
-            f"{row['total_points']} | {row['gameweeks']} |"
+            f"{row['total_points']} | {gameweeks} | {mean:.1f} |"
         )
     return "\n".join(lines)
+
+
+# 2024-25 overall champion finished at ~74 pts/GW with chips. Chips-off
+# bakeoffs should sit well below that; anything near 100+ is almost always
+# double-counted actuals from a multi-step prediction ledger.
+DEFAULT_MAX_MEAN_PPG = 90.0
+
+
+def assert_sane_mean_ppg(
+    summary: pl.DataFrame,
+    *,
+    max_mean: float = DEFAULT_MAX_MEAN_PPG,
+) -> None:
+    """Raise when any model × season mean points/GW looks inflated.
+
+    Args:
+        summary: Output of ``summarise_decisions``.
+        max_mean: Inclusive upper bound on ``total_points / gameweeks``.
+
+    Raises:
+        ValueError: A row exceeds ``max_mean``.
+    """
+    if summary.is_empty() or max_mean <= 0:
+        return
+    for row in summary.iter_rows(named=True):
+        gameweeks = int(row["gameweeks"])
+        if gameweeks <= 0:
+            continue
+        mean = float(row["total_points"]) / gameweeks
+        if mean > max_mean:
+            raise ValueError(
+                f"mean pts/GW {mean:.1f} for model_id={row['model_id']} "
+                f"season={row['season']} exceeds max_mean={max_mean:.1f} "
+                "(likely double-counted ledger actuals; "
+                "run `fplt decisions --explain-gw` on a high GW)"
+            )
 
 
 def _pick_from_row(row: dict[str, object]) -> _Pick:
