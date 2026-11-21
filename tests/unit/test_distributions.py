@@ -46,6 +46,19 @@ def test_tiny_tail_is_renormalised_onto_the_kept_grid() -> None:
     assert dist.pmf[0, 0, 0] == pytest.approx(1.0)
 
 
+def test_the_rating_bound_keeps_its_tail() -> None:
+    from scipy.stats import poisson
+
+    # 3 * 3 * 1.3, the largest rate the Dixon-Coles bounds can emit.
+    goals = np.arange(MAX_GOALS + 8)
+    home = poisson.pmf(goals, 11.7)
+    away = poisson.pmf(goals, 11.7)
+    joint = home[:, None] * away[None, :]
+    dist = ScorelineDist(np.array([1]), joint[None, :, :])
+    assert dist.pmf.shape == (1, MAX_GOALS + 1, MAX_GOALS + 1)
+    np.testing.assert_allclose(dist.pmf.sum(), 1.0)
+
+
 def test_a_heavy_tail_is_refused() -> None:
     wide = np.zeros((1, _GOALS + 2, _GOALS + 2))
     wide[0, 0, 0] = 1.0 - 1e-4

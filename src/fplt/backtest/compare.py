@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -152,6 +153,16 @@ def compare_models(
     pit = PITData(store)
     out = output_dir or _default_output_dir(data_dir, season, test_from_gw, test_to_gw)
     out.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "compare %s gw %s-%s fit_gw=%s steps=%s modes=%s models=%s",
+        season,
+        test_from_gw,
+        test_to_gw,
+        fit_at,
+        steps,
+        ",".join(chosen_modes),
+        ",".join(chosen),
+    )
 
     runs: list[CompareRun] = []
     for mode in chosen_modes:
@@ -170,6 +181,14 @@ def compare_models(
                     "--openfpl-model-dir."
                 )
             model = get_model(spec.kind)(spec)
+            logger.info(
+                "%s %s starting refit=%s seasons_back=%s",
+                mode,
+                name,
+                spec.refit,
+                spec.train_window.seasons_back,
+            )
+            started = time.perf_counter()
             frame = _predict_window(
                 model,
                 pit,
@@ -181,8 +200,16 @@ def compare_models(
                 steps=steps,
             )
             append_predictions(data_dir, frame)
+            logger.info(
+                "%s %s wrote %s rows in %.1fs",
+                mode,
+                name,
+                frame.height,
+                time.perf_counter() - started,
+            )
             runs.append(CompareRun(model_name=name, mode=mode, spec=spec))
 
+    logger.info("filling actuals")
     fill_actuals(data_dir, store)
     ledger = read_predictions(data_dir)
     model_ids = {run.spec.model_id for run in runs}
@@ -209,6 +236,7 @@ def compare_models(
         output_dir=out,
         skipped_openfpl=skipped,
     )
+    logger.info("writing %s", out)
     _write_outputs(result)
     if skipped:
         logger.info(skipped)

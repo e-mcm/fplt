@@ -178,6 +178,12 @@ class EmpiricalMinutes:
         chance = _chance(status, chance_of_playing, self._doubtful)
         p_start *= chance
         p_sub *= chance
+        # 4/5 + 1/5 is not exactly 1 in float, which would make the zero bin negative.
+        played = p_start + p_sub
+        if played > 1.0:
+            p_start /= played
+            p_sub /= played
+            played = 1.0
         start = _shrunk(
             self._player_start.get(player),
             self._position_start.get(position),
@@ -191,7 +197,7 @@ class EmpiricalMinutes:
             self._shrinkage,
         )
         pmf = np.zeros(_WIDTH, dtype=np.float64)
-        pmf[0] = 1.0 - p_start - p_sub
+        pmf[0] = 1.0 - played
         pmf += p_start * start
         pmf += p_sub * sub
         return pmf

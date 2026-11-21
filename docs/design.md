@@ -276,7 +276,7 @@ class MinutesDist:
     def sample(self, rng, n: int) -> np.ndarray      # (P, n) minutes
 ```
 
-Truncate scorelines at `G` (default 10) and renormalise; assert mass lost < 1e-6.
+Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack and defence are bounded by 3 before rescaling, and that rescaling keeps their product, so with home advantage 1.3 a rate can reach about 12. Thirty-two keeps that tail under the limit. The joint is computed past `G` so the discarded mass is the real tail, not just the last stored bin.
 
 ### 5.4 Initial component implementations
 

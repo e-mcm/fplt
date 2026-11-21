@@ -1,9 +1,12 @@
 """Scoreline and minutes distributions used by the layered match model.
 
-The scoreline grid stops at 10 goals a side. A heavier tail would move
+The scoreline grid stops at 32 goals a side. A heavier tail would move
 expected goals after renormalisation, so construction refuses a truncation
-that drops 1e-6 or more of the probability. Minutes sit on a fixed set of
-bins so a draw is a minute count the scoring rules can apply directly.
+that drops 1e-6 or more of the probability. Attack and defence are bounded
+by 3 before rescaling, and that rescaling keeps their product, so with home
+advantage 1.3 a rate can reach about 12. Thirty-two keeps that tail under
+the limit. Minutes sit on a fixed set of bins so a draw is a minute count
+the scoring rules can apply directly.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from typing import Literal
 import numpy as np
 import polars as pl
 
-MAX_GOALS = 10
+MAX_GOALS = 32
 MINUTE_BINS = np.array([0, 15, 30, 45, 60, 75, 90], dtype=np.int64)
 _MASS_LOST_LIMIT = 1e-6
 _Side = Literal["home", "away"]
@@ -27,13 +30,13 @@ class ScorelineDist:
     """
 
     def __init__(self, fixture_ids: np.ndarray, pmf: np.ndarray) -> None:
-        """Truncate ``pmf`` at 10 goals and renormalise.
+        """Truncate ``pmf`` at ``MAX_GOALS`` and renormalise.
 
         Args:
             fixture_ids: One id per fixture, shape ``(F,)``.
-            pmf: Non-negative joint masses, shape ``(F, G, G)`` with ``G`` at
-                least 11. Mass outside 0..10 must be under 1e-6 of each
-                fixture's total.
+            pmf: Non-negative joint masses, shape ``(F, G, G)`` with ``G``
+                greater than ``MAX_GOALS``. Mass outside that square must be
+                under 1e-6 of each fixture's total.
 
         Raises:
             ValueError: The shape, signs, or discarded tail is invalid.
@@ -85,7 +88,7 @@ class ScorelineDist:
             side: ``home`` or ``away``.
 
         Returns:
-            Shape ``(F, 11)``. Column ``k`` is ``P(goals = k)``.
+            Shape ``(F, MAX_GOALS + 1)``. Column ``k`` is ``P(goals = k)``.
         """
         if side == "home":
             return self.pmf.sum(axis=2)

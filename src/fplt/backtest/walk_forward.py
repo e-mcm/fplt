@@ -6,6 +6,9 @@ spec's ``train_window.seasons_back``. Actuals are filled later by the ledger.
 
 from __future__ import annotations
 
+import logging
+import time
+
 import polars as pl
 
 from fplt.data.pit import PITData, PITView
@@ -13,6 +16,8 @@ from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
 from fplt.types import GWKey
+
+logger = logging.getLogger(__name__)
 
 
 def horizon_for(as_of: GWKey, steps: int) -> list[GWKey]:
@@ -69,13 +74,33 @@ def walk_forward(
         A ``LedgerSchema`` frame. ``actual_pts`` and ``actual_minutes`` are null.
     """
     frames: list[pl.DataFrame] = []
+    total = len(as_ofs)
     for index, as_of in enumerate(as_ofs):
+        refitting = should_refit(model.spec, index)
+        logger.info(
+            "%s %s gw %s (%s/%s) %s",
+            model.spec.name,
+            as_of.season,
+            as_of.gw,
+            index + 1,
+            total,
+            "fitting" if refitting else "predicting",
+        )
+        started = time.perf_counter()
         seasons = allowed_seasons(as_of, model.spec.train_window.seasons_back)
         view = pit.view(as_of).within_seasons(seasons)
-        if should_refit(model.spec, index):
+        if refitting:
             model.fit(view)
         predicted = model.predict(view, horizon_for(as_of, steps))
         recorded = ledger_rows(predicted, view, as_of, run_kind)
+        logger.info(
+            "%s %s gw %s done in %.1fs, %s rows",
+            model.spec.name,
+            as_of.season,
+            as_of.gw,
+            time.perf_counter() - started,
+            recorded.height,
+        )
         if not recorded.is_empty():
             frames.append(recorded)
     combined = (
