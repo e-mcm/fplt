@@ -36,6 +36,7 @@ eval-board:
 # ── Fair model compare (walk-forward + fixed params) ──────────────────────────
 # Usage: make compare-models SEASON=2024-25
 # Optional: ARGS='--models rolling_mean_v1 ep_next_v1 --test-from-gw 1 --test-to-gw 10'
+# Optional OpenFPL (2024-25+): ARGS='--with-openfpl' or '--openfpl-model-dir /path'
 compare-models:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make compare-models SEASON=2024-25"; exit 1; fi
 	uv run fplt compare --season $(SEASON) $(ARGS)

@@ -380,9 +380,9 @@ Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snaps
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
-- Requires Understat-derived features: the adapter either uses our ingestion (once Understat is added) or runs OpenFPL's own pipeline.
-- Runs in its own uv environment (`external/openfpl/`) as a subprocess. The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, maps its player identifiers (`web_name` until a fuller name map exists) to `player_key`, and returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. `model_dir` points at a clone of OpenFPL; without that clone the runner returns zeros so the contract suite can call this spec, and those zeros are not OpenFPL scores.
-- Operator steps (`uv sync`, `params.model_dir`, season floor): [`docs/openfpl.md`](openfpl.md).
+- Requires Understat-derived sample features matching OpenFPL's published `xscaler` schema (~228 columns). Understat ingestion exists in-repo, but the adapter does **not** yet build that matrix (nor call OpenFPL's own sample pipeline); a non-empty `model_dir` with a real checkout raises until that lands. See [`docs/openfpl.md`](openfpl.md).
+- Runs in its own uv environment (`external/openfpl/`) as a subprocess (prefers that project's `.venv` when present). The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, maps its player identifiers (`web_name` until a fuller name map exists) to `player_key`, and returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. Without `model_dir` the runner returns zeros so the contract suite can call this spec, and those zeros are not OpenFPL scores. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / YAML `model_dir`), not in `CORE_MODELS`.
+- Operator steps (`uv sync`, season floor, feature gap): [`docs/openfpl.md`](openfpl.md).
 
 ### 7.5 Why no MLflow (yet)
 
