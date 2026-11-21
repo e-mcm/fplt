@@ -74,6 +74,8 @@ def test_specs_register_as_components_not_predictors() -> None:
     assert specs["dixon_coles_v2"].params["fit_rho"] is True
     assert specs["dixon_coles_v2"].params["fit_home_advantage"] is True
     assert specs["dixon_coles_v2"].kind == "dixon_coles"
+    assert specs["dixon_coles_odds_v1"].params["market_prior_strength"] == 1.0
+    assert "market_prior_strength" not in specs["dixon_coles_v2"].params
     assert {"dixon_coles", "poisson_score"} <= set(registered_components())
     assert "dixon_coles" not in registered_kinds()
 
