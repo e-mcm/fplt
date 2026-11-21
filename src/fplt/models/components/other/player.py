@@ -3,7 +3,8 @@
 Bonus uses realised bonus points blended with a BPS→bonus proxy when the
 player has few samples in a bucket. Saves, cards, defensive contribution,
 and the residual ``other`` bucket follow the same shrink. Defensive points
-are zero until staged stats carry clearances, tackles, and recoveries.
+use staged ``defensive_contribution`` action counts when the season's
+scoring rules award them; older seasons stay at zero.
 """
 
 from __future__ import annotations
@@ -191,13 +192,7 @@ def _components(rules: Rules, position: str, row: dict[str, Any]) -> _Points:
     cards = points(
         yellow_cards=int(row["yellow_cards"]), red_cards=int(row["red_cards"])
     )
-    defensive = points(
-        clearances_blocks_interceptions=int(
-            row.get("clearances_blocks_interceptions") or 0
-        ),
-        tackles=int(row.get("tackles") or 0),
-        recoveries=int(row.get("recoveries") or 0),
-    )
+    defensive = _defensive_points(rules, position, row)
     # Appearance points are not part of "other"; isolate residual awards.
     other = points(
         penalties_saved=int(row["penalties_saved"]),
@@ -205,6 +200,37 @@ def _components(rules: Rules, position: str, row: dict[str, Any]) -> _Points:
         own_goals=int(row["own_goals"]),
     )
     return (bonus, saves, cards, defensive, other)
+
+
+def _defensive_points(rules: Rules, position: str, row: dict[str, Any]) -> float:
+    """Map staged defensive contribution to points for ``position``.
+
+    When the season table has no defensive rules, return 0. Otherwise prefer
+    the live ``defensive_contribution`` action count (CBI+T for defenders,
+    CBI+T+R for midfielders/forwards) against that position's threshold.
+    Frames that predate the staged column fall back to summing the action
+    columns through ``Rules.score``.
+    """
+    if not rules.defensive_contributions:
+        return 0.0
+    if "defensive_contribution" in row:
+        count = int(row["defensive_contribution"] or 0)
+        for rule in rules.defensive_contributions:
+            if position in rule.positions and count >= rule.threshold:
+                return float(rule.points)
+        return 0.0
+    return float(
+        rules.score(
+            MatchStats(
+                position=position,  # type: ignore[arg-type]
+                clearances_blocks_interceptions=int(
+                    row.get("clearances_blocks_interceptions") or 0
+                ),
+                tackles=int(row.get("tackles") or 0),
+                recoveries=int(row.get("recoveries") or 0),
+            )
+        )
+    )
 
 
 def _bps_bonus_lookup(history: pl.DataFrame) -> dict[int, float]:
