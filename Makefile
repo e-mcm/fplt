@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -10,6 +10,13 @@ bootstrap-vaastav:
 fetch-understat:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-understat SEASON=2024-25"; exit 1; fi
 	uv run python scripts/fetch_understat.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
+
+# ── football-data.co.uk E0 closing odds ───────────────────────────────────────
+# Usage: make fetch-football-data SEASON=2024-25
+# Writes write-once CSV under $$FPLT_DATA_DIR/raw/football_data/season=.../E0.csv
+fetch-football-data:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-football-data SEASON=2024-25"; exit 1; fi
+	uv run python scripts/fetch_football_data.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:
