@@ -169,6 +169,7 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
     clearances_blocks_interceptions: int = pa.Field(ge=0)
     tackles: int = pa.Field(ge=0)
     recoveries: int = pa.Field(ge=0)
+    defensive_contribution: int = pa.Field(ge=0)
     available_at: datetime
     source: str
 
@@ -283,6 +284,7 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "clearances_blocks_interceptions": pl.Int64(),
         "tackles": pl.Int64(),
         "recoveries": pl.Int64(),
+        "defensive_contribution": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

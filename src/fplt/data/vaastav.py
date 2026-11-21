@@ -426,6 +426,7 @@ def _stats(
                 ),
                 "tackles": _as_int(row.get("tackles")),
                 "recoveries": _as_int(row.get("recoveries")),
+                "defensive_contribution": _as_int(row.get("defensive_contribution")),
                 "available_at": kickoff + _RESULT_LAG,
                 "source": "vaastav",
             }

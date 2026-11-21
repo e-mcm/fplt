@@ -38,6 +38,7 @@ def test_stage_event_live_keeps_ict_and_bps() -> None:
                         "clearances_blocks_interceptions": 8,
                         "tackles": 3,
                         "recoveries": 5,
+                        "defensive_contribution": 2,
                     },
                     "explain": [{"fixture": 99}],
                 }
@@ -56,6 +57,26 @@ def test_stage_event_live_keeps_ict_and_bps() -> None:
     assert row["clearances_blocks_interceptions"] == 8
     assert row["tackles"] == 3
     assert row["recoveries"] == 5
+    assert row["defensive_contribution"] == 2
+
+
+def test_stage_event_live_defaults_missing_defensive_contribution() -> None:
+    frame = stage_event_live(
+        {
+            "elements": [
+                {
+                    "id": 1,
+                    "stats": {"minutes": 90, "total_points": 2, "starts": 1},
+                    "explain": [{"fixture": 1}],
+                }
+            ]
+        },
+        "2025-26",
+        1,
+        datetime(2025, 8, 16, 18, tzinfo=UTC),
+        {1: 10},
+    )
+    assert frame["defensive_contribution"].to_list() == [0]
 
 
 def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
@@ -93,3 +114,4 @@ def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
     assert got["clearances_blocks_interceptions"].to_list() == [0]
     assert got["tackles"].to_list() == [0]
     assert got["recoveries"].to_list() == [0]
+    assert got["defensive_contribution"].to_list() == [0]

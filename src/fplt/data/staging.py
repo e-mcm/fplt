@@ -95,6 +95,9 @@ def stage_event_live(
                     ),
                     "tackles": int(stats.get("tackles") or 0),
                     "recoveries": int(stats.get("recoveries") or 0),
+                    "defensive_contribution": int(
+                        stats.get("defensive_contribution") or 0
+                    ),
                     "available_at": available_at.astimezone(UTC),
                     "source": source,
                 }
