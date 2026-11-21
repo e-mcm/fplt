@@ -58,7 +58,10 @@ def test_training_frame_shifts_the_label_row(tmp_path: Path) -> None:
     view = PITData(store).view(_AS_OF)
     train = training_frame(view)
     assert train.height == 2
-    assert set(train.columns) == set(FEATURE_COLUMNS) | {"total_points"}
+    assert set(train.columns) == set(FEATURE_COLUMNS) | {
+        "total_points",
+        "kickoff_time",
+    }
 
 
 def test_fit_predict_save_and_load(tmp_path: Path) -> None:

@@ -78,6 +78,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     backtest.add_argument("--refit", choices=_REFITS)
     backtest.add_argument("--seasons-back", type=int)
+    backtest.add_argument(
+        "--time-decay",
+        type=float,
+        help=(
+            "Override TrainWindow.time_decay (calendar λ, inverse days). "
+            "LightGBM sample weights; Dixon-Coles keeps using xi."
+        ),
+    )
     backtest.add_argument("--steps", type=int, default=1)
     compare = sub.add_parser(
         "compare",
@@ -104,6 +112,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Subset of walk_forward / fixed (default: both)",
     )
     compare.add_argument("--seasons-back", type=int)
+    compare.add_argument(
+        "--time-decay",
+        type=float,
+        help=(
+            "Override TrainWindow.time_decay (calendar λ, inverse days). "
+            "LightGBM sample weights; Dixon-Coles keeps using xi."
+        ),
+    )
     compare.add_argument("--steps", type=int, default=1)
     compare.add_argument("--with-openfpl", action="store_true")
     compare.add_argument("--openfpl-model-dir")
@@ -325,6 +341,7 @@ def _backtest(args: argparse.Namespace) -> None:
             list(args.models),
             refit=refit,
             seasons_back=args.seasons_back,
+            time_decay=args.time_decay,
             steps=args.steps,
         )
     except (ValueError, KeyError) as exc:
@@ -333,9 +350,10 @@ def _backtest(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     for spec in ran:
         window = spec.train_window.seasons_back
+        decay = spec.train_window.time_decay
         print(
             f"{spec.name} refit={spec.refit} seasons_back={window} "
-            f"model_id={spec.model_id}"
+            f"time_decay={decay} model_id={spec.model_id}"
         )
 
 
@@ -367,6 +385,7 @@ def _compare(args: argparse.Namespace) -> None:
             test_to_gw=args.test_to_gw,
             fit_gw=args.fit_gw,
             seasons_back=args.seasons_back,
+            time_decay=args.time_decay,
             modes=modes,
             steps=args.steps,
             with_openfpl=bool(args.with_openfpl),
@@ -379,9 +398,11 @@ def _compare(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     for run in result.runs:
         window = run.spec.train_window.seasons_back
+        decay = run.spec.train_window.time_decay
         print(
             f"{run.model_name} mode={run.mode} refit={run.spec.refit} "
-            f"seasons_back={window} model_id={run.spec.model_id}"
+            f"seasons_back={window} time_decay={decay} "
+            f"model_id={run.spec.model_id}"
         )
     print(format_summary_table(result.summary))
     print(f"wrote {result.output_dir / 'summary.json'}")

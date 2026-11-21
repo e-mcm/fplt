@@ -16,7 +16,15 @@ from fplt.types import GWKey
 
 
 class TrainWindow(BaseModel):
-    """How much history a fit is allowed to see."""
+    """How much history a fit is allowed to see.
+
+    ``seasons_back`` is enforced by walk-forward / PIT season filtering.
+    ``time_decay`` is an optional calendar rate λ (inverse days): trainers that
+    honour it weight rows by ``exp(-λ × days_before_as_of)``. Default ``None``
+    keeps equal weights (backwards compatible). Dixon–Coles uses its own
+    ``xi`` instead — do not also set ``time_decay`` on a DC score spec unless
+    you intentionally want a second decay path (currently ignored by DC).
+    """
 
     model_config = ConfigDict(frozen=True)
 

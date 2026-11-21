@@ -102,7 +102,10 @@ def test_command_fills_checked_actuals(
         ]
     )
     printed = capsys.readouterr().out
-    assert "rolling_mean_v1 refit=never seasons_back=2 model_id=" in printed
+    assert (
+        "rolling_mean_v1 refit=never seasons_back=2 time_decay=None model_id="
+        in printed
+    )
     actual = read_predictions(tmp_path).filter(pl.col("target_gw") == 1)
     assert actual["actual_pts"][0] == 10
     get_settings.cache_clear()
@@ -119,6 +122,8 @@ def test_bad_requests_are_rejected(tmp_path: Path) -> None:
         run_backtest(tmp_path, _TEST, 1, 1, ["missing"])
     with pytest.raises(ValueError, match="seasons_back"):
         run_backtest(tmp_path, _TEST, 1, 1, ["rolling_mean_v1"], seasons_back=0)
+    with pytest.raises(ValueError, match="time_decay"):
+        run_backtest(tmp_path, _TEST, 1, 1, ["rolling_mean_v1"], time_decay=-1.0)
     with pytest.raises(ValueError, match="gameweeks"):
         run_backtest(tmp_path, _TEST, 3, 1, ["rolling_mean_v1"])
 

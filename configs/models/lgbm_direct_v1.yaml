@@ -12,5 +12,10 @@ features:
   - context@1
   - rolling_form@1
   - opponent_strength@1
+# Optional calendar decay (default unset = equal weights). Example matching
+# Dixon–Coles xi scale (~107d half-life):
+# train_window:
+#   seasons_back: 4
+#   time_decay: 0.0065
 refit: every_gw
 seed: 0

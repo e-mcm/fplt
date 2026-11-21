@@ -96,6 +96,7 @@ def test_run_eval_board_delegates_to_backtest(
         *,
         refit: str | None = None,
         seasons_back: int | None = None,
+        time_decay: float | None = None,
         steps: int = 1,
     ) -> list[ModelSpec]:
         called["args"] = {
@@ -106,6 +107,7 @@ def test_run_eval_board_delegates_to_backtest(
             "models": models,
             "refit": refit,
             "seasons_back": seasons_back,
+            "time_decay": time_decay,
             "steps": steps,
         }
         return [ModelSpec(name=name, kind="rolling_mean") for name in models]
@@ -157,8 +159,9 @@ def test_run_eval_board_patches_openfpl_model_dir(
         refit: object,
         seasons_back: object,
         steps: int,
+        time_decay: object = None,
     ) -> ModelSpec:
-        del data_dir, season, from_gw, to_gw, refit, seasons_back, steps
+        del data_dir, season, from_gw, to_gw, refit, seasons_back, steps, time_decay
         openfpl_calls.append(model_dir)
         return ModelSpec(name=OPENFPL_MODEL, kind="openfpl")
 
@@ -384,6 +387,18 @@ def test_run_openfpl_rejects_bad_ranges(tmp_path: Path) -> None:
             model_dir=None,
             refit=None,
             seasons_back=0,
+            steps=1,
+        )
+    with pytest.raises(ValueError, match="time_decay"):
+        _run_openfpl(
+            tmp_path,
+            "2024-25",
+            1,
+            1,
+            model_dir=None,
+            refit=None,
+            seasons_back=None,
+            time_decay=-0.1,
             steps=1,
         )
     with pytest.raises(ValueError, match="gameweeks"):

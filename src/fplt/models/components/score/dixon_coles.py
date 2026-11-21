@@ -90,8 +90,10 @@ class MatchScoreModel:
 
     Spec params:
 
-    - ``xi``, ``home_advantage``, ``rho`` — time decay and (optional) starts
-      for home advantage and the Dixon-Coles low-score factor.
+    - ``xi``, ``home_advantage``, ``rho`` — match NLL time decay
+      ``exp(-xi × days_before_latest_kickoff)`` and (optional) starts for home
+      advantage and the Dixon-Coles low-score factor. ``TrainWindow.time_decay``
+      is ignored here; keep DC on ``xi`` only (do not double-decay).
     - ``fit_rho`` / ``fit_home_advantage`` — when true, estimate that scalar
       jointly with attack and defence (v2).
     - ``new_team_prior_strength`` — pseudo-matches pulling every team toward
