@@ -70,7 +70,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     seasons: list[str] = list(args.season)
-    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=60.0) as client:
+    # football-data.co.uk 302s www → apex; httpx defaults to not following.
+    with httpx.Client(
+        headers={"User-Agent": _USER_AGENT},
+        timeout=60.0,
+        follow_redirects=True,
+    ) as client:
         for season in seasons:
             result = fetch_season(client, args.out, season)
             state = "wrote" if result.wrote else "exists"

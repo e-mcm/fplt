@@ -60,3 +60,25 @@ def test_fetch_season_writes_once(tmp_path: Path) -> None:
     assert first.wrote is True
     assert second.wrote is False
     assert first.path.read_text(encoding="utf-8").startswith("Div,Date")
+
+
+def test_fetch_season_follows_www_to_apex_redirect(tmp_path: Path) -> None:
+    """www.football-data.co.uk 302s to the apex host before serving CSV."""
+    root = tmp_path / "raw"
+    apex = "https://football-data.co.uk/mmz4281/2425/E0.csv"
+    body = "Div,Date\nE0,16/08/2024\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == fetch.e0_url("2024-25"):
+            return httpx.Response(302, headers={"Location": apex})
+        if url == apex:
+            return httpx.Response(200, text=body)
+        raise AssertionError(f"unexpected request {url}")
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=True
+    )
+    result = fetch.fetch_season(client, root, "2024-25")
+    assert result.wrote is True
+    assert result.path.read_text(encoding="utf-8") == body
