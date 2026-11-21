@@ -70,14 +70,43 @@ def test_a_free_transfer_is_banked_for_a_better_week() -> None:
     assert plan.free_transfers == (1, 2)
     report = render_report(plan, "2024-25", [1, 2])
     assert "GW 2" in report
-    assert "hit 0" in report
+    assert "Hit: 0" in report
     captain = int(
         plan.picks.filter((pl.col("step") == 0) & pl.col("captain"))["player_key"][0]
     )
-    named = render_report(plan, "2024-25", [1, 2], names={captain: "Saka"})
-    assert "captain Saka" in named
+    vice = int(
+        plan.picks.filter((pl.col("step") == 0) & pl.col("vice"))["player_key"][0]
+    )
+    named = render_report(
+        plan, "2024-25", [1, 2], names={captain: "Saka", vice: "Saliba"}
+    )
+    assert "Saka (C)" in named
+    assert "Saliba (V)" in named
+    assert "### Transfers out" in named
+    assert "### Transfers in" in named
+    assert "### Starting XI" in named
+    assert "### Bench" in named
+    assert "| Name | Pos | Team | Price | xPts |" in named
     blank = render_report(plan, "2024-25", [1, 2], names={captain: "  "})
-    assert f"captain {captain}" in blank
+    assert f"{captain} (C)" in blank
+
+
+def test_render_report_tables_mark_armbands_and_empty_transfers() -> None:
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
+    report = render_report(plan, "2024-25", [1], names={1: "Raya"})
+    assert "### Transfers out" in report
+    assert "_None_" in report
+    assert "### Starting XI" in report
+    assert "### Bench" in report
+    assert "(C)" in report
+    assert "(V)" in report
+    assert report.count("| Name | Pos | Team | Price | xPts |") >= 2
+    xi_block = report.split("### Starting XI")[1].split("### Bench")[0]
+    assert "(C)" in xi_block
+    assert "(V)" in xi_block
+    assert "### Transfers out" not in xi_block
 
 
 def test_bad_plans_are_rejected() -> None:
@@ -276,7 +305,10 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
         assert len(saved) == 1
         assert str(saved[0]) in printed
         text = saved[0].read_text(encoding="utf-8")
-        assert "captain p" in text
+        assert "### Starting XI" in text
+        assert "(C)" in text
+        assert "| Name | Pos | Team | Price | xPts |" in text
+        assert "| p" in text
         with pytest.raises(SystemExit) as raised:
             main(
                 [
@@ -293,7 +325,8 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
             )
         assert raised.value.code == 2
         again = capsys.readouterr()
-        assert "captain p" in again.out
+        assert "(C)" in again.out
+        assert "### Starting XI" in again.out
         assert "plan already exists" in again.err
         with pytest.raises(PlanExistsError):
             run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1)
