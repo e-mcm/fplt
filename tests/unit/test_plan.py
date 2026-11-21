@@ -131,6 +131,34 @@ def test_bad_plans_are_rejected() -> None:
         )
 
 
+def test_orphan_prediction_rows_are_ignored() -> None:
+    """xpts for players without a PIT price do not break the plan.
+
+    Mid-season additions can appear in the prediction universe (fixtures)
+    before ``player_status`` has a row, so they are not candidates.
+    """
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    orphan = pl.DataFrame(
+        {
+            "player_key": pl.Series([999_999], dtype=pl.Int64),
+            "step": pl.Series([0], dtype=points["step"].dtype),
+            "xpts": pl.Series([100.0], dtype=pl.Float64),
+        }
+    )
+    with_orphan = plan_squad(
+        pool.drop("xpts"),
+        pl.concat([points, orphan]),
+        _state(),
+        initial=True,
+        horizon=1,
+    )
+    without = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
+    assert with_orphan.points == pytest.approx(without.points)
+    kept = with_orphan.picks.filter(~pl.col("sold"))["player_key"].to_list()
+    assert 999_999 not in kept
+
+
 def test_entry_picks_replace_the_squad_and_the_bank() -> None:
     state = load_squad_state()
     assert state.bank == 1000
