@@ -16,7 +16,7 @@ from fplt.models.components.minutes.empirical import EmpiricalMinutes
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.predictions import prediction_frame
-from fplt.models.simulation import simulate_match
+from fplt.models.simulation import ConcededMode, simulate_match
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
 from fplt.models.universe import player_fixtures
 from fplt.scoring.rules import Rules
@@ -36,10 +36,10 @@ class CompositePredictor:
     """Dixon-Coles, minutes, involvement, and other points, combined by simulation.
 
     ``n_sims`` is the number of match scenarios. ``own_goal_weight`` and
-    ``p_assist`` are passed to the simulator. The four components live under
-    ``components`` in the spec. A clean sheet still requires 60 minutes
-    against a scoreless opponent, and the goals-conceded penalty scales with
-    minutes/90.
+    ``p_assist`` are passed to the simulator. Optional fidelity knobs
+    (``cs_red_void_prob``, ``conceded_mode``, ``sample_other``) default to the
+    v1 approximations. The four components live under ``components`` in the
+    spec.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -47,22 +47,41 @@ class CompositePredictor:
         sims = spec.params.get("n_sims", 5000)
         own_goal = spec.params.get("own_goal_weight", 0.05)
         assist = spec.params.get("p_assist", 0.75)
+        void_prob = spec.params.get("cs_red_void_prob", 0.0)
+        conceded = spec.params.get("conceded_mode", "scaled")
+        sample_other = spec.params.get("sample_other", False)
         if isinstance(sims, bool) or not isinstance(sims, int) or sims < 1:
             raise ValueError(f"n_sims must be a positive int, got {sims!r}")
         own_goal_value = float(own_goal)
         assist_value = float(assist)
+        void_value = float(void_prob)
         if own_goal_value < 0:
             raise ValueError(
                 f"own_goal_weight must be non-negative, got {own_goal_value}"
             )
         if not 0.0 <= assist_value <= 1.0:
             raise ValueError(f"p_assist must be in [0, 1], got {assist_value}")
+        if not 0.0 <= void_value <= 1.0:
+            raise ValueError(f"cs_red_void_prob must be in [0, 1], got {void_value}")
+        if conceded == "played":
+            conceded_mode: ConcededMode = "played"
+        elif conceded == "scaled":
+            conceded_mode = "scaled"
+        else:
+            raise ValueError(
+                f"conceded_mode must be 'scaled' or 'played', got {conceded!r}"
+            )
+        if not isinstance(sample_other, bool):
+            raise ValueError(f"sample_other must be a bool, got {sample_other!r}")
         missing = [name for name in _PARTS if name not in spec.components]
         if missing:
             raise ValueError(f"dc_layered is missing components {missing}")
         self._n_sims = sims
         self._own_goal = own_goal_value
         self._p_assist = assist_value
+        self._cs_red_void_prob = void_value
+        self._conceded_mode = conceded_mode
+        self._sample_other = sample_other
         self._score = _build(spec, "score")
         self._minutes = _build(spec, "minutes")
         self._involvement = _build(spec, "involvement")
@@ -178,6 +197,9 @@ def _fixture(
         rng,
         own_goal_weight=model._own_goal,
         p_assist=model._p_assist,
+        cs_red_void_prob=model._cs_red_void_prob,
+        conceded_mode=model._conceded_mode,
+        sample_other=model._sample_other,
     )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),

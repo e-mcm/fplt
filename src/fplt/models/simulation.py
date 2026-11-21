@@ -1,15 +1,24 @@
 """Monte Carlo composition of a scoreline, minutes, and player shares.
 
-v1 clean-sheet approximation: a player keeps a clean sheet only when the
-opponent scored zero and that player played 60 or more minutes. The
-goals-conceded penalty is the full-match penalty from the scoring table,
-multiplied by minutes/90, so a half-match is half the penalty. Minutes are
-taken as drawn; this module does not force eleven starters.
+v1 defaults (``cs_red_void_prob=0``, ``conceded_mode="scaled"``,
+``sample_other=False``):
+
+- Clean sheet if the opponent scored zero and the player played 60 or more
+  minutes.
+- Goals-conceded penalty is the full-match table value times minutes/90.
+- Other points are the bucket expectation with no noise.
+
+Fidelity options (for a later layered spec) can void clean sheets at a red-card
+rate, apply the full conceded penalty whenever the player appears, and sample
+other points around their expectation so ``xpts_sd`` / ``p_haul`` see that
+variance. Minutes are taken as drawn; this module does not force eleven
+starters.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import polars as pl
@@ -17,6 +26,7 @@ import polars as pl
 from fplt.scoring.rules import Rules
 
 _BUCKET_EDGES = (0, 60)
+ConcededMode = Literal["scaled", "played"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +56,9 @@ def simulate_match(
     *,
     own_goal_weight: float = 0.05,
     p_assist: float = 0.75,
+    cs_red_void_prob: float = 0.0,
+    conceded_mode: ConcededMode = "scaled",
+    sample_other: bool = False,
 ) -> MatchSimulation:
     """Simulate points for every player across the sampled scorelines.
 
@@ -64,12 +77,19 @@ def simulate_match(
             as ``goal_weight * minutes / 90``.
         p_assist: Probability that a goal has an assist. The assister is
             someone else with minutes, weighted by ``assist_weight``.
+        cs_red_void_prob: Probability that a would-be clean sheet is voided
+            (red-card approximation). ``0`` keeps the v1 rule.
+        conceded_mode: ``"scaled"`` multiplies the goals-conceded penalty by
+            minutes/90 (v1). ``"played"`` applies the full penalty whenever
+            minutes are positive.
+        sample_other: When true, draw other points around the bucket mean
+            (Poisson / signed Poisson) instead of plugging in the mean.
 
     Returns:
         Points, goals, and assists per player, plus the unattributed goals.
 
     Raises:
-        ValueError: Shapes, sides, or weights are invalid.
+        ValueError: Shapes, sides, weights, or fidelity params are invalid.
     """
     home, away = _scorelines(scorelines)
     n = home.shape[0]
@@ -80,6 +100,12 @@ def simulate_match(
         raise ValueError(f"own_goal_weight must be non-negative, got {own_goal_weight}")
     if not 0.0 <= p_assist <= 1.0:
         raise ValueError(f"p_assist must be in [0, 1], got {p_assist}")
+    if not 0.0 <= cs_red_void_prob <= 1.0:
+        raise ValueError(f"cs_red_void_prob must be in [0, 1], got {cs_red_void_prob}")
+    if conceded_mode not in ("scaled", "played"):
+        raise ValueError(
+            f"conceded_mode must be 'scaled' or 'played', got {conceded_mode!r}"
+        )
     goals = np.zeros((keys.shape[0], n), dtype=np.int64)
     assists = np.zeros_like(goals)
     unattributed = np.zeros((2, n), dtype=np.int64)
@@ -97,7 +123,21 @@ def simulate_match(
         goals[mask] = side_goals_out
         assists[mask] = side_assists
         unattributed[side_index] = missed
-    points = _points(rules, positions, sides, played, goals, assists, home, away, other)
+    points = _points(
+        rules,
+        positions,
+        sides,
+        played,
+        goals,
+        assists,
+        home,
+        away,
+        other,
+        rng,
+        cs_red_void_prob=cs_red_void_prob,
+        conceded_mode=conceded_mode,
+        sample_other=sample_other,
+    )
     return MatchSimulation(
         player_key=keys,
         points=points,
@@ -174,6 +214,11 @@ def _points(
     home: np.ndarray,
     away: np.ndarray,
     other_points: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    cs_red_void_prob: float,
+    conceded_mode: ConcededMode,
+    sample_other: bool,
 ) -> np.ndarray:
     goal_value = np.array([rules.goals[pos] for pos in positions], dtype=np.float64)
     sheet_value = np.array(
@@ -195,13 +240,17 @@ def _points(
         np.where(minutes > 0, rules.appearance.short, 0),
     )
     clean_sheet = (opponent == 0) & (minutes >= long)
-    conceded = (
-        conceded_value[:, None]
-        * (opponent // every)
-        * np.where(minutes > 0, minutes / 90.0, 0.0)
-    )
+    if cs_red_void_prob > 0.0:
+        voided = rng.random(minutes.shape) < cs_red_void_prob
+        clean_sheet = clean_sheet & ~voided
+    if conceded_mode == "played":
+        exposure = np.where(minutes > 0, 1.0, 0.0)
+    else:
+        exposure = np.where(minutes > 0, minutes / 90.0, 0.0)
+    conceded = conceded_value[:, None] * (opponent // every) * exposure
     bucket = np.where(minutes <= 0, 0, np.where(minutes < _BUCKET_EDGES[1], 1, 2))
-    other = np.take_along_axis(other_points, bucket, axis=1)
+    other_mean = np.take_along_axis(other_points, bucket, axis=1)
+    other = _draw_other(other_mean, rng) if sample_other else other_mean
     return (
         appearance
         + goal_value[:, None] * goals
@@ -210,6 +259,13 @@ def _points(
         + conceded
         + other
     )
+
+
+def _draw_other(means: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Sample other points with mean equal to ``means`` (Poisson / signed)."""
+    rate = np.abs(means)
+    drawn = rng.poisson(rate).astype(np.float64)
+    return np.where(means >= 0.0, drawn, -drawn)
 
 
 def _scorelines(scorelines: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

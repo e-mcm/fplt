@@ -302,11 +302,11 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 2. **Minutes**: draw minutes for each player in both squads from `MinutesDist`. Draws are independent across players in v1 (known simplification; a later version can enforce 11 starters per team).
 3. **Goal allocation**: for each team goal, pick a scorer from players with minutes > 0 with probability ∝ `goal_weight × minutes/90`, plus an "unattributed" bucket for own goals (weight from history).
 4. **Assist allocation**: each goal is assisted with team-level probability `p_assist`; the assister is drawn ∝ `assist_weight × minutes/90`, excluding the scorer.
-5. **Clean sheet / conceded**: v1 approximation — clean sheet if the opponent scored 0 and the player played 60+; goals-conceded penalty applied scaled by minutes/90. Document the approximation in code.
-6. **Other points**: add the `OtherPointsModel` expectation for the player's drawn minutes bucket.
+5. **Clean sheet / conceded**: v1 approximation — clean sheet if the opponent scored 0 and the player played 60+; goals-conceded penalty applied scaled by minutes/90. Document the approximation in code. Optional fidelity params (defaults preserve v1): `cs_red_void_prob` voids a would-be clean sheet with that probability (red-card stand-in); `conceded_mode: played` applies the full goals-conceded band whenever minutes > 0 instead of scaling by minutes/90.
+6. **Other points**: add the `OtherPointsModel` expectation for the player's drawn minutes bucket. With `sample_other: true`, draw Poisson / signed-Poisson noise around that mean so `xpts_sd` and `p_haul` see residual variance.
 7. **Score**: apply `Rules` for the season to get points per player per sim.
 
-Output: `xpts` = mean, `xpts_sd`, `p_haul`, `p_60`, plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures.
+Output: `xpts` = mean, `xpts_sd`, `p_haul`, `p_60`, plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures. `dc_layered_v1` keeps the v1 defaults; a later layered spec (e.g. `dc_layered_v2`) enables the fidelity knobs.
 
 A unit test checks simulation against analytics: mean simulated team goals equals the `ScorelineDist` expectation, and simulated P(clean sheet) equals `p_clean_sheet` within Monte Carlo error.
 

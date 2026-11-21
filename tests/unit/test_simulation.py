@@ -98,6 +98,65 @@ def test_goals_conceded_scale_with_minutes() -> None:
     assert half == pytest.approx(0.5)
 
 
+def test_goals_conceded_played_mode_ignores_minutes_scale() -> None:
+    full, half = _play(
+        scorelines=np.array([[2, 0], [2, 0]]),
+        minutes=np.array([[90.0, 45.0]]),
+        weights=[(0.0, 0.0)],
+        sides=["away"],
+        positions=["GK"],
+        own_goal_weight=1.0,
+        p_assist=0.0,
+        seed=6,
+        conceded_mode="played",
+    ).points[0]
+    assert full == pytest.approx(1.0)
+    assert half == pytest.approx(0.0)
+
+
+def test_a_red_void_probability_removes_clean_sheets() -> None:
+    result = _play(
+        scorelines=np.array([[0, 0]] * 2000),
+        minutes=np.full((1, 2000), 90.0),
+        weights=[(0.0, 0.0)],
+        sides=["home"],
+        positions=["DEF"],
+        own_goal_weight=1.0,
+        p_assist=0.0,
+        seed=12,
+        cs_red_void_prob=1.0,
+    )
+    # Appearance 2 only; the 4-point clean sheet is always voided.
+    assert result.points[0].tolist() == pytest.approx([2.0] * 2000)
+
+
+def test_sampled_other_points_keep_the_mean_and_add_noise() -> None:
+    mean = _play(
+        scorelines=np.array([[0, 0]] * 4000),
+        minutes=np.full((1, 4000), 90.0),
+        weights=[(0.0, 0.0)],
+        other=np.array([[0.0, 0.0, 2.0]]),
+        own_goal_weight=0.0,
+        p_assist=0.0,
+        seed=13,
+        sample_other=False,
+    ).points[0]
+    sampled = _play(
+        scorelines=np.array([[0, 0]] * 4000),
+        minutes=np.full((1, 4000), 90.0),
+        weights=[(0.0, 0.0)],
+        other=np.array([[0.0, 0.0, 2.0]]),
+        own_goal_weight=0.0,
+        p_assist=0.0,
+        seed=13,
+        sample_other=True,
+    ).points[0]
+    assert mean.mean() == pytest.approx(4.0)
+    assert sampled.mean() == pytest.approx(4.0, abs=0.1)
+    assert sampled.std() > mean.std()
+    assert len(np.unique(sampled)) > 1
+
+
 def test_other_points_follow_the_minutes_bucket() -> None:
     result = _play(
         scorelines=np.array([[0, 0], [0, 0], [0, 0]]),
@@ -215,6 +274,26 @@ def test_bad_inputs_raise() -> None:
             rng,
             own_goal_weight=-0.1,
         )
+    with pytest.raises(ValueError, match="cs_red_void_prob"):
+        simulate_match(
+            np.array([[1, 0]]),
+            players,
+            minutes,
+            other,
+            _RULES,
+            rng,
+            cs_red_void_prob=1.5,
+        )
+    with pytest.raises(ValueError, match="conceded_mode"):
+        simulate_match(
+            np.array([[1, 0]]),
+            players,
+            minutes,
+            other,
+            _RULES,
+            rng,
+            conceded_mode="half",  # type: ignore[arg-type]
+        )
     with pytest.raises(ValueError, match="player_key"):
         simulate_match(
             np.array([[1, 0]]),
@@ -262,6 +341,9 @@ def _play(
     sides: list[str] | None = None,
     positions: list[str] | None = None,
     other: np.ndarray | None = None,
+    cs_red_void_prob: float = 0.0,
+    conceded_mode: str = "scaled",
+    sample_other: bool = False,
 ):
     players = _squad(weights, sides=sides, positions=positions)
     if other is None:
@@ -275,6 +357,9 @@ def _play(
         np.random.default_rng(seed),
         own_goal_weight=own_goal_weight,
         p_assist=p_assist,
+        cs_red_void_prob=cs_red_void_prob,
+        conceded_mode=conceded_mode,  # type: ignore[arg-type]
+        sample_other=sample_other,
     )
 
 
