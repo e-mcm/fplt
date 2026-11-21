@@ -86,6 +86,10 @@ def stage_event_live(
                     "penalties_saved": int(stats.get("penalties_saved", 0)),
                     "penalties_missed": int(stats.get("penalties_missed", 0)),
                     "starts": int(stats.get("starts", 0)),
+                    "influence": _stat_float(stats, "influence"),
+                    "creativity": _stat_float(stats, "creativity"),
+                    "threat": _stat_float(stats, "threat"),
+                    "bps": int(float(stats.get("bps") or 0)),
                     "available_at": available_at.astimezone(UTC),
                     "source": source,
                 }
@@ -251,3 +255,14 @@ def _fixtures(
         pl.col("team_h_score").cast(pl.Int64),
         pl.col("team_a_score").cast(pl.Int64),
     )
+
+
+def _stat_float(stats: dict[str, Any], key: str) -> float:
+    """Parse an FPL live ``stats`` field that may be a string or number."""
+    value = stats.get(key, 0)
+    if value is None or value == "":
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

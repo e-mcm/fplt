@@ -136,6 +136,10 @@ def build_league(root: DataStore) -> DataStore:
                     "penalties_saved": [0, 0, 0],
                     "penalties_missed": [0, 0, 0],
                     "starts": [1, 1, 1],
+                    "influence": [20.0, 5.0, 80.0],
+                    "creativity": [10.0, 2.0, 40.0],
+                    "threat": [15.0, 1.0, 60.0],
+                    "bps": [25, 5, 90],
                     "available_at": [
                         result_at,
                         result_at,

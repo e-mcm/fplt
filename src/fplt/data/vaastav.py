@@ -168,6 +168,13 @@ def _as_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _players(
     gw: pl.DataFrame,
     codes: dict[int, int],
@@ -410,6 +417,10 @@ def _stats(
                 "penalties_saved": _as_int(row.get("penalties_saved")),
                 "penalties_missed": _as_int(row.get("penalties_missed")),
                 "starts": starts,
+                "influence": _as_float(row.get("influence")),
+                "creativity": _as_float(row.get("creativity")),
+                "threat": _as_float(row.get("threat")),
+                "bps": _as_int(row.get("bps")),
                 "available_at": kickoff + _RESULT_LAG,
                 "source": "vaastav",
             }
