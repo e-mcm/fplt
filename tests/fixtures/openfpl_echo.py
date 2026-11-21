@@ -22,12 +22,16 @@ def main() -> None:
             name = "Nobody"
         elif mode == "rename":
             name = "Saka"
+        if mode == "features":
+            score = float(len(row.get("features") or {}))
+        else:
+            score = float(len(row["openfpl_player_id"]))
         rows.append(
             {
                 "row_id": row["row_id"],
                 "season": row["season"],
                 "openfpl_player_id": name,
-                "prediction": float(len(row["openfpl_player_id"])),
+                "prediction": score,
             }
         )
     json.dump({"rows": rows}, sys.stdout)
