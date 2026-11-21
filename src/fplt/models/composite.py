@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from fplt.models.universe import player_fixtures
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
 from fplt.utils.rng import seed_for
+
+logger = logging.getLogger(__name__)
 
 _BUCKETS = ("0", "1-59", "60+")
 _PARTS = ("score", "minutes", "involvement", "other")
@@ -90,10 +93,17 @@ class CompositePredictor:
             zero = pl.lit(0.0)
             return prediction_frame(self.spec, view.as_of, rows, zero, zero, zero, zero)
         squad = _squad(view, rows)
-        pieces = [
-            _fixture(self, view, squad, row)
-            for row in _fixtures(view, squad).iter_rows(named=True)
-        ]
+        fixtures = list(_fixtures(view, squad).iter_rows(named=True))
+        pieces: list[pl.DataFrame] = []
+        for index, row in enumerate(fixtures, start=1):
+            logger.info(
+                "%s fixture %s (%s/%s)",
+                self.spec.name,
+                row["fixture_id"],
+                index,
+                len(fixtures),
+            )
+            pieces.append(_fixture(self, view, squad, row))
         combined = pl.concat(pieces, how="vertical")
         return prediction_frame(
             self.spec,

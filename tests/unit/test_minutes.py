@@ -146,6 +146,15 @@ def test_no_history_uses_the_fallback_when_shrinkage_is_zero(tmp_path: Path) -> 
     assert dist.pmf[0, ninety] == pytest.approx(1.0)
 
 
+def test_a_full_appearance_window_stays_non_negative(tmp_path: Path) -> None:
+    rows = [(1, "MID", gw, 90, 1) for gw in range(1, 5)]
+    rows.append((1, "MID", 5, 15, 0))
+    store = _store(tmp_path, rows, {1: ("a", 100.0)})
+    dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    assert np.all(dist.pmf >= 0)
+    assert dist.pmf.sum() == pytest.approx(1.0)
+
+
 def test_a_squad_that_never_plays_stays_on_zero(tmp_path: Path) -> None:
     store = _store(tmp_path, [(1, "MID", 1, 0, 0)], {1: ("a", 100.0)})
     dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))

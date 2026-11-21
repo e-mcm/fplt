@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -43,17 +44,27 @@ _ZERO = (
 )
 
 
-def test_compare_runs_both_modes_and_writes_summary(tmp_path: Path) -> None:
+def test_compare_runs_both_modes_and_writes_summary(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     _store(tmp_path)
-    result = compare_models(
-        tmp_path,
-        _TEST,
-        models=["rolling_mean_v1"],
-        test_from_gw=1,
-        test_to_gw=2,
-        seasons_back=2,
-        steps=1,
+    with caplog.at_level(logging.INFO, logger="fplt.backtest.compare"):
+        result = compare_models(
+            tmp_path,
+            _TEST,
+            models=["rolling_mean_v1"],
+            test_from_gw=1,
+            test_to_gw=2,
+            seasons_back=2,
+            steps=1,
+        )
+    assert "compare 2024-25 gw 1-2 fit_gw=1 steps=1 modes=walk_forward,fixed" in (
+        caplog.text
     )
+    assert "walk_forward rolling_mean_v1 starting refit=every_gw" in caplog.text
+    assert "fixed rolling_mean_v1 starting refit=never" in caplog.text
+    assert "filling actuals" in caplog.text
+    assert "writing" in caplog.text
     assert [run.mode for run in result.runs] == ["walk_forward", "fixed"]
     assert {run.spec.refit for run in result.runs} == {"every_gw", "never"}
     assert len({run.spec.model_id for run in result.runs}) == 2
@@ -189,9 +200,12 @@ def test_cli_compare(
             "fixed",
         ]
     )
-    out = capsys.readouterr().out
-    assert "rolling_mean_v1 mode=fixed" in out
-    assert "summary.json" in out
+    captured = capsys.readouterr()
+    assert "rolling_mean_v1 mode=fixed" in captured.out
+    assert "summary.json" in captured.out
+    assert "compare 2024-25 gw 1-2" in captured.err
+    assert "fixed rolling_mean_v1 starting" in captured.err
+    assert "gw 1 (1/2) fitting" in captured.err
     get_settings.cache_clear()
 
 

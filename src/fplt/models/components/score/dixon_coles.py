@@ -19,7 +19,9 @@ from fplt.data.pit import PITView
 from fplt.models.distributions import MAX_GOALS, ScorelineDist
 from fplt.models.spec import ModelSpec, register_component
 
-_GRID = 31
+# 0..MAX_GOALS is kept. The extra bins are the tail ScorelineDist measures,
+# so a rate near the attack/defence bound is not silently cut off.
+_GRID = MAX_GOALS + 9
 _NEUTRAL = 1.0
 
 

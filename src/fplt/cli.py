@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 from typing import Literal
@@ -159,7 +160,22 @@ def _backtest(args: argparse.Namespace) -> None:
         )
 
 
+def _configure_cli_logging() -> None:
+    """Show library progress on stderr. Attaches one handler for the process."""
+    package = logging.getLogger("fplt")
+    package.setLevel(logging.INFO)
+    if any(getattr(handler, "_fplt_cli", False) for handler in package.handlers):
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    )
+    handler._fplt_cli = True  # type: ignore[attr-defined]
+    package.addHandler(handler)
+
+
 def _compare(args: argparse.Namespace) -> None:
+    _configure_cli_logging()
     modes: list[CompareMode] | None = (
         list(args.modes) if args.modes is not None else None
     )

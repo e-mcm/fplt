@@ -1,9 +1,11 @@
 """Walk-forward refits on the spec's policy and fills actuals only when checked."""
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from fplt.backtest.ledger import (
     append_predictions,
@@ -60,6 +62,19 @@ def test_empty_horizon_is_an_empty_ledger(tmp_path: Path) -> None:
     assert frame.is_empty()
     append_predictions(tmp_path, frame)
     assert not ledger_path(tmp_path).exists()
+
+
+def test_walk_forward_logs_each_deadline(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = build_league(DataStore(tmp_path))
+    spec = ModelSpec(name="rolling_mean", kind="rolling_mean", params={"window": 5})
+    as_ofs = [GWKey("2024-25", 1), GWKey("2024-25", 2)]
+    with caplog.at_level(logging.INFO, logger="fplt.backtest.walk_forward"):
+        walk_forward(RollingMeanPredictor(spec), PITData(store), as_ofs, steps=1)
+    assert "rolling_mean 2024-25 gw 1 (1/2) fitting" in caplog.text
+    assert "rolling_mean 2024-25 gw 2 (2/2) fitting" in caplog.text
+    assert "gw 1 done in" in caplog.text
 
 
 def test_walk_forward_refits_and_leaves_actuals_null(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 """The layered predictor is a points model driven by its YAML components."""
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,9 @@ def test_the_spec_builds_the_layered_model() -> None:
     assert spec.params["n_sims"] == 5000
 
 
-def test_a_gameweek_is_scored_and_written(tmp_path: Path) -> None:
+def test_a_gameweek_is_scored_and_written(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     spec = load_model_specs()["dc_layered_v1"].model_copy(
         update={"params": {"n_sims": 200, "own_goal_weight": 0.05, "p_assist": 0.75}}
     )
@@ -30,7 +33,10 @@ def test_a_gameweek_is_scored_and_written(tmp_path: Path) -> None:
     view = PITData(store).view(GWKey("2024-25", 1))
     model = CompositePredictor(spec)
     model.fit(view)
-    frame = model.predict(view, [GWKey("2024-25", 1), GWKey("2024-25", 2)])
+    with caplog.at_level(logging.INFO, logger="fplt.models.composite"):
+        frame = model.predict(view, [GWKey("2024-25", 1), GWKey("2024-25", 2)])
+    assert "fixture" in caplog.text
+    assert "(1/" in caplog.text
     checked = PredictionSchema.validate(frame)
     assert checked.height == 4
     assert checked["xpts"].is_not_null().all()
