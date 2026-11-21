@@ -1,0 +1,44 @@
+# Scaffold example: layered component slot swap shape (minutes v1 → v2).
+# Treatment parent would normally be a one-slot fork of dc_layered_v2; here we
+# point at existing YAMLs so dry-run resolves.
+name: example_component_minutes_v1_vs_v2
+kind: component
+description: "Minutes slot: empirical_minutes → empirical_minutes_v2 (shape demo)"
+
+change:
+  lever: component_swap
+  slot: minutes
+  control_kind: empirical_minutes
+  treatment_kind: empirical_minutes_v2
+  tables: []
+  features: []
+  diff:
+    - "components.minutes.kind: empirical_minutes → empirical_minutes_v2"
+  notes: "Replace arms with a true single-slot parent fork when evaluating ML minutes."
+
+control: dc_layered_v1
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  keep_if:
+    components_any: [minutes_brier_played, minutes_brier_60]
+    prediction_any: [spearman, mae]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Example: minutes component swap shape"

@@ -19,6 +19,12 @@ from fplt.backtest.component_eval import (
 )
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
+from fplt.backtest.promote_eval import (
+    format_plan,
+    load_eval_spec,
+    plan_promote_eval,
+    plan_to_json,
+)
 from fplt.backtest.run import run_backtest
 from fplt.browser_auth import BrowserAuthError, auth_from_browser
 from fplt.data.fpl_client import FPLAPIError
@@ -292,6 +298,52 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet here",
     )
+    promote_eval = sub.add_parser(
+        "promote-eval",
+        parents=[log_flags],
+        help=(
+            "Control vs treatment EvalSpec plan "
+            "(data / feature / config / component / model)"
+        ),
+    )
+    promote_eval.add_argument(
+        "--eval",
+        required=True,
+        help="EvalSpec name under configs/evals/<name>.yaml",
+    )
+    promote_eval.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Print the suite plan without fitting (default / only mode in v1)",
+    )
+    promote_eval.add_argument(
+        "--execute",
+        action="store_true",
+        help="Attempt execute path (not implemented yet; exits 2)",
+    )
+    promote_eval.add_argument(
+        "--tier",
+        choices=("S0", "S1", "S2", "S3", "S4"),
+        help="Clamp to_gw / disable decisions for S0–S2",
+    )
+    promote_eval.add_argument("--from-gw", type=int)
+    promote_eval.add_argument("--to-gw", type=int)
+    promote_eval.add_argument(
+        "--seasons",
+        nargs="+",
+        help="Override window.seasons",
+    )
+    promote_eval.add_argument(
+        "--skip-decisions",
+        action="store_true",
+        help="Force decisions suite off",
+    )
+    promote_eval.add_argument(
+        "--json",
+        action="store_true",
+        help="Print plan JSON instead of the text table",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -385,6 +437,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "eval-components":
         _eval_components(args)
+        return
+    if args.command == "promote-eval":
+        _promote_eval(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -592,6 +647,32 @@ def _eval_components(args: argparse.Namespace) -> None:
     if not result.sims.is_empty():
         print(result.sims)
     print(f"wrote {result.output_dir / 'summary.json'}")
+
+
+def _promote_eval(args: argparse.Namespace) -> None:
+    dry_run = not bool(args.execute)
+    try:
+        spec = load_eval_spec(str(args.eval))
+        plan = plan_promote_eval(
+            spec,
+            dry_run=dry_run,
+            tier=args.tier,
+            from_gw=args.from_gw,
+            to_gw=args.to_gw,
+            seasons=list(args.seasons) if args.seasons else None,
+            skip_decisions=bool(args.skip_decisions),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("promote-eval failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    if args.json:
+        print(plan_to_json(plan), end="")
+    else:
+        print(format_plan(plan))
+    if not dry_run:
+        print("promote-eval execute path not implemented yet", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _decisions(args: argparse.Namespace) -> None:

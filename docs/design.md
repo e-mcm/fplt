@@ -388,7 +388,11 @@ Component level (layered models):
 - Monte Carlo: `n_sims` stability sweep (mean/max \|Δxpts\| vs a high-`n` reference, wall time, analytic SE)
 - CLI: `fplt eval-components` / `make eval-components` (P0 harness)
 
-### 7.4 Benchmarks
+### 7.4 Promote-eval (control vs treatment)
+
+Any lever — new staged data, feature version, hyperparam / `train_window` fork, layered **component registry swap** (e.g. minutes empirical → LightGBM / handwritten), or full **predictor fork** (e.g. `lgbm_direct` → XGBoost) — is evaluated as two `ModelSpec` YAMLs plus an EvalSpec under `configs/evals/`. CLI: `fplt promote-eval --eval <name>` (scaffold dry-run prints the compare / eval-components / decisions plan; later phases execute). See [`docs/feature-eval-pipeline.md`](feature-eval-pipeline.md). Never silently edit the control default; treatment forks get a new `model_id`. Recommendation does not flip `PRODUCTION_MODELS`.
+
+### 7.5 Benchmarks
 
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
 
@@ -398,11 +402,11 @@ External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Runs in its own uv environment (`external/openfpl/`) as a subprocess. The adapter (`fplt.models.external.openfpl`) invokes it, reads its output, and joins each score back by request `row_id` (which already carries `player_key`). `web_name` is sent as a label and does not need to be unique. It returns a `PredictionSchema` frame. `fit` is a no-op. A target season before 2024-25 raises. `params.model_dir` is `external/openfpl/OpenFPL`. That ensemble is about 750MB (files near GitHub's 100MB limit), so the first real predict sparse-clones it there and `uv sync`s the runner env when `.venv` is missing. An empty `model_dir` or a checkout without `models/xscaler.save` raises; the runner does not substitute zeros. OpenFPL stays opt-in on `fplt compare` / `eval_board` (`--with-openfpl` / `--openfpl-model-dir` / a `model_dir` other than this default), not in `CORE_MODELS`. The contract suite drives the adapter with an offline echo runner.
 - Operator steps (`uv sync`, season floor, feature gap): [`docs/openfpl.md`](openfpl.md).
 
-### 7.5 Why no MLflow (yet)
+### 7.6 Why no MLflow (yet)
 
 The comparisons we need are slices over model × GW × horizon × position. A long parquet ledger queried with polars/DuckDB does this directly. Dagster already provides lineage, run history and per-materialisation metadata; `ModelSpec` hashing provides model identity and artifacts are content-addressed. Revisit MLflow only if large hyperparameter sweeps start.
 
-### 7.6 Leaderboard app
+### 7.7 Leaderboard app
 
 `apps/leaderboard.py` (Streamlit), reading only the ledger: model leaderboard by metric, filters for season/horizon/position, calibration plots, per-GW decision-quality curves, and side-by-side player predictions for a chosen GW.
 

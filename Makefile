@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -61,6 +61,13 @@ compare-models:
 eval-components:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-components SEASON=2024-25"; exit 1; fi
 	uv run fplt eval-components --season $(SEASON) $(ARGS)
+
+# ── Promote-eval (control vs treatment EvalSpec; dry-run scaffold) ─────────────
+# Usage: make promote-eval EVAL=example_model_lgbm_vs_rolling
+# Optional: ARGS='--dry-run --tier S1'
+promote-eval:
+	@if [ -z "$(EVAL)" ]; then echo "Usage: make promote-eval EVAL=<name>"; exit 1; fi
+	uv run fplt promote-eval --eval $(EVAL) $(ARGS)
 
 # ── Decision bakeoff (season totals after backtest fills the prediction ledger)
 # Usage: make decisions-board SEASON=2024-25

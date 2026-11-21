@@ -1,0 +1,47 @@
+# Scaffold example: layered config / multi-component bump (v1 → v2).
+# Real promote-evals should change one lever only; this file exercises the loader.
+name: example_config_dc_v1_vs_v2
+kind: config
+description: "dc_layered_v1 vs dc_layered_v2 (scaffold; multi-lever — prefer single-knob forks)"
+
+change:
+  lever: hyperparam
+  slot: null
+  control_kind: dc_layered
+  treatment_kind: dc_layered
+  tables: []
+  features: []
+  diff:
+    - "composite v1 → v2 (score/minutes/involvement/other params)"
+  notes: "Example only. For real xi/seasons_back screens, fork one param."
+
+control: dc_layered_v1
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+  decisions_horizon: 3
+  max_mean_ppg: 90
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [spearman, mae, top10]
+    components_any: [rps, minutes_brier_played]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Example: dc_layered v1 vs v2"
+  store_doc: null
