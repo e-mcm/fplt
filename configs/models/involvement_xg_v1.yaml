@@ -1,0 +1,9 @@
+name: involvement_xg_v1
+kind: involvement_xg
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  xg_blend: 0.7
+refit: every_gw
+seed: 0

@@ -9,10 +9,18 @@ from __future__ import annotations
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.components.involvement.rates import (
+    POSITIONS,
+    appearance_history,
+    current_teams,
+    latest_rows,
+    position_goal_assist_rates,
+    shrunk_rate,
+    team_share,
+    validated_involvement,
+)
 from fplt.models.spec import ModelSpec, register_component
-from fplt.schemas.components import INVOLVEMENT_COLUMNS, InvolvementSchema
-
-_POSITIONS = ("GK", "DEF", "MID", "FWD")
+from fplt.schemas.components import INVOLVEMENT_COLUMNS
 
 
 class InvolvementShares:
@@ -51,11 +59,11 @@ class InvolvementShares:
         self._fitted = True
         self._goal = {}
         self._assist = {}
-        history = _history(view)
+        history = appearance_history(view)
         if history.is_empty():
             return
-        prior = _position_rates(history)
-        recent = _latest(history, self._window)
+        prior = position_goal_assist_rates(history)
+        recent = latest_rows(history, self._window)
         takers = set(
             history.filter(pl.col("penalties_missed") > 0)["player_key"].to_list()
         )
@@ -67,13 +75,13 @@ class InvolvementShares:
         )
         for row in grouped.iter_rows(named=True):
             player = int(row["player_key"])
-            position = row["position"] if row["position"] in _POSITIONS else ""
+            position = row["position"] if row["position"] in POSITIONS else ""
             goal_prior, assist_prior = prior.get(position, (0.0, 0.0))
             nineties = float(row["minutes"]) / 90.0
-            self._goal[player] = _shrunk(
+            self._goal[player] = shrunk_rate(
                 float(row["goals_scored"]), nineties, goal_prior, self._shrinkage
             )
-            self._assist[player] = _shrunk(
+            self._assist[player] = shrunk_rate(
                 float(row["assists"]), nineties, assist_prior, self._shrinkage
             )
             if player in takers:
@@ -102,8 +110,8 @@ class InvolvementShares:
             maintain_order=True
         )
         if asked.is_empty():
-            return _validated(pl.DataFrame(schema=INVOLVEMENT_COLUMNS))
-        teams = _teams(view)
+            return validated_involvement(pl.DataFrame(schema=INVOLVEMENT_COLUMNS))
+        teams = current_teams(view)
         frame = asked.join(teams, on="player_key", how="left").with_columns(
             pl.col("team_key").fill_null(-pl.col("player_key"))
         )
@@ -119,88 +127,10 @@ class InvolvementShares:
             pl.len().over("fixture_id", "team_key").alias("squad"),
         )
         frame = frame.with_columns(
-            _share("goal_rate", "goal_sum").alias("goal_weight"),
-            _share("assist_rate", "assist_sum").alias("assist_weight"),
+            team_share("goal_rate", "goal_sum").alias("goal_weight"),
+            team_share("assist_rate", "assist_sum").alias("assist_weight"),
         )
-        return _validated(frame.select(list(INVOLVEMENT_COLUMNS)))
-
-
-def _history(view: PITView) -> pl.DataFrame:
-    stats = view.latest(
-        "player_fixture_stats", ["season", "player_key", "fixture_id"]
-    ).collect()
-    if stats.is_empty():
-        return stats
-    roster = (
-        view.latest("players", ["season", "player_key"])
-        .select("season", "player_key", "position", "team_key")
-        .collect()
-    )
-    return stats.join(roster, on=["season", "player_key"], how="left").sort(
-        ["player_key", "season", "gw", "fixture_id"]
-    )
-
-
-def _teams(view: PITView) -> pl.DataFrame:
-    roster = (
-        view.latest("players", ["season", "player_key"])
-        .select("player_key", "team_key", "available_at")
-        .collect()
-    )
-    if roster.is_empty():
-        return pl.DataFrame(schema={"player_key": pl.Int64(), "team_key": pl.Int64()})
-    return (
-        roster.sort("available_at")
-        .unique(subset=["player_key"], keep="last")
-        .select("player_key", "team_key")
-    )
-
-
-def _latest(history: pl.DataFrame, window: int) -> pl.DataFrame:
-    ranked = history.with_columns(
-        pl.col("player_key").cum_count().over("player_key").cast(pl.Int64).alias("_i"),
-        pl.len().over("player_key").cast(pl.Int64).alias("_n"),
-    )
-    return ranked.filter(pl.col("_i") > pl.col("_n") - window).drop("_i", "_n")
-
-
-def _position_rates(history: pl.DataFrame) -> dict[str, tuple[float, float]]:
-    played = history.filter(
-        (pl.col("minutes") > 0) & pl.col("position").is_in(list(_POSITIONS))
-    )
-    if played.is_empty():
-        return {}
-    totals = played.group_by("position").agg(
-        pl.col("goals_scored").sum().alias("goals"),
-        pl.col("assists").sum().alias("assists"),
-        (pl.col("minutes") / 90.0).sum().alias("nineties"),
-    )
-    rates: dict[str, tuple[float, float]] = {}
-    for row in totals.iter_rows(named=True):
-        nineties = float(row["nineties"])
-        rates[str(row["position"])] = (
-            float(row["goals"]) / nineties,
-            float(row["assists"]) / nineties,
-        )
-    return rates
-
-
-def _shrunk(events: float, nineties: float, prior: float, shrinkage: float) -> float:
-    denom = nineties + shrinkage
-    if denom <= 0:
-        return prior
-    return (events + shrinkage * prior) / denom
-
-
-def _share(rate: str, total: str) -> pl.Expr:
-    even = 1.0 / pl.col("squad")
-    return pl.when(pl.col(total) > 0).then(pl.col(rate) / pl.col(total)).otherwise(even)
-
-
-def _validated(frame: pl.DataFrame) -> pl.DataFrame:
-    checked = InvolvementSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
-    return checked
+        return validated_involvement(frame.select(list(INVOLVEMENT_COLUMNS)))
 
 
 register_component("involvement_shares")(InvolvementShares)

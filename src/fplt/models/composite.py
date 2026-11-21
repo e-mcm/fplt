@@ -12,6 +12,7 @@ import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.models.components.involvement.shares import InvolvementShares
+from fplt.models.components.involvement.xg import InvolvementXg
 from fplt.models.components.minutes.empirical import EmpiricalMinutes
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
@@ -33,6 +34,7 @@ _REGISTERED = (
     MatchScoreModel,
     EmpiricalMinutes,
     InvolvementShares,
+    InvolvementXg,
     OtherPointsPriors,
     OtherPlayerPriors,
 )
@@ -101,6 +103,7 @@ class CompositePredictor:
         self._minutes.fit(view)
         self._involvement.fit(view)
         self._other.fit(view)
+        _apply_involvement_sim_params(self)
         self._fitted = True
 
     def predict(self, view: PITView, horizon: list[GWKey]) -> pl.DataFrame:
@@ -163,7 +166,17 @@ class CompositePredictor:
         model._minutes = payload["minutes"]
         model._involvement = payload["involvement"]
         model._other = payload["other"]
+        _apply_involvement_sim_params(model)
         return model
+
+
+def _apply_involvement_sim_params(model: CompositePredictor) -> None:
+    """Prefer calibrated own-goal / assist knobs from involvement when present."""
+    involvement = model._involvement
+    if hasattr(involvement, "own_goal_weight"):
+        model._own_goal = float(involvement.own_goal_weight)
+    if hasattr(involvement, "p_assist"):
+        model._p_assist = float(involvement.p_assist)
 
 
 def _build(spec: ModelSpec, name: str) -> Any:
