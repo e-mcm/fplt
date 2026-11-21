@@ -1,0 +1,41 @@
+# Scaffold example: full predictor fork (direct LGBM vs rolling baseline).
+name: example_model_lgbm_vs_rolling
+kind: model
+description: "lgbm_direct_v1 vs rolling_mean_v1 (model_fork shape)"
+
+change:
+  lever: model_fork
+  slot: null
+  control_kind: rolling_mean
+  treatment_kind: lgbm_direct
+  tables: []
+  features: []
+  diff:
+    - "kind: rolling_mean → lgbm_direct"
+  notes: "For XGB/handwritten swaps, fork lgbm_direct_v1 and change kind only."
+
+control: rolling_mean_v1
+treatment: lgbm_direct_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  keep_if:
+    prediction_any: [spearman, mae, top10]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Example: direct model fork shape"

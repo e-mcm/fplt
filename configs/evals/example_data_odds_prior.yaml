@@ -1,0 +1,45 @@
+# Scaffold example: data lever (odds prior). Treatment YAML lands with W6;
+# dry-run warns until that ModelSpec exists.
+name: example_data_odds_prior
+kind: data
+description: "DC layered ± match_odds market prior (shape for W7)"
+
+change:
+  lever: data_table
+  slot: score
+  control_kind: dixon_coles
+  treatment_kind: dixon_coles
+  tables: [match_odds]
+  features: []
+  diff:
+    - "consume staged match_odds via market_prior_strength > 0"
+  notes: "closing_proxy; available_at = kickoff — not deadline PIT"
+
+control: dc_layered_v2
+treatment: dc_layered_odds_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: 0.80
+  keep_if:
+    prediction_any: [spearman, mae]
+    components_any: [rps, logloss]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Example: odds prior data lever"
+  store_doc: null
