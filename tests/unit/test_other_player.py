@@ -145,6 +145,26 @@ def test_older_seasons_keep_defensive_at_zero(tmp_path: Path) -> None:
     assert _cell(frame, 1, "60+")["defensive_contribution"] == pytest.approx(0.0)
 
 
+def test_use_defensive_contribution_false_zeros_channel(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "DEF", 1, minutes=90, defensive_contribution=10)],
+        season="2025-26",
+    )
+    frame = _predict(
+        store,
+        pl.DataFrame({"player_key": [1], "fixture_id": [9]}),
+        season="2025-26",
+        use_defensive_contribution=False,
+    )
+    assert _cell(frame, 1, "60+")["defensive_contribution"] == pytest.approx(0.0)
+
+
+def test_rejects_non_bool_use_defensive_contribution() -> None:
+    with pytest.raises(ValueError, match="use_defensive_contribution"):
+        OtherPlayerPriors(_spec(use_defensive_contribution="yes"))
+
+
 def test_an_unknown_player_gets_zeros(tmp_path: Path) -> None:
     store = _store(tmp_path, [_row(1, "FWD", 1, minutes=90, bonus=3)])
     frame = _predict(store, pl.DataFrame({"player_key": [99], "fixture_id": [9]}))
