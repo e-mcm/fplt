@@ -105,6 +105,36 @@ def test_penalty_miss_still_boosts_goals(tmp_path: Path) -> None:
     assert weights[2] == pytest.approx(0.0)
 
 
+def test_penalties_order_one_boosts_without_a_miss(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "FWD", 1), _row(2, "FWD", 1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[_status(1, order=1), _status(2, order=2)],
+    )
+    frame = _predict(store, xg_blend=1.0)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(0.0)
+
+
+def test_penalties_order_gates_miss_on_xg(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "FWD", 1, pens_missed=1), _row(2, "FWD", 1, pens_missed=1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[_status(1, order=2), _status(2, order=1)],
+    )
+    frame = _predict(store, xg_blend=1.0)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[2] == pytest.approx(1.0)
+    assert weights[1] == pytest.approx(0.0)
+
+
 def test_sim_params_come_from_history(tmp_path: Path) -> None:
     store = _store(
         tmp_path,
@@ -312,11 +342,16 @@ def _ust(
     }
 
 
+def _status(player: int, *, order: int | None) -> dict[str, object]:
+    return {"player": player, "order": order}
+
+
 def _store(
     root: Path,
     *,
     fpl: list[dict[str, object]],
     understat: list[dict[str, object]],
+    status: list[dict[str, object]] | None = None,
 ) -> DataStore:
     store = DataStore(root)
     players = list({(row["player"], row["position"], row["team"]) for row in fpl})
@@ -405,6 +440,26 @@ def _store(
                             _kick(1) + timedelta(hours=3) for _ in understat
                         ],
                         "source": ["understat"] * len(understat),
+                    }
+                )
+            ),
+        )
+    if status is not None:
+        store.write(
+            "player_status",
+            _utc(
+                pl.DataFrame(
+                    {
+                        "season": [_SEASON] * len(status),
+                        "player_key": [row["player"] for row in status],
+                        "status": ["a"] * len(status),
+                        "news": [""] * len(status),
+                        "price": [100] * len(status),
+                        "ep_next": [4.0] * len(status),
+                        "chance_of_playing": [100.0] * len(status),
+                        "penalties_order": [row["order"] for row in status],
+                        "available_at": [_START] * len(status),
+                        "source": ["fpl_api"] * len(status),
                     }
                 )
             ),

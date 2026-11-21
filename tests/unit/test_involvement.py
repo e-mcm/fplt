@@ -10,6 +10,10 @@ import fplt.models.components.involvement  # noqa: F401 — registers the compon
 import fplt.models.components.other  # noqa: F401 — registers the component
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
+from fplt.models.components.involvement.rates import (
+    appearance_history,
+    penalty_takers,
+)
 from fplt.models.components.involvement.shares import InvolvementShares
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.spec import (
@@ -84,6 +88,59 @@ def test_a_penalty_miss_adds_goals_per_ninety(tmp_path: Path) -> None:
     weights = _weights(frame)
     assert weights[1] == pytest.approx(1.0)
     assert weights[2] == pytest.approx(0.0)
+
+
+def test_penalties_order_one_marks_the_taker(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "FWD", 1), _row(2, "FWD", 1)],
+        status=[_status(1, order=1), _status(2, order=2)],
+    )
+    frame = _shares(store)
+    weights = _weights(frame)
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(0.0)
+
+
+def test_penalties_order_gates_off_a_miss(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "FWD", 1, pens_missed=1), _row(2, "FWD", 1, pens_missed=1)],
+        status=[_status(1, order=2), _status(2, order=1)],
+    )
+    frame = _shares(store)
+    weights = _weights(frame)
+    assert weights[2] == pytest.approx(1.0)
+    assert weights[1] == pytest.approx(0.0)
+
+
+def test_null_penalties_order_falls_back_to_miss(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "FWD", 1, pens_missed=1), _row(2, "FWD", 1)],
+        status=[_status(1, order=None), _status(2, order=None)],
+    )
+    frame = _shares(store)
+    weights = _weights(frame)
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(0.0)
+
+
+def test_penalty_takers_respect_pit_cutoff(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "FWD", 1, pens_missed=0), _row(2, "FWD", 1)],
+        status=[_status(1, order=2), _status(2, order=2)],
+    )
+    late = store.read("player_status").filter(pl.col("player_key") == 1)
+    late = late.with_columns(
+        pl.lit(1).alias("penalties_order"),
+        pl.lit(_deadline(3) + timedelta(hours=1)).alias("available_at"),
+    )
+    store.write("player_status", late)
+    view = PITData(store).view(GWKey(_SEASON, 3))
+    history = appearance_history(view)
+    assert penalty_takers(view, history) == set()
 
 
 def test_a_team_with_no_rates_splits_equally(tmp_path: Path) -> None:
@@ -318,8 +375,16 @@ def _row(
     }
 
 
+def _status(player: int, *, order: int | None) -> dict[str, object]:
+    return {"player": player, "order": order}
+
+
 def _store(
-    root: Path, rows: list[dict[str, object]], *, season: str = _SEASON
+    root: Path,
+    rows: list[dict[str, object]],
+    *,
+    season: str = _SEASON,
+    status: list[dict[str, object]] | None = None,
 ) -> DataStore:
     store = DataStore(root)
     players = list({(row["player"], row["position"], row["team"]) for row in rows})
@@ -386,6 +451,26 @@ def _store(
             )
         ),
     )
+    if status is not None:
+        store.write(
+            "player_status",
+            _utc(
+                pl.DataFrame(
+                    {
+                        "season": [season] * len(status),
+                        "player_key": [row["player"] for row in status],
+                        "status": ["a"] * len(status),
+                        "news": [""] * len(status),
+                        "price": [100] * len(status),
+                        "ep_next": [4.0] * len(status),
+                        "chance_of_playing": [100.0] * len(status),
+                        "penalties_order": [row["order"] for row in status],
+                        "available_at": [_START] * len(status),
+                        "source": ["fpl_api"] * len(status),
+                    }
+                )
+            ),
+        )
     return store
 
 
