@@ -76,9 +76,7 @@ def test_fetch_season_follows_www_to_apex_redirect(tmp_path: Path) -> None:
             return httpx.Response(200, text=body)
         raise AssertionError(f"unexpected request {url}")
 
-    client = httpx.Client(
-        transport=httpx.MockTransport(handler), follow_redirects=True
-    )
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
     result = fetch.fetch_season(client, root, "2024-25")
     assert result.wrote is True
     assert result.path.read_text(encoding="utf-8") == body
