@@ -17,7 +17,7 @@ from fplt.data.fpl_client import CurrentTeam, FPLClient
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
 from fplt.schemas.plan import PlanSchema
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
@@ -206,7 +206,7 @@ def apply_plan(
     season: str,
     gameweek: int,
     *,
-    horizon: int = 2,
+    horizon: int = DEFAULT_PLAN_HORIZON,
     confirm: bool = False,
     transfers_only: bool = False,
     lineup_only: bool = False,

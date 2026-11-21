@@ -63,7 +63,7 @@ eval-components:
 # Sanity: fails if mean pts/GW > 90 unless ARGS includes --max-mean-ppg 0
 decisions-board:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make decisions-board SEASON=2024-25"; exit 1; fi
-	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),2) $(ARGS)
+	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),3) $(ARGS)
 
 # Multi-horizon decision bakeoff. Prediction ledger must already cover max H
 # (backtest --steps >= max HORIZONS). Archives each run because ledger/decisions
@@ -91,7 +91,7 @@ decisions-explain:
 
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10
-# Optional: MODEL=rolling_mean_v1 HORIZON=2 ARGS='--entry-json picks.json'
+# Optional: MODEL=rolling_mean_v1 HORIZON=3 ARGS='--entry-json picks.json'
 plan:
 	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
 		echo "Usage: make plan SEASON=2025-26 GW=10"; exit 1; fi
@@ -99,12 +99,12 @@ plan:
 		--model $(or $(MODEL),rolling_mean_v1) \
 		--season $(SEASON) \
 		--gw $(GW) \
-		--horizon $(or $(HORIZON),2) \
+		--horizon $(or $(HORIZON),3) \
 		$(ARGS)
 
 # ── Apply saved plan to FPL (dry-run unless CONFIRM=1) ─────────────────────────
 # Usage: make apply SEASON=2025-26 GW=10
-# Optional: MODEL=rolling_mean_v1 HORIZON=2 CONFIRM=1 ARGS='--transfers-only'
+# Optional: MODEL=rolling_mean_v1 HORIZON=3 CONFIRM=1 ARGS='--transfers-only'
 apply:
 	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
 		echo "Usage: make apply SEASON=2025-26 GW=10"; exit 1; fi
@@ -112,7 +112,7 @@ apply:
 		--model $(or $(MODEL),rolling_mean_v1) \
 		--season $(SEASON) \
 		--gw $(GW) \
-		--horizon $(or $(HORIZON),2) \
+		--horizon $(or $(HORIZON),3) \
 		$(if $(filter 1 yes true,$(CONFIRM)),--confirm,) \
 		$(ARGS)
 

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fplt.cli import main
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.state import SquadState
 from fplt.settings import get_settings
 
@@ -107,6 +108,8 @@ def test_plan_defaults_to_resolve_when_entry_id_set(
         get_settings.cache_clear()
     resolve.assert_called_once()
     assert run.call_args.kwargs["squad"] is squad
+    assert run.call_args.args[4] == DEFAULT_PLAN_HORIZON
+    assert DEFAULT_PLAN_HORIZON == 3
 
 
 def test_plan_entry_json_wins_over_from_api(

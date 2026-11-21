@@ -108,11 +108,12 @@ Chips-off season sim from an optimal GW1 draft, ranked by realised FPL points (a
 # 1) Predictions + actuals into the ledger (horizon == decisions --horizon / --steps)
 uv run fplt backtest \
   --models rolling_mean_v1 dc_layered_v1 lgbm_direct_v1 \
-  --season 2024-25 --from-gw 1 --to-gw 38 --steps 2
+  --season 2024-25 --from-gw 1 --to-gw 38 --steps 3
 
 # 2) Multi-model decision sim + season-total scoreboard
+# Default planning horizon is 3 (match --steps above).
 make decisions-board SEASON=2024-25
-# or: uv run fplt decisions --season 2024-25 --horizon 2 \
+# or: uv run fplt decisions --season 2024-25 --horizon 3 \
 #        --models rolling_mean_v1 dc_layered_v1 lgbm_direct_v1
 ```
 

@@ -30,6 +30,7 @@ from fplt.optimise.decisions import (
     run_decisions,
     run_plan,
 )
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
 from fplt.settings import get_settings
@@ -131,7 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     plan.add_argument("--gw", type=int)
     plan.add_argument("--from-gw", type=int, default=1)
     plan.add_argument("--to-gw", type=int, default=38)
-    plan.add_argument("--horizon", type=int, default=2)
+    plan.add_argument("--horizon", type=int, default=DEFAULT_PLAN_HORIZON)
     plan.add_argument("--decisions", action="store_true")
     plan.add_argument("--entry-json", type=Path)
     plan.add_argument(
@@ -161,8 +162,10 @@ def main(argv: list[str] | None = None) -> None:
     apply.add_argument(
         "--horizon",
         type=int,
-        default=2,
-        help="Horizon used when the plan was written (default: 2)",
+        default=DEFAULT_PLAN_HORIZON,
+        help=(
+            f"Horizon used when the plan was written (default: {DEFAULT_PLAN_HORIZON})"
+        ),
     )
     apply.add_argument(
         "--confirm",
@@ -187,7 +190,7 @@ def main(argv: list[str] | None = None) -> None:
     decisions.add_argument("--season", required=True)
     decisions.add_argument("--from-gw", type=int, default=1)
     decisions.add_argument("--to-gw", type=int, default=38)
-    decisions.add_argument("--horizon", type=int, default=2)
+    decisions.add_argument("--horizon", type=int, default=DEFAULT_PLAN_HORIZON)
     decisions.add_argument(
         "--models",
         nargs="+",
