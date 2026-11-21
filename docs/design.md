@@ -65,7 +65,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | FPL API `event/{gw}/live/` | Per-player GW stats and the `explain` points breakdown per fixture | Ground truth for actual points |
 | FPL API `element-summary/{id}/` | Per-player history and upcoming fixtures | Optional; heavy (one call per player) |
 | FPL API `entry/{id}/...` | The user's squad, picks, transfers, history | Public finished-GW picks only; live GW is 403 without auth |
-| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`); `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` |
+| FPL API `my-team/{id}/` | Live squad with selling prices, bank, FT limit; lineup POST | Requires `x-api-authorization: Bearer` (`FPLT_FPL_API_TOKEN`, ~8h JWT). Store via `fplt auth` → `~/.config/fplt/env` — never the repo `.env`. `pl_profile` (`FPLT_FPL_SESSION`) is legacy. See `fplt.data.fpl_client` / `fplt.auth` |
 | FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match; team Deep / PPDA / xG per match | Player rows in `understat_player_matches` (`player_key` null until mapped). Team Deep/PPDA/xG in `understat_team_matches` from league-page `teamsData` (not `getMatchData`) |
@@ -448,7 +448,7 @@ A checked gameweek is waiting until `rolling_mean_v1` has a plan parquet for tha
 ### 8.6 Running locally
 
 - Development: `make dagster-dev` (`dagster dev`).
-- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. Operator steps: `deploy/README.md`.
+- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. The same file is loaded by `Settings` for local CLI (`fplt auth set` / `status` / `clear`). Operator steps: `deploy/README.md`.
 - A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
 - Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it with `--with-openfpl`, `--openfpl-model-dir`, or a `model_dir` other than the fetched default checkout, and only for seasons from 2024-25 onwards. Live `fplt predict` refuses to record an all-zero frame. Walk-forward backtests still record a cold start, such as a rolling mean before any appearances.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
@@ -526,7 +526,8 @@ fplt/
 ├── docs/design.md
 ├── scripts/snapshot.py          # standalone, runs on GitHub Actions
 ├── src/fplt/
-│   ├── settings.py              # pydantic-settings (paths, FPL entry id, FPL session)
+│   ├── settings.py              # pydantic-settings (paths, FPL entry id; loads ~/.config/fplt/env)
+│   ├── auth.py                  # fplt auth: store Bearer token outside the repo
 │   ├── types.py                 # GWKey, enums
 │   ├── data/                    # FPL client, raw writer, staging, DataStore, PITData
 │   ├── schemas/                 # pandera.polars schemas

@@ -17,6 +17,7 @@ from typing import Any, Literal, Self, cast
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from fplt.auth import inspect_token
 from fplt.settings import Settings, bearer_token, get_settings
 
 API_ROOT = "https://fantasy.premierleague.com/api"
@@ -395,7 +396,7 @@ class FPLClient:
             )
             raise FPLAPIError(
                 f"FPL API forbidden for {path}; live picks need a fresh "
-                "FPLT_FPL_API_TOKEN"
+                "FPLT_FPL_API_TOKEN (uv run fplt auth set)"
             )
         if response.status_code == 404:
             logger.error("FPL API not found: %s", path)
@@ -443,6 +444,12 @@ def load_current_team(
     resolved = entry_id if entry_id is not None else cfg.entry_id
     if resolved is None:
         raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
+    token_info = inspect_token(cfg.fpl_api_token)
+    if token_info is not None and token_info.expired is True:
+        logger.warning(
+            "FPLT_FPL_API_TOKEN looks expired (exp=%s); run: uv run fplt auth set",
+            token_info.expires_at.isoformat() if token_info.expires_at else "?",
+        )
     logger.info(
         "load_current_team entry_id=%s event=%s token=%s session=%s",
         resolved,
