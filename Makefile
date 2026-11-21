@@ -1,8 +1,15 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain plan apply dagster-dev clean bootstrap-vaastav
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components decisions-board decisions-explain plan apply dagster-dev clean bootstrap-vaastav fetch-understat
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
 	uv run python scripts/bootstrap_vaastav.py
+
+# ── Understat raw capture (matches + league teamsData Deep/PPDA) ──────────────
+# Usage: make fetch-understat SEASON=2024-25
+# Writes write-once gzipped JSON under $$FPLT_DATA_DIR/raw/understat/...
+fetch-understat:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-understat SEASON=2024-25"; exit 1; fi
+	uv run python scripts/fetch_understat.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:

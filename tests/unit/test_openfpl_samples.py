@@ -87,6 +87,26 @@ def test_build_features_covers_scaler_and_uses_history(tmp_path) -> None:
             }
         ),
     )
+    store.write(
+        "understat_team_matches",
+        pl.DataFrame(
+            {
+                "season": ["2024-25", "2024-25"],
+                "match_id": [9, 9],
+                "team_key": [3, 7],
+                "deep": [8.0, 3.0],
+                "deep_allowed": [3.0, 8.0],
+                "ppda_att": [240.0, 310.0],
+                "ppda_def": [20.0, 18.0],
+                "ppda_allowed_att": [310.0, 240.0],
+                "ppda_allowed_def": [18.0, 20.0],
+                "xg": [1.4, 0.6],
+                "xga": [0.6, 1.4],
+                "available_at": [result, result],
+                "source": ["understat", "understat"],
+            }
+        ),
+    )
     view = PITData(store).view(_AS_OF)
     request = pl.DataFrame(
         {
@@ -104,10 +124,29 @@ def test_build_features_covers_scaler_and_uses_history(tmp_path) -> None:
     assert row["player influence 1"] == pytest.approx(20.0)
     assert row["player shots 1"] == pytest.approx(3.0)
     assert row["player xg 1"] == pytest.approx(0.5)
-    assert row["team xg 1"] == pytest.approx(0.5)
-    assert row["opponent xga 1"] == pytest.approx(0.5)
+    assert row["team xg 1"] == pytest.approx(1.4)
+    assert row["opponent xga 1"] == pytest.approx(1.4)
     assert row["status player availability"] == pytest.approx(1.0)
-    # Deep / PPDA still zero until match-stats scrape.
+    assert row["team deep 1"] == pytest.approx(8.0)
+    assert row["team deep allowed 1"] == pytest.approx(3.0)
+    assert row["team ppda att 1"] == pytest.approx(240.0)
+    assert row["team ppda def 1"] == pytest.approx(20.0)
+    assert row["opponent deep 1"] == pytest.approx(3.0)
+    assert row["opponent ppda allowed att 1"] == pytest.approx(240.0)
+
+
+def test_build_features_deep_ppda_zero_without_team_table(tmp_path) -> None:
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 1))
+    request = pl.DataFrame(
+        {
+            "season": ["2024-25"],
+            "gw": [1],
+            "player_key": [100],
+            "fixture_id": [1],
+        }
+    )
+    row = build_openfpl_features(view, request)[0]
     assert row["team deep 1"] == 0.0
     assert row["team ppda att 1"] == 0.0
 

@@ -1,0 +1,40 @@
+{
+  "83": {
+    "id": "83",
+    "title": "Arsenal",
+    "history": [
+      {
+        "h_a": "h",
+        "xG": 1.4,
+        "xGA": 0.6,
+        "ppda": {"att": 240, "def": 20},
+        "ppda_allowed": {"att": 310, "def": 18},
+        "deep": 8,
+        "deep_allowed": 3,
+        "scored": 2,
+        "missed": 1,
+        "date": "2024-08-10 15:00:00",
+        "result": "w"
+      }
+    ]
+  },
+  "87": {
+    "id": "87",
+    "title": "Liverpool",
+    "history": [
+      {
+        "h_a": "a",
+        "xG": 0.6,
+        "xGA": 1.4,
+        "ppda": {"att": 310, "def": 18},
+        "ppda_allowed": {"att": 240, "def": 20},
+        "deep": 3,
+        "deep_allowed": 8,
+        "scored": 1,
+        "missed": 2,
+        "date": "2024-08-10 15:00:00",
+        "result": "l"
+      }
+    ]
+  }
+}

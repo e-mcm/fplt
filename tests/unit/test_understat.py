@@ -18,6 +18,8 @@ from fplt.data.understat import (
     normalize_match,
     season_label_from_understat_year,
     stage_understat,
+    stage_understat_team_matches,
+    teams_raw_path,
     understat_year_from_season,
 )
 from fplt.features.registry import get_feature, materialise_feature
@@ -29,9 +31,12 @@ _LATE = datetime(2024, 8, 20, tzinfo=UTC)
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 _FIXTURE = _FIXTURES / "understat_match.json"
 _AJAX = _FIXTURES / "understat" / "match_ajax.json"
+_TEAMS_JSON = _FIXTURES / "understat" / "teams.json"
+_DATES = _FIXTURES / "understat" / "dates.json"
 _MAPS = _FIXTURES / "understat" / "id_maps.yaml"
 _PLAYERS = {501: 100, 502: 200}
 _TEAMS = {10: 3, 20: 7}
+_MAPPED_TEAMS = {83: 3, 87: 14}
 
 
 def test_visible_matches_set_the_shares(tmp_path: Path) -> None:
@@ -149,6 +154,54 @@ def test_ingest_skips_other_seasons(tmp_path: Path) -> None:
         DataStore(tmp_path), raw, players, teams, seasons=["2024-25"]
     )
     assert count == 0
+
+
+def test_stage_understat_team_matches_deep_ppda(tmp_path: Path) -> None:
+    teams = json.loads(_TEAMS_JSON.read_text(encoding="utf-8"))
+    dates = json.loads(_DATES.read_text(encoding="utf-8"))
+    staged = stage_understat_team_matches(
+        DataStore(tmp_path), teams, dates, "2024-25", _MAPPED_TEAMS
+    )
+    assert staged.height == 2
+    home = staged.filter(pl.col("team_key") == 3).row(0, named=True)
+    assert home["match_id"] == 42
+    assert home["deep"] == pytest.approx(8.0)
+    assert home["deep_allowed"] == pytest.approx(3.0)
+    assert home["ppda_att"] == pytest.approx(240.0)
+    assert home["ppda_def"] == pytest.approx(20.0)
+    assert home["ppda_allowed_att"] == pytest.approx(310.0)
+    assert home["xg"] == pytest.approx(1.4)
+    assert home["available_at"] == datetime(2024, 8, 10, 18, 0, tzinfo=UTC)
+
+
+def test_ingest_understat_stages_teams_snapshot(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    match_path = match_raw_path(raw, "2024-25", 42)
+    match_path.parent.mkdir(parents=True)
+    with gzip.open(match_path, "wt", encoding="utf-8") as handle:
+        json.dump(json.loads(_AJAX.read_text(encoding="utf-8")), handle)
+    captured = datetime(2024, 8, 16, 10, 0, tzinfo=UTC)
+    dates_path = (
+        raw
+        / "understat"
+        / "season=2024-25"
+        / "dates"
+        / f"captured_at={captured.strftime('%Y-%m-%dT%H-%M-%SZ')}"
+        / "dates.json.gz"
+    )
+    dates_path.parent.mkdir(parents=True)
+    with gzip.open(dates_path, "wt", encoding="utf-8") as handle:
+        json.dump(json.loads(_DATES.read_text(encoding="utf-8")), handle)
+    teams_path = teams_raw_path(raw, "2024-25", captured)
+    teams_path.parent.mkdir(parents=True)
+    with gzip.open(teams_path, "wt", encoding="utf-8") as handle:
+        json.dump(json.loads(_TEAMS_JSON.read_text(encoding="utf-8")), handle)
+    players, teams = load_id_maps(_MAPS)
+    store = DataStore(tmp_path / "data")
+    assert ingest_understat(store, raw, players, teams) == 1
+    team_rows = store.read("understat_team_matches")
+    assert team_rows.height == 2
+    assert team_rows.filter(pl.col("deep") > 0).height == 2
 
 
 def _shares(store: DataStore, gameweek: int):

@@ -20,6 +20,7 @@ _SPEC.loader.exec_module(fetch)
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "understat"
 _NOW = datetime(2024, 8, 16, 10, 0, tzinfo=UTC)
+_LEAGUE_HTML = (_FIXTURES / "league.html").read_text(encoding="utf-8")
 
 
 def _load(name: str) -> object:
@@ -37,7 +38,12 @@ def test_season_helpers() -> None:
     assert fetch.understat_year("2024-25") == "2024"
 
 
-def test_capture_writes_dates_and_finished_matches_once(tmp_path: Path) -> None:
+def test_parse_embedded_teams_data() -> None:
+    teams = fetch.parse_embedded_json(_LEAGUE_HTML, "teamsData")
+    assert teams["83"]["history"][0]["deep"] == 8
+
+
+def test_capture_writes_dates_teams_and_finished_matches_once(tmp_path: Path) -> None:
     dates = _load("dates.json")
     match = _load("match_ajax.json")
     calls = {"dates": 0, "match": 0}
@@ -45,7 +51,7 @@ def test_capture_writes_dates_and_finished_matches_once(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/league/EPL/2024":
-            return httpx.Response(200, text="<html/>")
+            return httpx.Response(200, text=_LEAGUE_HTML)
         if path == "/getLeagueData/EPL/2024":
             calls["dates"] += 1
             body = {"dates": dates, "teams": {}, "players": []}
@@ -60,11 +66,35 @@ def test_capture_writes_dates_and_finished_matches_once(tmp_path: Path) -> None:
     first = fetch.capture(client, root, "2024-25", now=_NOW, delay=0)
     second = fetch.capture(client, root, "2024-25", now=_NOW, delay=0)
     assert first.wrote_dates
+    assert first.wrote_teams
     assert first.match_ids == [42]
     assert not second.wrote_dates
+    assert not second.wrote_teams
     assert second.match_ids == []
     assert calls["match"] == 1
     path = fetch.match_path(root, "2024-25", 42)
     with gzip.open(path, "rt", encoding="utf-8") as handle:
         assert json.load(handle)["tmpl"]["h"] == "83"
     assert not fetch.match_path(root, "2024-25", 43).exists()
+    teams_file = fetch.teams_path(root, "2024-25", _NOW)
+    with gzip.open(teams_file, "rt", encoding="utf-8") as handle:
+        teams = json.load(handle)
+    assert teams["83"]["history"][0]["ppda"]["att"] == 240
+
+
+def test_capture_falls_back_to_html_dates_when_ajax_html(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/league/EPL/2024":
+            return httpx.Response(200, text=_LEAGUE_HTML)
+        if path == "/getLeagueData/EPL/2024":
+            return httpx.Response(200, text="<html>down</html>")
+        if path == "/getMatchData/42":
+            return httpx.Response(200, text="<html>down</html>")
+        raise AssertionError(path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = fetch.capture(client, tmp_path / "raw", "2024-25", now=_NOW, delay=0)
+    assert result.wrote_dates
+    assert result.wrote_teams
+    assert result.match_ids == []
