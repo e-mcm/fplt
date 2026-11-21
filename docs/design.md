@@ -284,7 +284,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 | Component | v1 implementation |
 |---|---|
 | `TeamScoreModel` | Dixon-Coles. ξ always comes from the model spec. v1 also fixes home advantage and ρ in YAML and identifies only attack/defence. v2 (`dixon_coles_v2`) jointly estimates ρ and/or home advantage when `fit_rho` / `fit_home_advantage` are set, and shrinks sparse or promoted-team ratings toward the league mean via `new_team_prior_strength` / `promoted_prior_strength`. ρ = 0 is the independent Poisson baseline. |
-| `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. Rotation features are later |
+| `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. v2 (`empirical_minutes_v2`): multi-window start shares, logistic P(start) / P(≥60\|start) with home/rest/DGW/price/opponent context, histogram residuals, and optional soft projection of expected starters toward ~11 per team-fixture |
 | `InvolvementModel` | `involvement_shares_v1`: shrunk per-90 shares of team goals/assists; penalty-taker override. `involvement_xg_v1`: blend Understat xG/xA per-90 with FPL goals/assists (`xg_blend`), same penalty override; fits `own_goal_weight` and `p_assist` from visible history for the simulator |
 | `OtherPointsModel` | v1: position-level priors by minutes bucket. `other_player_v1`: player-level means shrunk toward that prior, with a BPS→bonus proxy and defensive contribution when staged action counts are present; later GBM |
 
@@ -299,7 +299,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 `CompositePredictor.predict` runs, per target fixture, `n_sims` scenarios (default 5,000):
 
 1. **Scoreline**: draw (home_goals, away_goals) from `ScorelineDist`.
-2. **Minutes**: draw minutes for each player in both squads from `MinutesDist`. Draws are independent across players in v1 (known simplification; a later version can enforce 11 starters per team).
+2. **Minutes**: draw minutes for each player in both squads from `MinutesDist`. Draws are independent across players in v1. v2 may soft-project expected starters toward ~11 in the PMF; a hard eleven-starter draw constraint remains later.
 3. **Goal allocation**: for each team goal, pick a scorer from players with minutes > 0 with probability ∝ `goal_weight × minutes/90`, plus an "unattributed" bucket for own goals (weight from history).
 4. **Assist allocation**: each goal is assisted with team-level probability `p_assist`; the assister is drawn ∝ `assist_weight × minutes/90`, excluding the scorer.
 5. **Clean sheet / conceded**: v1 approximation — clean sheet if the opponent scored 0 and the player played 60+; goals-conceded penalty applied scaled by minutes/90. Document the approximation in code. Optional fidelity params (defaults preserve v1): `cs_red_void_prob` voids a would-be clean sheet with that probability (red-card stand-in); `conceded_mode: played` applies the full goals-conceded band whenever minutes > 0 instead of scaling by minutes/90.
@@ -579,4 +579,4 @@ These are settled. Change them here before changing the code.
 2. **Snapshot storage.** An orphan git branch named `snapshots`. Object storage (for example Cloudflare R2) is only worth revisiting if that branch grows unwieldy.
 3. **Leaderboard.** Streamlit (`apps/leaderboard.py`).
 4. **Experiment tracking.** No MLflow. The parquet ledger, Dagster metadata, and `ModelSpec` hashing cover comparison and lineage (§7.5).
-5. **Minutes model.** v1 draws each player's minutes independently. Enforcing 11 starters per team is a later version.
+5. **Minutes model.** v1 draws each player's minutes independently. v2 may soft-project expected starters toward ~11 in the distribution; enforcing a hard 11-starter draw constraint per team is a later version.

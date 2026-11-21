@@ -1,0 +1,12 @@
+name: empirical_minutes_v2
+kind: empirical_minutes_v2
+params:
+  windows: [3, 5, 10]
+  shrinkage: 5
+  doubtful_chance: 0.5
+  soft_squad: true
+  target_starters: 11.0
+  soft_squad_strength: 0.5
+  l2: 1.0
+refit: every_gw
+seed: 0
