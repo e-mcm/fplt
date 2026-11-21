@@ -1,5 +1,6 @@
 """Every registered predictor honours the schema, the horizon, and the cutoff."""
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from fplt.schemas.predictions import PredictionSchema
 from fplt.types import GWKey
 from tests.builders import build_league
 
+_ECHO = Path(__file__).parents[1] / "fixtures" / "openfpl_echo.py"
 _AS_OF = GWKey("2024-25", 1)
 _HORIZON = [GWKey("2024-25", 1), GWKey("2024-25", 2)]
 _KEYS = ["target_season", "target_gw", "player_key", "fixture_id"]
@@ -27,7 +29,14 @@ def _spec(kind: str):
     matches = [spec for spec in load_model_specs().values() if spec.kind == kind]
     if len(matches) != 1:
         raise AssertionError(f"{kind} needs one YAML spec, found {len(matches)}")
-    return matches[0]
+    spec = matches[0]
+    if kind != "openfpl":
+        return spec
+    # The published ensemble is fetched on first real predict and is too large
+    # for this suite. The echo runner still exercises schema, horizon, and leakage.
+    params = dict(spec.params)
+    params["command"] = [sys.executable, str(_ECHO), "length"]
+    return spec.model_copy(update={"params": params})
 
 
 def _predict(kind: str, store: DataStore) -> pl.DataFrame:

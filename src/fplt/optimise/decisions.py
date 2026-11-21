@@ -41,6 +41,10 @@ from fplt.types import GWKey
 TeamLoader = Callable[..., CurrentTeam]
 logger = logging.getLogger(__name__)
 
+# A blank gameweek drops a couple of clubs. Below half the candidate pool,
+# the missing rows are being treated as zero and the plan is not usable.
+_MIN_COVERAGE = 0.5
+
 __all__ = [
     "PlanExistsError",
     "candidates_as_of",
@@ -347,6 +351,9 @@ def run_plan(
             ``report`` on the exception is the summary.
         FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
             ``entry_json`` / ``squad`` was provided.
+        ValueError: This deadline has no predictions, a horizon week is
+            missing or all zero, or a week covers fewer than half the
+            candidates.
     """
     logger.info(
         "run_plan model=%s season=%s gw=%s horizon=%s",
@@ -378,14 +385,7 @@ def run_plan(
         window,
         not state.owned,
     )
-    if points.is_empty():
-        logger.warning(
-            "no ledger predictions for model_id=%s as_of=%s gw=%s; "
-            "plan will use missing xPts as zero",
-            spec.model_id,
-            gameweek,
-            window,
-        )
+    _require_usable_points(points, candidates, window, model_name)
     solved = plan_squad(
         candidates,
         points,
@@ -407,6 +407,55 @@ def run_plan(
         solved.points,
     )
     return solved, path, report
+
+
+def _require_usable_points(
+    points: pl.DataFrame,
+    candidates: pl.DataFrame,
+    gameweeks: list[int],
+    model_name: str,
+) -> None:
+    """Reject a plan whose expected points are missing or all zero.
+
+    Args:
+        points: ``player_key``, ``step``, ``xpts`` from ``points_from_ledger``.
+        candidates: Players who can be picked. Missing rows would score zero.
+        gameweeks: Horizon targets in step order.
+        model_name: Spec name used in the error.
+
+    Raises:
+        ValueError: No rows, a week with no rows, a week of all zeros, or a
+            week covering fewer than half the candidates.
+    """
+    if points.is_empty():
+        raise ValueError(
+            f"{model_name} has no predictions for this deadline; run fplt predict first"
+        )
+    present = {int(step) for step in points["step"].unique().to_list()}
+    missing = [gameweeks[step] for step in range(len(gameweeks)) if step not in present]
+    if missing:
+        label = ", ".join(str(gameweek) for gameweek in missing)
+        raise ValueError(f"{model_name} has no predictions for gameweek {label}")
+    if candidates.height == 0:
+        return
+    for step, gameweek in enumerate(gameweeks):
+        part = points.filter(pl.col("step") == step)
+        peak = part.select(pl.col("xpts").abs().max()).item()
+        if peak is None or float(peak) == 0.0:
+            raise ValueError(
+                f"{model_name} predictions for gameweek {gameweek} are all zero"
+            )
+        covered = (
+            candidates.select("player_key")
+            .join(part.select("player_key").unique(), on="player_key", how="inner")
+            .height
+        )
+        if covered / candidates.height < _MIN_COVERAGE:
+            missing_players = candidates.height - covered
+            raise ValueError(
+                f"{model_name} is missing predictions for {missing_players} of "
+                f"{candidates.height} players in gameweek {gameweek}"
+            )
 
 
 def run_decisions(

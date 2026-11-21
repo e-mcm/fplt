@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+external/openfpl/OpenFPL/
 *.egg-info/
 .pytest_cache/
 dist/

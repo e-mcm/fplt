@@ -94,9 +94,8 @@ def run_eval_board(
     """Walk-forward backtest the eval set into ``data_dir``'s ledger.
 
     OpenFPL uses ``openfpl_model_dir`` when provided (overrides the YAML
-    ``model_dir``). An empty ``model_dir`` makes the OpenFPL runner emit
-    zeros — those rows are not real OpenFPL scores. Set ``model_dir`` (YAML
-    or ``--openfpl-model-dir``) after ``uv sync`` in ``external/openfpl``.
+    ``model_dir``). The default YAML path is fetched on first score. An
+    empty ``model_dir`` raises rather than recording zeros.
 
     Args:
         data_dir: Root with ``staged/``; receives ``ledger/``.
@@ -104,7 +103,7 @@ def run_eval_board(
         from_gw: First as-of gameweek.
         to_gw: Last as-of gameweek, inclusive.
         models: Explicit specs; default is the core set (± OpenFPL).
-        with_openfpl: Include OpenFPL even when YAML ``model_dir`` is empty.
+        with_openfpl: Include OpenFPL in the default set.
         openfpl_model_dir: Optional override for OpenFPL's fitted ensemble.
         refit: Override each spec's refit policy.
         seasons_back: Override each spec's training window.
@@ -196,8 +195,8 @@ def _run_openfpl(
         spec = spec.model_copy(update={"params": params})
     if not str(spec.params.get("model_dir") or "").strip():
         logger.warning(
-            "openfpl_v1 model_dir is empty; the runner returns zeros "
-            "(not OpenFPL scores). Set params.model_dir or --openfpl-model-dir."
+            "openfpl_v1 model_dir is empty; scoring raises instead of "
+            "writing zeros. Set params.model_dir or --openfpl-model-dir."
         )
     store = DataStore(data_dir)
     pit = PITData(store)

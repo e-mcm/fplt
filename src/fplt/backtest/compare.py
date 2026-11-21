@@ -111,7 +111,7 @@ def compare_models(
         seasons_back: Override each spec's training window length.
         modes: Subset of ``walk_forward`` / ``fixed``. Default is both.
         steps: Horizon length passed to ``walk_forward``.
-        with_openfpl: Include OpenFPL even when YAML ``model_dir`` is empty.
+        with_openfpl: Include OpenFPL in the default set.
         openfpl_model_dir: Optional OpenFPL ``model_dir`` override.
         output_dir: Where to write summary JSON/parquet. Defaults under
             ``data_dir/compare/``.
@@ -177,9 +177,8 @@ def compare_models(
             model_dir = str(spec.params.get("model_dir") or "").strip()
             if name == OPENFPL_MODEL and not model_dir:
                 logger.warning(
-                    "openfpl_v1 model_dir is empty; the runner returns zeros "
-                    "(not OpenFPL scores). Set params.model_dir or "
-                    "--openfpl-model-dir."
+                    "openfpl_v1 model_dir is empty; scoring raises instead of "
+                    "writing zeros. Set params.model_dir or --openfpl-model-dir."
                 )
             logger.info(
                 "compare run model=%s mode=%s refit=%s model_id=%s",

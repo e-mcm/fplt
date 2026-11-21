@@ -6,10 +6,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from fplt.backtest.ledger import append_predictions, ledger_path
 from fplt.cli import main
 from fplt.data.store import DataStore
+from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
     PlanExistsError,
+    _require_usable_points,
     points_from_ledger,
     run_decision_bakeoff,
     run_decisions,
@@ -291,6 +294,7 @@ def test_run_plan_resolves_squad_when_entry_id_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stage(tmp_path)
+    _score(tmp_path)
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("FPLT_ENTRY_ID", "42")
     get_settings.cache_clear()
@@ -316,6 +320,7 @@ def test_run_plan_skips_resolve_when_squad_passed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stage(tmp_path)
+    _score(tmp_path)
     monkeypatch.setenv("FPLT_ENTRY_ID", "42")
     get_settings.cache_clear()
 
@@ -342,6 +347,7 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _stage(tmp_path)
+    _score(tmp_path)
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     try:
@@ -395,6 +401,22 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
             main(["plan", "--model", "missing", "--season", "2024-25", "--gw", "1"])
     finally:
         get_settings.cache_clear()
+
+
+def test_run_plan_rejects_missing_or_blank_predictions(tmp_path: Path) -> None:
+    _stage(tmp_path)
+    with pytest.raises(ValueError, match="no predictions"):
+        run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state())
+    _score(tmp_path)
+    with pytest.raises(ValueError, match="gameweek 2"):
+        run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 2, squad=_state())
+    keys = [int(key) for key in _pool()["player_key"].to_list()]
+    _score(tmp_path, scores=dict.fromkeys(keys, 0.0))
+    with pytest.raises(ValueError, match="all zero"):
+        run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state())
+    _score(tmp_path, scores={keys[0]: 5.0})
+    with pytest.raises(ValueError, match="missing predictions"):
+        run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state())
 
 
 def _state(**overrides: object) -> SquadState:
@@ -518,6 +540,53 @@ def _bank_plan():
         initial=False,
         horizon=2,
     )
+
+
+def test_an_empty_candidate_pool_skips_the_coverage_check() -> None:
+    points = pl.DataFrame({"player_key": [1], "step": [0], "xpts": [1.0]})
+    candidates = pl.DataFrame(schema={"player_key": pl.Int64()})
+    _require_usable_points(points, candidates, [1], "rolling_mean_v1")
+
+
+def _score(root: Path, *, scores: dict[int, float] | None = None) -> None:
+    path = ledger_path(root)
+    if path.exists():
+        path.unlink()
+    spec = load_model_specs()["rolling_mean_v1"]
+    pool = _pool()
+    if scores is not None:
+        pool = pool.filter(pl.col("player_key").is_in(list(scores)))
+    records: list[dict[str, object]] = []
+    for row in pool.iter_rows(named=True):
+        key = int(row["player_key"])
+        records.append(
+            {
+                "model_id": spec.model_id,
+                "run_kind": "live",
+                "as_of_season": "2024-25",
+                "as_of_gw": 1,
+                "target_season": "2024-25",
+                "target_gw": 1,
+                "horizon": 1,
+                "player_key": key,
+                "position": row["position"],
+                "fixture_id": key,
+                "xpts": float(row["xpts"] if scores is None else scores[key]),
+                "xpts_sd": None,
+                "p_haul": None,
+                "p_60": None,
+                "actual_pts": None,
+                "actual_minutes": None,
+            }
+        )
+    frame = pl.DataFrame(records).with_columns(
+        pl.col("xpts_sd").cast(pl.Float64()),
+        pl.col("p_haul").cast(pl.Float64()),
+        pl.col("p_60").cast(pl.Float64()),
+        pl.col("actual_pts").cast(pl.Int64()),
+        pl.col("actual_minutes").cast(pl.Int64()),
+    )
+    append_predictions(root, frame)
 
 
 def _stage(root: Path) -> None:
