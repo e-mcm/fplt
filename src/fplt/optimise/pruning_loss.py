@@ -23,6 +23,7 @@ import polars as pl
 
 from fplt.optimise.candidate_prune import (
     DEFAULT_PRUNE_POLICY,
+    DEFAULT_TARGET_POOL,
     MIN_POS_POOL,
     CandidatePrunePolicy,
 )
@@ -32,9 +33,6 @@ from fplt.optimise.state import OwnedPlayer, SquadState, rebuild_squad_state
 from fplt.schemas.pruning_loss import PruningLossRowSchema
 
 _log = logging.getLogger(__name__)
-
-# Nominal size the default policy was tuned for (docs/design.md §10.2).
-DEFAULT_TARGET_POOL = 200
 
 # Pool sizes to sweep (§3.1). ``current`` is recorded as a separate arm.
 DEFAULT_POOL_TARGETS: tuple[int, ...] = (80, 100, 130, 160, 200, 300)
@@ -271,14 +269,15 @@ def sample_synthetic_scenarios(
 
     Tags cycle through early season, DGW run-up, ``--rebuild``, and
     mid-season with banked free transfers. Default pools are large enough
-    to prune (~200 players). Pass ``pool_counts`` to shrink for fast tests.
+    to prune (~200 raw players before dominance). Pass ``pool_counts`` to
+    shrink for fast tests.
 
     Args:
         n: Number of scenarios (typically 20–30).
         seed: RNG seed for owned picks and xPts jitter.
         horizon: Plan horizon (prune auto-applies at H≥5).
         pool_counts: Optional per-position pool sizes. Defaults to a ~200
-            player universe.
+            player universe (use ~640 for quota-sensitive N sweeps).
 
     Returns:
         Frozen scenarios ready for :func:`run_pruning_loss_harness`.

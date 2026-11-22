@@ -106,7 +106,7 @@ horizon-skill:
 # Usage: make pruning-loss
 # Optional: N_SCENARIOS=24 SEED=0 HORIZON=5 ARGS='--targets 80 100 130 160 200 300'
 # Writes $$FPLT_DATA_DIR/pruning_loss/ (override with ARGS='--output-dir …').
-# Does not retune DEFAULT_PRUNE_POLICY; use the report to pick N later.
+# DEFAULT_PRUNE_POLICY N was retuned from this harness (FDB-159 → ~130).
 pruning-loss:
 	uv run fplt pruning-loss \
 		--n-scenarios $(or $(N_SCENARIOS),24) \
