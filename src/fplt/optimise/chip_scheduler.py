@@ -6,16 +6,19 @@ season scheduler (~CLI/JSON workflow). We fill the same ``ChipUseWindows``
 contract with a coarse half-season model already in-tree (polars + fixture
 counts from ``chip_windows``).
 
-**Option-value heuristic.** For each remaining chip in the active
-``ChipRules`` window, score every gameweek from ``as_of_gw`` through the
-window end (fixture doubles/blanks, team-level expected points, squad
-continuity). Let ``H`` be the short planning horizon and
-``V* = max score`` over weeks strictly after the short horizon (0 if none).
-A near-term week is allowed only when its score is at least ``V*`` — play
-now only if the gain beats the best expected opportunity left in the half.
-Later near-best weeks stay allowed so the MILP can wait. The unique best
-week is forced when it falls inside the short horizon and clears ``V*``.
-Near-horizon weeks where every remaining chip is held join ``no_chip``.
+**Option-value heuristic.** For each remaining chip in each active
+``ChipRules`` half-window, score every gameweek from ``as_of_gw`` through
+that window's end (fixture doubles/blanks, team-level expected points,
+squad continuity). The option-value cut is keyed by ``(chip, window)`` —
+``deferred_best`` / ``best_score`` never mix first- and second-half
+opportunities. Let ``H`` be the short planning horizon and
+``V* = max score`` over weeks of that window strictly after the short
+horizon (0 if none). A near-term week is allowed only when its score is at
+least ``V*`` — play now only if the gain beats the best expected
+opportunity left in the same half. Later near-best weeks stay allowed so
+the MILP can wait. The unique best week is forced when it falls inside the
+short horizon and clears ``V*``. Near-horizon weeks where every remaining
+chip is held join ``no_chip``.
 
 **Force-play at window end.** Remaining unused chips in a half-season
 ``ChipRules`` window are packed onto the last eligible gameweeks of that
@@ -48,9 +51,10 @@ _SCORE_EPS = 1e-9
 
 @dataclass(frozen=True)
 class ChipOpportunity:
-    """One coarse (chip, gameweek) opportunity score."""
+    """One coarse (chip, window, gameweek) opportunity score."""
 
     chip: ChipName
+    window: str
     gameweek: int
     score: float
 
@@ -196,9 +200,14 @@ def score_chip_opportunities(
                     window=window,
                 )
                 scored.append(
-                    ChipOpportunity(chip=chip, gameweek=gameweek, score=score)
+                    ChipOpportunity(
+                        chip=chip,
+                        window=window.id,
+                        gameweek=gameweek,
+                        score=score,
+                    )
                 )
-    scored.sort(key=lambda row: (_CHIP_ORDER.index(row.chip), row.gameweek))
+    scored.sort(key=lambda row: (_CHIP_ORDER.index(row.chip), row.window, row.gameweek))
     return tuple(scored)
 
 
@@ -226,13 +235,17 @@ def windows_from_opportunities(
         Allowed / forced / no-chip hooks for the short-horizon MILP.
     """
     near_end = min(38, as_of_gw + short_horizon - 1)
+    by_chip_window: dict[tuple[ChipName, str], list[ChipOpportunity]] = {}
     by_chip: dict[ChipName, list[ChipOpportunity]] = {}
     for row in opportunities:
+        by_chip_window.setdefault((row.chip, row.window), []).append(row)
         by_chip.setdefault(row.chip, []).append(row)
 
     allowed: dict[ChipName, set[int]] = {}
     forced_candidates: dict[ChipName, int] = {}
-    for chip, rows in by_chip.items():
+    # Option-value cut is per (chip, half-window): second-half doubles must not
+    # empty the first-half allow-list (and vice versa).
+    for (chip, _window_id), rows in by_chip_window.items():
         scores = {row.gameweek: row.score for row in rows}
         if not scores:
             continue
@@ -250,7 +263,7 @@ def windows_from_opportunities(
             gw for gw, score in scores.items() if abs(score - best_score) <= _SCORE_EPS
         ]
         keep.update(best_gws)
-        allowed[chip] = keep
+        allowed.setdefault(chip, set()).update(keep)
         if (
             len(best_gws) == 1
             and best_gws[0] <= near_end

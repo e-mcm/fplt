@@ -33,6 +33,8 @@ from fplt.optimise.chip_windows import (
     ChipArm,
     ChipUseWindows,
     chip_arm_model_id,
+    chip_use_windows_payload,
+    format_chip_use_windows,
     is_counterfactual_rules,
     parse_chip_arm_model_id,
     rule_based_chip_windows,
@@ -65,7 +67,7 @@ from fplt.optimise.state import (
     apply_entry_picks,
     load_squad_state,
 )
-from fplt.schemas.plan import CandidateSchema, DecisionSchema
+from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
@@ -93,6 +95,7 @@ __all__ = [
     "format_chip_decision_scoreboard",
     "format_decision_scoreboard",
     "points_from_ledger",
+    "read_chip_windows",
     "read_decisions",
     "resolve_squad_state",
     "run_chip_decision_board",
@@ -102,6 +105,7 @@ __all__ = [
     "simulate_decisions",
     "summarise_chip_decisions",
     "summarise_decisions",
+    "write_chip_windows",
     "write_decisions",
     "prediction_rows_from_ledger",
     "actual_rows_from_ledger",
@@ -219,6 +223,7 @@ def simulate_decisions(
     chip_windows: ChipUseWindows | None = None,
     fixtures: pl.DataFrame | None = None,
     force_play: bool = True,
+    chip_windows_log: dict[int, ChipUseWindows] | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -242,6 +247,8 @@ def simulate_decisions(
         fixtures: Staged fixtures for rule-based / scheduled windows.
         force_play: When true (default), the optimised arm force-packs
             remaining half-window chips. Ignored for ``off`` / ``rule_based``.
+        chip_windows_log: Optional mutable map filled with each deadline's
+            ``ChipUseWindows`` (for ``ledger/chip_windows`` / explain dumps).
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -294,6 +301,14 @@ def simulate_decisions(
                 gameweeks=gameweeks,
                 force_play=force_play,
             )
+        if active_windows is not None:
+            logger.info(
+                "chip windows gw=%s %s",
+                gameweek,
+                format_chip_use_windows(active_windows),
+            )
+            if chip_windows_log is not None:
+                chip_windows_log[gameweek] = active_windows
         started = time.perf_counter()
         solved = plan_squad(
             pool,
@@ -332,6 +347,55 @@ def read_decisions(root: Path) -> pl.DataFrame:
     if not path.exists():
         return _empty_decisions()
     return _decisions(pl.read_parquet(path))
+
+
+def read_chip_windows(root: Path) -> pl.DataFrame:
+    """Load ``ledger/chip_windows/part.parquet``, or an empty typed frame."""
+    path = root / "ledger" / "chip_windows" / "part.parquet"
+    if not path.exists():
+        return _empty_chip_windows()
+    return _chip_windows(pl.read_parquet(path))
+
+
+def write_chip_windows(
+    root: Path,
+    *,
+    model_id: str,
+    season: str,
+    windows_by_gw: dict[int, ChipUseWindows],
+) -> Path:
+    """Append per-deadline chip-window rows, replacing matching keys.
+
+    Args:
+        root: Data directory that contains ``ledger/``.
+        model_id: Decision-ledger model id (may include ``::chip_*``).
+        season: Season label.
+        windows_by_gw: Deadlines → ``ChipUseWindows`` to persist.
+
+    Returns:
+        ``ledger/chip_windows/part.parquet``.
+    """
+    path = root / "ledger" / "chip_windows" / "part.parquet"
+    if not windows_by_gw:
+        return path
+    rows = [
+        {
+            "model_id": model_id,
+            "season": season,
+            "gw": gameweek,
+            **_chip_windows_row(windows),
+        }
+        for gameweek, windows in sorted(windows_by_gw.items())
+    ]
+    frame = _chip_windows(pl.DataFrame(rows, schema=_empty_chip_windows().schema))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = pl.read_parquet(path)
+        keys = frame.select("model_id", "season", "gw")
+        kept = existing.join(keys, on=["model_id", "season", "gw"], how="anti")
+        frame = pl.concat([kept, frame], how="diagonal_relaxed")
+    frame.write_parquet(path)
+    return path
 
 
 def write_decisions(root: Path, frame: pl.DataFrame) -> Path:
@@ -561,6 +625,20 @@ def run_plan(
         plan_season = season
         plan_gameweeks = window
         plan_rules_season = rules_season
+    if plan_windows is not None:
+        logger.info(
+            "chip windows gw=%s %s",
+            gameweek,
+            format_chip_use_windows(plan_windows),
+        )
+        write_chip_windows(
+            data_dir,
+            model_id=chip_arm_model_id(spec.model_id, chip_arm)
+            if chip_arm != "off"
+            else spec.model_id,
+            season=season,
+            windows_by_gw={gameweek: plan_windows},
+        )
     solved = plan_squad(
         candidates,
         points,
@@ -575,6 +653,9 @@ def run_plan(
     table = plan_table(solved, spec.model_id, season, gameweek, window)
     names = _player_names(view)
     report = render_report(solved, season, window, names=names)
+    if plan_windows is not None:
+        windows_line = format_chip_use_windows(plan_windows)
+        report = f"{report}\n\n## Chip windows\n\n{windows_line}\n"
     report = _with_explain_sections(
         report,
         solved=solved,
@@ -760,6 +841,7 @@ def run_decisions(
         if chip_arm == "off"
         else chip_arm_model_id(spec.model_id, chip_arm)
     )
+    windows_log: dict[int, ChipUseWindows] = {}
     frame = simulate_decisions(
         pl.concat(pools),
         predictions,
@@ -773,8 +855,17 @@ def run_decisions(
         chip_rules_season=chip_rules_season,
         fixtures=fixtures,
         force_play=force_play,
+        chip_windows_log=windows_log,
     )
-    return write_decisions(data_dir, frame)
+    path = write_decisions(data_dir, frame)
+    if windows_log:
+        write_chip_windows(
+            data_dir,
+            model_id=ledger_id,
+            season=season,
+            windows_by_gw=windows_log,
+        )
+    return path
 
 
 def run_chip_decision_board(
@@ -1055,7 +1146,13 @@ def explain_decision_gameweek(
         f"# {model_name} ({spec.model_id}) {season} GW{gameweek}\n"
         f"hit={hit:.0f} free_transfers={int(part['free_transfers'][0])}\n"
     )
-    return header + explain_gameweek(part, hit=hit, names=names)
+    body = header + explain_gameweek(part, hit=hit, names=names)
+    windows_note = _explain_chip_windows_note(
+        data_dir, model_id=spec.model_id, season=season, gameweek=gameweek
+    )
+    if windows_note is None:
+        return body
+    return f"{body}\n\n{windows_note}"
 
 
 def prediction_rows_from_ledger(
@@ -1519,6 +1616,69 @@ def _empty_decisions() -> pl.DataFrame:
             "chip": pl.Utf8(),
         }
     )
+
+
+def _empty_chip_windows() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "model_id": pl.Utf8(),
+            "season": pl.Utf8(),
+            "gw": pl.Int64(),
+            "allowed": pl.Utf8(),
+            "forced": pl.Utf8(),
+            "no_chip": pl.Utf8(),
+        }
+    )
+
+
+def _chip_windows(frame: pl.DataFrame) -> pl.DataFrame:
+    checked = ChipWindowsSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    return checked
+
+
+def _chip_windows_row(windows: ChipUseWindows) -> dict[str, str]:
+    payload = chip_use_windows_payload(windows)
+    return {
+        "allowed": json.dumps(payload["allowed"], sort_keys=True),
+        "forced": json.dumps(payload["forced"], sort_keys=True),
+        "no_chip": json.dumps(payload["no_chip"]),
+    }
+
+
+def _explain_chip_windows_note(
+    data_dir: Path,
+    *,
+    model_id: str,
+    season: str,
+    gameweek: int,
+) -> str | None:
+    """Return an explain section for logged chip windows, if present."""
+    frame = read_chip_windows(data_dir)
+    if frame.is_empty():
+        return None
+    part = frame.filter(
+        (pl.col("season") == season)
+        & (pl.col("gw") == gameweek)
+        & (
+            (pl.col("model_id") == model_id)
+            | pl.col("model_id").str.starts_with(f"{model_id}::chip_")
+        )
+    )
+    if part.is_empty():
+        return None
+    # Prefer optimised arm rows when several chip-arm ids match.
+    preferred = part.filter(pl.col("model_id").str.ends_with("::chip_optimised"))
+    row = (preferred if not preferred.is_empty() else part).row(0, named=True)
+    allowed = json.loads(str(row["allowed"]))
+    forced = json.loads(str(row["forced"]))
+    no_chip = json.loads(str(row["no_chip"]))
+    windows = ChipUseWindows(
+        allowed={chip: frozenset(weeks) for chip, weeks in allowed.items()},
+        forced={chip: frozenset(weeks) for chip, weeks in forced.items()},
+        no_chip=frozenset(no_chip),
+    )
+    return f"chip_windows ({row['model_id']}): {format_chip_use_windows(windows)}"
 
 
 def _decisions(frame: pl.DataFrame) -> pl.DataFrame:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import pytest
 from pydantic import ValidationError
@@ -9,6 +11,8 @@ from pydantic import ValidationError
 from fplt.optimise.chip_windows import (
     ChipUseWindows,
     chip_arm_model_id,
+    chip_use_windows_payload,
+    format_chip_use_windows,
     gameweek_landmarks,
     is_counterfactual_rules,
     parse_chip_arm_model_id,
@@ -16,6 +20,7 @@ from fplt.optimise.chip_windows import (
     rules_label,
     team_fixture_counts,
 )
+from fplt.optimise.decisions import read_chip_windows, write_chip_windows
 from fplt.scoring.chips import ChipRules
 
 
@@ -47,6 +52,57 @@ def test_allows_and_requires() -> None:
     assert not windows.allows("bboost", 10)
     assert not windows.allows("bboost", 12)
     assert windows.allows("3xc", 9)
+
+
+def test_format_and_payload_chip_use_windows() -> None:
+    windows = ChipUseWindows(
+        allowed={"bboost": frozenset({8, 9}), "3xc": frozenset({10})},
+        forced={"bboost": frozenset({8})},
+        no_chip=frozenset({12}),
+    )
+    text = format_chip_use_windows(windows)
+    assert "allowed=" in text
+    assert "bboost:[8,9]" in text
+    assert "forced=" in text
+    assert "no_chip=12" in text
+    payload = chip_use_windows_payload(windows)
+    assert payload["allowed"]["bboost"] == [8, 9]
+    assert payload["forced"]["bboost"] == [8]
+    assert payload["no_chip"] == [12]
+
+
+def test_chip_windows_ledger_round_trip(tmp_path: Path) -> None:
+    windows = ChipUseWindows(
+        allowed={"bboost": frozenset({5, 19})},
+        forced={"bboost": frozenset({19})},
+        no_chip=frozenset({6}),
+    )
+    path = write_chip_windows(
+        tmp_path,
+        model_id="m::chip_optimised",
+        season="2025-26",
+        windows_by_gw={5: windows},
+    )
+    assert path.exists()
+    frame = read_chip_windows(tmp_path)
+    assert frame.height == 1
+    row = frame.row(0, named=True)
+    assert row["model_id"] == "m::chip_optimised"
+    assert row["gw"] == 5
+    assert "5" in str(row["allowed"])
+    assert "19" in str(row["forced"])
+    assert "6" in str(row["no_chip"])
+    # Replacing the same key keeps a single row.
+    updated = ChipUseWindows(allowed={"3xc": frozenset({5})})
+    write_chip_windows(
+        tmp_path,
+        model_id="m::chip_optimised",
+        season="2025-26",
+        windows_by_gw={5: updated},
+    )
+    again = read_chip_windows(tmp_path)
+    assert again.height == 1
+    assert "3xc" in str(again.row(0, named=True)["allowed"])
 
 
 def test_team_fixture_counts_and_landmarks() -> None:
