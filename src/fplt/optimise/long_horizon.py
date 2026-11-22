@@ -8,8 +8,13 @@ plan. Relax-and-fix and coarsening hook off ``LongHorizonPolicy``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from fplt.optimise.chip_windows import ChipUseWindows
+from fplt.scoring.chips import ChipName
 
 # Auto-apply relax-and-fix / coarsening at this horizon and above (§4).
 LONG_HORIZON_MIN = 6
@@ -21,6 +26,10 @@ class LongHorizonPolicy(BaseModel):
     ``plan_squad`` applies enabled heuristics when
     ``horizon >= auto_min_horizon``. Warm starts are always available via
     ``warm_start=`` regardless of horizon.
+
+    Far-step captain/vice/TC coarsening skips any step whose gameweek has a
+    **forced** chip (``ChipUseWindows.forced``), so rule-based TC/FH landmarks
+    stay feasible inside H≥6 look-aheads.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -46,7 +55,8 @@ class LongHorizonPolicy(BaseModel):
         default=3,
         description=(
             "Drop captain/vice detail from this step onward (0-indexed) when "
-            "``should_auto_apply`` is true. None disables coarsening."
+            "``should_auto_apply`` is true. None disables coarsening. Forced-chip "
+            "gameweeks keep armbands even past this step."
         ),
     )
 
@@ -68,6 +78,53 @@ class LongHorizonPolicy(BaseModel):
         if self.coarsen_from_step >= horizon:
             return None
         return self.coarsen_from_step
+
+
+def coarsen_steps(
+    horizon: int,
+    coarsen_from_step: int | None,
+    *,
+    gameweeks: Sequence[int] | None = None,
+    chip_windows: ChipUseWindows | None = None,
+) -> frozenset[int]:
+    """Return 0-indexed steps that drop captain/vice/TC under coarsening.
+
+    Args:
+        horizon: Plan length.
+        coarsen_from_step: First step to coarsen, or None to disable.
+        gameweeks: Target GW for each step (required to honour forced chips).
+        chip_windows: Optional forced/allowed hooks; forced GWs keep armbands.
+
+    Returns:
+        Steps whose armband vars are pinned off and whose captain/TC
+        objective is zeroed. Empty when coarsening is off.
+    """
+    if coarsen_from_step is None:
+        return frozenset()
+    forced_gws = _forced_gameweeks(chip_windows)
+    skip: set[int] = set()
+    if gameweeks is not None and forced_gws:
+        for step, gameweek in enumerate(gameweeks):
+            if step >= horizon:
+                break
+            if int(gameweek) in forced_gws:
+                skip.add(step)
+    return frozenset(
+        step
+        for step in range(horizon)
+        if step >= coarsen_from_step and step not in skip
+    )
+
+
+def _forced_gameweeks(chip_windows: ChipUseWindows | None) -> frozenset[int]:
+    """Union of all forced chip gameweeks, or empty when hooks are absent."""
+    if chip_windows is None:
+        return frozenset()
+    weeks: set[int] = set()
+    forced: Mapping[ChipName, frozenset[int]] = chip_windows.forced
+    for gws in forced.values():
+        weeks.update(int(gw) for gw in gws)
+    return frozenset(weeks)
 
 
 # Relax-and-fix + far-step coarsening (from step 3) on at H≥6.

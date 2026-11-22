@@ -5,11 +5,13 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from fplt.optimise.chip_windows import ChipUseWindows
 from fplt.optimise.highs_options import HighsSolveOptions
 from fplt.optimise.long_horizon import (
     DEFAULT_LONG_HORIZON_POLICY,
     LONG_HORIZON_MIN,
     LongHorizonPolicy,
+    coarsen_steps,
     shift_horizon_picks,
 )
 from fplt.optimise.plan import plan_squad, shift_gameweek_plan
@@ -17,6 +19,7 @@ from fplt.optimise.pruning_loss import (
     check_week1_equivalence,
     sample_synthetic_scenarios,
 )
+from fplt.optimise.state import ChipInventory
 
 
 def test_long_horizon_policy_defaults_relax_and_coarsen() -> None:
@@ -151,6 +154,22 @@ def test_small_mip_gap_keeps_week1_actions_vs_proven_optimal() -> None:
     assert result.identical, result.mismatches
 
 
+def test_coarsen_steps_skips_forced_chip_gameweeks() -> None:
+    """Forced-chip GWs stay out of the coarsened step set."""
+    windows = ChipUseWindows(
+        allowed={"3xc": frozenset({17})},
+        forced={"3xc": frozenset({17})},
+    )
+    gameweeks = [10, 11, 12, 13, 14, 15, 16, 17]
+    assert coarsen_steps(8, 3) == frozenset({3, 4, 5, 6, 7})
+    assert coarsen_steps(8, 3, gameweeks=gameweeks, chip_windows=windows) == frozenset(
+        {3, 4, 5, 6}
+    )
+    assert coarsen_steps(8, None, gameweeks=gameweeks, chip_windows=windows) == (
+        frozenset()
+    )
+
+
 def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
     """H=6 with captain/vice dropped from step 3 still matches week-1 actions."""
     scenario = sample_synthetic_scenarios(
@@ -199,6 +218,78 @@ def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
     far = coarsened.picks.filter(pl.col("step") >= 3)
     assert far.filter(pl.col("captain")).is_empty()
     assert far.filter(pl.col("vice")).is_empty()
+
+
+def test_forced_tc_on_coarsened_step_stays_feasible() -> None:
+    """Forced TC on a far step keeps armbands; week-1 matches full-detail TC."""
+    scenario = sample_synthetic_scenarios(
+        1,
+        seed=41,
+        horizon=6,
+        pool_counts={"GK": 6, "DEF": 14, "MID": 18, "FWD": 8},
+    )[0]
+    options = _fast_options()
+    gameweeks = [10, 11, 12, 13, 14, 15]
+    windows = ChipUseWindows(
+        allowed={"3xc": frozenset({15})},
+        forced={"3xc": frozenset({15})},
+    )
+    chips = ChipInventory(
+        remaining={
+            "wildcard": 0,
+            "freehit": 0,
+            "bboost": 0,
+            "3xc": 1,
+        },
+        played=[],
+    )
+    state = scenario.state.model_copy(update={"chips": chips})
+    # Without the forced-chip skip this used to be kInfeasible (TC=1 vs pin 0).
+    coarsened = plan_squad(
+        scenario.players,
+        scenario.points,
+        state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        season="2025-26",
+        gameweeks=gameweeks,
+        chip_windows=windows,
+        prune=False,
+        highs_options=options,
+        lineup_reopt=False,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            coarsen_from_step=3,
+            auto_min_horizon=6,
+        ),
+    )
+    assert coarsened.chips[-1] == "3xc"
+    forced_step = coarsened.picks.filter(pl.col("step") == 5)
+    assert forced_step.filter(pl.col("captain")).height == 1
+    # Free (non-forced) far steps still coarsen.
+    free_far = coarsened.picks.filter(pl.col("step").is_in([3, 4]))
+    assert free_far.filter(pl.col("captain")).is_empty()
+    assert free_far.filter(pl.col("vice")).is_empty()
+    detailed = plan_squad(
+        scenario.players,
+        scenario.points,
+        state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        season="2025-26",
+        gameweeks=gameweeks,
+        chip_windows=windows,
+        prune=False,
+        highs_options=options,
+        lineup_reopt=False,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            coarsen_from_step=None,
+            auto_min_horizon=6,
+        ),
+    )
+    result = check_week1_equivalence(detailed, coarsened, initial=scenario.initial)
+    assert result.identical, result.mismatches
 
 
 def test_relax_and_fix_keeps_week1_actions_at_h6() -> None:
