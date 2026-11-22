@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +26,24 @@ import highspy
 import numpy as np
 import polars as pl
 
+from fplt.optimise.candidate_prune import (
+    DEFAULT_KEEP_CHEAPEST as CANDIDATE_KEEP_CHEAPEST,
+)
+from fplt.optimise.candidate_prune import (
+    DEFAULT_PRUNE_POLICY,
+    LEGACY_TOP_K,
+    CandidatePrunePolicy,
+    prune_candidates,
+)
+from fplt.optimise.candidate_prune import (
+    PRUNE_AUTO_MIN_HORIZON as PRUNE_AUTO_MIN_HORIZON,
+)
 from fplt.optimise.chip_windows import ChipUseWindows
+from fplt.optimise.highs_options import (
+    DEFAULT_HIGHS_OPTIONS,
+    HighsSolveOptions,
+    log_solve_status,
+)
 from fplt.optimise.prices import fpl_selling_price
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
@@ -66,111 +83,9 @@ _log = logging.getLogger(__name__)
 # cross-model mean; H=4 matched H=3 actions at higher MILP cost).
 DEFAULT_PLAN_HORIZON = 3
 
-# Long horizons explode binary count (~players × H × lineup vars). Auto-prune
-# when H reaches this unless the caller forces prune on/off.
-PRUNE_AUTO_MIN_HORIZON = 5
-
-# Keep enough depth per position for XI + bench + Free Hit redraws, plus a
-# few cheapest fillers so the budget stays feasible after dropping zeros.
-DEFAULT_CANDIDATE_TOP_K: Mapping[str, int] = {
-    "GK": 20,
-    "DEF": 50,
-    "MID": 60,
-    "FWD": 30,
-}
-DEFAULT_KEEP_CHEAPEST = 8
-
-# Minimum pool depth so a legal 15 can still be formed after pruning.
-_MIN_POS_POOL: Mapping[str, int] = {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}
-
-
-def prune_candidates(
-    players: pl.DataFrame,
-    points: pl.DataFrame,
-    *,
-    owned_keys: Sequence[int] = (),
-    top_k: Mapping[str, int] | None = None,
-    keep_cheapest: int = DEFAULT_KEEP_CHEAPEST,
-) -> pl.DataFrame:
-    """Drop low-xPts candidates while keeping owned and cheap fillers.
-
-    Ranks each player by the sum of horizon ``xpts``, keeps the top ``top_k``
-    per position, the ``keep_cheapest`` lowest-priced players per position
-    (budget / Free Hit fillers), and every ``owned_keys`` entry. Pure
-    ``xpts == 0`` cuts barely shrink the pool; this top-K rule is what makes
-    H≥5 MILPs tractable.
-
-    Args:
-        players: Candidates matching ``CandidateSchema``.
-        points: ``HorizonPointsSchema`` rows for the same horizon.
-        owned_keys: Player keys that must remain selectable (current squad).
-        top_k: Per-position keep counts. Defaults to
-            ``DEFAULT_CANDIDATE_TOP_K``.
-        keep_cheapest: Cheapest players to retain per position.
-
-    Returns:
-        A ``CandidateSchema`` subset of ``players``, sorted by ``player_key``.
-
-    Raises:
-        ValueError: ``keep_cheapest`` is negative, ``top_k`` misses a
-            position, or the pruned pool cannot form a legal fifteen.
-    """
-    if keep_cheapest < 0:
-        raise ValueError(f"keep_cheapest must be >= 0, got {keep_cheapest}")
-    quotas = dict(DEFAULT_CANDIDATE_TOP_K if top_k is None else top_k)
-    for position in _MIN_POS_POOL:
-        if position not in quotas:
-            raise ValueError(f"top_k missing position {position!r}")
-        if quotas[position] < _MIN_POS_POOL[position]:
-            raise ValueError(
-                f"top_k[{position!r}]={quotas[position]} is below the "
-                f"squad minimum {_MIN_POS_POOL[position]}"
-            )
-
-    pool = _frame(players.sort("player_key"), CandidateSchema)
-    if pool.is_empty():
-        return pool
-    scored = _frame(points, HorizonPointsSchema)
-    totals = (
-        scored.group_by("player_key").agg(pl.col("xpts").sum().alias("sum_xpts"))
-        if not scored.is_empty()
-        else pl.DataFrame(schema={"player_key": pl.Int64(), "sum_xpts": pl.Float64()})
-    )
-    ranked = pool.join(totals, on="player_key", how="left").with_columns(
-        pl.col("sum_xpts").fill_null(0.0)
-    )
-
-    keep: set[int] = {int(key) for key in owned_keys}
-    missing_owned = sorted(keep - set(ranked["player_key"].to_list()))
-    if missing_owned:
-        raise ValueError(f"owned players are not in the pool: {missing_owned}")
-
-    for position, quota in quotas.items():
-        part = ranked.filter(pl.col("position") == position)
-        if part.is_empty():
-            continue
-        top = (
-            part.sort(["sum_xpts", "player_key"], descending=[True, False])
-            .head(quota)["player_key"]
-            .to_list()
-        )
-        keep.update(int(key) for key in top)
-        if keep_cheapest > 0:
-            cheap = (
-                part.sort(["price", "player_key"])
-                .head(keep_cheapest)["player_key"]
-                .to_list()
-            )
-            keep.update(int(key) for key in cheap)
-
-    pruned = pool.filter(pl.col("player_key").is_in(sorted(keep))).sort("player_key")
-    for position, minimum in _MIN_POS_POOL.items():
-        have = pruned.filter(pl.col("position") == position).height
-        if have < minimum:
-            raise ValueError(
-                f"pruned pool has {have} {position} players; need >= {minimum}"
-            )
-    return pruned
+# Re-exports for callers / tests that imported prune knobs from this module.
+DEFAULT_CANDIDATE_TOP_K: Mapping[str, int] = LEGACY_TOP_K
+DEFAULT_KEEP_CHEAPEST = CANDIDATE_KEEP_CHEAPEST
 
 
 @dataclass(frozen=True)
@@ -200,6 +115,8 @@ def plan_squad(
     chip_windows: ChipUseWindows | None = None,
     chip_rules_season: str | None = None,
     prune: bool | None = None,
+    prune_policy: CandidatePrunePolicy | None = None,
+    highs_options: HighsSolveOptions | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -224,9 +141,14 @@ def plan_squad(
         chip_rules_season: Optional season whose ``configs/chips`` file
             to load. Defaults to ``season``. Use to score an older fixture
             season under current chip rules (counterfactual).
-        prune: Drop low-xPts players before the MILP. ``None`` auto-enables
-            when ``horizon >= PRUNE_AUTO_MIN_HORIZON``; ``True`` / ``False``
-            force on / off. See ``prune_candidates``.
+        prune: Drop low-value candidates before the MILP. ``None``
+            auto-enables when ``horizon >= policy.auto_min_horizon``;
+            ``True`` / ``False`` force on / off.
+        prune_policy: Keep rules (top xPts, top value, cheapest per
+            position). Defaults to ``DEFAULT_PRUNE_POLICY`` (~200 players).
+        highs_options: HiGHS time limit / gap / parallel knobs. Defaults
+            to ``DEFAULT_HIGHS_OPTIONS`` (600s, accept time-limit
+            incumbents).
 
     Returns:
         Squad members and sales at every step.
@@ -244,13 +166,15 @@ def plan_squad(
     pool = _frame(players.sort("player_key"), CandidateSchema)
     scored = _frame(points, HorizonPointsSchema)
     owned = _owned(state, initial)
-    do_prune = horizon >= PRUNE_AUTO_MIN_HORIZON if prune is None else prune
+    policy = DEFAULT_PRUNE_POLICY if prune_policy is None else prune_policy
+    do_prune = policy.should_auto_apply(horizon) if prune is None else prune
     raw_n = pool.height
     if do_prune:
         pool = prune_candidates(
             pool,
             scored,
             owned_keys=[player.player_key for player in owned],
+            policy=policy,
         )
         _log.info(
             "candidate prune horizon=%s raw=%s kept=%s (%.0f%%)",
@@ -277,8 +201,9 @@ def plan_squad(
         sell_price[at] = float(
             fpl_selling_price(player.purchase_price, int(list_price[at]))
         )
+    options = DEFAULT_HIGHS_OPTIONS if highs_options is None else highs_options
     columns = _columns(expected, state, horizon, initial)
-    solver = _solver(columns.costs)
+    solver = _solver(columns.costs, options)
     _constrain(
         solver,
         pool,
@@ -306,8 +231,9 @@ def plan_squad(
         status,
         elapsed,
     )
-    if status != highspy.HighsModelStatus.kOptimal:
+    if not options.accepts_status(status):
         raise ValueError("no plan satisfies the budget, positions, and club limits")
+    log_solve_status(status, options=options)
     return _read(solver, pool, expected, columns, state, initial, horizon, rules)
 
 
@@ -1419,10 +1345,9 @@ def _expected(
     return expected
 
 
-def _solver(cost: np.ndarray) -> highspy.Highs:
+def _solver(cost: np.ndarray, options: HighsSolveOptions) -> highspy.Highs:
     solver = highspy.Highs()
-    solver.setOptionValue("output_flag", False)
-    solver.setOptionValue("mip_rel_gap", 0)
+    options.apply(solver)
     _add_binaries(solver, cost)
     return solver
 
