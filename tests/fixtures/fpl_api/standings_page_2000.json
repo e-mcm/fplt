@@ -1,0 +1,35 @@
+{
+  "league": {
+    "id": 314,
+    "name": "Overall",
+    "league_type": "s",
+    "scoring": "c",
+    "start_event": 1
+  },
+  "standings": {
+    "has_next": true,
+    "page": 2000,
+    "results": [
+      {
+        "entry": 100001,
+        "entry_name": "Near 100k A",
+        "rank": 99950,
+        "last_rank": 100100,
+        "rank_sort": 99950,
+        "total": 2050,
+        "event_total": 40
+      },
+      {
+        "entry": 100002,
+        "entry_name": "Near 100k B",
+        "rank": 100000,
+        "last_rank": 100200,
+        "rank_sort": 100000,
+        "total": 2040,
+        "event_total": 38
+      }
+    ]
+  },
+  "new_entries": {"has_next": false, "page": 1, "results": []},
+  "last_updated_data": "2025-05-25T18:00:00Z"
+}

@@ -1,0 +1,32 @@
+{
+  "season": "2024-25",
+  "captured_at": "2025-05-25T18-00-00Z",
+  "league_id": 314,
+  "total_players": 11500000,
+  "ranks": [
+    {
+      "target_rank": 1,
+      "observed_rank": 1,
+      "points": 2400,
+      "page": 1
+    },
+    {
+      "target_rank": 10000,
+      "observed_rank": 10000,
+      "points": 2195,
+      "page": 200
+    },
+    {
+      "target_rank": 100000,
+      "observed_rank": 100000,
+      "points": 2040,
+      "page": 2000
+    },
+    {
+      "target_rank": 1000000,
+      "observed_rank": 1000000,
+      "points": 1800,
+      "page": 20000
+    }
+  ]
+}
