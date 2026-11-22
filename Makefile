@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -151,6 +151,20 @@ apply:
 		--horizon $(or $(HORIZON),3) \
 		$(if $(filter 1 yes true,$(CONFIRM)),--confirm,) \
 		$(ARGS)
+
+# ── Benchmark archives (N1: ep_next + OpenFPL → benchmark_projections) ────────
+# Live (due GW inside 3h): make archive-benchmarks
+# Backfill: make archive-benchmarks SEASON=2024-25 GW=10
+# Optional: ARGS='--skip-openfpl' (local only; not for production)
+archive-benchmarks:
+	@if [ -n "$(SEASON)" ] || [ -n "$(GW)" ]; then \
+		if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
+			echo "Usage: make archive-benchmarks SEASON=2024-25 GW=10"; exit 1; \
+		fi; \
+		uv run fplt archive-benchmarks --season $(SEASON) --gw $(GW) $(ARGS); \
+	else \
+		uv run fplt archive-benchmarks $(ARGS); \
+	fi
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:

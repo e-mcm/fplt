@@ -39,6 +39,11 @@ from fplt.backtest.promote_eval import (
 )
 from fplt.backtest.run import run_backtest
 from fplt.browser_auth import BrowserAuthError, auth_from_browser
+from fplt.data.benchmark_projections import (
+    BenchmarkArchiveError,
+    archive_deadline_benchmarks,
+    archive_if_missing,
+)
 from fplt.data.fpl_client import FPLAPIError
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
@@ -440,6 +445,21 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Print plan JSON instead of the text table (dry-run)",
     )
+    archive_benchmarks = sub.add_parser(
+        "archive-benchmarks",
+        parents=[log_flags],
+        help=(
+            "Archive ep_next + OpenFPL into benchmark_projections "
+            "(pre-deadline or backfill; no FPL Review scrape)"
+        ),
+    )
+    archive_benchmarks.add_argument("--season")
+    archive_benchmarks.add_argument("--gw", type=int)
+    archive_benchmarks.add_argument(
+        "--skip-openfpl",
+        action="store_true",
+        help="Do not require OpenFPL rows (ep_next only; not for production)",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -539,6 +559,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "bakeoff":
         _bakeoff(args)
+        return
+    if args.command == "archive-benchmarks":
+        _archive_benchmarks(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -888,6 +911,43 @@ def _decisions(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(format_decision_scoreboard(summary))
     path = data_dir / "ledger" / "decisions" / "part.parquet"
+    print(path)
+
+
+def _archive_benchmarks(args: argparse.Namespace) -> None:
+    data_dir = get_settings().data_dir
+    include_openfpl = not bool(args.skip_openfpl)
+    try:
+        if args.season is None and args.gw is None:
+            from datetime import UTC, datetime
+
+            from fplt.automation.cycle import due_gameweek
+
+            key = due_gameweek(DataStore(data_dir), datetime.now(UTC))
+            if key is None:
+                print("no deadline inside three hours", file=sys.stderr)
+                raise SystemExit(1)
+            path = archive_if_missing(data_dir, key, include_openfpl=include_openfpl)
+            if path is None:
+                print(f"already archived: {key.season} gw{key.gw}")
+                return
+        else:
+            if args.season is None or args.gw is None:
+                raise ValueError("--season and --gw must be given together")
+            key = GWKey(str(args.season), int(args.gw))
+            path = archive_deadline_benchmarks(
+                data_dir, key, include_openfpl=include_openfpl
+            )
+    except (
+        BenchmarkArchiveError,
+        FileExistsError,
+        KeyError,
+        NotImplementedError,
+        ValueError,
+    ) as exc:
+        logger.error("archive-benchmarks failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
     print(path)
 
 

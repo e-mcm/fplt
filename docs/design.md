@@ -108,6 +108,7 @@ data/
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
+├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── ledger/                      # backtest ledger (§7.2)
 └── plans/<model_id>/as_of=.../  # optimiser outputs
 ```
@@ -398,6 +399,7 @@ Prediction level (by model × horizon × position × season):
 
 Decision level — what actually matters:
 - Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. Actuals are loaded from the prediction ledger **deduplicated per fixture** before summing a gameweek (walk-forward `steps>1` re-states the same fixture under later `as_of` rows; summing those raw rows double-counts). `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`, fails by default when mean pts/GW exceeds 90, and supports `fplt decisions --explain-gw` / `make decisions-explain` for per-GW XI arithmetic.
+- **Forecast × optimiser 2×2 swap (N4).** Separate forecast quality from optimiser quality: `(ours | benchmark projections) × (ours | reference optimiser)`. Library: `fplt.backtest.forecast_optimiser_swap.run_forecast_optimiser_swap` over opaque `SwapProjectionSchema` frames (no live FPL Review). Season totals land in `SeasonPointsSchema` (nullable component-regret columns reserved for N5). The reference arm today is `IdentityReferenceOptimiser` — the same MILP with frozen hit/decay/banking/bench knobs — because FPL-Optimization-Tools / open-fpl-solver is a CLI/CSV script tree, not an installable season-sim library for `SeasonOptimiser`. `FplOptimizationToolsAdapter` is a documented stub. Does not change `PRODUCTION_MODELS`.
 
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline
@@ -417,6 +419,8 @@ Control is the off state and treatment is the on state. Production stays whichev
 ### 7.5 Benchmarks
 
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
+
+**Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` + Dagster `benchmark_archive`) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. `fpl_review` is a schema stub only until terms allow a manual/licensed loader (FDB-118) — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md).
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
@@ -460,6 +464,7 @@ Season rank alone is a noisy live check (evaluation north star §3). Cache Overa
 | `ledger_predictions` | season-gw | Appends predictions; joins actuals when available |
 | `squad_plan` | season-gw | Optimiser output for the chosen production model |
 | `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
+| `benchmark_archive` | no (due GW via `due_gameweek`) | Write-once `benchmark_projections` for `ep_next` + OpenFPL (§7.5) |
 
 Factories mean adding a YAML spec or a new feature version makes a new asset appear in the UI without new orchestration code. Asset `code_version` = feature version / `model_id`, so stale assets are flagged.
 
@@ -475,7 +480,7 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 |---|---|---|
 | New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` |
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
-| Next deadline within 3 h and no pre-deadline run yet | sensor (every 15 min) | Re-stage latest snapshot; re-predict (no refit); re-optimise; emit report |
+| Next deadline within 3 h and plan or `benchmark_projections` still missing | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
 
 The pre-deadline run can always be launched manually from the UI.
