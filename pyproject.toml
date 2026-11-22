@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "arch>=9.0.0",
     "chromium-reader>=0.1.1",
     "dagster>=1.13.30",
     "highspy>=1.16.0",
@@ -16,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
     "scipy>=1.13",
+    "statsmodels>=0.15.0",
 ]
 
 [project.scripts]

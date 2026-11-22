@@ -5,7 +5,9 @@ component registry swap, or full predictor fork — is expressed as two YAML
 specs plus an ``EvalSpec``. P1 validates orientation, one lever, coverage, and
 leakage before fit. P2 runs ``compare_models`` on both arms and writes
 ``recommendation.md``. Improvement verdicts are ``drop`` (coverage / leak) or
-``inconclusive`` until FDB-73.
+``inconclusive`` until FDB-73. Paired intervals (HAC + stationary bootstrap)
+are descriptive for improvement levers; equivalence may ``drop`` when an
+interval lies entirely on the bad side (never a ``keep`` rule).
 """
 
 from __future__ import annotations
@@ -29,6 +31,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fplt.backtest.compare import CompareResult, compare_models
+from fplt.backtest.intervals import (
+    equivalence_drop_from_intervals,
+    interval_to_dict,
+    intervals_for_pair,
+    multi_arm_selection,
+    per_gw_losses,
+    per_gw_wins_from_losses,
+)
 from fplt.backtest.ledger import read_predictions
 from fplt.data.store import DataStore
 from fplt.models.spec import (
@@ -814,7 +824,13 @@ def execute_promote_eval(
         compare_result, wall_clock, peak_rss = _run_compare(
             plan, data_dir=data_dir, output_dir=out / "compare"
         )
-        deltas = _prediction_deltas(compare_result, plan.control, plan.treatment)
+        deltas = _prediction_deltas(
+            compare_result,
+            plan.control,
+            plan.treatment,
+            data_dir=data_dir,
+            position_specific=_lever_is_position_specific(spec),
+        )
         folds = _folds_from_compare(compare_result, data_dir)
         summary = compare_result.summary
         compare_result.summary.write_parquet(out / "summary.parquet")
@@ -1026,8 +1042,22 @@ def render_recommendation(
             )
         if "mean_xpts" in deltas:
             lines.append(f"- mean_xpts: {deltas['mean_xpts']}")
+        lines.extend(_format_interval_lines(deltas))
+        if "spa" in deltas and deltas["spa"] is not None:
+            spa = deltas["spa"]
+            lines.append(
+                "- SPA (consistent p-value; any arm beat control?): "
+                f"{spa.get('pvalue_consistent')}"
+            )
+        if "mcs" in deltas and deltas["mcs"] is not None:
+            mcs = deltas["mcs"]
+            lines.append(
+                f"- MCS included (size={mcs.get('size')}): {mcs.get('included')}"
+            )
+            lines.append(f"- MCS excluded: {mcs.get('excluded')}")
         lines.append(
-            "- HAC / bootstrap intervals: deferred (statsmodels / arch; not in P1+P2)"
+            "- intervals are descriptive for improvement levers "
+            "(not a keep rule; equivalence may drop on entirely-bad intervals)"
         )
     lines.append("")
     # 9. Components
@@ -1883,7 +1913,12 @@ def _run_compare(
 
 
 def _prediction_deltas(
-    compare: CompareResult, control: str, treatment: str
+    compare: CompareResult,
+    control: str,
+    treatment: str,
+    *,
+    data_dir: Path,
+    position_specific: bool = False,
 ) -> dict[str, Any]:
     summary = compare.summary
     if summary.is_empty() or "model_name" not in summary.columns:
@@ -1912,52 +1947,141 @@ def _prediction_deltas(
     for key in ("spearman", "top10_precision"):
         if c.get(key) is not None and t.get(key) is not None:
             deltas[key] = float(t[key]) - float(c[key])
-    deltas["per_gw_wins"] = _per_gw_wins(compare, control, treatment)
+
+    id_by_name = _model_ids_by_name(compare)
+    control_id = id_by_name.get(control)
+    treatment_id = id_by_name.get(treatment)
+    if control_id is None or treatment_id is None:
+        deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
+        return deltas
+
+    try:
+        ledger = read_predictions(data_dir)
+    except Exception:
+        deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
+        return deltas
+    model_ids = {control_id, treatment_id}
+    scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
+    if scored.is_empty():
+        deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
+        return deltas
+
+    positions = ("DEF", "MID", "FWD", "GKP") if position_specific else None
+    paired = intervals_for_pair(
+        scored,
+        control_id=control_id,
+        treatment_id=treatment_id,
+        metrics=("mae", "rmse", "spearman"),
+        positions=positions,
+    )
+    deltas["intervals"] = [interval_to_dict(item) for item in paired]
+    # Equivalence-only signal; improvement runners ignore this for the call.
+    deltas["equivalence_interval_drop"] = equivalence_drop_from_intervals(paired)
+
+    control_mae = per_gw_losses(scored, model_id=control_id, metric="mae")
+    treatment_mae = per_gw_losses(scored, model_id=treatment_id, metric="mae")
+    deltas["per_gw_wins"] = per_gw_wins_from_losses(control_mae, treatment_mae)
+
+    # SPA / MCS only when several arms share the window (dose / multi-arm).
+    spa_mcs = _spa_mcs_from_ledger(
+        scored, compare=compare, control=control, id_by_name=id_by_name
+    )
+    if spa_mcs is not None:
+        deltas["spa"] = spa_mcs["spa"]
+        deltas["mcs"] = spa_mcs["mcs"]
     return deltas
 
 
-def _per_gw_wins(
-    compare: CompareResult, control: str, treatment: str
-) -> dict[str, int]:
-    detail = compare.detail
-    if detail.is_empty() or "model_name" not in detail.columns:
-        return {"control": 0, "treatment": 0, "ties": 0}
-    frame = detail
-    if "mode" in frame.columns:
-        wf = frame.filter(pl.col("mode") == "walk_forward")
-        if not wf.is_empty():
-            frame = wf
-    if "horizon" in frame.columns:
-        h1 = frame.filter(pl.col("horizon") == 1)
-        if not h1.is_empty():
-            frame = h1
-    # detail from summarise is by position; pool MAE per target_gw when present.
-    if "target_gw" not in frame.columns or "mae" not in frame.columns:
-        return {"control": 0, "treatment": 0, "ties": 0}
-    grouped = (
-        frame.group_by(["model_name", "target_gw"])
-        .agg(pl.col("mae").mean().alias("mae"))
-        .sort("target_gw")
-    )
-    c = {
-        row["target_gw"]: row["mae"]
-        for row in grouped.filter(pl.col("model_name") == control).to_dicts()
+def _spa_mcs_from_ledger(
+    scored: pl.DataFrame,
+    *,
+    compare: CompareResult,
+    control: str,
+    id_by_name: dict[str, str],
+) -> dict[str, Any] | None:
+    """Build SPA/MCS payloads when compare scored more than two arms."""
+    arm_names = sorted({run.model_name for run in compare.runs})
+    if len(arm_names) <= 2 or control not in arm_names:
+        return None
+    keys: pl.DataFrame | None = None
+    per_arm: dict[str, pl.DataFrame] = {}
+    for name in arm_names:
+        mid = id_by_name.get(name)
+        if mid is None:
+            return None
+        losses = per_gw_losses(scored, model_id=mid, metric="mae")
+        if losses.is_empty():
+            return None
+        per_arm[name] = losses
+        gw_keys = losses.select(["target_season", "target_gw"])
+        keys = (
+            gw_keys
+            if keys is None
+            else keys.join(gw_keys, on=["target_season", "target_gw"], how="inner")
+        )
+    if keys is None or keys.is_empty():
+        return None
+    loss_by_arm: dict[str, Any] = {}
+    for name, losses in per_arm.items():
+        aligned = keys.join(
+            losses, on=["target_season", "target_gw"], how="inner"
+        ).sort(["target_season", "target_gw"])
+        loss_by_arm[name] = aligned["loss"].to_numpy()
+    selection = multi_arm_selection(loss_by_arm, control=control)
+    if selection is None:
+        return None
+    spa, mcs = selection
+    return {
+        "spa": {
+            "pvalue_consistent": spa.pvalue_consistent,
+            "pvalue_lower": spa.pvalue_lower,
+            "pvalue_upper": spa.pvalue_upper,
+            "n_gw": spa.n_gw,
+            "n_models": spa.n_models,
+        },
+        "mcs": {
+            "included": list(mcs.included),
+            "excluded": list(mcs.excluded),
+            "size": mcs.size,
+            "n_gw": mcs.n_gw,
+        },
     }
-    t = {
-        row["target_gw"]: row["mae"]
-        for row in grouped.filter(pl.col("model_name") == treatment).to_dicts()
-    }
-    wins = {"control": 0, "treatment": 0, "ties": 0}
-    for gw in sorted(set(c) | set(t)):
-        if gw not in c or gw not in t:
+
+
+def _model_ids_by_name(compare: CompareResult) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for run in compare.runs:
+        mapping[run.model_name] = run.spec.model_id
+    return mapping
+
+
+def _lever_is_position_specific(spec: EvalSpec) -> bool:
+    return any("defensive_contribution" in line for line in spec.change.diff)
+
+
+def _format_interval_lines(deltas: dict[str, Any]) -> list[str]:
+    raw_obj = deltas.get("intervals")
+    if not isinstance(raw_obj, list) or not raw_obj:
+        return ["- HAC / bootstrap intervals: unavailable (no paired gameweeks)"]
+    raw = cast(list[object], raw_obj)
+    lines: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
             continue
-        if c[gw] < t[gw]:
-            wins["control"] += 1
-        elif t[gw] < c[gw]:
-            wins["treatment"] += 1
-        else:
-            wins["ties"] += 1
-    return wins
+        item = cast(dict[str, Any], entry)
+        metric = item.get("metric")
+        position = item.get("position")
+        label = f"{metric}" if position is None else f"{metric}[{position}]"
+        mean = item.get("mean")
+        hac = item.get("hac_ci")
+        boot = item.get("bootstrap_ci")
+        hac_p = item.get("hac_pvalue")
+        hac_se = item.get("hac_se")
+        lines.append(
+            f"- {label}: mean_d={mean} HAC_se={hac_se} HAC_p={hac_p} "
+            f"HAC_CI={hac} bootstrap_CI={boot}"
+        )
+    return lines
 
 
 def _folds_from_compare(compare: CompareResult, data_dir: Path) -> list[dict[str, Any]]:
