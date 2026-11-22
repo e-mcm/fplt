@@ -1,9 +1,10 @@
 """Coarse chip-timing windows for the short-horizon MILP.
 
 Mirrors FPL-Optimization-Tools ``allowed_chip_gws`` / ``forced_chip_gws`` /
-``no_chip_gws``. A future season-level scheduler (Wave C5) fills these; Wave C3
-exposes the hooks and a rule-based baseline that forces BB / TC / FH / WC onto
-double and blank landmarks.
+``no_chip_gws``. Wave C3 exposes the hooks and a rule-based baseline that
+forces BB / TC / FH / WC onto double and blank landmarks. Wave C5's
+``schedule_chip_windows`` (``fplt.optimise.chip_scheduler``) fills the same
+contract with option-value scoring over the rest of the half-season.
 """
 
 from __future__ import annotations
