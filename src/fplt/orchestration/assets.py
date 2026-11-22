@@ -16,8 +16,15 @@ from datetime import UTC, datetime
 import dagster as dg
 import polars as pl
 
-from fplt.automation.cycle import PRODUCTION_MODELS, catch_up, pre_deadline, reports
+from fplt.automation.cycle import (
+    PRODUCTION_MODELS,
+    catch_up,
+    due_gameweek,
+    pre_deadline,
+    reports,
+)
 from fplt.automation.notify import notify_recommendation
+from fplt.data.benchmark_projections import archive_if_missing, benchmarks_path
 from fplt.data.football_data import (
     default_team_map_path,
     ingest_football_data,
@@ -111,13 +118,38 @@ def pre_deadline_plan() -> dg.MaterializeResult:
     )
 
 
+@dg.asset(name="benchmark_archive")
+def benchmark_archive() -> dg.MaterializeResult:
+    """Archive ``ep_next`` + OpenFPL into ``benchmark_projections`` for the due GW.
+
+    Write-once under ``$FPLT_DATA_DIR/benchmark_projections/as_of=.../``. Fails
+    loudly when a required source cannot be produced. Does not scrape FPL
+    Review (``source=fpl_review`` is a schema stub for FDB-118).
+    """
+    settings = get_settings()
+    data = settings.data_dir
+    now = datetime.now(UTC)
+    key = due_gameweek(DataStore(data), now)
+    if key is None:
+        return dg.MaterializeResult(metadata={"deadline": "none", "path": ""})
+    path = archive_if_missing(data, key, now=now)
+    written = "" if path is None else path.as_posix()
+    existing = benchmarks_path(data, key).as_posix()
+    return dg.MaterializeResult(
+        metadata={
+            "deadline": f"{key.season} gw{key.gw}",
+            "path": written or existing,
+        }
+    )
+
+
 catch_up_job = dg.define_asset_job(
     name="catch_up",
     selection=dg.AssetSelection.assets(recommendation_report),
 )
 pre_deadline_job = dg.define_asset_job(
     name="pre_deadline",
-    selection=dg.AssetSelection.assets(pre_deadline_plan),
+    selection=dg.AssetSelection.assets(pre_deadline_plan, benchmark_archive),
 )
 
 

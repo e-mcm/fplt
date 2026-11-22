@@ -59,8 +59,13 @@ def test_a_deadline_is_due_only_inside_three_hours(tmp_path: Path) -> None:
     assert plans_exist(tmp_path, ["rolling_mean_v1"], GWKey("2024-25", 1), 0) is False
 
 
-def test_catch_up_plans_a_skipped_checked_week(tmp_path: Path) -> None:
+def test_catch_up_plans_a_skipped_checked_week(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _league(tmp_path)
+    monkeypatch.setattr(
+        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
+    )
     done = catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
     assert [key.gw for key in done] == [1, 2]
     assert catch_up(tmp_path, ["rolling_mean_v1"], horizon=1) == []

@@ -58,8 +58,8 @@ class SquadState(BaseModel):
 
     An empty ``owned`` list is an initial draft: the bank is the whole
     budget and the fifteen picks are not transfers. ``chips`` stores
-    remaining uses and play history for Wave C; the MILP does not consume
-    them yet.
+    remaining uses and play history; ``plan_squad`` consumes Bench Boost
+    and Triple Captain when ``season`` and ``gameweeks`` are passed.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

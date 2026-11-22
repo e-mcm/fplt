@@ -17,6 +17,7 @@ from fplt.automation.cycle import (
     plans_exist,
 )
 from fplt.automation.notify import notify
+from fplt.data.benchmark_projections import benchmarks_path
 from fplt.data.snapshots import SnapshotFetchError, fetch_snapshots
 from fplt.data.store import DataStore
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
@@ -65,16 +66,21 @@ def catchup_sensor() -> dg.RunRequest | dg.SkipReason:
 @dg.sensor(
     job=pre_deadline_job,
     minimum_interval_seconds=_FIFTEEN_MINUTES,
-    description="Re-plan the deadline that falls inside the next three hours.",
+    description=(
+        "Re-plan and archive benchmark_projections for the deadline "
+        "inside the next three hours."
+    ),
 )
 def pre_deadline_sensor() -> dg.RunRequest | dg.SkipReason:
-    """Request a refresh when a deadline is inside three hours and unplanned."""
+    """Request a refresh when plan or benchmark archive is still missing."""
     data = get_settings().data_dir
     key = due_gameweek(DataStore(data), datetime.now(UTC))
-    if key is None or plans_exist(
-        data, PRODUCTION_MODELS, key, horizon=DEFAULT_PLAN_HORIZON
-    ):
+    if key is None:
         return dg.SkipReason("no deadline inside three hours")
+    planned = plans_exist(data, PRODUCTION_MODELS, key, horizon=DEFAULT_PLAN_HORIZON)
+    archived = benchmarks_path(data, key).exists()
+    if planned and archived:
+        return dg.SkipReason("plan and benchmark_projections already saved")
     return dg.RunRequest(run_key=f"deadline-{key.season}-{key.gw}")
 
 

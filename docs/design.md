@@ -107,6 +107,7 @@ data/
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
+├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── ledger/                      # backtest ledger (§7.2)
 └── plans/<model_id>/as_of=.../  # optimiser outputs
 ```
@@ -320,7 +321,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 - `windows`: named closed gameweek intervals with `carries_over` (first-half chips that expire at a deadline set `carries_over: false`)
 - `grants`: one entry per chip use (`wildcard` / `freehit` / `bboost` / `3xc`), each tied to a window
 
-From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`); the optimiser MILP does not yet consume chip variables (Wave C).
+From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`). When `plan_squad` is given `season` and `gameweeks`, the MILP uses Bench Boost and Triple Captain under those rules (one chip per GW, half-season caps from windows + remaining inventory). Wildcard and Free Hit binaries are present for the one-chip constraint but stay fixed at zero until Wave C2.
 
 ### 5.6 Simulation engine (composition)
 
@@ -398,6 +399,7 @@ Prediction level (by model × horizon × position × season):
 Decision level — what actually matters:
 - Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. Actuals are loaded from the prediction ledger **deduplicated per fixture** before summing a gameweek (walk-forward `steps>1` re-states the same fixture under later `as_of` rows; summing those raw rows double-counts). `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`, fails by default when mean pts/GW exceeds 90, and supports `fplt decisions --explain-gw` / `make decisions-explain` for per-GW XI arithmetic.
 - **Share of attainable points** (`fplt.optimise.attainable`): a constrained hindsight oracle runs the same decision sim with realised points as planner `xpts` (same FT banking, hits, budget, frozen selling prices; chips off). Share = realised ÷ oracle. Component regret covers captaincy (best armband in the chosen XI), XI/bench order (best lineup from the fifteen vs chosen XI with optimal captain), transfers (H=1 hindsight action from the pre-transfer squad), and chip timing (nullable hook while chips are off). Board hook: `fplt decisions --with-oracle` enriches the scoreboard via `enrich_decision_summary`.
+- **Forecast × optimiser 2×2 swap (N4).** Separate forecast quality from optimiser quality: `(ours | benchmark projections) × (ours | reference optimiser)`. Library: `fplt.backtest.forecast_optimiser_swap.run_forecast_optimiser_swap` over opaque `SwapProjectionSchema` frames (no live FPL Review). Season totals land in `SeasonPointsSchema` (nullable component-regret columns filled by N5 / `fplt.optimise.attainable`). The reference arm today is `IdentityReferenceOptimiser` — the same MILP with frozen hit/decay/banking/bench knobs — because FPL-Optimization-Tools / open-fpl-solver is a CLI/CSV script tree, not an installable season-sim library for `SeasonOptimiser`. `FplOptimizationToolsAdapter` is a documented stub. Does not change `PRODUCTION_MODELS`.
 
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline
@@ -417,6 +419,8 @@ Control is the off state and treatment is the on state. Production stays whichev
 ### 7.5 Benchmarks
 
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
+
+**Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` + Dagster `benchmark_archive`) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. `fpl_review` is a schema stub only until terms allow a manual/licensed loader (FDB-118) — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md).
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
@@ -456,6 +460,7 @@ Prefer an existing library when it already does about 90% of the job. For promot
 | `ledger_predictions` | season-gw | Appends predictions; joins actuals when available |
 | `squad_plan` | season-gw | Optimiser output for the chosen production model |
 | `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
+| `benchmark_archive` | no (due GW via `due_gameweek`) | Write-once `benchmark_projections` for `ep_next` + OpenFPL (§7.5) |
 
 Factories mean adding a YAML spec or a new feature version makes a new asset appear in the UI without new orchestration code. Asset `code_version` = feature version / `model_id`, so stale assets are flagged.
 
@@ -471,7 +476,7 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 |---|---|---|
 | New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` |
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
-| Next deadline within 3 h and no pre-deadline run yet | sensor (every 15 min) | Re-stage latest snapshot; re-predict (no refit); re-optimise; emit report |
+| Next deadline within 3 h and plan or `benchmark_projections` still missing | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
 
 The pre-deadline run can always be launched manually from the UI.
@@ -527,11 +532,11 @@ A checked gameweek is waiting until `dc_layered_v2` has a plan parquet for that 
 
 ### 10.2 Formulation (multi-period ILP)
 
-Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out. Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer. Objective: Σ_t decay^t × (XI points + captain bonus + small bench weight) − hit costs. Solve with HiGHS (`highspy`).
+Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out, plus chip binaries `wc_t` / `fh_t` / `bb_t` / `tc_t` (and TC extra-captain / BB bench-score player vars). Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer, one chip per GW, half-season BB/TC caps from `ChipRules` + `SquadState.chips`. Objective: Σ_t decay^t × (XI points + captain bonus + TC extra + BB bench + small bench weight) − hit costs. Solve with HiGHS (`highspy`). Wildcard / Free Hit effects are not modelled yet (`wc_t` = `fh_t` = 0).
 
 Library entry point: `fplt.optimise.optimize_transfers(candidates, expected_points, state, gameweeks=...)`. Predictions are opaque (`ExpectedPointsSchema`: `player_key`, `gw`, `xpts`); the engine does not call predictors or the data store. `fplt plan` is the CLI wrapper that loads candidates and ledger rows, then calls the same solver.
 
-v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can use `p_haul` / samples as a tiebreak.
+v1: single-GW XI + captain. v2: multi-period transfers. v3: chips (BB/TC in MILP; WC/FH next). Captaincy can use `p_haul` / samples as a tiebreak.
 
 ### 10.3 Output
 
@@ -539,7 +544,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 `fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 
-Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, owned selling prices, and `chips` (`remaining` counts plus `played` `{name, gw}` history). An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players; chip inventory stays in YAML. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chip variables are not in the MILP yet (v3); season allotments are in `configs/chips/<season>.yaml`.
+Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, owned selling prices, and `chips` (`remaining` counts plus `played` `{name, gw}` history). An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players; chip inventory stays in YAML. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget; it still omits `season`/`gameweeks` on `plan_squad`, so chips stay off there until the three-arm board (Wave C3). Season allotments are in `configs/chips/<season>.yaml`.
 
 ---
 

@@ -15,6 +15,12 @@ from fplt.optimise.attainable import (
 )
 from fplt.optimise.engine import TransferPlan, horizon_points, optimize_transfers
 from fplt.optimise.plan import GameweekPlan, plan_squad
+from fplt.optimise.season_optimiser import (
+    FplOptimizationToolsAdapter,
+    IdentityReferenceOptimiser,
+    OursSeasonOptimiser,
+    freeze_reference_state,
+)
 from fplt.optimise.squad import SquadSelection, aggregate_gameweek, select_squad
 from fplt.optimise.state import (
     ChipInventory,
@@ -29,7 +35,10 @@ __all__ = [
     "ChipInventory",
     "ChipPlay",
     "ChipTimingRegret",
+    "FplOptimizationToolsAdapter",
     "GameweekPlan",
+    "IdentityReferenceOptimiser",
+    "OursSeasonOptimiser",
     "SquadSelection",
     "SquadState",
     "TransferPlan",
@@ -40,6 +49,7 @@ __all__ = [
     "enrich_decision_summary",
     "foresight_predictions",
     "format_attainable_scoreboard",
+    "freeze_reference_state",
     "horizon_points",
     "load_squad_state",
     "optimize_transfers",
