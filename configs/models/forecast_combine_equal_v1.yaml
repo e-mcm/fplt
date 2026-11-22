@@ -1,0 +1,11 @@
+# Equal-weight walk-forward blend of production DC + LightGBM.
+# OpenFPL omitted until Deep/PPDA stages (Wave E1 / FDB-107).
+name: forecast_combine_equal_v1
+kind: forecast_combine
+params:
+  mode: equal
+  members:
+    - dc_layered_v2
+    - lgbm_direct_v1
+refit: every_gw
+seed: 0

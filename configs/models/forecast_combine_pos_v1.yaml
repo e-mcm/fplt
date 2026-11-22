@@ -1,0 +1,25 @@
+# Position-weighted blend: DC heavier on GKP/DEF (calibration), LGBM on MID/FWD
+# (ranking). Same members as forecast_combine_equal_v1; weights are fixed priors,
+# not walk-forward-learned (no cheap in-fit MAE pattern in-repo yet).
+name: forecast_combine_pos_v1
+kind: forecast_combine
+params:
+  mode: position
+  members:
+    - dc_layered_v2
+    - lgbm_direct_v1
+  position_weights:
+    GKP:
+      dc_layered_v2: 0.7
+      lgbm_direct_v1: 0.3
+    DEF:
+      dc_layered_v2: 0.7
+      lgbm_direct_v1: 0.3
+    MID:
+      dc_layered_v2: 0.4
+      lgbm_direct_v1: 0.6
+    FWD:
+      dc_layered_v2: 0.4
+      lgbm_direct_v1: 0.6
+refit: every_gw
+seed: 0

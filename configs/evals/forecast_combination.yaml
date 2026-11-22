@@ -1,0 +1,41 @@
+# Wave E1 / FDB-107: does DC+LGBM forecast combination beat the singletons?
+# Descriptive championship on the same board as best-model bakeoff (GW1–20).
+# OpenFPL excluded until Deep/PPDA. Decisions stay on `fplt decisions`.
+#
+# Dry-run:  uv run fplt bakeoff --bakeoff forecast_combination
+# Execute:  uv run fplt bakeoff --bakeoff forecast_combination --execute
+
+name: forecast_combination
+question: >
+  Do equal-weight and position-weighted blends of dc_layered_v2 +
+  lgbm_direct_v1 beat either singleton on 2024-25 GW1–20 walk-forward MAE
+  (and Spearman)? Descriptive; not a keep.
+description: >
+  Forecast combination bakeoff. Shared window with the championship board;
+  ledgers reuse the content-addressed compare cache for singleton arms.
+
+control: dc_layered_v2
+models:
+  - dc_layered_v2
+  - lgbm_direct_v1
+  - forecast_combine_equal_v1
+  - forecast_combine_pos_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+pairwise_evals: []
+
+report:
+  title: "Forecast combination (DC v2 + LightGBM)"
+  store_doc: null
