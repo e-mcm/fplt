@@ -243,6 +243,10 @@ def test_promote_eval_stale_cache_exits_2(tmp_path: Path) -> None:
             "fplt.backtest.promote_eval.preflight_promote_eval",
             side_effect=ok_preflight,
         ),
+        patch(
+            "fplt.backtest.promote_eval._run_components",
+            return_value=(None, None, None),
+        ),
         patch("fplt.backtest.promote_eval.compare_models", side_effect=boom),
     ):
         result = execute_promote_eval(
