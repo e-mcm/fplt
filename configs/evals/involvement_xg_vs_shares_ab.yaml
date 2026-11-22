@@ -1,14 +1,14 @@
 # Wave A3 / M7: involvement_xg (FPL-native Opta xG) vs involvement_shares.
 # Run after restaging so player_fixture_stats carries expected_*.
 name: involvement_xg_vs_shares_ab
-kind: config
+kind: component
 question: >
   Does blending FPL-native expected_goals / expected_assists
   (involvement_xg_v1) beat goal/assist shares on xPts and goal-share MAE?
 description: "involvement_xg vs involvement_shares (Wave A3 / M7)."
 
 change:
-  lever: hyperparam
+  lever: component_swap
   orientation: opt_in
   slot: involvement
   control_kind: involvement_shares
@@ -17,7 +17,7 @@ change:
   features: []
   allow_multi_lever: false
   diff:
-    - "components.involvement: involvement_shares_v1 → involvement_xg_v1"
+    - "components.involvement.kind: involvement_shares → involvement_xg"
   notes: >
     Control dc_layered_shares_v2 (v2 stack + shares). Treatment dc_layered_v2
     (involvement_xg_v1, xg_blend=0.7). Prefers staged expected_* over Understat.
