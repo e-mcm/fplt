@@ -2,9 +2,9 @@
 
 On disk: ``$FPLT_DATA_DIR/benchmark_projections/as_of=<season>_gwNN/part.parquet``.
 Schema: ``fplt.schemas.benchmark_projections.BenchmarkProjectionSchema``.
-``available_at`` is always strictly before the deadline. ``source=fpl_review``
-is a schema slot only until terms allow a manual loader (FDB-118) — see
-``fpl_review_projections``.
+``available_at`` is always strictly before the deadline. Manual FPL Review
+CSV/JSON drops use ``fplt.data.fpl_review`` (``source=fpl_review``); the
+``fpl_review_projections`` stub stays for the automated archive path.
 """
 
 from __future__ import annotations
@@ -36,9 +36,10 @@ logger = logging.getLogger(__name__)
 EP_NEXT_SPEC = "ep_next_v1"
 OPENFPL_SPEC = "openfpl_v1"
 _REVIEW_TERMS_NOTE = (
-    "FPL Review archival is blocked pending a terms-of-use check; "
-    "see docs/benchmark-archives.md. Load Review via FDB-118 into this "
-    "same benchmark_projections table — do not add a parallel schema."
+    "Automated FPL Review fetch is not implemented (no scrape). "
+    "Use fplt ingest-review / fplt.data.fpl_review to merge a manual "
+    "CSV/JSON drop into this same benchmark_projections table. "
+    "See docs/fpl_review.md and docs/benchmark-archives.md."
 )
 
 
@@ -78,6 +79,53 @@ def write_benchmark_archive(data_dir: Path, as_of: GWKey, frame: pl.DataFrame) -
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     checked.write_parquet(path)
+    return path
+
+
+def merge_benchmark_source(data_dir: Path, as_of: GWKey, frame: pl.DataFrame) -> Path:
+    """Replace one ``source``'s rows in the deadline archive (or create it).
+
+    Used by the manual FPL Review drop path so ``ep_next`` / ``openfpl`` rows
+    written earlier are kept. All rows in ``frame`` must share one ``source``
+    and match ``as_of``.
+
+    Args:
+        data_dir: Root that contains ``benchmark_projections/``.
+        as_of: Deadline the archive belongs to.
+        frame: A ``BenchmarkProjectionSchema`` frame for a single source.
+
+    Returns:
+        The parquet path written.
+
+    Raises:
+        ValueError: ``frame`` is empty, mixes sources, or mismatches ``as_of``.
+    """
+    checked = BenchmarkProjectionSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    checked = _ensure_utc(checked)
+    if checked.is_empty():
+        raise ValueError("cannot merge an empty benchmark frame")
+    sources = checked["source"].unique().to_list()
+    if len(sources) != 1:
+        raise ValueError(f"merge expects a single source, got {sources!r}")
+    seasons = checked["as_of_season"].unique().to_list()
+    gws = checked["as_of_gw"].unique().to_list()
+    if seasons != [as_of.season] or gws != [as_of.gw]:
+        raise ValueError(
+            f"frame as_of {seasons!r} gw{gws!r} does not match archive {as_of}"
+        )
+    source = str(sources[0])
+    existing = read_benchmark_archive(data_dir, as_of)
+    if existing.is_empty():
+        merged = checked
+    else:
+        kept = existing.filter(pl.col("source") != source)
+        merged = pl.concat([kept, checked], how="vertical_relaxed")
+    merged = BenchmarkProjectionSchema.validate(_ensure_utc(merged))
+    assert isinstance(merged, pl.DataFrame)
+    path = benchmarks_path(data_dir, as_of)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged.write_parquet(path)
     return path
 
 
@@ -137,7 +185,10 @@ def openfpl_deep_ppda_degraded(view: PITView) -> bool:
 def fpl_review_projections(
     view: PITView, horizon: list[GWKey], available_at: datetime
 ) -> pl.DataFrame:
-    """Stub for FPL Review projections. Raises until terms are checked.
+    """Automated Review fetch stub — always raises (no scrape).
+
+    Manual CSV/JSON drops go through ``fplt.data.fpl_review`` /
+    ``fplt ingest-review`` into the same ``benchmark_projections`` archive.
 
     Args:
         view: Unused PIT view (kept for API symmetry with other sources).
@@ -145,10 +196,10 @@ def fpl_review_projections(
         available_at: Unused archive stamp.
 
     Returns:
-        Never returns; reserved for a later implementation.
+        Never returns.
 
     Raises:
-        NotImplementedError: Always — Review needs a terms check first.
+        NotImplementedError: Always — use the manual ingest path instead.
     """
     del view, horizon, available_at
     raise NotImplementedError(_REVIEW_TERMS_NOTE)
@@ -369,6 +420,7 @@ __all__ = [
     "benchmarks_path",
     "empty_benchmarks",
     "fpl_review_projections",
+    "merge_benchmark_source",
     "openfpl_deep_ppda_degraded",
     "read_benchmark_archive",
     "visible_benchmarks",
