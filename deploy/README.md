@@ -74,7 +74,9 @@ pushed when ntfy and/or SMTP are configured. Run failures still POST to
    ```
 
    Or export the same `FPLT_*` variables in the shell. Compose substitutes them
-   into both services.
+   into both services, including `FPLT_FPL_API_TOKEN` (live my-team) and optional
+   `FPLT_API_FOOTBALL_KEY` (local injuries fetch). Legacy `FPLT_FPL_SESSION` is
+   still passed for older setups but unused by the current API.
 
 3. Start:
 
