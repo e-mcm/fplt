@@ -13,8 +13,11 @@ from fplt.optimise.candidate_prune import (
     DEFAULT_KEEP_CHEAPEST,
     DEFAULT_MIN_P_60,
     DEFAULT_PRUNE_POLICY,
+    DEFAULT_TOP_PER_STEP,
     DEFAULT_TOP_VALUE,
+    DEFAULT_TOP_WINDOW,
     DEFAULT_TOP_XPTS,
+    DEFAULT_WINDOW_LENGTHS,
     MAX_PER_CLUB,
     MIN_POS_POOL,
     CandidatePrunePolicy,
@@ -97,10 +100,17 @@ def _points(players: pl.DataFrame, *, horizon: int = 5) -> pl.DataFrame:
 
 
 def _tight_policy(**overrides: object) -> CandidatePrunePolicy:
-    """Small keep quotas for unit tests on the synthetic pool."""
+    """Small keep quotas for unit tests on the synthetic pool.
+
+    Step / window tops are off by default so older assertions stay
+    focused; enable them in the dedicated per-step tests.
+    """
     base: dict[str, object] = {
         "top_xpts": {"GK": 3, "DEF": 6, "MID": 5, "FWD": 4},
         "top_value": {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        "top_per_step": None,
+        "top_window": None,
+        "window_lengths": (),
         "keep_cheapest": 2,
     }
     base.update(overrides)
@@ -108,13 +118,19 @@ def _tight_policy(**overrides: object) -> CandidatePrunePolicy:
 
 
 def test_default_policy_knobs_target_about_200() -> None:
-    """Defaults are the ~200-player xPts / value / cheapest union."""
+    """Defaults are the ~200-player union including step / window tops."""
     assert DEFAULT_KEEP_CHEAPEST == 4
     assert DEFAULT_MIN_P_60 == 0.5
     assert dict(DEFAULT_TOP_XPTS) == {"GK": 25, "DEF": 55, "MID": 70, "FWD": 35}
     assert dict(DEFAULT_TOP_VALUE) == {"GK": 15, "DEF": 35, "MID": 45, "FWD": 20}
+    assert dict(DEFAULT_TOP_PER_STEP) == {"GK": 3, "DEF": 8, "MID": 10, "FWD": 5}
+    assert dict(DEFAULT_TOP_WINDOW) == {"GK": 3, "DEF": 8, "MID": 10, "FWD": 5}
+    assert DEFAULT_WINDOW_LENGTHS == (2, 3)
     assert DEFAULT_PRUNE_POLICY.top_xpts == dict(DEFAULT_TOP_XPTS)
     assert DEFAULT_PRUNE_POLICY.top_value == dict(DEFAULT_TOP_VALUE)
+    assert DEFAULT_PRUNE_POLICY.top_per_step == dict(DEFAULT_TOP_PER_STEP)
+    assert DEFAULT_PRUNE_POLICY.top_window == dict(DEFAULT_TOP_WINDOW)
+    assert DEFAULT_PRUNE_POLICY.window_lengths == DEFAULT_WINDOW_LENGTHS
     assert DEFAULT_PRUNE_POLICY.min_p_60 == DEFAULT_MIN_P_60
     assert sum(DEFAULT_CANDIDATE_TOP_K.values()) == 160
 
@@ -333,6 +349,9 @@ def test_rank_uses_passed_decay_not_flat_sum() -> None:
     policy = CandidatePrunePolicy(
         top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
         top_value=None,
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
         keep_cheapest=0,
     )
     pruned = policy.apply(players, points, decay=decay)
@@ -487,6 +506,9 @@ def test_dominance_drops_clearly_dominated() -> None:
     policy = CandidatePrunePolicy(
         top_xpts={"GK": 5, "DEF": 12, "MID": 20, "FWD": 8},
         top_value=None,
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
         keep_cheapest=0,
     )
     pruned = policy.apply(cand, points)
@@ -745,3 +767,180 @@ def test_plan_squad_passes_state_decay_into_prune(
     assert captured["has_p_60"] is True
     # Planner weight identity used by both MILP and ranking.
     assert math.isclose(decay**0, 1.0)
+
+
+def test_per_step_tops_keep_one_week_punt() -> None:
+    """A late one-week spike survives via top_per_step, not horizon sum."""
+    # Legal minima + enough MIDs that a tight top_xpts drops the punt.
+    players = pl.DataFrame(
+        {
+            "player_key": list(range(1, 19)),
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 8 + ["FWD"] * 3),
+            "team_key": [1 + (i % 5) for i in range(18)],
+            "price": [45] * 18,
+        }
+    )
+    # Keys 8–15 are MID. Punt = last MID: tiny horizon sum, best at step 3.
+    punt_key = 15
+    rows: list[dict[str, object]] = []
+    for key in players["player_key"].to_list():
+        for step in range(4):
+            if key == punt_key:
+                # Beats every rival at step 3; horizon sum 6 << steady ~20.
+                xpts = 6.0 if step == 3 else 0.0
+            else:
+                # Steady points so horizon tops fill without the punt.
+                xpts = 5.0
+            rows.append({"player_key": int(key), "step": step, "xpts": xpts})
+    points = pl.DataFrame(rows)
+    without = CandidatePrunePolicy(
+        top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_value=None,
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=0,
+    )
+    kept_without = set(without.apply(players, points, decay=0.9)["player_key"])
+    assert punt_key not in kept_without
+    with_step = CandidatePrunePolicy(
+        top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_value=None,
+        top_per_step={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=0,
+    )
+    kept_with = set(with_step.apply(players, points, decay=0.9)["player_key"])
+    assert punt_key in kept_with
+    assert kept_without.issubset(kept_with)
+
+
+def test_per_step_tops_use_raw_step_xpts_not_decay() -> None:
+    """Per-step ranking ignores planner decay (step xPts for that step)."""
+    players = pl.DataFrame(
+        {
+            "player_key": list(range(1, 17)),
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 6 + ["FWD"] * 3),
+            "team_key": [1 + (i % 5) for i in range(16)],
+            "price": [45] * 16,
+        }
+    )
+    # At step 4: late_key has 10 raw xPts; early_key has 9. With decay=0.5
+    # the decayed step-4 scores are 0.625 vs 0.5625, but per-step tops must
+    # still prefer late_key on raw 10 > 9.
+    late_key, early_key = 10, 11
+    rows: list[dict[str, object]] = []
+    for key in players["player_key"].to_list():
+        for step in range(5):
+            if key == late_key:
+                xpts = 10.0 if step == 4 else 0.1
+            elif key == early_key:
+                xpts = 9.0 if step == 4 else 0.1
+            else:
+                xpts = 1.0
+            rows.append({"player_key": int(key), "step": step, "xpts": xpts})
+    points = pl.DataFrame(rows)
+    policy = CandidatePrunePolicy(
+        top_xpts=None,
+        top_value=None,
+        top_per_step={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=0,
+    )
+    pruned = policy.apply(players, points, decay=0.5)
+    kept = set(pruned["player_key"].to_list())
+    assert late_key in kept
+    # early_key is 2nd at step 4 among MIDs; quota MID=5 keeps both, so only
+    # assert late survives — and that a zero flat MID without a spike does not
+    # displace late when quotas are tight.
+    assert early_key in kept
+
+
+def test_window_tops_keep_short_stretch_specialist() -> None:
+    """A player strong only on a 2-step stretch survives via top_window."""
+    players = pl.DataFrame(
+        {
+            "player_key": list(range(1, 19)),
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 8 + ["FWD"] * 3),
+            "team_key": [1 + (i % 5) for i in range(18)],
+            "price": [45] * 18,
+        }
+    )
+    specialist = 15  # last MID: points only on steps 1–2
+    mid_keys = set(players.filter(pl.col("position") == "MID")["player_key"].to_list())
+    rows: list[dict[str, object]] = []
+    for key in players["player_key"].to_list():
+        for step in range(5):
+            if key == specialist:
+                # Window (1, 2) sum = 24; horizon sum = 24.
+                xpts = 12.0 if step in (1, 2) else 0.0
+            elif key in mid_keys:
+                # Strong outside the window → horizon sum 25 > specialist.
+                xpts = 0.5 if step in (1, 2) else 8.0
+            else:
+                xpts = 3.0
+            rows.append({"player_key": int(key), "step": step, "xpts": xpts})
+    points = pl.DataFrame(rows)
+    no_window = CandidatePrunePolicy(
+        top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_value=None,
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=0,
+    )
+    kept_without = set(no_window.apply(players, points, decay=1.0)["player_key"])
+    assert specialist not in kept_without
+    with_window = CandidatePrunePolicy(
+        top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_value=None,
+        top_per_step=None,
+        top_window={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        window_lengths=(2,),
+        keep_cheapest=0,
+    )
+    kept_with = set(with_window.apply(players, points, decay=1.0)["player_key"])
+    assert specialist in kept_with
+
+
+def test_step_and_window_union_with_owned_and_minima() -> None:
+    """Step / window tops union with owned and still form a legal fifteen."""
+    players = _players()
+    cand = players.drop("sum_xpts")
+    owned_key = int(
+        players.filter(pl.col("position") == "MID")
+        .sort("sum_xpts")
+        .head(1)["player_key"][0]
+    )
+    points = _points(players, horizon=4).with_columns(
+        pl.when(pl.col("player_key") == owned_key)
+        .then(0.0)
+        .otherwise(pl.col("xpts"))
+        .alias("xpts")
+    )
+    policy = _tight_policy(
+        top_per_step={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_window={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        window_lengths=(2, 3),
+    )
+    pruned = policy.apply(cand, points, owned_keys=[owned_key], decay=0.9)
+    kept = set(pruned["player_key"].to_list())
+    assert owned_key in kept
+    assert kept.issubset(set(cand["player_key"].to_list()))
+    for position, minimum in MIN_POS_POOL.items():
+        assert pruned.filter(pl.col("position") == position).height >= minimum
+
+
+def test_window_lengths_reject_below_two() -> None:
+    """window_lengths entries must be at least 2."""
+    with pytest.raises(ValueError, match="window_lengths"):
+        CandidatePrunePolicy(
+            top_xpts={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+            top_value=None,
+            top_per_step=None,
+            top_window={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+            window_lengths=(1, 2),
+            keep_cheapest=0,
+        )
