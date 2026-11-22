@@ -69,7 +69,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | FPL API `transfers/` (POST) | Submit paired element in/out transfers | Unofficial write API; gated via `fplt apply --confirm` only |
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match; team Deep / PPDA / xG per match | Player rows in `understat_player_matches` (`player_key` null until mapped). Team Deep/PPDA/xG in `understat_team_matches` from league-page `teamsData` (not `getMatchData`) |
-| football-data.co.uk E0 CSV | Closing 1X2 (+ O/U 2.5) → staged `match_odds` | Free history. `odds_kind=closing_proxy`; `available_at=kickoff`. **Closing ≠ FPL deadline** — not deadline-safe PIT. Team names → `team_key` via `configs/football_data/team_names.yaml` |
+| football-data.co.uk E0 CSV | Closing + scheduled-prematch 1X2 (+ O/U 2.5) → staged `match_odds` | Free history. `odds_kind=closing_proxy` (`available_at=kickoff`) and `odds_kind=prematch_scheduled` (non-closing columns; conservative Fri/Tue 17:00 London collection). **Closing ≠ FPL deadline.** Prematch needs the deadline coverage gate when deadline &lt; collection. Team names → `team_key` via `configs/football_data/team_names.yaml` |
 
 ### 4.2 Identifiers
 
@@ -103,7 +103,7 @@ data/
 │   ├── player_fixture_stats/    # actuals from event_live
 │   ├── understat_player_matches/
 │   ├── understat_team_matches/  # Deep / PPDA / team xG per match
-│   └── match_odds/              # closing 1X2 (+ O/U); available_at = kickoff
+│   └── match_odds/              # closing_proxy (+ prematch_scheduled); see §4.4
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
@@ -115,7 +115,7 @@ Raw is stored as gzipped JSON rather than parquet because it is lossless against
 
 Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON plus league `teamsData` onto the `snapshots` branch; the Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
 
-football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` writes `raw/football_data/season=.../E0.csv` once; the Dagster `match_odds_ingest` asset stages `match_odds` with `odds_kind=closing_proxy` and `available_at=kickoff` (closing lines are pre-KO, **not** deadline PIT). Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date.
+football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` writes `raw/football_data/season=.../E0.csv` once; the Dagster `match_odds_ingest` asset stages `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
 
 ### 4.4 Point-in-time access (`PITData`)
 
@@ -124,7 +124,8 @@ Every staged table carries an `available_at` timestamp (UTC):
 - Snapshotted attributes (status, news, price, `ep_next`, `penalties_order`): `available_at = captured_at`.
 - Match results and stats: `available_at` = time the GW was marked `data_checked` (or kickoff + 3h as a historical proxy).
 - Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that date.
-- Closing match odds (`match_odds`): `available_at = kickoff`. This is a **closing_proxy** — bookmaker close is pre-KO, not the FPL deadline.
+- Closing match odds (`match_odds`, `odds_kind=closing_proxy`): `available_at = kickoff`. Bookmaker close is pre-KO, not the FPL deadline.
+- Scheduled prematch odds (`match_odds`, `odds_kind=prematch_scheduled`): `available_at` = conservative football-data collection estimate (Fri/Tue 17:00 London). Still not automatically deadline-legal — gate on `available_at <= deadline`.
 
 `PITData` is the only way models read data:
 
