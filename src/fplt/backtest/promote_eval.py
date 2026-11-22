@@ -284,6 +284,14 @@ class EvalSpec(BaseModel):
     change: ChangeSpec
     control: str
     treatment: str
+    arms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional extra ModelSpec names for a dose / multi-arm readout. "
+            "Control and treatment stay the promote pair; arms share the "
+            "compare window so SPA/MCS can run. Descriptive — not a keep."
+        ),
+    )
     window: WindowSpec = Field(default_factory=WindowSpec)
     suites: SuitesSpec = Field(default_factory=SuitesSpec)
     gates: GatesSpec = Field(default_factory=GatesSpec)
@@ -320,9 +328,35 @@ class EvalSpec(BaseModel):
                 raise ValueError(
                     "equivalence kinds require control == treatment ModelSpec name"
                 )
+            if self.arms:
+                raise ValueError("equivalence kinds must leave arms empty")
         elif self.control == self.treatment:
             raise ValueError("control and treatment must differ")
+        for arm in self.arms:
+            if arm in {self.control, self.treatment}:
+                raise ValueError(
+                    f"arms entry {arm!r} duplicates control or treatment; "
+                    "omit it from arms"
+                )
+        if len(set(self.arms)) != len(self.arms):
+            raise ValueError("arms must be unique")
         return self
+
+
+def compare_arm_names(spec: EvalSpec) -> list[str]:
+    """Return ModelSpec names passed to ``compare`` / ``decisions``.
+
+    Control and treatment first, then any dose ``arms`` (feature-eval §9).
+    """
+    names = [spec.control, spec.treatment, *spec.arms]
+    # Preserve order while dropping accidental duplicates.
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
 
 
 class PromoteEvalPlan(BaseModel):
@@ -335,6 +369,7 @@ class PromoteEvalPlan(BaseModel):
     lever: Lever
     control: str
     treatment: str
+    arms: list[str] = Field(default_factory=list)
     seasons: list[str]
     from_gw: int
     to_gw: int
@@ -498,9 +533,14 @@ def plan_promote_eval(
         raise ValueError(f"from_gw {start} > to_gw {end}")
 
     model_names = set(load_model_specs(models_dir))
-    for arm in (spec.control, spec.treatment):
+    for arm in compare_arm_names(spec):
         if arm not in model_names:
             warnings.append(f"ModelSpec {arm!r} not found under configs/models")
+    if spec.arms:
+        warnings.append(
+            "several arms on one window: SPA/MCS are descriptive; "
+            "keep needs a fresh confirmation window (§9)"
+        )
 
     commands = _commands_for(
         spec,
@@ -521,6 +561,7 @@ def plan_promote_eval(
         lever=spec.change.lever,
         control=spec.control,
         treatment=spec.treatment,
+        arms=list(spec.arms),
         seasons=season_list,
         from_gw=start,
         to_gw=end,
@@ -540,14 +581,20 @@ def format_plan(plan: PromoteEvalPlan) -> str:
     lines = [
         f"promote-eval {plan.eval_name}  kind={plan.kind}  lever={plan.lever}",
         f"  control={plan.control}  treatment={plan.treatment}",
-        f"  seasons={','.join(plan.seasons)}  gw={plan.from_gw}-{plan.to_gw}  "
-        f"seasons_back={plan.seasons_back}  modes={','.join(plan.modes)}",
-        (
-            f"  suites: prediction={plan.suites.prediction} "
-            f"components={plan.suites.components} "
-            f"decisions={plan.suites.decisions}"
-        ),
     ]
+    if plan.arms:
+        lines.append(f"  arms (dose): {' '.join(plan.arms)}")
+    lines.extend(
+        [
+            f"  seasons={','.join(plan.seasons)}  gw={plan.from_gw}-{plan.to_gw}  "
+            f"seasons_back={plan.seasons_back}  modes={','.join(plan.modes)}",
+            (
+                f"  suites: prediction={plan.suites.prediction} "
+                f"components={plan.suites.components} "
+                f"decisions={plan.suites.decisions}"
+            ),
+        ]
+    )
     if plan.diff:
         lines.append("  diff:")
         lines.extend(f"    - {item}" for item in plan.diff)
@@ -2494,13 +2541,14 @@ def _run_compare(
 ) -> tuple[CompareResult, dict[str, float], dict[str, int]]:
     wall: dict[str, float] = {}
     rss: dict[str, int] = {}
-    # One compare call scores both arms under shared windows.
+    # One compare call scores control, treatment, and any dose arms.
+    compare_models_list = [plan.control, plan.treatment, *plan.arms]
     started = time.perf_counter()
     before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     result = compare_models(
         data_dir,
         plan.seasons[0],
-        models=[plan.control, plan.treatment],
+        models=compare_models_list,
         test_from_gw=plan.from_gw,
         test_to_gw=plan.to_gw,
         fit_gw=plan.from_gw if plan.modes == ["walk_forward"] else None,
@@ -2517,7 +2565,7 @@ def _run_compare(
         part = compare_models(
             data_dir,
             season,
-            models=[plan.control, plan.treatment],
+            models=compare_models_list,
             test_from_gw=plan.from_gw,
             test_to_gw=plan.to_gw,
             seasons_back=plan.seasons_back,
@@ -2938,7 +2986,7 @@ def _commands_for(
     warnings: list[str] | None = None,
 ) -> list[str]:
     commands: list[str] = []
-    arms = f"{spec.control} {spec.treatment}"
+    arms = " ".join(compare_arm_names(spec))
     warn = warnings if warnings is not None else []
     if is_equivalence_kind(spec.kind):
         control_ref = spec.change.control_ref or "HEAD"
@@ -3229,6 +3277,7 @@ __all__ = [
     "ReportSpec",
     "SuitesSpec",
     "WindowSpec",
+    "compare_arm_names",
     "default_evals_dir",
     "effective_param",
     "execute_promote_eval",

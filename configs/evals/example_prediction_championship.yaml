@@ -1,0 +1,44 @@
+# Thin multi-arm prediction bakeoff (championship ranking).
+# Reuses fplt compare + content-addressed ledger cache + SPA/MCS.
+# Descriptive on this window — not a promote-eval keep.
+#
+# Dry-run:  uv run fplt bakeoff --bakeoff example_prediction_championship
+# Execute:  uv run fplt bakeoff --bakeoff example_prediction_championship --execute
+#
+# Decision season totals stay on `fplt decisions` / make decisions-board.
+# Pairwise A/B with a recommendation stays on `fplt promote-eval`.
+
+name: example_prediction_championship
+question: >
+  Which of rolling_mean_v1, dc_layered_v2, and lgbm_direct_v1 ranks best
+  on 2024-25 GW1–20 walk-forward (descriptive; not a keep)?
+description: >
+  Example championship bakeoff. Shared window and seasons_back; ledgers
+  come from the promote-eval / compare content-addressed cache.
+
+control: rolling_mean_v1
+models:
+  - rolling_mean_v1
+  - dc_layered_v2
+  - lgbm_direct_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+# Optional: also run these promote-eval EvalSpecs after the multi-arm compare
+# (same ledger cache for the shared control).
+pairwise_evals: []
+
+report:
+  title: "Prediction championship (example)"
+  store_doc: null

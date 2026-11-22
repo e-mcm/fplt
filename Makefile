@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -68,6 +68,20 @@ eval-components:
 promote-eval:
 	@if [ -z "$(EVAL)" ]; then echo "Usage: make promote-eval EVAL=<name>"; exit 1; fi
 	uv run fplt promote-eval --eval $(EVAL) $(ARGS)
+
+# ── Multi-arm prediction bakeoff (compare + SPA/MCS ranking; not a keep) ───────
+# Usage: make bakeoff BAKEOFF=example_prediction_championship
+# Optional: ARGS='--execute' or CLI mode ARGS='--models a b c --control a --season 2024-25 --execute'
+bakeoff:
+	@if [ -z "$(BAKEOFF)" ] && [ -z "$(ARGS)" ]; then \
+		echo "Usage: make bakeoff BAKEOFF=<name>  or  make bakeoff ARGS='--models … --control … --season …'"; \
+		exit 1; \
+	fi
+	@if [ -n "$(BAKEOFF)" ]; then \
+		uv run fplt bakeoff --bakeoff $(BAKEOFF) $(ARGS); \
+	else \
+		uv run fplt bakeoff $(ARGS); \
+	fi
 
 # ── Decision bakeoff (season totals after backtest fills the prediction ledger)
 # Usage: make decisions-board SEASON=2024-25

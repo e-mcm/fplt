@@ -67,6 +67,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
 | Layered component metrics + `n_sims` sweep | `make eval-components SEASON=2024-25` or `uv run fplt eval-components --season 2024-25` |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
+| Prediction championship (multi-arm bakeoff) | `make bakeoff BAKEOFF=example_prediction_championship` or `uv run fplt bakeoff --models … --control … --season …` |
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
@@ -112,6 +113,20 @@ make bootstrap-vaastav
 ```
 
 That clones a sparse checkout into `$FPLT_DATA_DIR/.vaastav` (skipped when `--source` points at an existing vaastav `data/` tree) and copies seasons from `2021-22` onward. Use `--force` to refresh seasons already on disk. Dagster's staged ingest then picks them up via `import_available`. Per-gameweek `value` is staged as `player_status.price` at that GW's deadline (news/chance stay unknown).
+
+### Prediction championship (multi-arm bakeoff)
+
+Thin wrapper on `compare` / promote-eval for championship-style ranking of several ModelSpecs on one shared window (content-addressed ledger cache, SPA/MCS). Descriptive — not a `keep`. Pairwise A/B with a recommendation stays on `fplt promote-eval`. See [`docs/feature-eval-pipeline.md`](docs/feature-eval-pipeline.md) §9 / bakeoff.
+
+```bash
+# YAML BakeoffSpec under configs/evals/
+uv run fplt bakeoff --bakeoff example_prediction_championship          # dry-run plan
+uv run fplt bakeoff --bakeoff example_prediction_championship --execute
+
+# Or CLI models list (≥3 arms including --control)
+uv run fplt bakeoff --models rolling_mean_v1 dc_layered_v2 lgbm_direct_v1 \
+  --control rolling_mean_v1 --season 2024-25 --from-gw 1 --to-gw 20 --execute
+```
 
 ### Historical decision bakeoff
 
