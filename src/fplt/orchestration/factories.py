@@ -30,6 +30,7 @@ import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport
 import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from fplt.backtest.horizons import DEFAULT_PROJECTION_HORIZON
 from fplt.backtest.predict_live import resolve_as_of
 from fplt.backtest.walk_forward import allowed_seasons, horizon_for
 from fplt.data.pit import PITData, PITView
@@ -52,15 +53,13 @@ from fplt.schemas.predictions import PredictionSchema
 from fplt.settings import get_settings
 from fplt.types import GWKey
 
-_DEFAULT_HORIZON = 5
-
 
 class LineageConfig(Config):
     """Optional as-of deadline and prediction horizon for lineage assets."""
 
     season: str | None = None
     gw: int | None = None
-    horizon: int = _DEFAULT_HORIZON
+    horizon: int = DEFAULT_PROJECTION_HORIZON
 
 
 def feature_asset_name(name: str, version: int) -> str:

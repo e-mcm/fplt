@@ -377,7 +377,7 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 ### 7.1 Walk-forward protocol
 
-For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see. Optional `train_window.time_decay` down-weights older rows inside that window for trainers that implement it (see §5.2); it does not expand or shrink the season set.
+For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 10 via `DEFAULT_PROJECTION_HORIZON`, so H=8–10 planning has projections without raising `DEFAULT_PLAN_HORIZON`). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see. Optional `train_window.time_decay` down-weights older rows inside that window for trainers that implement it (see §5.2); it does not expand or shrink the season set.
 
 Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes RMSE (headline) / MAE (secondary) / Spearman / mean per-GW top-10 / event Brier+log summary JSON + parquet, plus calibration tables by xPts decile and position, under `$FPLT_DATA_DIR/compare/`, scored on the decision-relevant player pool (see §7.3).
 
@@ -417,6 +417,7 @@ Component level (layered models):
 - Minutes: Brier score on P(played) and P(60+), reported by stats `source` (snapshot vs vaastav)
 - Involvement: MAE of predicted team goal share vs realised share among players with minutes
 - Monte Carlo: `n_sims` stability sweep (mean/max \|Δxpts\| vs a high-`n` reference, wall time, analytic SE)
+- **Skill by horizon (Wave C4 / M9):** player xPts MAE/RMSE on the decision-relevant pool for lead times H=1…N (`DEFAULT_SKILL_STEPS` = 10). Reuses `compare_models` / `overall_summary`. CLI: `fplt eval-components --points-models … --steps 10` or `fplt horizon-skill` / `make horizon-skill`. Does **not** flip `DEFAULT_PLAN_HORIZON`; chips-on H retune is a season-points decision board (FDB-120).
 - CLI: `fplt eval-components` / `make eval-components` (P0 harness)
 
 ### 7.4 Promote-eval (control vs treatment)
@@ -473,7 +474,7 @@ Season rank alone is a noisy live check (evaluation north star §3). Cache Overa
 | `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats) | season-gw | Typed parquet from raw |
 | `feature__<name>__v<version>` | no (as-of via run config / `resolve_as_of`) | One asset per registered feature version (`orchestration/factories.py`) |
 | `model__<name>` | no (same) | Fitted artifact per points-predictor `ModelSpec` (component YAML skipped) |
-| `predictions__<name>` | no (same) | Predictions for horizon 1..H (default 5); CLI/catch-up stay authoritative |
+| `predictions__<name>` | no (same) | Predictions for horizon 1..H (default 10 via `DEFAULT_PROJECTION_HORIZON`); CLI/catch-up stay authoritative |
 | `ledger_predictions` | season-gw | Appends predictions; joins actuals when available |
 | `squad_plan` | season-gw | Optimiser output for the chosen production model |
 | `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
@@ -543,7 +544,7 @@ A checked gameweek is waiting until `dc_layered_v2` has a plan parquet for that 
 
 ### 10.1 Inputs
 
-- Predictions for horizon H from one predictor (expected points; optionally samples). CLI / `make plan` / `make decisions-board` / `fplt apply` default to **H = 3** (`DEFAULT_PLAN_HORIZON`), from the 2024-25 chips-off horizon sweep (H=3 best cross-model season points; H=4 matched actions at higher solve cost). Match backtest `--steps` to the planner horizon.
+- Predictions for horizon H from one predictor (expected points; optionally samples). Live `fplt predict` / lineage assets default to **H = 10** (`DEFAULT_PROJECTION_HORIZON`) so planners can request 8–10 steps. CLI / `make plan` / `make decisions-board` / `fplt apply` still default to **H = 3** (`DEFAULT_PLAN_HORIZON`), from the 2024-25 chips-off horizon sweep (H=3 best cross-model season points; H=4 matched actions at higher solve cost). Match backtest `--steps` to the planner horizon. Re-tune H with chips on via the three-arm chip board + `make horizon-decisions` before changing the plan default (FDB-120).
 - Squad state: current 15, purchase/selling prices, bank, free transfers available, chips available. `fplt.optimise.decisions.resolve_squad_state` is the shared entry point: YAML draft by default; `entry_json` when provided; otherwise `fplt.data.fpl_client.load_current_team` → `apply_entry_picks` when `FPLT_ENTRY_ID` is set (authenticated `my-team/{id}` needs `FPLT_FPL_API_TOKEN`, the Bearer value from `x-api-authorization`; else public finished-GW picks, no selling prices). `run_plan` (and thus `make plan` / CLI / automation) calls this whenever a pre-built `squad` is not passed. FT from `my-team` replaces the YAML count when it fits the banking cap; chips stay in `configs/squad_state.yaml`.
 - Rules for the season (squad limits, FT banking cap, hit cost).
 

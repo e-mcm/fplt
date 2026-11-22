@@ -35,6 +35,8 @@ from fplt.backtest.component_eval import (
     run_component_eval,
 )
 from fplt.backtest.eval_set import CORE_MODELS
+from fplt.backtest.horizon_skill import format_skill_curve, run_horizon_skill
+from fplt.backtest.horizons import DEFAULT_PROJECTION_HORIZON, DEFAULT_SKILL_STEPS
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.produce_ledger import StaleLedgerCacheError
 from fplt.backtest.promote_eval import (
@@ -177,7 +179,16 @@ def main(argv: list[str] | None = None) -> None:
         help="Predict the next gameweeks",
     )
     predict.add_argument("--model", required=True)
-    predict.add_argument("--horizon", type=int, default=5)
+    predict.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PROJECTION_HORIZON,
+        help=(
+            "Gameweeks to project starting at the as-of "
+            f"(default: {DEFAULT_PROJECTION_HORIZON}; plan default stays "
+            f"{DEFAULT_PLAN_HORIZON})"
+        ),
+    )
     predict.add_argument("--season")
     predict.add_argument("--gw", type=int)
     plan = sub.add_parser(
@@ -311,7 +322,10 @@ def main(argv: list[str] | None = None) -> None:
     eval_components = sub.add_parser(
         "eval-components",
         parents=[log_flags],
-        help="Layered component metrics (RPS, minutes Brier, involvement, n_sims)",
+        help=(
+            "Layered component metrics (RPS, minutes Brier, involvement, "
+            "n_sims) plus optional points skill-by-horizon"
+        ),
     )
     eval_components.add_argument("--season", required=True)
     eval_components.add_argument("--from-gw", type=int, default=1)
@@ -347,6 +361,23 @@ def main(argv: list[str] | None = None) -> None:
         help="Composite YAML for the n_sims sweep",
     )
     eval_components.add_argument(
+        "--points-models",
+        nargs="+",
+        help=(
+            "PointsPredictor YAML names for skill-by-horizon "
+            f"(MAE/RMSE for H=1…--steps; default steps={DEFAULT_SKILL_STEPS})"
+        ),
+    )
+    eval_components.add_argument(
+        "--steps",
+        type=int,
+        default=DEFAULT_SKILL_STEPS,
+        help=(
+            "Lead times for --points-models "
+            f"(default: {DEFAULT_SKILL_STEPS}; ignored without --points-models)"
+        ),
+    )
+    eval_components.add_argument(
         "--sims",
         nargs="+",
         type=int,
@@ -364,6 +395,36 @@ def main(argv: list[str] | None = None) -> None:
         "--output-dir",
         type=Path,
         help="Write summary JSON/parquet here",
+    )
+    horizon_skill = sub.add_parser(
+        "horizon-skill",
+        parents=[log_flags],
+        help=(
+            "Walk-forward MAE/RMSE by lead time (H=1…N); wraps compare "
+            f"(default steps={DEFAULT_SKILL_STEPS})"
+        ),
+    )
+    horizon_skill.add_argument("--season", required=True)
+    horizon_skill.add_argument("--from-gw", type=int, default=1)
+    horizon_skill.add_argument("--to-gw", type=int, default=20)
+    horizon_skill.add_argument(
+        "--steps",
+        type=int,
+        default=DEFAULT_SKILL_STEPS,
+        help=f"Lead times to score (default: {DEFAULT_SKILL_STEPS})",
+    )
+    horizon_skill.add_argument(
+        "--models",
+        nargs="+",
+        help="PointsPredictor YAML names (default: compare core set)",
+    )
+    horizon_skill.add_argument("--seasons-back", type=int)
+    horizon_skill.add_argument("--with-openfpl", action="store_true")
+    horizon_skill.add_argument("--openfpl-model-dir")
+    horizon_skill.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write horizon_skill JSON/parquet here",
     )
     bakeoff = sub.add_parser(
         "bakeoff",
@@ -651,6 +712,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "eval-components":
         _eval_components(args)
         return
+    if args.command == "horizon-skill":
+        _horizon_skill(args)
+        return
     if args.command == "promote-eval":
         _promote_eval(args)
         return
@@ -909,15 +973,41 @@ def _eval_components(args: argparse.Namespace) -> None:
             layered_model=str(args.layered_model),
             sims=sims,
             output_dir=args.output_dir,
+            points_models=list(args.points_models) if args.points_models else None,
+            steps=int(args.steps),
         )
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, StaleLedgerCacheError) as exc:
         logger.error("eval-components failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_component_table(result.summary))
     if not result.sims.is_empty():
         print(result.sims)
+    if not result.horizon_skill.is_empty():
+        print(format_skill_curve(result.horizon_skill))
     print(f"wrote {result.output_dir / 'summary.json'}")
+
+
+def _horizon_skill(args: argparse.Namespace) -> None:
+    try:
+        result = run_horizon_skill(
+            get_settings().data_dir,
+            args.season,
+            models=list(args.models) if args.models else None,
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            steps=int(args.steps),
+            seasons_back=args.seasons_back,
+            with_openfpl=bool(args.with_openfpl),
+            openfpl_model_dir=args.openfpl_model_dir,
+            output_dir=args.output_dir,
+        )
+    except (ValueError, KeyError, StaleLedgerCacheError) as exc:
+        logger.error("horizon-skill failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_skill_curve(result.curve))
+    print(f"wrote {result.output_dir / 'horizon_skill.json'}")
 
 
 def _promote_eval(args: argparse.Namespace) -> None:

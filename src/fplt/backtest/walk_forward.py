@@ -11,6 +11,7 @@ import time
 
 import polars as pl
 
+from fplt.backtest.horizons import DEFAULT_PROJECTION_HORIZON
 from fplt.data.pit import PITData, PITView
 from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec
@@ -58,7 +59,7 @@ def walk_forward(
     model: PointsPredictor,
     pit: PITData,
     as_ofs: list[GWKey],
-    steps: int = 5,
+    steps: int = DEFAULT_PROJECTION_HORIZON,
     run_kind: str = "backtest",
 ) -> pl.DataFrame:
     """Fit and predict at each as-of deadline.
@@ -67,7 +68,9 @@ def walk_forward(
         model: Predictor whose ``spec`` supplies the refit policy and window.
         pit: Source of point-in-time views.
         as_ofs: Deadlines to evaluate, in order.
-        steps: Horizon length. The default is 5.
+        steps: Horizon length. Default is ``DEFAULT_PROJECTION_HORIZON`` (10)
+            so planning can request H=8–10 without re-predicting; CLI
+            backtest/compare still pass an explicit ``steps``.
         run_kind: ``backtest`` or ``live``.
 
     Returns:
