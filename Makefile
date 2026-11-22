@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -145,6 +145,24 @@ chip-decision-board:
 		$(if $(MODELS),--models $(MODELS),) \
 		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
 		$(if $(TO_GW),--to-gw $(TO_GW),) \
+		$(ARGS)
+
+# Chip-arm simulated-season SE smoke (N6). Short GW window × few CRN paths —
+# not a full 38-GW × large-N board. Needs prediction ledger with actuals and
+# --steps matching HORIZON. Does not flip DEFAULT_PLAN_HORIZON or live chips.
+# Usage: make sim-season-smoke SEASON=2025-26
+# Optional: FROM_GW=1 TO_GW=3 N_PATHS=3 SEED=0 MODELS='dc_layered_v2'
+#           RULES_SEASON=2025-26 HORIZON=3 ARGS='--chip-arms off optimised'
+sim-season-smoke:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make sim-season-smoke SEASON=2025-26"; exit 1; fi
+	uv run fplt sim-season --season $(SEASON) \
+		--from-gw $(or $(FROM_GW),1) \
+		--to-gw $(or $(TO_GW),3) \
+		--horizon $(or $(HORIZON),3) \
+		--n-paths $(or $(N_PATHS),5) \
+		--seed $(or $(SEED),0) \
+		$(if $(RULES_SEASON),--chip-rules-season $(RULES_SEASON),) \
+		$(if $(MODELS),--models $(MODELS),) \
 		$(ARGS)
 
 # Multi-horizon decision bakeoff. Prediction ledger must already cover max H

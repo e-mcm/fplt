@@ -87,6 +87,8 @@ __all__ = [
     "summarise_chip_decisions",
     "summarise_decisions",
     "write_decisions",
+    "prediction_rows_from_ledger",
+    "actual_rows_from_ledger",
 ]
 
 
@@ -953,6 +955,44 @@ def explain_decision_gameweek(
         f"hit={hit:.0f} free_transfers={int(part['free_transfers'][0])}\n"
     )
     return header + explain_gameweek(part, hit=hit, names=names)
+
+
+def prediction_rows_from_ledger(
+    ledger: pl.DataFrame, model_id: str, season: str
+) -> pl.DataFrame:
+    """Collapse prediction-ledger xPts to planner grain for one model/season.
+
+    Deduplicates per fixture before summing so walk-forward re-appends and
+    double gameweeks do not inflate ``xpts``.
+
+    Args:
+        ledger: Prediction ledger frame (or empty).
+        model_id: Content-addressed model id.
+        season: ``as_of_season`` / ``target_season`` to keep.
+
+    Returns:
+        ``as_of_gw``, ``target_gw``, ``player_key``, ``xpts``.
+    """
+    return _prediction_rows(ledger, model_id, season)
+
+
+def actual_rows_from_ledger(
+    ledger: pl.DataFrame, model_id: str, season: str
+) -> pl.DataFrame:
+    """Collapse prediction-ledger actuals to one row per player-gameweek.
+
+    Deduplicates per fixture before summing so walk-forward ledgers do not
+    double-count realised points.
+
+    Args:
+        ledger: Prediction ledger frame (or empty).
+        model_id: Content-addressed model id.
+        season: ``target_season`` to keep.
+
+    Returns:
+        ``gw``, ``player_key``, ``actual_pts``, ``actual_minutes``.
+    """
+    return _actual_rows(ledger, model_id, season)
 
 
 def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.DataFrame:
