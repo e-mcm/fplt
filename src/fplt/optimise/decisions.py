@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -287,6 +288,7 @@ def simulate_decisions(
                 state=current,
                 gameweeks=gameweeks,
             )
+        started = time.perf_counter()
         solved = plan_squad(
             pool,
             _window_points(predictions, gameweek, window),
@@ -297,6 +299,15 @@ def simulate_decisions(
             gameweeks=window if chip_arm != "off" else None,
             chip_windows=active_windows if chip_arm != "off" else None,
             chip_rules_season=rules_season if chip_arm != "off" else None,
+        )
+        logger.info(
+            "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
+            gameweek,
+            chip_arm,
+            len(window),
+            pool.height,
+            time.perf_counter() - started,
+            solved.points,
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
         current = _advance(current, solved, pool, gameweek=gameweek, rules=rules)
