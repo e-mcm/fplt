@@ -264,6 +264,7 @@ def simulate_decisions(
     current = _ensure_chip_inventory(state, rules) if rules is not None else state
     scored = _actuals(actuals)
     rows: list[dict[str, object]] = []
+    prior_plan: GameweekPlan | None = None
     for gameweek in gameweeks:
         window = [
             gameweek + offset for offset in range(horizon) if gameweek + offset <= 38
@@ -299,6 +300,7 @@ def simulate_decisions(
             gameweeks=window if chip_arm != "off" else None,
             chip_windows=active_windows if chip_arm != "off" else None,
             chip_rules_season=rules_season if chip_arm != "off" else None,
+            warm_start=prior_plan,
         )
         logger.info(
             "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
@@ -311,6 +313,7 @@ def simulate_decisions(
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
         current = _advance(current, solved, pool, gameweek=gameweek, rules=rules)
+        prior_plan = solved
     if not rows:
         return _empty_decisions()
     # Explicit schema: early null chips must not freeze the column as Null

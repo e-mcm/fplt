@@ -9,10 +9,10 @@ from fplt.optimise.highs_options import HighsSolveOptions
 
 
 def test_open_fpl_defaults_accept_time_limit() -> None:
-    """Default options mirror open-fpl (600s) and accept incumbents."""
+    """Default options use 600s, a small MIP gap, and accept incumbents."""
     options = HighsSolveOptions.open_fpl_defaults()
     assert options.time_limit == 600.0
-    assert options.mip_rel_gap == 0.0
+    assert options.mip_rel_gap == pytest.approx(1e-3)
     assert options.accepts_status(highspy.HighsModelStatus.kOptimal)
     assert options.accepts_status(highspy.HighsModelStatus.kTimeLimit)
 

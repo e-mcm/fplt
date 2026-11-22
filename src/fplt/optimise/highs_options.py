@@ -1,9 +1,10 @@
 """HiGHS solve options for the transfer MILP.
 
 open-fpl-solver (FPL-Optimization-Tools) sets ``time_limit`` (``secs``),
-``mip_rel_gap`` (``gap``), ``presolve``, and ``parallel``. We previously
-only forced ``mip_rel_gap=0`` with no wall-clock limit, so fat H=8 models
-could hang indefinitely. This policy makes those knobs explicit.
+``mip_rel_gap`` (``gap``), ``presolve``, and ``parallel``. We ship a 600s
+time limit and a small ``mip_rel_gap`` (1e-3) so fat H≥6 models finish;
+reference / harness solves still pass ``mip_rel_gap=0`` when proving
+optimality matters.
 """
 
 from __future__ import annotations
@@ -34,11 +35,13 @@ class HighsSolveOptions(BaseModel):
         ),
     )
     mip_rel_gap: float = Field(
-        default=0.0,
+        default=1e-3,
         ge=0.0,
         description=(
             "Relative MIP gap. 0 proves optimality when the solve finishes. "
-            "open-fpl ``gap`` default is 0; try 1e-3 to stop earlier."
+            "Production default is 1e-3 so fat H≥6 models stop earlier; "
+            "week-1 actions stay stable on the pruning-loss harness. "
+            "Use 0 for reference / equivalence solves."
         ),
     )
     output_flag: bool = Field(
@@ -102,10 +105,14 @@ class HighsSolveOptions(BaseModel):
 
     @classmethod
     def open_fpl_defaults(cls) -> HighsSolveOptions:
-        """Return open-fpl-like HiGHS settings (600s, gap 0, parallel on)."""
+        """Return production HiGHS settings (600s, gap 1e-3, parallel on).
+
+        open-fpl uses gap 0; we ship a small relative gap so long-horizon
+        MILPs finish sooner without changing executable week-1 actions.
+        """
         return cls(
             time_limit=600.0,
-            mip_rel_gap=0.0,
+            mip_rel_gap=1e-3,
             output_flag=False,
             presolve="on",
             parallel="on",
