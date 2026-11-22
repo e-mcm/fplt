@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import highspy
@@ -94,6 +94,10 @@ class GameweekPlan:
 
     ``chips`` is one entry per horizon step: ``\"wildcard\"``, ``\"freehit\"``,
     ``\"bboost\"``, ``\"3xc\"``, or ``None``.
+
+    ``solve_elapsed`` / ``mip_status`` / ``pool_size`` are filled by
+    ``plan_squad`` for the pruning-loss harness and logging; older
+    constructors may leave them unset.
     """
 
     picks: pl.DataFrame
@@ -101,6 +105,9 @@ class GameweekPlan:
     free_transfers: tuple[int, ...]
     points: float
     chips: tuple[str | None, ...] = ()
+    solve_elapsed: float | None = None
+    mip_status: str | None = None
+    pool_size: int | None = None
 
 
 def plan_squad(
@@ -243,7 +250,13 @@ def plan_squad(
     if not options.accepts_status(status):
         raise ValueError("no plan satisfies the budget, positions, and club limits")
     log_solve_status(status, options=options)
-    return _read(solver, pool, expected, columns, state, initial, horizon, rules)
+    plan = _read(solver, pool, expected, columns, state, initial, horizon, rules)
+    return replace(
+        plan,
+        solve_elapsed=float(elapsed),
+        mip_status=status.name,
+        pool_size=int(count),
+    )
 
 
 def plan_table(
