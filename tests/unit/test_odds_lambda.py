@@ -7,9 +7,13 @@ from hypothesis import strategies as st
 
 from fplt.models.components.score.odds_lambda import (
     blend_lambda,
+    cs_probs_from_lambda,
     de_vig,
     independent_poisson_markets,
     odds_to_lambda,
+    outcome_probs_from_joint,
+    rescale_joint_cs_margins,
+    rescale_joint_to_1x2,
 )
 
 
@@ -74,3 +78,32 @@ def test_blend_lambda_moves_toward_market() -> None:
     assert mid == pytest.approx(2.0)
     strong = blend_lambda(1.0, 3.0, 9.0)
     assert abs(strong - 3.0) < abs(mid - 3.0)
+
+
+def test_cs_probs_from_lambda_match_poisson_zero() -> None:
+    p_cs_home, p_cs_away = cs_probs_from_lambda(1.5, 0.8)
+    assert p_cs_home == pytest.approx(float(np.exp(-0.8)))
+    assert p_cs_away == pytest.approx(float(np.exp(-1.5)))
+    # Stronger away attack → lower home CS.
+    high_away = cs_probs_from_lambda(1.5, 2.0)[0]
+    assert high_away < p_cs_home
+
+
+def test_rescale_joint_cs_margins_hits_targets_then_1x2_restore() -> None:
+    goals = np.arange(8)
+    shape = np.outer(np.exp(-goals / 2.0), np.exp(-goals / 2.5))
+    shape /= shape.sum()
+    target_cs_h, target_cs_a = 0.35, 0.28
+    adjusted = rescale_joint_cs_margins(shape, target_cs_h, target_cs_a)
+    # Sequential CS rescale leaves a small residual on the second margin.
+    assert abs(float(adjusted[:, 0].sum()) - target_cs_h) < 0.05
+    assert abs(float(adjusted[0, :].sum()) - target_cs_a) < 0.05
+    p_h, p_d, p_a = outcome_probs_from_joint(shape)
+    restored = rescale_joint_to_1x2(
+        adjusted, float(p_h[0]), float(p_d[0]), float(p_a[0])
+    )
+    rh, rd, ra = outcome_probs_from_joint(restored)
+    assert float(rh[0]) == pytest.approx(float(p_h[0]), abs=1e-9)
+    assert float(rd[0]) == pytest.approx(float(p_d[0]), abs=1e-9)
+    assert float(ra[0]) == pytest.approx(float(p_a[0]), abs=1e-9)
+    assert float(restored.sum()) == pytest.approx(1.0)

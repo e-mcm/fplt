@@ -1268,3 +1268,114 @@ def test_closing_proxy_read_requires_flag(tmp_path: Path) -> None:
         result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
     assert not result.ok
     assert any("closing_proxy_labelled" in f for f in result.failures)
+
+
+def test_prematch_coverage_passes_for_cs_only_arm(tmp_path: Path) -> None:
+    # Prematch collected Fri afternoon; FPL deadline Sat 11:00 → legal.
+    available = datetime(2024, 8, 16, 16, tzinfo=UTC)
+    store = _seed_odds_store(tmp_path, available_at=available)
+    odds = store.read("match_odds").with_columns(
+        pl.lit("prematch_scheduled").alias("odds_kind")
+    )
+    store.write("match_odds", _utc(odds))
+    payload = _base_payload(
+        name="cs_prematch_ok",
+        kind="data",
+        question="prematch CS coverage?",
+        change={
+            "lever": "data_table",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "tables": ["match_odds"],
+            "diff": ["market_cs_strength: 0 → 0.5"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_cs_v1",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": False, "components": True},
+        gates={
+            "min_coverage": 0.80,
+            "coverage": {"metric": "odds_join", "read": "prematch_scheduled"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "cs_prematch_ok", payload)
+    spec = load_eval_spec("cs_prematch_ok", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.passed
+    assert result.coverage.rate == 1.0
+    assert result.coverage.extras.get("read") == "prematch_scheduled"
+    assert result.effective_flags.get("treatment.market_cs_strength") == 0.5
+
+
+def test_prematch_read_rejects_closing_proxy_flag(tmp_path: Path) -> None:
+    from fplt.backtest.promote_eval import _coverage_odds_join
+
+    available = datetime(2024, 8, 16, 16, tzinfo=UTC)
+    store = _seed_odds_store(tmp_path, available_at=available)
+    payload = _base_payload(
+        name="cs_proxy_bad",
+        kind="data",
+        question="proxy with prematch read?",
+        change={
+            "lever": "data_table",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "tables": ["match_odds"],
+            "diff": ["market_cs_strength"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_cs_v1",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": False, "components": True},
+        gates={
+            "min_coverage": 0.8,
+            "coverage": {"metric": "odds_join", "read": "prematch_scheduled"},
+        },
+    )
+    _write_eval(tmp_path, "cs_proxy_bad", payload)
+    spec = load_eval_spec("cs_proxy_bad", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    bad_treatment = ModelSpec(
+        name="dc_layered_cs_proxy",
+        kind="dc_layered",
+        components={
+            "score": ModelSpec(
+                name="dixon_coles_cs_proxy",
+                kind="dixon_coles",
+                params={"market_cs_strength": 0.5, "use_closing_proxy": True},
+            )
+        },
+    )
+    fixtures = store.read("fixtures")
+    with pytest.raises(ValueError, match="prematch_scheduled"):
+        _coverage_odds_join(spec, plan, store, fixtures, bad_treatment)
+
+
+def test_cs_only_eval_spec_loads_from_configs() -> None:
+    spec = load_eval_spec("cs_only_market_lambda_ab")
+    assert spec.control == "dc_layered_v2"
+    assert spec.treatment == "dc_layered_cs_v1"
+    assert spec.change.orientation == "opt_in"
+    assert spec.gates.coverage.read == "prematch_scheduled"
+    assert spec.gates.min_coverage == 0.80
+    assert spec.suites.components is True
+    assert "brier_cs_home" in (spec.gates.keep_if.components_any or [])
