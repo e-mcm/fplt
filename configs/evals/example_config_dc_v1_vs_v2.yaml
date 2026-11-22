@@ -2,6 +2,7 @@
 # Real promote-evals should change one lever only; this file exercises the loader.
 name: example_config_dc_v1_vs_v2
 kind: config
+question: "Scaffold only: does dc_layered_v2 differ from v1 on xPts? (multi-lever)"
 description: "dc_layered_v1 vs dc_layered_v2 (scaffold; multi-lever — prefer single-knob forks)"
 
 change:
@@ -11,6 +12,7 @@ change:
   treatment_kind: dc_layered
   tables: []
   features: []
+  allow_multi_lever: true
   diff:
     - "composite v1 → v2 (score/minutes/involvement/other params)"
   notes: "Example only. For real xi/seasons_back screens, fork one param."

@@ -20,6 +20,7 @@ from fplt.backtest.component_eval import (
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.promote_eval import (
+    execute_promote_eval,
     format_plan,
     load_eval_spec,
     plan_promote_eval,
@@ -305,8 +306,8 @@ def main(argv: list[str] | None = None) -> None:
         "promote-eval",
         parents=[log_flags],
         help=(
-            "Control vs treatment EvalSpec plan "
-            "(data / feature / config / component / model)"
+            "Control vs treatment EvalSpec: dry-run plan or execute "
+            "(preflight + compare + recommendation)"
         ),
     )
     promote_eval.add_argument(
@@ -318,17 +319,22 @@ def main(argv: list[str] | None = None) -> None:
         "--dry-run",
         action="store_true",
         default=True,
-        help="Print the suite plan without fitting (default / only mode in v1)",
+        help="Print the suite plan without fitting (default)",
     )
     promote_eval.add_argument(
         "--execute",
         action="store_true",
-        help="Attempt execute path (not implemented yet; exits 2)",
+        help="Run preflight and prediction compare; write recommendation.md",
+    )
+    promote_eval.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Continue with a dirty tree; forces inconclusive",
     )
     promote_eval.add_argument(
         "--tier",
         choices=("S0", "S1", "S2", "S3", "S4"),
-        help="Clamp to_gw / disable decisions for S0–S2",
+        help="Clamp to_gw / disable decisions for S0–S2; S0 is preflight only",
     )
     promote_eval.add_argument("--from-gw", type=int)
     promote_eval.add_argument("--to-gw", type=int)
@@ -343,9 +349,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Force decisions suite off",
     )
     promote_eval.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write plan/audit/recommendation here",
+    )
+    promote_eval.add_argument(
         "--json",
         action="store_true",
-        help="Print plan JSON instead of the text table",
+        help="Print plan JSON instead of the text table (dry-run)",
     )
     auth = sub.add_parser(
         "auth",
@@ -656,26 +667,47 @@ def _promote_eval(args: argparse.Namespace) -> None:
     dry_run = not bool(args.execute)
     try:
         spec = load_eval_spec(str(args.eval))
-        plan = plan_promote_eval(
+        if dry_run:
+            plan = plan_promote_eval(
+                spec,
+                dry_run=True,
+                tier=args.tier,
+                from_gw=args.from_gw,
+                to_gw=args.to_gw,
+                seasons=list(args.seasons) if args.seasons else None,
+                skip_decisions=bool(args.skip_decisions),
+            )
+            if args.json:
+                print(plan_to_json(plan), end="")
+            else:
+                print(format_plan(plan))
+            return
+        result = execute_promote_eval(
             spec,
-            dry_run=dry_run,
+            data_dir=get_settings().data_dir,
+            dry_run=False,
             tier=args.tier,
             from_gw=args.from_gw,
             to_gw=args.to_gw,
             seasons=list(args.seasons) if args.seasons else None,
             skip_decisions=bool(args.skip_decisions),
+            allow_dirty=bool(args.allow_dirty),
+            output_dir=args.output_dir,
+            argv=sys.argv[1:],
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, KeyError) as exc:
         logger.error("promote-eval failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
-    if args.json:
-        print(plan_to_json(plan), end="")
-    else:
-        print(format_plan(plan))
-    if not dry_run:
-        print("promote-eval execute path not implemented yet", file=sys.stderr)
-        raise SystemExit(2)
+    print(result.recommendation, end="")
+    print(f"wrote {result.output_dir}", file=sys.stderr)
+    if result.preflight.failures and result.exit_code == 2:
+        print(
+            "preflight failed: " + "; ".join(result.preflight.failures),
+            file=sys.stderr,
+        )
+    if result.exit_code != 0:
+        raise SystemExit(result.exit_code)
 
 
 def _decisions(args: argparse.Namespace) -> None:

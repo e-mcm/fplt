@@ -1,21 +1,35 @@
-"""Tests for EvalSpec loading and promote-eval dry-run planning."""
+"""Tests for EvalSpec loading, preflight, coverage, and promote-eval execute."""
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
+import polars as pl
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from fplt.backtest.promote_eval import (
     EvalSpec,
+    execute_promote_eval,
     format_plan,
     load_eval_spec,
     plan_promote_eval,
     plan_to_json,
+    preflight_promote_eval,
+    render_recommendation,
 )
 from fplt.cli import main
+from fplt.data.store import DataStore
+from fplt.models.spec import ModelSpec
+
+_START = datetime(2025, 8, 1, tzinfo=UTC)
+_DEADLINE_GW1 = datetime(2025, 8, 15, 17, tzinfo=UTC)
+_KICKOFF_GW1 = datetime(2025, 8, 16, 14, tzinfo=UTC)
 
 
 def _write_eval(folder: Path, name: str, payload: dict[str, object]) -> Path:
@@ -29,12 +43,15 @@ def _base_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "name": "demo_swap",
         "kind": "component",
+        "question": "Does a minutes swap move xPts?",
         "description": "minutes swap",
         "change": {
             "lever": "component_swap",
+            "orientation": "opt_in",
             "slot": "minutes",
             "control_kind": "empirical_minutes_v2",
             "treatment_kind": "lgbm_minutes",
+            "allow_multi_lever": True,
             "diff": ["components.minutes.kind: empirical_minutes_v2 → lgbm_minutes"],
         },
         "control": "dc_layered_v2",
@@ -55,6 +72,182 @@ def _base_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def _utc(frame: pl.DataFrame) -> pl.DataFrame:
+    exprs = [
+        pl.col(name).cast(pl.Datetime("us", "UTC"))
+        for name, dtype in frame.schema.items()
+        if isinstance(dtype, pl.Datetime)
+    ]
+    return frame.with_columns(exprs) if exprs else frame
+
+
+def _seed_pens_store(
+    root: Path, *, order: int | None, source: str = "fpl_api"
+) -> DataStore:
+    store = DataStore(root)
+    season = "2025-26"
+    store.write(
+        "gameweeks",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season],
+                    "gw": [1],
+                    "deadline_time": [_DEADLINE_GW1],
+                    "finished": [False],
+                    "data_checked": [False],
+                    "available_at": [_START],
+                    "source": ["fpl_api"],
+                }
+            )
+        ),
+    )
+    store.write(
+        "fixtures",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season],
+                    "fixture_id": [1],
+                    "gw": [1],
+                    "team_h_key": [3],
+                    "team_a_key": [7],
+                    "kickoff_time": [_KICKOFF_GW1],
+                    "team_h_score": [None],
+                    "team_a_score": [None],
+                    "finished": [False],
+                    "available_at": [_START],
+                    "source": ["fpl_api"],
+                }
+            )
+        ),
+    )
+    store.write(
+        "player_status",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "player_key": [100, 200],
+                    "status": ["a", "a"],
+                    "news": ["", ""],
+                    "price": [70, 80],
+                    "ep_next": [3.0, 4.0],
+                    "chance_of_playing": [100.0, 100.0],
+                    "penalties_order": [order, None],
+                    "available_at": [_START, _START],
+                    "source": [source, source],
+                }
+            )
+        ),
+    )
+    store.write(
+        "player_fixture_stats",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "gw": [1, 1],
+                    "player_key": [100, 200],
+                    "fixture_id": [1, 1],
+                    "minutes": [90, 90],
+                    "total_points": [5, 6],
+                    "goals_scored": [0, 0],
+                    "assists": [0, 0],
+                    "clean_sheets": [0, 0],
+                    "goals_conceded": [1, 1],
+                    "saves": [0, 0],
+                    "bonus": [0, 0],
+                    "yellow_cards": [0, 0],
+                    "red_cards": [0, 0],
+                    "own_goals": [0, 0],
+                    "penalties_saved": [0, 0],
+                    "penalties_missed": [0, 0],
+                    "starts": [1, 1],
+                    "influence": [0.0, 0.0],
+                    "creativity": [0.0, 0.0],
+                    "threat": [0.0, 0.0],
+                    "bps": [10, 12],
+                    "clearances_blocks_interceptions": [0, 0],
+                    "tackles": [0, 0],
+                    "recoveries": [0, 0],
+                    "defensive_contribution": [0, 0],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    return store
+
+
+def _seed_odds_store(root: Path, *, available_at: datetime) -> DataStore:
+    store = DataStore(root)
+    season = "2024-25"
+    deadline = datetime(2024, 8, 16, 17, tzinfo=UTC)
+    kickoff = datetime(2024, 8, 17, 14, tzinfo=UTC)
+    start = datetime(2024, 8, 1, tzinfo=UTC)
+    store.write(
+        "gameweeks",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season],
+                    "gw": [1],
+                    "deadline_time": [deadline],
+                    "finished": [False],
+                    "data_checked": [False],
+                    "available_at": [start],
+                    "source": ["fpl_api"],
+                }
+            )
+        ),
+    )
+    store.write(
+        "fixtures",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season],
+                    "fixture_id": [10],
+                    "gw": [1],
+                    "team_h_key": [3],
+                    "team_a_key": [7],
+                    "kickoff_time": [kickoff],
+                    "team_h_score": [None],
+                    "team_a_score": [None],
+                    "finished": [False],
+                    "available_at": [start],
+                    "source": ["fpl_api"],
+                }
+            )
+        ),
+    )
+    store.write(
+        "match_odds",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season],
+                    "fixture_id": [10],
+                    "team_h_key": [3],
+                    "team_a_key": [7],
+                    "kickoff_time": [kickoff],
+                    "home_odds": [2.1],
+                    "draw_odds": [3.4],
+                    "away_odds": [3.5],
+                    "over_25_odds": [1.9],
+                    "under_25_odds": [1.9],
+                    "odds_kind": ["closing_proxy"],
+                    "available_at": [available_at],
+                    "source": ["football_data"],
+                }
+            )
+        ),
+    )
+    return store
+
+
 def test_eval_spec_rejects_kind_lever_mismatch() -> None:
     with pytest.raises(ValidationError):
         EvalSpec.model_validate(
@@ -67,6 +260,11 @@ def test_eval_spec_rejects_kind_lever_mismatch() -> None:
                 },
             )
         )
+
+
+def test_eval_spec_rejects_blank_question() -> None:
+    with pytest.raises(ValidationError):
+        EvalSpec.model_validate(_base_payload(question="   "))
 
 
 def test_component_swap_requires_slot() -> None:
@@ -162,11 +360,13 @@ def test_repo_example_evals_load() -> None:
         "example_component_minutes_v1_vs_v2",
         "example_model_lgbm_vs_rolling",
         "example_data_odds_prior",
+        "pens_order_involvement_ab",
     ):
         spec = load_eval_spec(name)
         plan = plan_promote_eval(spec, dry_run=True)
         assert plan.eval_name == name
         assert plan.commands
+        assert spec.question.strip()
 
 
 def test_cli_promote_eval_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
@@ -187,24 +387,666 @@ def test_cli_promote_eval_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
     assert "dry-run" in out
 
 
-def test_cli_promote_eval_execute_exits(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "promote-eval",
-                "--eval",
-                "example_model_lgbm_vs_rolling",
-                "--execute",
-            ]
-        )
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "not implemented" in err
-
-
 def test_cli_promote_eval_missing_eval() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["promote-eval", "--eval", "does_not_exist_zz"])
     assert exc.value.code == 2
+
+
+def test_preflight_orientation_pens(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=False, to_gw=1)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(
+            spec, plan, data_dir=tmp_path, allow_dirty=False
+        )
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.metric == "penalties_order_non_null"
+    assert result.coverage.passed
+    assert result.effective_flags["control.use_penalties_order"] is False
+    assert result.effective_flags["treatment.use_penalties_order"] is True
+
+
+def test_preflight_pens_coverage_drop_on_all_null(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=None, source="vaastav")
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=False, to_gw=1)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok  # coverage miss is not a structural failure
+    assert result.coverage is not None
+    assert not result.coverage.passed
+    assert result.coverage.rate == 0.0
+
+
+def test_preflight_odds_strict_pit_misses_kickoff_rows(tmp_path: Path) -> None:
+    kickoff = datetime(2024, 8, 17, 14, tzinfo=UTC)
+    _seed_odds_store(tmp_path, available_at=kickoff)
+    payload = _base_payload(
+        name="odds_ab",
+        kind="config",
+        question="Does the odds prior help?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "tables": ["match_odds"],
+            "diff": ["market_prior_strength: 0 → 1.0"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_odds_v1",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.80,
+            "coverage": {"metric": "odds_join", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "odds_ab", payload)
+    spec = load_eval_spec("odds_ab", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.coverage is not None
+    assert result.coverage.rate == 0.0
+    assert not result.coverage.passed
+    assert result.pit_caveat is not None
+    assert "Strict-PIT" in result.pit_caveat
+
+
+def test_preflight_dc_season_eligible(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    for season, gw_deadline in (
+        ("2024-25", datetime(2024, 8, 16, 17, tzinfo=UTC)),
+        ("2025-26", _DEADLINE_GW1),
+    ):
+        store.write(
+            "gameweeks",
+            _utc(
+                pl.DataFrame(
+                    {
+                        "season": [season],
+                        "gw": [1],
+                        "deadline_time": [gw_deadline],
+                        "finished": [False],
+                        "data_checked": [False],
+                        "available_at": [_START],
+                        "source": ["fpl_api"],
+                    }
+                )
+            ),
+        )
+        store.write(
+            "fixtures",
+            _utc(
+                pl.DataFrame(
+                    {
+                        "season": [season],
+                        "fixture_id": [1 if season == "2024-25" else 2],
+                        "gw": [1],
+                        "team_h_key": [3],
+                        "team_a_key": [7],
+                        "kickoff_time": [gw_deadline + timedelta(days=1)],
+                        "team_h_score": [None],
+                        "team_a_score": [None],
+                        "finished": [False],
+                        "available_at": [_START],
+                        "source": ["fpl_api"],
+                    }
+                )
+            ),
+        )
+    payload = _base_payload(
+        name="defcon_ab",
+        kind="config",
+        question="Does defensive contribution help on 2025-26?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_out",
+            "slot": "other",
+            "control_kind": "other_player",
+            "treatment_kind": "other_player",
+            "diff": ["use_defensive_contribution: false → true"],
+        },
+        control="dc_layered_nodefcon_v1",
+        treatment="dc_layered_v2",
+        window={
+            "seasons": ["2024-25", "2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 1.0,
+            "coverage": {"metric": "dc_season_eligible", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "defcon_ab", payload)
+    spec = load_eval_spec("defcon_ab", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.coverage is not None
+    assert result.coverage.denominator == 2
+    assert result.coverage.numerator == 1
+    assert not result.coverage.passed
+
+
+def test_preflight_dirty_tree_fails(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=False, to_gw=1)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=True):
+        result = preflight_promote_eval(
+            spec, plan, data_dir=tmp_path, allow_dirty=False
+        )
+    assert not result.ok
+    assert any("dirty" in f for f in result.failures)
+
+
+def test_preflight_allow_dirty_forces_inconclusive(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=False, to_gw=1)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=True):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path, allow_dirty=True)
+    assert result.ok
+    assert result.force_inconclusive
+    assert result.git_dirty
+
+
+def test_preflight_arms_inverted(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    payload = _base_payload(
+        name="inverted",
+        kind="config",
+        question="inverted arms?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_out",
+            "slot": "involvement",
+            "control_kind": "involvement_xg",
+            "treatment_kind": "involvement_xg",
+            "tables": ["player_status"],
+            "diff": ["use_penalties_order swapped"],
+        },
+        # Swapped relative to opt_out: control should be off-fork.
+        control="dc_layered_v2",
+        treatment="dc_layered_nopens_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.01,
+            "coverage": {
+                "metric": "penalties_order_non_null",
+                "read": "strict_pit",
+            },
+        },
+    )
+    _write_eval(tmp_path, "inverted", payload)
+    spec = load_eval_spec("inverted", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert not result.ok
+    assert any("inverted" in f for f in result.failures)
+
+
+def test_preflight_multi_lever_without_allow(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    store.write(
+        "gameweeks",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": ["2024-25"],
+                    "gw": [1],
+                    "deadline_time": [datetime(2024, 8, 16, 17, tzinfo=UTC)],
+                    "finished": [False],
+                    "data_checked": [False],
+                    "available_at": [_START],
+                    "source": ["fpl_api"],
+                }
+            )
+        ),
+    )
+    payload = _base_payload(
+        name="multi",
+        kind="config",
+        question="multi lever?",
+        change={
+            "lever": "hyperparam",
+            "slot": "involvement",
+            "control_kind": "involvement_shares",
+            "treatment_kind": "involvement_xg",
+            "allow_multi_lever": False,
+            "diff": ["v1 → v2"],
+        },
+        control="dc_layered_v1",
+        treatment="dc_layered_v2",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+    )
+    _write_eval(tmp_path, "multi", payload)
+    spec = load_eval_spec("multi", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert not result.ok
+    assert any("multi-lever" in f or "param family" in f for f in result.failures)
+
+
+def test_execute_coverage_drop_writes_recommendation(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=None, source="vaastav")
+    spec = load_eval_spec("pens_order_involvement_ab")
+    out = tmp_path / "out"
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            to_gw=1,
+            output_dir=out,
+            argv=["promote-eval", "--execute", "--eval", "pens_order_involvement_ab"],
+        )
+    assert result.verdict == "drop"
+    assert result.exit_code == 1
+    rec = (out / "recommendation.md").read_text(encoding="utf-8")
+    assert "question:" in rec
+    assert "**drop**" in rec
+    assert "Coverage" in rec
+    audit = json.loads((out / "audit.json").read_text(encoding="utf-8"))
+    assert audit["git_dirty"] is False
+    assert "uv_lock_sha256" in audit
+    assert "config" in audit
+
+
+def test_execute_allow_dirty_inconclusive_skips_compare_on_s0(
+    tmp_path: Path,
+) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    spec = load_eval_spec("pens_order_involvement_ab")
+    out = tmp_path / "out"
+    with (
+        patch("fplt.backtest.promote_eval.git_is_dirty", return_value=True),
+        patch("fplt.backtest.promote_eval.compare_models") as compare,
+    ):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            tier="S0",
+            to_gw=1,
+            allow_dirty=True,
+            output_dir=out,
+        )
+    compare.assert_not_called()
+    assert result.verdict == "inconclusive"
+    assert result.exit_code == 0
+    rec = (out / "recommendation.md").read_text(encoding="utf-8")
+    assert "--allow-dirty" in rec
+    assert "inconclusive" in rec
+
+
+def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    spec = load_eval_spec("pens_order_involvement_ab")
+    out = tmp_path / "out"
+
+    class _FakeCompare:
+        summary = pl.DataFrame(
+            {
+                "model_name": ["dc_layered_nopens_v1", "dc_layered_v2"],
+                "mode": ["walk_forward", "walk_forward"],
+                "horizon": [1, 1],
+                "mae": [1.0, 0.9],
+                "rmse": [1.5, 1.4],
+                "spearman": [0.1, 0.2],
+                "top10_precision": [0.3, 0.4],
+            }
+        )
+        detail = pl.DataFrame(
+            {
+                "model_name": ["dc_layered_nopens_v1", "dc_layered_v2"],
+                "mode": ["walk_forward", "walk_forward"],
+                "horizon": [1, 1],
+                "target_gw": [1, 1],
+                "mae": [1.0, 0.9],
+            }
+        )
+        output_dir = out / "compare"
+        runs: list[Any] = []
+        season = "2025-26"
+        test_from_gw = 1
+        test_to_gw = 1
+        fit_gw = 1
+        seasons_back = 4
+        modes = ("walk_forward",)
+        time_decay = None
+        skipped_openfpl = None
+
+    with (
+        patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False),
+        patch(
+            "fplt.backtest.promote_eval.compare_models",
+            return_value=_FakeCompare(),
+        ) as compare,
+        patch(
+            "fplt.backtest.promote_eval.read_predictions",
+            return_value=pl.DataFrame(),
+        ),
+    ):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            to_gw=1,
+            output_dir=out,
+            argv=["promote-eval", "--execute"],
+        )
+    compare.assert_called_once()
+    assert result.verdict == "inconclusive"
+    assert result.exit_code == 0
+    rec = (out / "recommendation.md").read_text(encoding="utf-8")
+    assert "mae_delta" in rec
+    assert "**inconclusive**" in rec
+    assert "decisions: not run" in rec
+    assert (out / "audit.json").is_file()
+    assert (out / "summary.parquet").is_file()
+
+
+def test_render_recommendation_order() -> None:
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=True, to_gw=1)
+    from fplt.backtest.promote_eval import CoverageResult, PreflightResult
+
+    preflight = PreflightResult(
+        ok=True,
+        coverage=CoverageResult(
+            metric="penalties_order_non_null",
+            numerator=1,
+            denominator=100,
+            rate=0.01,
+            min_coverage=0.01,
+            passed=True,
+            extras={"penalties_order_eq_1_rate": 0.01},
+        ),
+        git_sha="abc",
+        git_dirty=False,
+        control_spec=ModelSpec(name="c", kind="dc_layered"),
+        treatment_spec=ModelSpec(name="t", kind="dc_layered"),
+        effective_flags={
+            "control.use_penalties_order": False,
+            "treatment.use_penalties_order": True,
+        },
+    )
+    text = render_recommendation(
+        spec,
+        plan,
+        preflight,
+        verdict="inconclusive",
+        allow_dirty=False,
+        compare=None,
+        deltas={"mae": 0.01, "per_gw_wins": {"control": 1, "treatment": 2, "ties": 0}},
+        prediction_ran=True,
+    )
+    # §9 order: title/question → arms → audit → window → coverage → join → caveat
+    # → deltas → components → decisions → equivalence → call
+    markers = [
+        "question:",
+        "## Arms",
+        "## Audit",
+        "## Window",
+        "## Coverage",
+        "## Join / available_at",
+        "## PIT caveat",
+        "## Prediction deltas",
+        "## Components",
+        "## Decisions",
+        "## Equivalence",
+        "## Call",
+    ]
+    positions = [text.index(marker) for marker in markers]
+    assert positions == sorted(positions)
+
+
+def test_cli_promote_eval_execute_coverage_drop(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_pens_store(tmp_path, order=None)
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings = __import__("fplt.settings", fromlist=["get_settings"]).get_settings
+    get_settings.cache_clear()
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        with pytest.raises(SystemExit) as exc:
+            main(
+                [
+                    "promote-eval",
+                    "--eval",
+                    "pens_order_involvement_ab",
+                    "--execute",
+                    "--to-gw",
+                    "1",
+                    "--output-dir",
+                    str(tmp_path / "cli-out"),
+                ]
+            )
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "**drop**" in out
+    get_settings.cache_clear()
+
+
+def test_allow_low_coverage_forces_inconclusive(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=None, source="vaastav")
+    payload = yaml.safe_load(
+        (Path("configs/evals/pens_order_involvement_ab.yaml")).read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["name"] = "pens_low"
+    payload["gates"]["allow_low_coverage"] = True
+    _write_eval(tmp_path, "pens_low", payload)
+    spec = load_eval_spec("pens_low", directory=tmp_path)
+    out = tmp_path / "out"
+    with (
+        patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False),
+        patch("fplt.backtest.promote_eval.compare_models") as compare,
+    ):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            tier="S0",
+            to_gw=1,
+            output_dir=out,
+        )
+    compare.assert_not_called()
+    assert result.verdict == "inconclusive"
+    assert result.exit_code == 0
+    assert result.preflight.force_inconclusive
+    assert result.preflight.coverage is not None
+    assert not result.preflight.coverage.passed
+
+
+def test_leak_fails_preflight(tmp_path: Path) -> None:
+    _seed_pens_store(tmp_path, order=1)
+    deadline = _DEADLINE_GW1
+    feature_dir = tmp_path / "features" / "context" / "v=1" / "as_of=2025-26_gw01"
+    feature_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "season": ["2025-26"],
+            "fixture_id": [1],
+            "player_key": [100],
+            "available_at": [deadline + timedelta(hours=2)],
+            "value": [1.0],
+        }
+    ).write_parquet(feature_dir / "part.parquet")
+    payload = _base_payload(
+        name="leak_demo",
+        kind="feature",
+        question="leak?",
+        change={
+            "lever": "feature_version",
+            "orientation": "opt_in",
+            "features": ["context@1"],
+            "allow_multi_lever": True,
+            "diff": ["context@1"],
+        },
+        control="rolling_mean_v1",
+        treatment="lgbm_direct_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+    )
+    _write_eval(tmp_path, "leak_demo", payload)
+    spec = load_eval_spec("leak_demo", directory=tmp_path)
+    out = tmp_path / "out"
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            output_dir=out,
+        )
+    assert result.verdict == "drop"
+    assert result.exit_code == 2
+    assert result.preflight.leak
+    assert "leak" in (out / "recommendation.md").read_text(encoding="utf-8").lower()
+
+
+def test_odds_join_passes_when_available_before_deadline(tmp_path: Path) -> None:
+    before = datetime(2024, 8, 16, 12, tzinfo=UTC)  # before deadline 17:00
+    _seed_odds_store(tmp_path, available_at=before)
+    payload = _base_payload(
+        name="odds_ok",
+        kind="config",
+        question="odds visible?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "tables": ["match_odds"],
+            "diff": ["market_prior_strength: 0 → 1.0"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_odds_v1",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.80,
+            "coverage": {"metric": "odds_join", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "odds_ok", payload)
+    spec = load_eval_spec("odds_ok", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.passed
+    assert result.coverage.rate == 1.0
+
+
+def test_structural_preflight_fail_exits_2(tmp_path: Path) -> None:
+    payload = _base_payload(
+        name="missing_arm",
+        kind="model",
+        question="missing?",
+        change={
+            "lever": "model_fork",
+            "control_kind": "rolling_mean",
+            "treatment_kind": "lgbm_direct",
+            "diff": ["kind"],
+        },
+        control="rolling_mean_v1",
+        treatment="does_not_exist_model",
+        suites={"prediction": True, "components": False},
+    )
+    _write_eval(tmp_path, "missing_arm", payload)
+    spec = load_eval_spec("missing_arm", directory=tmp_path)
+    out = tmp_path / "out"
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = execute_promote_eval(
+            spec, data_dir=tmp_path, dry_run=False, output_dir=out
+        )
+    assert result.exit_code == 2
+    assert not (out / "recommendation.md").exists()
+
+
+def test_closing_proxy_read_requires_flag(tmp_path: Path) -> None:
+    kickoff = datetime(2024, 8, 17, 14, tzinfo=UTC)
+    _seed_odds_store(tmp_path, available_at=kickoff)
+    payload = _base_payload(
+        name="proxy_bad",
+        kind="config",
+        question="proxy?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "tables": ["match_odds"],
+            "diff": ["market_prior_strength"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_odds_v1",
+        window={
+            "seasons": ["2024-25"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.8,
+            "coverage": {
+                "metric": "odds_join",
+                "read": "closing_proxy_labelled",
+            },
+        },
+    )
+    _write_eval(tmp_path, "proxy_bad", payload)
+    spec = load_eval_spec("proxy_bad", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert not result.ok
+    assert any("closing_proxy_labelled" in f for f in result.failures)

@@ -1,15 +1,18 @@
 # Scaffold example: full predictor fork (direct LGBM vs rolling baseline).
 name: example_model_lgbm_vs_rolling
 kind: model
+question: "Scaffold only: does lgbm_direct_v1 beat rolling_mean_v1 on Spearman/MAE?"
 description: "lgbm_direct_v1 vs rolling_mean_v1 (model_fork shape)"
 
 change:
   lever: model_fork
+  orientation: opt_in
   slot: null
   control_kind: rolling_mean
   treatment_kind: lgbm_direct
   tables: []
   features: []
+  allow_multi_lever: false
   diff:
     - "kind: rolling_mean → lgbm_direct"
   notes: "For XGB/handwritten swaps, fork lgbm_direct_v1 and change kind only."
