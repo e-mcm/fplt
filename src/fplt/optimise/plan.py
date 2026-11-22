@@ -69,6 +69,12 @@ from fplt.optimise.squad import (
     _row,  # pyright: ignore[reportPrivateUsage]
     _sum,  # pyright: ignore[reportPrivateUsage]
 )
+from fplt.optimise.squad_integrity import (
+    inspect_horizon_picks,
+    locked_fifteen_issue,
+    log_horizon_integrity,
+    require_locked_steps,
+)
 from fplt.optimise.state import ChipInventory, OwnedPlayer, SquadState
 from fplt.schemas.plan import (
     CandidateSchema,
@@ -185,9 +191,11 @@ def plan_squad(
             ``horizon >= auto_min_horizon``). Forced-chip gameweeks keep
             armband detail so TC/FH landmarks stay feasible.
         lineup_reopt: After the transfer MILP, re-choose XI / captain /
-            vice on each locked fifteen via sample-average (or EV +
-            ``p_haul``) lineup selection. Default on (Wave D1); set
-            ``False`` to keep the MILP lineup only.
+            vice on each *locked* fifteen via sample-average (or EV +
+            ``p_haul``). Default on (Wave D1); set ``False`` to keep the
+            MILP lineup only. Continuous far steps under relax-and-fix
+            are not locked fifteens — reopt skips them when 0.5-thresholded
+            picks fail formation (look-ahead only); step 0 must stay legal.
         scenarios: Optional shared scenarios for step-0 lineup SAA.
         p_haul: Optional ``player_key``, ``step``, ``p_haul`` for captaincy.
         haul_weight: Weight on ``p_haul`` in the EV lineup path.
@@ -196,7 +204,9 @@ def plan_squad(
         Squad members and sales at every step.
 
     Raises:
-        ValueError: The inputs disagree, or no squad meets the rules.
+        ValueError: The inputs disagree, no squad meets the rules, or the
+            actionable (step-0) squad is not a legal locked fifteen after
+            solve.
     """
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
@@ -265,6 +275,16 @@ def plan_squad(
         gameweeks=targets,
         chip_windows=chip_windows,
     )
+    locked_steps = _integral_steps(lh_policy, horizon)
+    _assert_owned_locked_fifteen(pool, owned, initial=initial)
+    _log.info(
+        "plan_squad long_horizon raf=%s integral_steps=%s coarsen_steps=%s "
+        "lineup_reopt=%s",
+        _raf_active(lh_policy, horizon),
+        locked_steps,
+        sorted(coarse_steps),
+        lineup_reopt,
+    )
     columns = _columns(expected, state, horizon, initial, coarsen_steps=coarse_steps)
     solver = _solver(columns.costs, options)
     _constrain(
@@ -312,6 +332,15 @@ def plan_squad(
         raise ValueError("no plan satisfies the budget, positions, and club limits")
     log_solve_status(status, options=options)
     plan = _read(solver, pool, expected, columns, state, initial, horizon, rules)
+    integrity = inspect_horizon_picks(plan.picks, plan.chips)
+    log_horizon_integrity(integrity, binary_steps=locked_steps)
+    # Executable week must be a legal fifteen. Far continuous steps may fail
+    # formation after 0.5-thresholding; that is look-ahead only.
+    require_locked_steps(
+        integrity,
+        (0,),
+        context="plan_squad after solve (actionable step 0)",
+    )
     if lineup_reopt:
         refreshed = reoptimize_plan_lineups(
             plan.picks,
@@ -1483,6 +1512,47 @@ def _expected(
     return expected
 
 
+def _raf_active(long_horizon: LongHorizonPolicy, horizon: int) -> bool:
+    """True when relax-and-fix will leave far steps continuous."""
+    return (
+        long_horizon.relax_and_fix
+        and long_horizon.should_auto_apply(horizon)
+        and long_horizon.binary_steps < horizon
+    )
+
+
+def _integral_steps(long_horizon: LongHorizonPolicy, horizon: int) -> tuple[int, ...]:
+    """Horizon steps that remain integer after the final HiGHS solve.
+
+    Under relax-and-fix, only the leading ``binary_steps`` stay integer
+    (far steps are continuous look-ahead). Without RAF, every step is
+    integral.
+    """
+    if not _raf_active(long_horizon, horizon):
+        return tuple(range(horizon))
+    n_binary = min(long_horizon.binary_steps, horizon)
+    return tuple(range(n_binary))
+
+
+def _assert_owned_locked_fifteen(
+    pool: pl.DataFrame,
+    owned: list[OwnedPlayer],
+    *,
+    initial: bool,
+) -> None:
+    """Fail fast when a non-draft owned squad is not a legal fifteen."""
+    if initial or not owned:
+        return
+    keys = [player.player_key for player in owned]
+    owned_rows = pool.filter(pl.col("player_key").is_in(keys))
+    missing = sorted(set(keys) - set(owned_rows["player_key"].to_list()))
+    if missing:
+        raise ValueError(f"owned players missing from candidate pool: {missing}")
+    issue = locked_fifteen_issue(owned_rows)
+    if issue is not None:
+        raise ValueError(f"owned squad before plan_squad: {issue}")
+
+
 def _run_solver(
     solver: highspy.Highs,
     *,
@@ -1498,11 +1568,7 @@ def _run_solver(
     week-1 variables to the incumbent, then re-solve with mid-horizon
     steps restored to integer (far steps stay continuous).
     """
-    use_raf = (
-        long_horizon.relax_and_fix
-        and long_horizon.should_auto_apply(horizon)
-        and long_horizon.binary_steps < horizon
-    )
+    use_raf = _raf_active(long_horizon, horizon)
     if not use_raf:
         solver.run()
         return solver.getModelStatus()
