@@ -1,27 +1,32 @@
 # W8 / FDB-71: involvement ± penalties_order taker bonus.
 name: pens_order_involvement_ab
 kind: config
-description: "Involvement / dc_layered ± penalties_order taker bonus (W8)"
+question: >
+  Does penalties_order (taker == 1) improve involvement / xPts versus the
+  miss-only fallback on a snapshot-backed window?
+description: "involvement ± penalties_order (W8). Opt-out."
 
 change:
   lever: hyperparam
+  orientation: opt_out
   slot: involvement
   control_kind: involvement_xg
   treatment_kind: involvement_xg
-  tables: []
+  tables: [player_status]
   features: []
+  allow_multi_lever: false
   diff:
     - "components.involvement.params.use_penalties_order: false → true"
   notes: >
-    Control is miss-only (pre-W2). Treatment is production default
-    (penalties_order == 1, miss fallback when order null). Vaastav seasons
-    have null order, so arms may tie until snapshot-backed status exists.
+    Control dc_layered_nopens_v1. Treatment dc_layered_v2 (default true).
+    Window must be snapshot-backed. Vaastav non-null rate is 0 and the
+    arms tie via the penalties_missed fallback.
 
 control: dc_layered_nopens_v1
 treatment: dc_layered_v2
 
 window:
-  seasons: ["2024-25"]
+  seasons: ["2025-26"]
   from_gw: 1
   to_gw: 38
   seasons_back: 4
@@ -34,6 +39,11 @@ suites:
   steps: 1
 
 gates:
+  min_coverage: 0.01
+  allow_low_coverage: false
+  coverage:
+    metric: penalties_order_non_null
+    read: strict_pit
   keep_if:
     components_any: [mae_goal_share]
     prediction_any: [mae, spearman]

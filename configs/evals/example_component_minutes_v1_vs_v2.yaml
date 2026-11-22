@@ -3,15 +3,18 @@
 # point at existing YAMLs so dry-run resolves.
 name: example_component_minutes_v1_vs_v2
 kind: component
+question: "Scaffold only: does empirical_minutes_v2 beat v1 inside dc_layered?"
 description: "Minutes slot: empirical_minutes → empirical_minutes_v2 (shape demo)"
 
 change:
   lever: component_swap
+  orientation: opt_in
   slot: minutes
   control_kind: empirical_minutes
   treatment_kind: empirical_minutes_v2
   tables: []
   features: []
+  allow_multi_lever: true
   diff:
     - "components.minutes.kind: empirical_minutes → empirical_minutes_v2"
   notes: "Replace arms with a true single-slot parent fork when evaluating ML minutes."
