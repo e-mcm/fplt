@@ -150,25 +150,57 @@ def season_label_from_token(token: str) -> str:
     return f"{start}-{end:02d}"
 
 
-def e0_raw_path(raw_root: Path, season: str) -> Path:
-    """Write-once path for one E0 CSV under ``raw/football_data``."""
-    return raw_root / "football_data" / f"season={season}" / "E0.csv"
+def e0_raw_path(raw_root: Path, season: str, *, captured_at: str | None = None) -> Path:
+    """Write-once path for one E0 CSV under ``raw/football_data``.
+
+    Args:
+        raw_root: ``$FPLT_DATA_DIR/raw``.
+        season: FPL season label (``YYYY-YY``).
+        captured_at: Optional UTC calendar day (``YYYY-MM-DD``). When set, the
+            file lands at ``season=…/captured_at=…/E0.csv`` so monthly GHA
+            refreshes stay write-once. When omitted, uses the legacy
+            ``season=…/E0.csv`` path.
+
+    Returns:
+        Absolute path for the season CSV (may not exist yet).
+    """
+    base = raw_root / "football_data" / f"season={season}"
+    if captured_at is None:
+        return base / "E0.csv"
+    return base / f"captured_at={captured_at}" / "E0.csv"
 
 
 def iter_raw_e0(
     raw_root: Path, seasons: list[str] | None = None
 ) -> list[tuple[Path, str]]:
-    """List write-once E0 CSV files under ``raw_root/football_data``."""
+    """List write-once E0 CSV files under ``raw_root/football_data``.
+
+    Finds legacy ``season=*/E0.csv`` and monthly
+    ``season=*/captured_at=*/E0.csv`` captures. Ordered so later
+    ``captured_at`` values stage last (``DataStore.write`` keeps last on key).
+    """
     base = raw_root / "football_data"
     if not base.exists():
         return []
-    found: list[tuple[Path, str]] = []
-    for path in sorted(base.glob("season=*/E0.csv")):
+    found: list[tuple[Path, str, str]] = []
+    for path in base.glob("season=*/E0.csv"):
         season = path.parent.name.removeprefix("season=")
         if seasons is not None and season not in seasons:
             continue
-        found.append((path, season))
-    return found
+        found.append((path, season, ""))
+    for path in base.glob("season=*/captured_at=*/E0.csv"):
+        season = path.parent.parent.name.removeprefix("season=")
+        stamp = path.parent.name.removeprefix("captured_at=")
+        if seasons is not None and season not in seasons:
+            continue
+        found.append((path, season, stamp))
+    found.sort(key=lambda item: (item[1], item[2], item[0].as_posix()))
+    return [(path, season) for path, season, _stamp in found]
+
+
+def list_e0_csv_paths(raw_root: Path) -> list[Path]:
+    """Sorted absolute paths of every write-once E0 CSV under ``raw_root``."""
+    return [path for path, _season in iter_raw_e0(raw_root)]
 
 
 def parse_kickoff(date_text: str, time_text: str | None) -> datetime:

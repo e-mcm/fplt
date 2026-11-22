@@ -21,10 +21,13 @@ fetch-api-football:
 
 # ── football-data.co.uk E0 odds (closing + scheduled prematch) ────────────────
 # Usage: make fetch-football-data SEASON=2024-25
-# Writes write-once CSV under $$FPLT_DATA_DIR/raw/football_data/season=.../E0.csv
+# Monthly refresh (write-once): CAPTURED_AT=YYYY-MM-DD
+# GHA: .github/workflows/football_data.yml (1st of month 06:00 UTC) → snapshots;
+# Dagster match_odds_sensor stages when a new E0.csv lands under raw.
 fetch-football-data:
-	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-football-data SEASON=2024-25"; exit 1; fi
-	uv run python scripts/fetch_football_data.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-football-data SEASON=2024-25 [CAPTURED_AT=YYYY-MM-DD]"; exit 1; fi
+	uv run python scripts/fetch_football_data.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON) \
+		$(if $(CAPTURED_AT),--captured-at $(CAPTURED_AT),)
 
 # ── FPL overall-league points-at-rank (live percentile mapping) ───────────────
 # Usage: make fetch-overall-rank

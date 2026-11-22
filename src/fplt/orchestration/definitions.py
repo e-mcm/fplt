@@ -39,6 +39,7 @@ from fplt.orchestration.factories import (
 from fplt.orchestration.sensors import (
     api_football_sensor,
     catchup_sensor,
+    match_odds_sensor,
     notify_run_failure,
     pre_deadline_sensor,
     snapshots_sensor,
@@ -77,6 +78,7 @@ defs = dg.Definitions(
         snapshots_sensor,
         understat_sensor,
         api_football_sensor,
+        match_odds_sensor,
         catchup_sensor,
         pre_deadline_sensor,
         notify_run_failure,

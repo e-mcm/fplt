@@ -20,7 +20,10 @@ class SnapshotFetchError(RuntimeError):
 def fetch_snapshots(
     dest: Path, remote: str = "origin", branch: str = "snapshots"
 ) -> list[Path]:
-    """Copy new ``*.json.gz`` files from ``branch`` into ``dest``.
+    """Copy new snapshot files from ``branch`` into ``dest``.
+
+    Copies write-once ``*.json.gz`` captures and football-data ``E0.csv``
+    files. Existing destinations are left untouched.
 
     Args:
         dest: Directory that corresponds to ``$FPLT_DATA_DIR/raw``.
@@ -57,6 +60,11 @@ def fetch_snapshots(
         return _copy_new(source, dest)
 
 
+def is_football_data_raw(path: Path) -> bool:
+    """Return whether ``path`` sits under a ``football_data`` raw prefix."""
+    return "football_data" in path.parts
+
+
 def _git(args: list[str]) -> None:
     subprocess.run(
         ["git", *args],
@@ -69,7 +77,11 @@ def _git(args: list[str]) -> None:
 
 def _copy_new(source: Path, dest: Path) -> list[Path]:
     copied: list[Path] = []
-    for path in sorted(source.rglob("*.json.gz")):
+    candidates = list(source.rglob("*.json.gz"))
+    football = source / "football_data"
+    if football.exists():
+        candidates.extend(football.rglob("E0.csv"))
+    for path in sorted(candidates):
         if not path.is_file():
             continue
         target = dest / path.relative_to(source)

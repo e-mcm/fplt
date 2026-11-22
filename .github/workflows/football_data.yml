@@ -1,0 +1,58 @@
+name: football_data
+
+on:
+  schedule:
+    # Monthly: growing E0 CSV for the current season (write-once captured_at=day).
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Capture football-data E0 CSV
+        run: |
+          set -euo pipefail
+          CAPTURED_AT="$(date -u +%Y-%m-%d)"
+          python scripts/fetch_football_data.py \
+            --out "$RUNNER_TEMP/raw" \
+            --captured-at "$CAPTURED_AT"
+          echo "CAPTURED_AT=$CAPTURED_AT" >> "$GITHUB_ENV"
+
+      - name: Publish to the snapshots branch
+        run: |
+          set -euo pipefail
+          if [ -z "$(find "$RUNNER_TEMP/raw" -type f -name 'E0.csv' 2>/dev/null | head -n 1)" ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin snapshots || true
+          if git rev-parse --verify origin/snapshots >/dev/null 2>&1; then
+            git checkout --track origin/snapshots
+          else
+            git checkout --orphan snapshots
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p data
+          cp -a "$RUNNER_TEMP/raw/." data/raw/
+          git add data/raw
+          if git diff --cached --quiet; then
+            echo "football_data snapshots already present"
+            exit 0
+          fi
+          git commit -m "Capture football-data E0 CSV (${CAPTURED_AT})"
+          git push origin HEAD:snapshots
