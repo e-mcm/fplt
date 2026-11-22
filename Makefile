@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -262,6 +262,14 @@ archive-compare:
 		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
 		$(if $(TO_GW),--to-gw $(TO_GW),) \
 		$(ARGS)
+
+# ── Post-downtime ops catch-up (no Dagster UI) ────────────────────────────────
+# After travel / long sleep: fetch snapshots → restage FPL → understat +
+# api_football ingest → catch_up missing checked GWs → print status (+ auth).
+# Same library steps as the Dagster refresh_staged / understat_ingest /
+# api_football_ingest / catch_up jobs. Optional: ARGS='--no-notify --horizon 3'
+ops-catchup:
+	uv run fplt ops-catchup $(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:

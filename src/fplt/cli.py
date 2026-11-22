@@ -762,6 +762,35 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet/markdown here",
     )
+    ops_catchup = sub.add_parser(
+        "ops-catchup",
+        parents=[log_flags],
+        help=(
+            "Post-downtime recovery: fetch snapshots → restage → "
+            "understat/AF ingest → catch_up → status (no Dagster UI)"
+        ),
+    )
+    ops_catchup.add_argument(
+        "--remote",
+        default="origin",
+        help="Git remote (or local path) for the snapshots branch",
+    )
+    ops_catchup.add_argument(
+        "--branch",
+        default="snapshots",
+        help="Branch that holds write-once captures (default: snapshots)",
+    )
+    ops_catchup.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PLAN_HORIZON,
+        help=f"Plan horizon (default: {DEFAULT_PLAN_HORIZON})",
+    )
+    ops_catchup.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Skip ntfy/SMTP recommendation push even when plans were made",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -835,6 +864,9 @@ def main(argv: list[str] | None = None) -> None:
         _auth(args)
         return
     logger.info("fplt %s (data_dir=%s)", args.command, get_settings().data_dir)
+    if args.command == "ops-catchup":
+        _ops_catchup(args)
+        return
     if args.command == "backtest":
         _backtest(args)
         return
@@ -884,6 +916,27 @@ def main(argv: list[str] | None = None) -> None:
         _archive_compare(args)
         return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _ops_catchup(args: argparse.Namespace) -> None:
+    from fplt.automation.ops_catchup import (
+        format_ops_catchup_status,
+        run_ops_catchup,
+    )
+    from fplt.data.snapshots import SnapshotFetchError
+
+    try:
+        result = run_ops_catchup(
+            remote=str(args.remote),
+            branch=str(args.branch),
+            horizon=int(args.horizon),
+            notify=not bool(args.no_notify),
+        )
+    except SnapshotFetchError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_ops_catchup_status(result), end="")
+    print(format_status(auth_status()), end="")
 
 
 def _ingest_lineups(args: argparse.Namespace) -> None:

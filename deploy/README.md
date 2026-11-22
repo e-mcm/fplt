@@ -62,6 +62,25 @@ After a successful catch-up or pre-deadline plan, recommendation `report.md` is
 pushed when ntfy and/or SMTP are configured. Run failures still POST to
 `FPLT_NTFY_URL` when set.
 
+## Post-travel / downtime catch-up (no UI)
+
+When the laptop slept through sensors or the daemon was off, drain the backlog
+without opening Dagster:
+
+```bash
+make ops-catchup
+# equivalent: uv run fplt ops-catchup
+```
+
+Order: fetch `snapshots` → restage FPL (+ vaastav if present) → Understat and
+API-Football ingest → `catch_up` for every checked GW still missing a production
+plan → print counts / pending GWs and `fplt auth status`. Refresh the live token
+first if plans should use your squad (`uv run fplt auth status`).
+
+Optional flags via `ARGS`, e.g. `make ops-catchup ARGS='--no-notify'`. Does not
+replace a running daemon for ongoing pre-deadline windows; use this as a
+one-shot recovery.
+
 ## docker compose (optional VPS)
 
 1. Build or tag an image as `fplt:local` that contains this repo and its deps.
