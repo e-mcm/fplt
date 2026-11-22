@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -112,6 +112,21 @@ pruning-loss:
 		--n-scenarios $(or $(N_SCENARIOS),24) \
 		--seed $(or $(SEED),0) \
 		--horizon $(or $(HORIZON),5) \
+		$(ARGS)
+
+# Ensemble sensitivity / move-frequency (Wave D2): shared-state DC vs LGBM.
+# Requires prediction ledger for control + challengers at matching --horizon.
+# Usage: make ensemble-sensitivity SEASON=2024-25
+# Optional: HORIZON=3 FROM_GW=1 TO_GW=38 CONTROL=dc_layered_v2
+#   ARGS='--challengers lgbm_direct_v1 --output-dir …'
+# Does not change PRODUCTION_MODELS; chips-off reporting board only.
+ensemble-sensitivity:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make ensemble-sensitivity SEASON=2024-25"; exit 1; fi
+	uv run fplt ensemble-sensitivity --season $(SEASON) \
+		--from-gw $(or $(FROM_GW),1) \
+		--to-gw $(or $(TO_GW),38) \
+		--horizon $(or $(HORIZON),3) \
+		--control $(or $(CONTROL),dc_layered_v2) \
 		$(ARGS)
 
 # ── Promote-eval (control vs treatment EvalSpec; dry-run scaffold) ─────────────

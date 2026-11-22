@@ -552,6 +552,39 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write horizon_skill JSON/parquet here",
     )
+    ensemble_sensitivity = sub.add_parser(
+        "ensemble-sensitivity",
+        parents=[log_flags],
+        help=(
+            "Shared-state DC vs LGBM (bakeoff pair) move-frequency board: "
+            "how often week-1 transfers/XI/captain disagree"
+        ),
+    )
+    ensemble_sensitivity.add_argument("--season", required=True)
+    ensemble_sensitivity.add_argument("--from-gw", type=int, default=1)
+    ensemble_sensitivity.add_argument("--to-gw", type=int, default=38)
+    ensemble_sensitivity.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PLAN_HORIZON,
+        help=f"Planner horizon (default: {DEFAULT_PLAN_HORIZON})",
+    )
+    ensemble_sensitivity.add_argument(
+        "--control",
+        default="dc_layered_v2",
+        help="YAML ModelSpec for the ownership path (default: dc_layered_v2)",
+    )
+    ensemble_sensitivity.add_argument(
+        "--challengers",
+        nargs="+",
+        default=["lgbm_direct_v1"],
+        help="YAML ModelSpec names to compare (default: lgbm_direct_v1)",
+    )
+    ensemble_sensitivity.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write rows/summary parquet + summary.json here",
+    )
     pruning_loss = sub.add_parser(
         "pruning-loss",
         parents=[log_flags],
@@ -949,6 +982,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "pruning-loss":
         _pruning_loss(args)
         return
+    if args.command == "ensemble-sensitivity":
+        _ensemble_sensitivity(args)
+        return
     if args.command == "promote-eval":
         _promote_eval(args)
         return
@@ -1342,6 +1378,37 @@ def _horizon_skill(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(format_skill_curve(result.curve))
     print(f"wrote {result.output_dir / 'horizon_skill.json'}")
+
+
+def _ensemble_sensitivity(args: argparse.Namespace) -> None:
+    from fplt.optimise.ensemble_sensitivity import (
+        format_ensemble_sensitivity_board,
+        run_ensemble_sensitivity_from_data_dir,
+        write_ensemble_sensitivity_report,
+    )
+
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir is not None
+        else get_settings().data_dir / "ensemble_sensitivity"
+    )
+    try:
+        report = run_ensemble_sensitivity_from_data_dir(
+            get_settings().data_dir,
+            season=str(args.season),
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            horizon=int(args.horizon),
+            control=str(args.control),
+            challengers=list(args.challengers),
+        )
+        paths = write_ensemble_sensitivity_report(report, output_dir)
+    except (KeyError, ValueError) as exc:
+        logger.error("ensemble-sensitivity failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_ensemble_sensitivity_board(report.summary))
+    print(f"wrote {paths['json']}")
 
 
 def _pruning_loss(args: argparse.Namespace) -> None:
