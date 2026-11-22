@@ -1,0 +1,13 @@
+# Live unattended planning (catch-up / pre-deadline sensors).
+# Keep this list short — never silently multi-arm live.
+#
+# Override without a PR via env (takes precedence over this file):
+#   FPLT_PRODUCTION_MODELS=dc_layered_v2          # comma-separated
+#   FPLT_PLAN_HORIZON=3
+#
+# CLI / make plan still default to DEFAULT_PLAN_HORIZON in
+# fplt.optimise.plan; this file only feeds automation.
+
+models:
+  - dc_layered_v2
+plan_horizon: 3

@@ -16,13 +16,7 @@ from datetime import UTC, datetime
 import dagster as dg
 import polars as pl
 
-from fplt.automation.cycle import (
-    PRODUCTION_MODELS,
-    catch_up,
-    due_gameweek,
-    pre_deadline,
-    reports,
-)
+from fplt.automation.cycle import catch_up, due_gameweek, pre_deadline, reports
 from fplt.automation.notify import notify_recommendation
 from fplt.data.api_football import (
     default_id_maps_path as api_football_id_maps_path,
@@ -48,7 +42,6 @@ from fplt.data.raw import ingest_raw
 from fplt.data.store import DataStore
 from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
 from fplt.data.vaastav import import_available
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.schemas.staged import STAGED_SCHEMAS
 from fplt.settings import get_settings
 
@@ -102,7 +95,7 @@ def recommendation_report() -> dg.MaterializeResult:
     """
     settings = get_settings()
     data = settings.data_dir
-    done = catch_up(data, PRODUCTION_MODELS, horizon=DEFAULT_PLAN_HORIZON)
+    done = catch_up(data)
     text = reports(data) or "No plan yet."
     if done:
         notify_recommendation(settings, "fplt recommendation", text)
@@ -120,9 +113,7 @@ def pre_deadline_plan() -> dg.MaterializeResult:
     """Plan the deadline inside the next three hours, if it has no plan yet."""
     settings = get_settings()
     data = settings.data_dir
-    key = pre_deadline(
-        data, datetime.now(UTC), PRODUCTION_MODELS, horizon=DEFAULT_PLAN_HORIZON
-    )
+    key = pre_deadline(data, datetime.now(UTC))
     label = "none" if key is None else f"{key.season} gw{key.gw}"
     text = reports(data) or "No plan yet."
     if key is not None:

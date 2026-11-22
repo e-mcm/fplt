@@ -12,6 +12,8 @@ never committed.
 | `FPLT_FPL_API_TOKEN` | Bearer token from `x-api-authorization` (selling prices / FT) | For authenticated my-team |
 | `FPLT_FPL_SESSION` | Legacy `pl_profile` cookie | Unused by the current API |
 | `FPLT_API_FOOTBALL_KEY` | API-Sports key for injuries fetch/stage | For `make fetch-api-football` / GHA |
+| `FPLT_PRODUCTION_MODELS` | Comma-separated live model specs (overrides `configs/ops/production.yaml`) | Optional |
+| `FPLT_PLAN_HORIZON` | Automation plan horizon (overrides ops YAML; CLI still uses `DEFAULT_PLAN_HORIZON`) | Optional |
 | `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts | Optional |
 | `FPLT_SMTP_HOST` | SMTP host for recommendation email | Optional\* |
 | `FPLT_SMTP_PORT` | SMTP port (default `587`) | Optional |

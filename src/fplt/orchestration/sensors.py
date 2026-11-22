@@ -11,13 +11,9 @@ from pathlib import Path
 
 import dagster as dg
 
-from fplt.automation.cycle import (
-    PRODUCTION_MODELS,
-    due_gameweek,
-    pending_checked,
-    plans_exist,
-)
+from fplt.automation.cycle import due_gameweek, pending_checked, plans_exist
 from fplt.automation.notify import notify
+from fplt.automation.production import load_production_ops
 from fplt.data.benchmark_projections import benchmarks_path
 from fplt.data.football_data import list_e0_csv_paths
 from fplt.data.snapshots import (
@@ -26,7 +22,6 @@ from fplt.data.snapshots import (
     is_football_data_raw,
 )
 from fplt.data.store import DataStore
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.orchestration.assets import (
     api_football_ingest_job,
     catch_up_job,
@@ -206,8 +201,9 @@ def _cursor_paths(cursor: str | None) -> set[str]:
 def catchup_sensor() -> dg.RunRequest | dg.SkipReason:
     """Request a catch-up when a checked gameweek has not been planned."""
     data = get_settings().data_dir
+    ops = load_production_ops()
     waiting = pending_checked(
-        DataStore(data), data, PRODUCTION_MODELS, horizon=DEFAULT_PLAN_HORIZON
+        DataStore(data), data, ops.models, horizon=ops.plan_horizon
     )
     if not waiting:
         return dg.SkipReason("no checked gameweek is waiting")
@@ -226,10 +222,11 @@ def catchup_sensor() -> dg.RunRequest | dg.SkipReason:
 def pre_deadline_sensor() -> dg.RunRequest | dg.SkipReason:
     """Request a refresh when plan or benchmark archive is still missing."""
     data = get_settings().data_dir
+    ops = load_production_ops()
     key = due_gameweek(DataStore(data), datetime.now(UTC))
     if key is None:
         return dg.SkipReason("no deadline inside three hours")
-    planned = plans_exist(data, PRODUCTION_MODELS, key, horizon=DEFAULT_PLAN_HORIZON)
+    planned = plans_exist(data, ops.models, key, horizon=ops.plan_horizon)
     archived = benchmarks_path(data, key).exists()
     if planned and archived:
         return dg.SkipReason("plan and benchmark_projections already saved")
