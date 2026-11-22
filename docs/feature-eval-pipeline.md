@@ -56,7 +56,7 @@ Code defaults, absent key included:
 | `use_defensive_contribution` | `true` | on |
 | `market_prior_strength` | `0` | off |
 
-`PRODUCTION_MODELS` in `fplt.automation.cycle` is the live-plan list (`dc_layered_v2` today, horizon `DEFAULT_PLAN_HORIZON` = 3). It is not the arm check. The arm check reads the layered spec under test.
+Live unattended planning reads `configs/ops/production.yaml` via `load_production_ops` (`dc_layered_v2` / horizon 3 by default; env `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` override). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML default for docs/imports. It is not the arm check. The arm check reads the layered spec under test.
 
 Other hard rules, unchanged:
 

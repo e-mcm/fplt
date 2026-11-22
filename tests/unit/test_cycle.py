@@ -16,6 +16,7 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
+from fplt.automation.production import ProductionOps, load_production_ops
 from fplt.backtest.ledger import append_predictions
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
@@ -35,16 +36,19 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def test_production_models_are_dc_layered_v2_at_default_horizon() -> None:
     """Unattended plans use the control model at the live planner horizon."""
+    ops = load_production_ops()
+    assert ops.models == ["dc_layered_v2"]
+    assert ops.plan_horizon == 3
     assert PRODUCTION_MODELS == ["dc_layered_v2"]
     assert DEFAULT_PLAN_HORIZON == 3
     assert catch_up.__defaults__ is not None
-    assert catch_up.__defaults__[-1] == DEFAULT_PLAN_HORIZON
+    assert catch_up.__defaults__[-1] is None
     assert pre_deadline.__defaults__ is not None
-    assert pre_deadline.__defaults__[-1] == DEFAULT_PLAN_HORIZON
+    assert pre_deadline.__defaults__[-1] is None
     assert pending_checked.__defaults__ is not None
-    assert pending_checked.__defaults__[-1] == DEFAULT_PLAN_HORIZON
+    assert pending_checked.__defaults__[-1] is None
     assert plans_exist.__defaults__ is not None
-    assert plans_exist.__defaults__[-1] == DEFAULT_PLAN_HORIZON
+    assert plans_exist.__defaults__[-1] is None
 
 
 def test_a_deadline_is_due_only_inside_three_hours(tmp_path: Path) -> None:
@@ -211,9 +215,9 @@ def test_materialize_attaches_the_report(
     # Synthetic league has rolling-mean ledger rows only; keep the asset path
     # under that model and H=1 so the report-attachment check stays cheap.
     monkeypatch.setattr(
-        "fplt.orchestration.assets.PRODUCTION_MODELS", ["rolling_mean_v1"]
+        "fplt.automation.cycle.load_production_ops",
+        lambda: ProductionOps(models=["rolling_mean_v1"], plan_horizon=1),
     )
-    monkeypatch.setattr("fplt.orchestration.assets.DEFAULT_PLAN_HORIZON", 1)
     result = dg.materialize([recommendation_report])
     assert result.success
     events = result.get_asset_materialization_events()

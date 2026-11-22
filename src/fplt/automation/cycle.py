@@ -23,16 +23,20 @@ from pathlib import Path
 
 import polars as pl
 
+from fplt.automation.production import load_production_ops
 from fplt.backtest.run import run_backtest
 from fplt.data.benchmark_projections import archive_if_missing
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import resolve_squad_state, run_plan
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
+from fplt.optimise.plan import covered_horizon, plan_parquet
 from fplt.types import GWKey
 
-PRODUCTION_MODELS = ["dc_layered_v2"]
+# Live list / horizon come from ``configs/ops/production.yaml`` (or env).
+# Prefer ``load_production_ops()`` so overrides apply; this name stays for
+# docs and callers that want the committed-default snapshot at import time.
+PRODUCTION_MODELS = list(load_production_ops().models)
 _WINDOW = timedelta(hours=3)
 logger = logging.getLogger(__name__)
 
@@ -40,26 +44,31 @@ logger = logging.getLogger(__name__)
 def pending_checked(
     store: DataStore,
     root: Path,
-    models: list[str],
-    horizon: int = DEFAULT_PLAN_HORIZON,
+    models: list[str] | None = None,
+    horizon: int | None = None,
 ) -> list[GWKey]:
     """Checked gameweeks that are still missing a plan, earliest first.
 
     Args:
         store: Staged tables, including ``gameweeks``.
         root: Data directory that contains ``plans/``.
-        models: YAML spec names that must each have a plan.
-        horizon: Weeks the missing plan would cover.
+        models: YAML spec names that must each have a plan. Defaults to
+            ``load_production_ops().models``.
+        horizon: Weeks the missing plan would cover. Defaults to
+            ``load_production_ops().plan_horizon``.
 
     Returns:
         Deadlines whose ``data_checked`` flag is set and whose plan is absent.
     """
+    ops = load_production_ops()
+    chosen = ops.models if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
     frame = store.read("gameweeks").filter(pl.col("data_checked"))
     waiting: list[GWKey] = []
     seen: set[GWKey] = set()
     for season, gameweek in frame.select("season", "gw").iter_rows():
         key = GWKey(str(season), int(gameweek))
-        if key in seen or plans_exist(root, models, key, horizon):
+        if key in seen or plans_exist(root, chosen, key, steps):
             continue
         seen.add(key)
         waiting.append(key)
@@ -92,30 +101,33 @@ def due_gameweek(store: DataStore, now: datetime) -> GWKey | None:
 def catch_up(
     data_dir: Path,
     models: list[str] | None = None,
-    horizon: int = DEFAULT_PLAN_HORIZON,
+    horizon: int | None = None,
 ) -> list[GWKey]:
     """Fit, score, and plan every checked gameweek that has no plan yet.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``ledger/`` and
             ``plans/``.
-        models: YAML spec names. Defaults to ``PRODUCTION_MODELS``.
-        horizon: Weeks each plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
+        models: YAML spec names. Defaults to ``load_production_ops().models``.
+        horizon: Weeks each plan looks ahead. Defaults to
+            ``load_production_ops().plan_horizon``.
 
     Returns:
         The gameweeks processed by this call, in play order.
     """
-    chosen = PRODUCTION_MODELS if models is None else models
-    waiting = pending_checked(DataStore(data_dir), data_dir, chosen, horizon)
+    ops = load_production_ops()
+    chosen = list(ops.models) if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
+    waiting = pending_checked(DataStore(data_dir), data_dir, chosen, steps)
     logger.info(
         "catch_up models=%s pending=%s horizon=%s",
         chosen,
         [str(key) for key in waiting],
-        horizon,
+        steps,
     )
     done: list[GWKey] = []
     for key in waiting:
-        _play(data_dir, chosen, key, horizon)
+        _play(data_dir, chosen, key, steps)
         done.append(key)
     return done
 
@@ -124,31 +136,34 @@ def pre_deadline(
     data_dir: Path,
     now: datetime,
     models: list[str] | None = None,
-    horizon: int = DEFAULT_PLAN_HORIZON,
+    horizon: int | None = None,
 ) -> GWKey | None:
     """Plan the deadline inside the next three hours, when it has no plan yet.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives the plan.
         now: Clock reading, timezone-aware.
-        models: YAML spec names. Defaults to ``PRODUCTION_MODELS``.
-        horizon: Weeks the plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
+        models: YAML spec names. Defaults to ``load_production_ops().models``.
+        horizon: Weeks the plan looks ahead. Defaults to
+            ``load_production_ops().plan_horizon``.
 
     Returns:
         The deadline that was planned, or ``None`` when nothing was due.
     """
-    chosen = PRODUCTION_MODELS if models is None else models
+    ops = load_production_ops()
+    chosen = list(ops.models) if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
     key = due_gameweek(DataStore(data_dir), now)
     if key is None:
         logger.info("pre_deadline: nothing due within %s", _WINDOW)
         return None
     # North-star N1: archive ep_next + OpenFPL before the deadline (write-once).
     archive_if_missing(data_dir, key, now=now)
-    if plans_exist(data_dir, chosen, key, horizon):
+    if plans_exist(data_dir, chosen, key, steps):
         logger.info("pre_deadline: plan already exists for %s", key)
         return None
     logger.info("pre_deadline: planning %s models=%s", key, chosen)
-    _play(data_dir, chosen, key, horizon)
+    _play(data_dir, chosen, key, steps)
     return key
 
 
@@ -186,29 +201,32 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
 
 def plans_exist(
     root: Path,
-    models: list[str],
+    models: list[str] | None,
     key: GWKey,
-    horizon: int = DEFAULT_PLAN_HORIZON,
+    horizon: int | None = None,
 ) -> bool:
     """Whether every model already has a plan for ``key`` at ``horizon``.
 
     Args:
         root: Data directory that contains ``plans/``.
-        models: YAML spec names.
+        models: YAML spec names. ``None`` uses ``load_production_ops().models``.
         key: Deadline to look up.
         horizon: Weeks the plan covers. Weeks past 38 are not part of the file.
-            Defaults to ``DEFAULT_PLAN_HORIZON``.
+            Defaults to ``load_production_ops().plan_horizon``.
 
     Returns:
         True when each model's parquet is already on disk.
     """
-    weeks = covered_horizon(key.gw, horizon)
+    ops = load_production_ops()
+    chosen = ops.models if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
+    weeks = covered_horizon(key.gw, steps)
     if weeks < 1:
         return False
     specs = load_model_specs()
     return all(
         plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks).exists()
-        for name in models
+        for name in chosen
     )
 
 
