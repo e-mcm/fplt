@@ -321,7 +321,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 - `windows`: named closed gameweek intervals with `carries_over` (first-half chips that expire at a deadline set `carries_over: false`)
 - `grants`: one entry per chip use (`wildcard` / `freehit` / `bboost` / `3xc`), each tied to a window
 
-From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`). When `plan_squad` is given `season` and `gameweeks`, the MILP uses Bench Boost and Triple Captain under those rules (one chip per GW, half-season caps from windows + remaining inventory). Wildcard and Free Hit binaries are present for the one-chip constraint but stay fixed at zero until Wave C2.
+From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`). When `plan_squad` is given `season` and `gameweeks`, the MILP uses all four chips under those rules (one chip per GW, half-season caps from windows + remaining inventory). Wildcard suppresses hits that week and resets the next free-transfer count to 1. Free Hit fields a temporary squad/XI/captain within selling value of the permanent squad plus bank; step `t+1` continues from the pre-FH squad; free-transfer banking passes through when `free_hit_keeps_free_transfers` is true.
 
 ### 5.6 Simulation engine (composition)
 
@@ -531,11 +531,11 @@ A checked gameweek is waiting until `dc_layered_v2` has a plan parquet for that 
 
 ### 10.2 Formulation (multi-period ILP)
 
-Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out, plus chip binaries `wc_t` / `fh_t` / `bb_t` / `tc_t` (and TC extra-captain / BB bench-score player vars). Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer, one chip per GW, half-season BB/TC caps from `ChipRules` + `SquadState.chips`. Objective: Σ_t decay^t × (XI points + captain bonus + TC extra + BB bench + small bench weight) − hit costs. Solve with HiGHS (`highspy`). Wildcard / Free Hit effects are not modelled yet (`wc_t` = `fh_t` = 0).
+Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out, plus chip binaries `wc_t` / `fh_t` / `bb_t` / `tc_t` (TC extra-captain / BB bench-score player vars; Free Hit temporary squad/XI/captain). Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer (hits bounded by `M·(1−wc_t)`; FH freezes permanent transfers), one chip per GW, half-season chip caps from `ChipRules` + `SquadState.chips`. Objective: Σ_t decay^t × (XI points + captain bonus + TC extra + BB bench + FH temporary lineup + small bench weight) − hit costs. Solve with HiGHS (`highspy`).
 
 Library entry point: `fplt.optimise.optimize_transfers(candidates, expected_points, state, gameweeks=...)`. Predictions are opaque (`ExpectedPointsSchema`: `player_key`, `gw`, `xpts`); the engine does not call predictors or the data store. `fplt plan` is the CLI wrapper that loads candidates and ledger rows, then calls the same solver.
 
-v1: single-GW XI + captain. v2: multi-period transfers. v3: chips (BB/TC in MILP; WC/FH next). Captaincy can use `p_haul` / samples as a tiebreak.
+v1: single-GW XI + captain. v2: multi-period transfers. v3: chips in MILP (BB/TC/WC/FH; chip windows / three-arm board next). Captaincy can use `p_haul` / samples as a tiebreak.
 
 ### 10.3 Output
 
