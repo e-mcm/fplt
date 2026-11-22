@@ -307,6 +307,92 @@ def test_selection_payloads_needs_three_arms() -> None:
     assert spa is None and mcs is None
 
 
+def test_selection_payloads_skips_empty_arms(tmp_path: Path) -> None:
+    """Empty ledger arms (e.g. ep_next) must not abort SPA for the rest."""
+    seasons = ["2024-25"] * 3
+    gws = [1, 2, 3]
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["ctrl", "alt", "third"],
+            "actual_pts": [1.0, 1.0, 1.0],
+        }
+    )
+    compare = CompareResult(
+        season="2024-25",
+        test_from_gw=1,
+        test_to_gw=3,
+        fit_gw=1,
+        seasons_back=4,
+        modes=("walk_forward",),
+        runs=(
+            CompareRun(
+                model_name="control",
+                mode="walk_forward",
+                spec=MagicMock(model_id="ctrl"),
+            ),
+            CompareRun(
+                model_name="empty",
+                mode="walk_forward",
+                spec=MagicMock(model_id="empty"),
+            ),
+            CompareRun(
+                model_name="challenger",
+                mode="walk_forward",
+                spec=MagicMock(model_id="alt"),
+            ),
+            CompareRun(
+                model_name="third",
+                mode="walk_forward",
+                spec=MagicMock(model_id="third"),
+            ),
+        ),
+        summary=pl.DataFrame(),
+        detail=pl.DataFrame(),
+        output_dir=tmp_path,
+    )
+
+    def fake_losses(
+        _scored: pl.DataFrame, *, model_id: str, metric: str
+    ) -> pl.DataFrame:
+        del metric
+        if model_id == "empty":
+            return pl.DataFrame(
+                schema={
+                    "target_season": pl.Utf8,
+                    "target_gw": pl.Int64,
+                    "loss": pl.Float64,
+                }
+            )
+        losses = {
+            "ctrl": [1.10, 1.00, 1.05],
+            "alt": [0.90, 0.95, 0.92],
+            "third": [1.05, 1.02, 1.01],
+        }[model_id]
+        return pl.DataFrame(
+            {
+                "target_season": seasons,
+                "target_gw": gws,
+                "loss": losses,
+            }
+        )
+
+    with (
+        patch("fplt.backtest.bakeoff.read_predictions", return_value=ledger),
+        patch("fplt.backtest.bakeoff.per_gw_losses", side_effect=fake_losses),
+    ):
+        spa, mcs = selection_payloads(
+            data_dir=tmp_path,
+            compare=compare,
+            control="control",
+            models=["control", "empty", "challenger", "third"],
+        )
+    assert spa is not None and mcs is not None
+    assert spa["skipped_empty"] == ["empty"]
+    assert mcs["skipped_empty"] == ["empty"]
+    assert "empty" not in mcs["included"]
+    assert "empty" not in mcs["excluded"]
+
+
 def test_evalspec_arms_compare_names() -> None:
     payload = {
         "name": "dose",
