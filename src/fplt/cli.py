@@ -74,6 +74,7 @@ from fplt.optimise.decisions import (
     run_decisions,
     run_plan,
 )
+from fplt.optimise.explain import run_explain
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
@@ -220,6 +221,42 @@ def main(argv: list[str] | None = None) -> None:
             "(bank + selling prices). Ignores transfer hits; needs selling "
             "prices from my-team or --entry-json when not using YAML owned"
         ),
+    )
+    explain = sub.add_parser(
+        "explain",
+        parents=[log_flags],
+        help="Forecast board + plan/transfer deltas vs current squad",
+    )
+    explain.add_argument(
+        "--model",
+        default="dc_layered_v2",
+        help="YAML spec name (default: dc_layered_v2)",
+    )
+    explain.add_argument("--season", required=True)
+    explain.add_argument("--gw", type=int, required=True)
+    explain.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PLAN_HORIZON,
+        help=(
+            f"Horizon used when the plan was written (default: {DEFAULT_PLAN_HORIZON})"
+        ),
+    )
+    explain.add_argument(
+        "--top",
+        type=int,
+        default=30,
+        help="Top-N players for forecast-only mode (ignored when a plan exists)",
+    )
+    explain.add_argument(
+        "--forecast-only",
+        action="store_true",
+        help="Skip decision/transfer deltas (no plan required)",
+    )
+    explain.add_argument(
+        "--decision-only",
+        action="store_true",
+        help="Skip the forecast board (plan required)",
     )
     apply = sub.add_parser(
         "apply",
@@ -712,6 +749,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "plan":
         _plan(args)
         return
+    if args.command == "explain":
+        _explain(args)
+        return
     if args.command == "apply":
         _apply(args)
         return
@@ -880,6 +920,31 @@ def _compare(args: argparse.Namespace) -> None:
     print(f"wrote {result.output_dir / 'summary.json'}")
     if result.skipped_openfpl:
         print(result.skipped_openfpl, file=sys.stderr)
+
+
+def _explain(args: argparse.Namespace) -> None:
+    if args.forecast_only and args.decision_only:
+        print(
+            "choose at most one of --forecast-only / --decision-only",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        text = run_explain(
+            get_settings().data_dir,
+            args.model,
+            args.season,
+            int(args.gw),
+            horizon=int(args.horizon),
+            top_n=int(args.top),
+            include_forecast=not bool(args.decision_only),
+            include_decision=not bool(args.forecast_only),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        logger.error("explain failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(text, end="")
 
 
 def _plan(args: argparse.Namespace) -> None:

@@ -480,7 +480,19 @@ def run_plan(
         horizon=len(window),
     )
     table = plan_table(solved, spec.model_id, season, gameweek, window)
-    report = render_report(solved, season, window, names=_player_names(view))
+    names = _player_names(view)
+    report = render_report(solved, season, window, names=names)
+    report = _with_explain_sections(
+        report,
+        solved=solved,
+        state=state,
+        candidates=candidates,
+        data_dir=data_dir,
+        model_id=spec.model_id,
+        season=season,
+        gameweek=gameweek,
+        names=names,
+    )
     try:
         path = write_plan(data_dir, table)
     except FileExistsError as exc:
@@ -493,6 +505,47 @@ def run_plan(
         solved.points,
     )
     return solved, path, report
+
+
+def _with_explain_sections(
+    report: str,
+    *,
+    solved: GameweekPlan,
+    state: SquadState,
+    candidates: pl.DataFrame,
+    data_dir: Path,
+    model_id: str,
+    season: str,
+    gameweek: int,
+    names: dict[int, str],
+) -> str:
+    """Append decision / forecast explain blocks when predictions allow it."""
+    from fplt.optimise.explain import append_explain_sections, explain_plan_markdown
+    from fplt.scoring.rules import Rules
+
+    ledger = read_predictions(data_dir)
+    preds = ledger.filter(
+        (pl.col("model_id") == model_id)
+        & (pl.col("as_of_season") == season)
+        & (pl.col("as_of_gw") == gameweek)
+        & (pl.col("target_season") == season)
+        & (pl.col("target_gw") == gameweek)
+    )
+    try:
+        explain = explain_plan_markdown(
+            solved,
+            state,
+            candidates,
+            preds,
+            season=season,
+            gameweek=gameweek,
+            rules=Rules.for_season(season),
+            names=names,
+        )
+    except (ValueError, KeyError) as exc:
+        logger.warning("explain sections skipped: %s", exc)
+        return report
+    return append_explain_sections(report, decision=explain)
 
 
 def _require_usable_points(

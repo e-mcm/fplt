@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -165,6 +165,22 @@ decisions-explain:
 		echo "Usage: make decisions-explain SEASON=2024-25 GW=2 MODEL=openfpl_v1"; exit 1; fi
 	uv run fplt decisions --season $(SEASON) --summarise-only \
 		--explain-gw $(GW) --explain-model $(or $(MODEL),rolling_mean_v1) $(ARGS)
+
+# ── Explainability (forecast board + plan/transfer deltas) ────────────────────
+# Usage: make explain SEASON=2025-26 GW=10
+# Optional: MODEL=dc_layered_v2 HORIZON=3 TOP=30 ARGS='--forecast-only'
+# Needs ledger predictions for the deadline; decision section needs a saved plan
+# (make plan). Also appended onto plans/.../report.md when you run make plan.
+explain:
+	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
+		echo "Usage: make explain SEASON=2025-26 GW=10"; exit 1; fi
+	uv run fplt explain \
+		--model $(or $(MODEL),dc_layered_v2) \
+		--season $(SEASON) \
+		--gw $(GW) \
+		--horizon $(or $(HORIZON),3) \
+		--top $(or $(TOP),30) \
+		$(ARGS)
 
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10
