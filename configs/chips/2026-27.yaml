@@ -1,0 +1,29 @@
+# Same two-set rules as 2025-26 until official changes are published.
+one_chip_per_gameweek: true
+free_hit_keeps_free_transfers: true
+windows:
+  - id: first
+    start_event: 2
+    stop_event: 19
+    carries_over: false
+  - id: second
+    start_event: 20
+    stop_event: 38
+    carries_over: false
+grants:
+  - name: wildcard
+    window: first
+  - name: freehit
+    window: first
+  - name: bboost
+    window: first
+  - name: "3xc"
+    window: first
+  - name: wildcard
+    window: second
+  - name: freehit
+    window: second
+  - name: bboost
+    window: second
+  - name: "3xc"
+    window: second

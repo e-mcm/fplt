@@ -310,6 +310,17 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 
 `fplt.scoring.Rules.for_season(season)` loads and validates them. `Rules.score` applies the table to one player's integer match stats. Clean sheets and goals conceded are the official counts (already gated by minutes and red cards), not a scoreline recomputation. Bonus is the published bonus multiplied by the season's `bonus` rate (1). Defensive contributions are empty before 2025-26. From 2025-26 a defender scores 2 points for 10 clearances, blocks, interceptions and tackles, and a midfielder or forward scores 2 for 12 of those plus recoveries. Points do not stack. A per-season test reconstructs actual FPL points from `event/{gw}/live` stats for a sample of player-GWs and asserts exact equality with the official totals.
 
+### 5.5.1 Chip rules
+
+`configs/chips/<season>.yaml` holds the FPL chip allotment for that season (alongside scoring configs; never hardcode season rules in Python). Each file lists:
+
+- `one_chip_per_gameweek` (always true under current FPL rules)
+- `free_hit_keeps_free_transfers` (Free Hit preserves banked free transfers)
+- `windows`: named closed gameweek intervals with `carries_over` (first-half chips that expire at a deadline set `carries_over: false`)
+- `grants`: one entry per chip use (`wildcard` / `freehit` / `bboost` / `3xc`), each tied to a window
+
+From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`); the optimiser MILP does not yet consume chip variables (Wave C).
+
 ### 5.6 Simulation engine (composition)
 
 `CompositePredictor.predict` runs, per target fixture, `n_sims` scenarios (default 5,000):
@@ -526,7 +537,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 `fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 
-Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, and owned selling prices. An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chips stay off.
+Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, owned selling prices, and `chips` (`remaining` counts plus `played` `{name, gw}` history). An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players; chip inventory stays in YAML. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chip variables are not in the MILP yet (v3); season allotments are in `configs/chips/<season>.yaml`.
 
 ---
 
@@ -541,8 +552,9 @@ fplt/
 │   └── workflows/ci.yml  snapshot.yml
 ├── configs/
 │   ├── models/*.yaml            # ModelSpecs
-│   ├── scoring/<season>.yaml    # FPL rules per season
-│   └── squad_state.yaml         # optimiser overrides
+│   ├── scoring/<season>.yaml    # FPL points table per season
+│   ├── chips/<season>.yaml      # FPL chip allotments per season
+│   └── squad_state.yaml         # optimiser overrides (incl. chip inventory)
 ├── docs/design.md
 ├── scripts/snapshot.py          # standalone, runs on GitHub Actions
 ├── src/fplt/
@@ -553,7 +565,7 @@ fplt/
 │   ├── data/                    # FPL client, raw writer, staging, DataStore, PITData
 │   ├── schemas/                 # pandera.polars schemas
 │   ├── features/                # registry + feature definitions
-│   ├── scoring/                 # Rules
+│   ├── scoring/                 # Rules, ChipRules
 │   ├── models/
 │   │   ├── contracts.py         # PointsPredictor + component protocols
 │   │   ├── spec.py              # ModelSpec, registry
