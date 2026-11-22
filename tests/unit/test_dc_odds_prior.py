@@ -13,8 +13,10 @@ from fplt.data.store import DataStore
 from fplt.models.components.score.dixon_coles import MatchScoreModel, _align_odds
 from fplt.models.components.score.odds_lambda import (
     blend_lambda,
+    cs_probs_from_lambda,
     de_vig,
     odds_to_lambda,
+    outcome_probs_from_joint,
 )
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.types import GWKey
@@ -275,6 +277,146 @@ def test_dixon_coles_1x2_and_layered_specs_registered() -> None:
     assert layered.components["score"].params["market_1x2_strength"] == 1.0
     assert (
         "market_prior_strength" not in specs["dc_layered_v2"].components["score"].params
+    )
+
+
+def test_dixon_coles_cs_and_layered_specs_registered() -> None:
+    specs = load_model_specs()
+    cs = specs["dixon_coles_cs_v1"]
+    assert cs.params["market_cs_strength"] == 0.5
+    assert cs.params["use_closing_proxy"] is False
+    assert "market_prior_strength" not in cs.params
+    assert "market_1x2_strength" not in cs.params
+    layered = specs["dc_layered_cs_v1"]
+    score = layered.components["score"]
+    assert score.name == "dixon_coles_cs_v1"
+    assert score.params["market_cs_strength"] == 0.5
+    # Layered fork omits use_closing_proxy so one-lever diffs stay on
+    # market_cs_strength alone; MatchScoreModel still defaults it off.
+    assert "use_closing_proxy" not in score.params
+    assert "market_cs_strength" not in specs["dc_layered_v2"].components["score"].params
+
+
+def test_market_cs_strength_zero_matches_vanilla(tmp_path: Path) -> None:
+    store = _season_with_odds(DataStore(tmp_path), odds_before_deadline=True)
+    view = PITData(store).view(GWKey(_SEASON, 4))
+    fixtures = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "fixture_id": [4],
+            "team_h_key": [1],
+            "team_a_key": [2],
+            "kickoff_time": [
+                store.read("fixtures").filter(pl.col("fixture_id") == 4)[
+                    "kickoff_time"
+                ][0]
+            ],
+        }
+    )
+    base = {"xi": 0.0, "home_advantage": 1.2, "rho": -0.05}
+    vanilla = MatchScoreModel(ModelSpec(name="v", kind="dixon_coles", params=base))
+    zero = MatchScoreModel(
+        ModelSpec(
+            name="z",
+            kind="dixon_coles",
+            params={**base, "market_cs_strength": 0.0, "use_closing_proxy": False},
+        )
+    )
+    vanilla.fit(view)
+    zero.fit(view)
+    np.testing.assert_allclose(
+        vanilla.predict(view, fixtures).pmf,
+        zero.predict(view, fixtures).pmf,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def test_market_cs_strength_moves_cs_keeps_1x2(tmp_path: Path) -> None:
+    store = _season_with_odds(DataStore(tmp_path), odds_before_deadline=True)
+    view = PITData(store).view(GWKey(_SEASON, 4))
+    kick = store.read("fixtures").filter(pl.col("fixture_id") == 4)["kickoff_time"][0]
+    fixtures = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "fixture_id": [4],
+            "team_h_key": [1],
+            "team_a_key": [2],
+            "kickoff_time": [kick],
+        }
+    )
+    base = {"xi": 0.0, "home_advantage": 1.0, "rho": 0.0}
+    vanilla = MatchScoreModel(ModelSpec(name="v", kind="dixon_coles", params=base))
+    blended = MatchScoreModel(
+        ModelSpec(
+            name="b",
+            kind="dixon_coles",
+            params={
+                **base,
+                "market_cs_strength": 0.5,
+                "use_closing_proxy": False,
+            },
+        )
+    )
+    vanilla.fit(view)
+    blended.fit(view)
+    v_dist = vanilla.predict(view, fixtures)
+    b_dist = blended.predict(view, fixtures)
+    v_h, v_d, v_a = outcome_probs_from_joint(v_dist.pmf)
+    b_h, b_d, b_a = outcome_probs_from_joint(b_dist.pmf)
+    # DC 1X2 preserved exactly after CS blend + restore.
+    assert float(b_h[0]) == pytest.approx(float(v_h[0]), abs=1e-9)
+    assert float(b_d[0]) == pytest.approx(float(v_d[0]), abs=1e-9)
+    assert float(b_a[0]) == pytest.approx(float(v_a[0]), abs=1e-9)
+    mkt_h, mkt_a = odds_to_lambda(1.25, 6.0, 12.0, 1.55, 2.40)
+    mkt_cs_home, mkt_cs_away = cs_probs_from_lambda(mkt_h, mkt_a)
+    # Short home price → low away λ → high home CS; blend should move toward it.
+    v_cs_h = float(v_dist.p_clean_sheet("home")[0])
+    b_cs_h = float(b_dist.p_clean_sheet("home")[0])
+    assert abs(b_cs_h - mkt_cs_home) < abs(v_cs_h - mkt_cs_home)
+    v_cs_a = float(v_dist.p_clean_sheet("away")[0])
+    b_cs_a = float(b_dist.p_clean_sheet("away")[0])
+    assert abs(b_cs_a - mkt_cs_away) <= abs(v_cs_a - mkt_cs_away) + 1e-9
+
+
+def test_negative_market_cs_strength_raises() -> None:
+    with pytest.raises(ValueError, match="market_cs_strength"):
+        MatchScoreModel(
+            ModelSpec(
+                name="bad",
+                kind="dixon_coles",
+                params={"market_cs_strength": -0.1},
+            )
+        )
+
+
+def test_odds_after_deadline_leave_cs_blend_as_vanilla(tmp_path: Path) -> None:
+    store = _season_with_odds(DataStore(tmp_path), odds_before_deadline=False)
+    view = PITData(store).view(GWKey(_SEASON, 4))
+    fixtures = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "fixture_id": [4],
+            "team_h_key": [1],
+            "team_a_key": [2],
+        }
+    )
+    base = {"xi": 0.0, "home_advantage": 1.2, "rho": -0.05}
+    vanilla = MatchScoreModel(ModelSpec(name="v", kind="dixon_coles", params=base))
+    cs = MatchScoreModel(
+        ModelSpec(
+            name="cs",
+            kind="dixon_coles",
+            params={**base, "market_cs_strength": 0.5, "use_closing_proxy": False},
+        )
+    )
+    vanilla.fit(view)
+    cs.fit(view)
+    np.testing.assert_allclose(
+        vanilla.predict(view, fixtures).pmf,
+        cs.predict(view, fixtures).pmf,
+        rtol=1e-10,
+        atol=1e-12,
     )
 
 

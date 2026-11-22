@@ -19,6 +19,12 @@ When ``market_1x2_strength`` > 0, ``predict`` instead (or afterwards) rescales
 the joint's home/draw/away regions toward de-vigged bookmaker 1X2, preserving
 DC's conditional scoreline shape. Prefer this over the λ prior when the goal
 is match-outcome calibration.
+
+When ``market_cs_strength`` > 0, ``predict`` borrows only the market's
+zero-goal (clean-sheet) margin from ``odds_to_lambda``, then restores the
+joint's current 1X2. Use strengths below 1; leave full-strength λ / 1X2
+blends off. Prefer deadline-legal ``prematch_scheduled`` odds under strict
+PIT (``use_closing_proxy: false``).
 """
 
 # scipy does not ship type stubs.
@@ -35,9 +41,11 @@ from scipy.stats import poisson
 from fplt.data.pit import PITView
 from fplt.models.components.score.odds_lambda import (
     blend_lambda,
+    cs_probs_from_lambda,
     de_vig,
     odds_to_lambda,
     outcome_probs_from_joint,
+    rescale_joint_cs_margins,
     rescale_joint_to_1x2,
 )
 from fplt.models.distributions import MAX_GOALS, ScorelineDist
@@ -152,6 +160,11 @@ class MatchScoreModel:
       margins toward de-vigged bookmaker prices (0 = off). Prefer over the
       λ prior for match-outcome calibration. ``use_closing_proxy`` (default
       true when this strength is set) admits kickoff-stamped closing lines.
+    - ``market_cs_strength`` — pseudo-count shrink of clean-sheet
+      (zero-goal) margins toward market λ, then restore current 1X2
+      (0 = off). Prefer strengths below 1; keep λ / 1X2 strengths at 0.
+      ``use_closing_proxy`` defaults false when only this strength is set
+      so prematch / strict-PIT odds are used.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -165,6 +178,7 @@ class MatchScoreModel:
         self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
         self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
         self._market_1x2 = float(spec.params.get("market_1x2_strength", 0.0))
+        self._market_cs = float(spec.params.get("market_cs_strength", 0.0))
         raw_source = spec.params.get("market_prior_source")
         if raw_source is None or raw_source == "":
             self._market_source: str | None = None
@@ -178,11 +192,14 @@ class MatchScoreModel:
             raise ValueError(
                 f"market_1x2_strength must be >= 0, got {self._market_1x2}"
             )
+        if self._market_cs < 0:
+            raise ValueError(f"market_cs_strength must be >= 0, got {self._market_cs}")
         if self._market_source is not None and self._market_source != "history":
             raise ValueError(
                 "market_prior_source must be absent or 'history', "
                 f"got {self._market_source!r}"
             )
+        # 1X2 blend defaults to closing-proxy; CS-only prefers strict PIT.
         default_proxy = self._market_1x2 > 0
         self._use_closing_proxy = bool(
             spec.params.get("use_closing_proxy", default_proxy)
@@ -302,6 +319,8 @@ class MatchScoreModel:
                 λ blend. History mode applies the prior at fit time only.
                 When ``market_1x2_strength`` > 0, rescales 1X2 margins toward
                 de-vigged bookmaker prices after the joint is built.
+                When ``market_cs_strength`` > 0, blends clean-sheet margins
+                toward market λ then restores the joint's 1X2.
             fixtures: Columns ``fixture_id``, ``team_h_key``, and ``team_a_key``.
                 ``season`` helps the odds join when ``fixture_id`` is missing.
 
@@ -345,6 +364,14 @@ class MatchScoreModel:
                 fixtures,
                 joint,
                 strength=self._market_1x2,
+                use_closing_proxy=self._use_closing_proxy,
+            )
+        if self._market_cs > 0:
+            joint = _blend_joint_cs(
+                view,
+                fixtures,
+                joint,
+                strength=self._market_cs,
                 use_closing_proxy=self._use_closing_proxy,
             )
         return ScorelineDist(ids, joint)
@@ -583,6 +610,57 @@ def _blend_joint_1x2(
         target_d = (float(dc_d[index]) + weight * float(market[1])) / denom
         target_a = (float(dc_a[index]) + weight * float(market[2])) / denom
         out[index] = rescale_joint_to_1x2(joint[index], target_h, target_d, target_a)
+    return out
+
+
+def _blend_joint_cs(
+    view: PITView,
+    fixtures: pl.DataFrame,
+    joint: np.ndarray,
+    *,
+    strength: float,
+    use_closing_proxy: bool,
+) -> np.ndarray:
+    """Blend clean-sheet margins toward market λ; restore current 1X2."""
+    from fplt.models.components.score.odds_poisson import join_odds, odds_frame
+
+    odds = odds_frame(view, allow_closing_proxy=use_closing_proxy)
+    aligned = join_odds(fixtures, odds)
+    keep_h, keep_d, keep_a = outcome_probs_from_joint(joint)
+    # ScorelineDist / analytics read CS from the truncated grid; match that.
+    dc_cs_home = joint[:, :, 0].sum(axis=1)
+    dc_cs_away = joint[:, 0, :].sum(axis=1)
+    out = joint.copy()
+    weight = float(strength)
+    denom = 1.0 + weight
+    for index, row in enumerate(aligned.iter_rows(named=True)):
+        home_odds = row.get("home_odds")
+        draw_odds = row.get("draw_odds")
+        away_odds = row.get("away_odds")
+        if home_odds is None or draw_odds is None or away_odds is None:
+            continue
+        over = row.get("over_25_odds")
+        under = row.get("under_25_odds")
+        try:
+            market_h, market_a = odds_to_lambda(
+                float(home_odds),
+                float(draw_odds),
+                float(away_odds),
+                None if over is None else float(over),
+                None if under is None else float(under),
+            )
+        except ValueError:
+            continue
+        mkt_cs_home, mkt_cs_away = cs_probs_from_lambda(market_h, market_a)
+        target_cs_h = (float(dc_cs_home[index]) + weight * mkt_cs_home) / denom
+        target_cs_a = (float(dc_cs_away[index]) + weight * mkt_cs_away) / denom
+        adjusted = rescale_joint_cs_margins(out[index], target_cs_h, target_cs_a)
+        out[index] = rescale_joint_to_1x2(
+            adjusted,
+            float(keep_h[index]),
+            float(keep_d[index]),
+            float(keep_a[index]),
+        )
     return out
 
 

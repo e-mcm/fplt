@@ -111,7 +111,7 @@ CoverageMetric = Literal[
     "penalties_order_non_null",
     "dc_season_eligible",
 ]
-CoverageRead = Literal["strict_pit", "closing_proxy_labelled"]
+CoverageRead = Literal["strict_pit", "closing_proxy_labelled", "prematch_scheduled"]
 Verdict = Literal["keep", "tune", "drop", "inconclusive"]
 
 _TIER_TO_GW: dict[Tier, int] = {
@@ -129,6 +129,7 @@ _BOOL_DEFAULTS: dict[str, bool] = {
 }
 _FLOAT_DEFAULTS: dict[str, float] = {
     "market_prior_strength": 0.0,
+    "market_cs_strength": 0.0,
 }
 _ORIENTATION_PARAMS = frozenset({*_BOOL_DEFAULTS, *_FLOAT_DEFAULTS})
 
@@ -1514,12 +1515,16 @@ def render_recommendation(
     mps = preflight.effective_flags.get("treatment.market_prior_source")
     if mps is not None:
         lines.append(f"- market_prior_source: {mps}")
-    if "market_prior_strength" in {
-        k.split(".", 1)[-1] for k in preflight.effective_flags
-    }:
+    flag_keys = {k.split(".", 1)[-1] for k in preflight.effective_flags}
+    if "market_prior_strength" in flag_keys:
         lines.append(
             "- market_prior_strength (treatment): "
             f"{preflight.effective_flags.get('treatment.market_prior_strength')}"
+        )
+    if "market_cs_strength" in flag_keys:
+        lines.append(
+            "- market_cs_strength (treatment): "
+            f"{preflight.effective_flags.get('treatment.market_cs_strength')}"
         )
     lines.append("")
     # 7. PIT caveat
@@ -2158,6 +2163,12 @@ def _coverage_odds_join(
             "coverage.read=closing_proxy_labelled but treatment "
             "use_closing_proxy is not true"
         )
+    if read == "prematch_scheduled" and use_proxy:
+        raise ValueError(
+            "coverage.read=prematch_scheduled but treatment "
+            "use_closing_proxy is true (CS-only / prematch boards must "
+            "keep use_closing_proxy: false)"
+        )
     odds = store.read("match_odds")
     denom = fixtures.height
     if denom == 0:
@@ -2175,7 +2186,7 @@ def _coverage_odds_join(
             None,
         )
 
-    # Per-fixture deadline for strict PIT.
+    # Per-fixture deadline for strict PIT / prematch coverage.
     deadlines = (
         store.table("gameweeks")
         .filter(pl.col("season").is_in(plan.seasons))
@@ -2189,6 +2200,16 @@ def _coverage_odds_join(
     fixture_id_rate, team_rate, strict_rate, proxy_rate = _odds_join_rates(
         targets, odds, read=read
     )
+    prematch_rate = 0.0
+    prematch_dropped: tuple[int, ...] = ()
+    if read == "prematch_scheduled":
+        from fplt.data.football_data import check_prematch_deadline_coverage
+
+        prematch = check_prematch_deadline_coverage(targets, odds, min_coverage=None)
+        prematch_rate = prematch.rate
+        prematch_dropped = prematch.dropped_fixture_ids
+        if not prematch.passed and prematch.message:
+            warnings.append(prematch.message)
     if team_rate - fixture_id_rate > 0.05 + 1e-12:
         warnings.append(
             f"team-key odds rate {team_rate:.3f} exceeds fixture_id rate "
@@ -2196,29 +2217,57 @@ def _coverage_odds_join(
         )
     if not odds.is_empty() and (odds["odds_kind"] == "closing_proxy").any():
         warnings.append("closing-proxy odds rows present")
+    if (
+        not odds.is_empty()
+        and "odds_kind" in odds.columns
+        and (odds["odds_kind"] == "prematch_scheduled").any()
+    ):
+        warnings.append("prematch_scheduled odds rows present")
 
-    rate = strict_rate if read == "strict_pit" else proxy_rate
+    if read == "strict_pit":
+        rate = strict_rate
+    elif read == "closing_proxy_labelled":
+        rate = proxy_rate
+    else:
+        rate = prematch_rate
     numerator = int(round(rate * denom))
     min_cov = spec.gates.min_coverage
     passed = True if min_cov is None else rate + 1e-12 >= min_cov
     mps = "latest"
+    mcs = None
     if score is not None:
         mps = str(score.params.get("market_prior_source", "latest"))
+        if "market_cs_strength" in score.params:
+            mcs = score.params.get("market_cs_strength")
     caveat = (
         "Closing lines are stamped available_at=kickoff, after the FPL deadline. "
         "This run did not move the PIT cutoff. "
         f"Strict-PIT odds join = {strict_rate:.1%}. "
         "Closing-proxy join (labelled; used only by specs with "
         f"use_closing_proxy: true) = {proxy_rate:.1%}. "
+        f"Prematch-scheduled deadline coverage = {prematch_rate:.1%}. "
         f"market_prior_source = {mps}."
     )
+    if mcs is not None:
+        caveat += f" market_cs_strength = {mcs}."
     # Always print caveat when match_odds is involved or closing_proxy exists.
     if "match_odds" in spec.change.tables or (
         not odds.is_empty() and (odds["odds_kind"] == "closing_proxy").any()
     ):
         pit_caveat: str | None = caveat
     else:
-        pit_caveat = caveat if read == "strict_pit" else None
+        pit_caveat = caveat if read in {"strict_pit", "prematch_scheduled"} else None
+
+    extras: dict[str, Any] = {
+        "fixture_id_join_rate": fixture_id_rate,
+        "team_key_join_rate": team_rate,
+        "strict_pit_rate": strict_rate,
+        "closing_proxy_rate": proxy_rate,
+        "prematch_scheduled_rate": prematch_rate,
+        "read": read,
+    }
+    if prematch_dropped:
+        extras["prematch_dropped_fixture_ids"] = list(prematch_dropped)
 
     return (
         CoverageResult(
@@ -2228,13 +2277,7 @@ def _coverage_odds_join(
             rate=rate,
             min_coverage=min_cov,
             passed=passed,
-            extras={
-                "fixture_id_join_rate": fixture_id_rate,
-                "team_key_join_rate": team_rate,
-                "strict_pit_rate": strict_rate,
-                "closing_proxy_rate": proxy_rate,
-                "read": read,
-            },
+            extras=extras,
         ),
         warnings,
         pit_caveat,

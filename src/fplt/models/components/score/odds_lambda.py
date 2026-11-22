@@ -1,8 +1,9 @@
 """Map bookmaker 1X2 (+ optional O/U 2.5) odds to independent-Poisson λ.
 
-Shared by the odds scoreline baseline (W5) and the Dixon–Coles market prior
-(W6). De-vigs decimal odds, then fits λ_home / λ_away so the independent
-Poisson scoreline probabilities match the fair 1X2 (and O/U when present).
+Shared by the odds scoreline baseline (W5), the Dixon–Coles market prior
+(W6), and the CS-only market-λ blend. De-vigs decimal odds, then fits
+λ_home / λ_away so the independent Poisson scoreline probabilities match
+the fair 1X2 (and O/U when present).
 """
 
 # scipy does not ship type stubs.
@@ -179,6 +180,81 @@ def outcome_probs_from_joint(
     if single:
         return p_home[0:1], p_draw[0:1], p_away[0:1]
     return p_home, p_draw, p_away
+
+
+def cs_probs_from_lambda(lambda_home: float, lambda_away: float) -> tuple[float, float]:
+    """Independent-Poisson clean-sheet probs from expected goals.
+
+    Home CS is ``P(away goals = 0)``; away CS is ``P(home goals = 0)``.
+
+    Args:
+        lambda_home: Home expected goals.
+        lambda_away: Away expected goals.
+
+    Returns:
+        ``(p_cs_home, p_cs_away)``.
+    """
+    return float(poisson.pmf(0, lambda_away)), float(poisson.pmf(0, lambda_home))
+
+
+def rescale_joint_cs_margins(
+    joint: np.ndarray,
+    p_cs_home: float | np.ndarray,
+    p_cs_away: float | np.ndarray,
+) -> np.ndarray:
+    """Rescale zero-goal margins so clean-sheet probs match the targets.
+
+    Home CS is the away-goals=0 slice; away CS is the home-goals=0 slice.
+    Conditional shape inside each zero / positive slice is preserved. Rows
+    are renormalised to sum to 1. Callers that must keep 1X2 should follow
+    with :func:`rescale_joint_to_1x2`.
+
+    Args:
+        joint: Non-negative masses, shape ``(F, G, G)`` or ``(G, G)``.
+        p_cs_home / p_cs_away: Target clean-sheet probs (scalars or ``(F,)``).
+
+    Returns:
+        Rescaled joint with the same shape as ``joint``.
+    """
+    grid = np.asarray(joint, dtype=np.float64).copy()
+    single = grid.ndim == 2
+    if single:
+        grid = grid[None, ...]
+    if grid.ndim != 3 or grid.shape[1] != grid.shape[2]:
+        raise ValueError(f"joint must have shape (F, G, G), got {grid.shape}")
+    n, _, _ = grid.shape
+    targets_home = np.broadcast_to(np.asarray(p_cs_home, dtype=np.float64), (n,))
+    targets_away = np.broadcast_to(np.asarray(p_cs_away, dtype=np.float64), (n,))
+    out = grid.copy()
+    for index in range(n):
+        want_h = float(np.clip(targets_home[index], 0.0, 1.0))
+        col0 = out[index, :, 0]
+        rest_a = out[index, :, 1:]
+        mass0 = float(col0.sum())
+        mass1 = float(rest_a.sum())
+        if want_h > 0 and mass0 > 0:
+            out[index, :, 0] = col0 * (want_h / mass0)
+        elif want_h > 0:
+            out[index, 0, 0] = want_h
+        if want_h < 1.0 and mass1 > 0:
+            out[index, :, 1:] = rest_a * ((1.0 - want_h) / mass1)
+
+        want_a = float(np.clip(targets_away[index], 0.0, 1.0))
+        row0 = out[index, 0, :]
+        rest_h = out[index, 1:, :]
+        mass0 = float(row0.sum())
+        mass1 = float(rest_h.sum())
+        if want_a > 0 and mass0 > 0:
+            out[index, 0, :] = row0 * (want_a / mass0)
+        elif want_a > 0:
+            out[index, 0, 0] = want_a
+        if want_a < 1.0 and mass1 > 0:
+            out[index, 1:, :] = rest_h * ((1.0 - want_a) / mass1)
+
+    totals = out.sum(axis=(1, 2), keepdims=True)
+    totals = np.where(totals > 0, totals, 1.0)
+    out = out / totals
+    return out[0] if single else out
 
 
 def rescale_joint_to_1x2(
