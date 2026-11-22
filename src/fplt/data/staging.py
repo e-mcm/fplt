@@ -1,16 +1,17 @@
 """Turn raw FPL API payloads into staged frames.
 
-Schedule rows are published at ``captured_at``. Result rows are published at
-the capture where ``data_checked`` is true, which is the moment those scores
-become visible to a later point-in-time view. Opta ``expected_goals`` /
-``expected_assists`` / ``expected_goal_involvements`` /
-``expected_goals_conceded`` stage onto ``player_fixture_stats`` with that
-same ``available_at``.
+Schedule rows are published at ``captured_at`` for that snapshot. A later
+snapshot that rearranges kickoff/gw keeps a new row with its own
+``available_at``, so earlier deadlines still see the pre-rearrangement
+schedule. Result rows are published at the capture where ``data_checked``
+is true. Opta ``expected_goals`` / ``expected_assists`` /
+``expected_goal_involvements`` / ``expected_goals_conceded`` stage onto
+``player_fixture_stats`` with that same ``available_at``.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import polars as pl
@@ -273,18 +274,6 @@ def _fixtures(
                 "source": source,
             }
         )
-        if scores_visible:
-            # Also publish the pre-match schedule at kickoff minus 14 days so a
-            # view before the result still sees the fixture.
-            rows.append(
-                {
-                    **rows[-1],
-                    "team_h_score": None,
-                    "team_a_score": None,
-                    "finished": False,
-                    "available_at": kickoff - timedelta(days=14),
-                }
-            )
     frame = pl.DataFrame(rows)
     return frame.with_columns(
         pl.col("kickoff_time").cast(pl.Datetime("us", "UTC")),

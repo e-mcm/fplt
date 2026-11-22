@@ -136,7 +136,7 @@ Every staged table carries an `available_at` timestamp (UTC):
 
 - Snapshotted attributes (status, news, `news_added`, price, `ep_next`, chance this/next, `penalties_order`): `available_at = captured_at`.
 - Match results and stats: `available_at` = time the GW was marked `data_checked` (or kickoff + 3h as a historical proxy).
-- Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that date.
+- Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that kickoff/gw/teams identity. FPL API staging stamps each capture at `captured_at` (no synthetic near-kickoff backdate — that would leak late rearrangements). Vaastav has no mid-season fixture archive, so schedule rows use `season_start` (1 July) as the earliest-known proxy and results stay at kickoff + 3h; rearrangements that exist only in the final `fixtures.csv` can appear early — prefer FPL API snapshot history when present. Mid-season deadlines then see season-ahead GWs (enough for H=8–10 planning) while PIT filtering still hides unpublished rearrangements from later snapshots.
 - Closing match odds (`match_odds`, `odds_kind=closing_proxy`): `available_at = kickoff`. Bookmaker close is pre-KO, not the FPL deadline.
 - Scheduled prematch odds (`match_odds`, `odds_kind=prematch_scheduled`): `available_at` = conservative football-data collection estimate (Fri/Tue 17:00 London). Still not automatically deadline-legal — gate on `available_at <= deadline`.
 - API-Football injuries (`player_injuries`): `available_at = captured_at` of the raw snapshot.
@@ -172,7 +172,21 @@ Availability and news cannot be recovered after the fact, so capture runs indepe
 - Snapshots are committed to an orphan branch `snapshots` of this repo (path layout as `data/raw/fpl_api/...`).
 - Local Dagster has a sensor that fetches the `snapshots` branch and ingests new files into `data/raw`.
 
-Historical seasons (vaastav) lack per-deadline status/news/`news_added`/chance/`penalties_order` snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons (`make minutes-brier` / `fplt eval-components --minutes-only`, read `slice=source=fpl_api`). Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order`, both chance fields, and `news_added` are null for vaastav rows.
+Historical seasons (vaastav) lack per-deadline status/news/`news_added`/chance/`penalties_order` snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons (`make minutes-brier` / `fplt eval-components --minutes-only`, read `slice=source=fpl_api`). Fixture schedules are still staged at `season_start` so long-horizon planning works without inventing near-kickoff visibility. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order`, both chance fields, and `news_added` are null for vaastav rows.
+
+After restaging fixtures with the season-start / snapshot stamps, an H=8 chip board can be re-run without flipping `DEFAULT_PLAN_HORIZON` (still 3):
+
+```bash
+# Restage if the store still has kickoff−14d fixture stamps
+uv run python -c "from fplt.data.store import DataStore; from fplt.data.vaastav import import_available; from fplt.settings import get_settings; s=get_settings(); print(import_available(DataStore(s.data_dir), s.data_dir))"
+# Prefer FPL API snapshots when present:
+# uv run python -c "from fplt.data.raw import ingest_raw; from fplt.data.store import DataStore; from fplt.settings import get_settings; s=get_settings(); print(ingest_raw(DataStore(s.data_dir), s.data_dir/'raw'))"
+
+rm -f data/ledger/predictions/part.parquet
+uv run fplt backtest --models dc_layered_v2 --season 2025-26 --from-gw 1 --to-gw 38 --steps 8
+uv run fplt decisions --chip-board --season 2025-26 --horizon 8 \
+  --models dc_layered_v2 --from-gw 1 --to-gw 38
+```
 
 ### 4.6 Schemas
 
