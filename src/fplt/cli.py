@@ -63,9 +63,11 @@ from fplt.optimise.attainable import (
 from fplt.optimise.decisions import (
     PlanExistsError,
     explain_decision_gameweek,
+    format_chip_decision_scoreboard,
     format_decision_scoreboard,
     read_decisions,
     resolve_squad_state,
+    run_chip_decision_board,
     run_decision_bakeoff,
     run_decisions,
     run_plan,
@@ -283,6 +285,28 @@ def main(argv: list[str] | None = None) -> None:
             "Run the constrained hindsight oracle and append attainable "
             "share columns to the scoreboard"
         ),
+    )
+    decisions.add_argument(
+        "--chip-board",
+        action="store_true",
+        help=(
+            "Three-arm chip board: chips-off vs rule-based vs optimised MILP "
+            "(season points; does not run the full FDB-120 bakeoff)"
+        ),
+    )
+    decisions.add_argument(
+        "--chip-rules-season",
+        help=(
+            "Chip-rules year for --chip-board (default: --season). "
+            "Use 2025-26 on a 2024-25 fixture season to label a counterfactual"
+        ),
+    )
+    decisions.add_argument(
+        "--chip-arms",
+        nargs="+",
+        choices=["off", "rule_based", "optimised"],
+        default=["off", "rule_based", "optimised"],
+        help="Chip arms for --chip-board (default: all three)",
     )
     eval_components = sub.add_parser(
         "eval-components",
@@ -1018,40 +1042,57 @@ def _decisions(args: argparse.Namespace) -> None:
         return
     max_mean = float(args.max_mean_ppg)
     try:
-        summary = run_decision_bakeoff(
-            data_dir,
-            list(args.models),
-            args.season,
-            args.from_gw,
-            args.to_gw,
-            args.horizon,
-            simulate=not bool(args.summarise_only),
-            max_mean_ppg=None if max_mean <= 0 else max_mean,
-        )
-        if bool(args.with_oracle):
-            if not bool(args.summarise_only):
-                run_hindsight_oracle(
-                    data_dir,
-                    args.season,
-                    args.from_gw,
-                    args.to_gw,
-                    args.horizon,
-                    actuals_model=list(args.models)[0],
-                )
-            oracle = read_decisions(data_dir).filter(
-                (pl.col("model_id") == ORACLE_MODEL_ID)
-                & (pl.col("season") == args.season)
+        if bool(args.chip_board):
+            if bool(args.with_oracle):
+                raise ValueError("--with-oracle is not supported with --chip-board")
+            summary = run_chip_decision_board(
+                data_dir,
+                list(args.models),
+                args.season,
+                args.from_gw,
+                args.to_gw,
+                args.horizon,
+                arms=list(args.chip_arms),
+                chip_rules_season=args.chip_rules_season,
+                simulate=not bool(args.summarise_only),
+                max_mean_ppg=None if max_mean <= 0 else max_mean,
             )
-            if args.from_gw > 1 or args.to_gw < 38:
-                oracle = oracle.filter(
-                    (pl.col("gw") >= args.from_gw) & (pl.col("gw") <= args.to_gw)
+            print(format_chip_decision_scoreboard(summary))
+        else:
+            summary = run_decision_bakeoff(
+                data_dir,
+                list(args.models),
+                args.season,
+                args.from_gw,
+                args.to_gw,
+                args.horizon,
+                simulate=not bool(args.summarise_only),
+                max_mean_ppg=None if max_mean <= 0 else max_mean,
+            )
+            if bool(args.with_oracle):
+                if not bool(args.summarise_only):
+                    run_hindsight_oracle(
+                        data_dir,
+                        args.season,
+                        args.from_gw,
+                        args.to_gw,
+                        args.horizon,
+                        actuals_model=list(args.models)[0],
+                    )
+                oracle = read_decisions(data_dir).filter(
+                    (pl.col("model_id") == ORACLE_MODEL_ID)
+                    & (pl.col("season") == args.season)
                 )
-            summary = enrich_decision_summary(summary, oracle)
+                if args.from_gw > 1 or args.to_gw < 38:
+                    oracle = oracle.filter(
+                        (pl.col("gw") >= args.from_gw) & (pl.col("gw") <= args.to_gw)
+                    )
+                summary = enrich_decision_summary(summary, oracle)
+            print(format_decision_scoreboard(summary))
     except (KeyError, ValueError) as exc:
         logger.error("decisions failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
-    print(format_decision_scoreboard(summary))
     path = data_dir / "ledger" / "decisions" / "part.parquet"
     print(path)
 

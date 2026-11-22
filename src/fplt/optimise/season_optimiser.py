@@ -221,6 +221,8 @@ def validate_decisions(frame: pl.DataFrame) -> pl.DataFrame:
     Returns:
         The validated polars frame.
     """
+    if "chip" not in frame.columns:
+        frame = frame.with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
     checked = DecisionSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
     return checked

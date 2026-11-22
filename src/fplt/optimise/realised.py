@@ -47,6 +47,7 @@ def score_gameweek(
     picks: pl.DataFrame,
     *,
     hit: float = 0.0,
+    chip: str | None = None,
 ) -> int:
     """Score one gameweek's kept squad with autosub and vice-on-blank.
 
@@ -55,21 +56,24 @@ def score_gameweek(
             ``in_xi``, ``captain``, ``vice``, ``actual_pts``, and
             ``actual_minutes``. Null points are 0; null minutes assume played.
         hit: Transfer hit cost to subtract once (non-negative).
+        chip: Active chip for the gameweek (``bboost``, ``3xc``, …). When
+            omitted, uses a non-null ``chip`` column on ``picks`` if present.
 
     Returns:
-        Net realised points (XI after autosub, captain ×2 or vice ×2, minus
-        ``hit``).
+        Net realised points (XI after autosub, captain ×2 / Triple Captain
+        ×3, Bench Boost bench points, minus ``hit``).
 
     Raises:
         ValueError: The frame is missing required columns or has no XI.
     """
-    return _score_parts(picks, hit=hit).net
+    return _score_parts(picks, hit=hit, chip=_resolve_chip(picks, chip)).net
 
 
 def explain_gameweek(
     picks: pl.DataFrame,
     *,
     hit: float = 0.0,
+    chip: str | None = None,
     names: dict[int, str] | None = None,
 ) -> str:
     """Render XI / autosub / captain arithmetic for one gameweek's picks.
@@ -77,6 +81,7 @@ def explain_gameweek(
     Args:
         picks: Decision rows for a single model × season × gameweek.
         hit: Transfer hit cost to subtract once.
+        chip: Active chip for the gameweek; see ``score_gameweek``.
         names: Optional ``player_key`` → display name map.
 
     Returns:
@@ -85,7 +90,7 @@ def explain_gameweek(
     Raises:
         ValueError: The frame is missing required columns or has no XI.
     """
-    parts = _score_parts(picks, hit=hit)
+    parts = _score_parts(picks, hit=hit, chip=_resolve_chip(picks, chip))
     label = names or {}
 
     def _name(key: int) -> str:
@@ -113,7 +118,12 @@ def explain_gameweek(
             f"{row.minutes} | {row.pts} | -"
         )
     lines.append(f"XI sum (after autosub, mins>0): {parts.xi_sum}")
-    if parts.captain_extra:
+    if parts.chip == "3xc" and parts.captain_extra:
+        lines.append(
+            f"triple captain extra (+{parts.captain_extra}): "
+            f"{_name(parts.armband_key)} ×3 armband"
+        )
+    elif parts.captain_extra:
         lines.append(
             f"captain extra (+{parts.captain_extra}): "
             f"{_name(parts.armband_key)} ×2 armband"
@@ -125,6 +135,10 @@ def explain_gameweek(
         )
     else:
         lines.append("armband extra: 0 (captain and vice blanked)")
+    if parts.bench_boost:
+        lines.append(f"bench boost (+{parts.bench_boost}): full bench scores")
+    if parts.chip:
+        lines.append(f"chip: {parts.chip}")
     lines.append(f"hit: -{int(max(hit, 0.0))}")
     lines.append(f"net: {parts.net}")
     return "\n".join(lines)
@@ -141,10 +155,14 @@ class _ScoreParts:
     captain_extra: int
     vice_extra: int
     armband_key: int
+    bench_boost: int
+    chip: str | None
     net: int
 
 
-def _score_parts(picks: pl.DataFrame, *, hit: float) -> _ScoreParts:
+def _score_parts(
+    picks: pl.DataFrame, *, hit: float, chip: str | None = None
+) -> _ScoreParts:
     required = {
         "player_key",
         "position",
@@ -208,7 +226,8 @@ def _score_parts(picks: pl.DataFrame, *, hit: float) -> _ScoreParts:
     armband_key = 0
     total = xi_sum
     if captain is not None and captain.minutes > 0:
-        captain_extra = captain.pts
+        # Triple Captain adds two extras on top of the XI copy (×3 total).
+        captain_extra = 2 * captain.pts if chip == "3xc" else captain.pts
         armband_key = captain.player_key
         total += captain_extra
     elif vice is not None and vice.minutes > 0:
@@ -219,6 +238,12 @@ def _score_parts(picks: pl.DataFrame, *, hit: float) -> _ScoreParts:
             vice_extra = 2 * vice.pts
         total += vice_extra
     inactive_bench = tuple(row for row in bench if row.player_key not in used_bench)
+    bench_boost = 0
+    if chip == "bboost":
+        # Bench Boost: every bench player with minutes scores (autosubs still
+        # move blanks into the XI copy above; remaining bench is added here).
+        bench_boost = sum(row.pts for row in inactive_bench if row.minutes > 0)
+        total += bench_boost
     return _ScoreParts(
         active=active,
         inactive_bench=inactive_bench,
@@ -227,6 +252,8 @@ def _score_parts(picks: pl.DataFrame, *, hit: float) -> _ScoreParts:
         captain_extra=captain_extra,
         vice_extra=vice_extra,
         armband_key=armband_key,
+        bench_boost=bench_boost,
+        chip=chip,
         net=int(total - max(hit, 0.0)),
     )
 
@@ -282,7 +309,8 @@ def summarise_decisions(frame: pl.DataFrame) -> pl.DataFrame:
             & (pl.col("gw") == gameweek)
         )
         hit = float(part["hit"][0]) if part.height else 0.0
-        net = score_gameweek(part, hit=hit)
+        chip = _resolve_chip(part, None)
+        net = score_gameweek(part, hit=hit, chip=chip)
         realised.append(
             RealisedGameweek(
                 model_id=str(model_id),
@@ -389,6 +417,18 @@ def assert_sane_mean_ppg(
                 "(likely double-counted ledger actuals; "
                 "run `fplt decisions --explain-gw` on a high GW)"
             )
+
+
+def _resolve_chip(picks: pl.DataFrame, chip: str | None) -> str | None:
+    """Prefer an explicit chip; else the first non-null ``chip`` column value."""
+    if chip is not None:
+        return chip
+    if "chip" not in picks.columns or picks.is_empty():
+        return None
+    for value in picks["chip"].to_list():
+        if value is not None and str(value) != "":
+            return str(value)
+    return None
 
 
 def _pick_from_row(row: dict[str, object]) -> _Pick:
