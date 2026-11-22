@@ -99,7 +99,8 @@ data/
 │   │   ├── teams/captured_at=.../teams.json.gz  # league teamsData (Deep/PPDA)
 │   │   └── match_id=<id>/match.json.gz   # getMatchData AJAX payload
 │   ├── football_data/season=2024-25/
-│   │   └── E0.csv                 # football-data.co.uk Premier League closing odds
+│   │   ├── E0.csv                 # optional legacy once-per-season path
+│   │   └── captured_at=2025-11-01/E0.csv  # monthly GHA write-once refreshes
 │   ├── touchline/season=…/captured_at=…/lineups.json.gz   # experimental predicted XI
 │   └── api_football/season=2026-27/
 │       ├── injuries/captured_at=.../injuries.json.gz
@@ -126,7 +127,7 @@ Raw is stored as gzipped JSON rather than parquet because it is lossless against
 
 Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON plus league `teamsData` onto the `snapshots` branch; the Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
 
-football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` writes `raw/football_data/season=.../E0.csv` once; the Dagster `match_odds_ingest` asset stages `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
+football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` (and monthly `.github/workflows/football_data.yml`, 1st of month 06:00 UTC + manual) writes write-once E0 CSVs onto the `snapshots` branch under `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` (local `make fetch-football-data` may still use the legacy `season=…/E0.csv` path). The Dagster `match_odds_sensor` (30 min) requests `match_odds_ingest` when a new E0 CSV appears under raw after `snapshots_sensor` copies it. Staging writes `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist; later `captured_at` files win on key collision. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
 
 API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON onto the `snapshots` branch under `raw/api_football/...`; the Dagster `api_football_ingest` asset stages `player_injuries` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v2` is unchanged until eval.
 
@@ -519,9 +520,11 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 
 | Trigger | Type | Action |
 |---|---|---|
-| New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` |
+| New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` (football-data CSVs are copied but restage is skipped — odds sensor handles them) |
 | New Understat raw under `raw/understat/` | sensor (every 10 min) | Materialise `understat_ingest` (fetch + prefix filter; cursor fallback if `snapshots_sensor` already copied) |
 | New API-Football injury raw under `raw/api_football/` (excludes `lineups/`) | sensor (every 10 min) | Materialise `api_football_ingest` |
+| New football-data `E0.csv` under raw | sensor (every 30 min) | Materialise `match_odds_ingest` |
+| Monthly / manual football-data capture | GHA `football_data.yml` | Current-season E0 → `snapshots` under `captured_at=YYYY-MM-DD` |
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
 | Next deadline within 3 h and plan or `benchmark_projections` still missing | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |

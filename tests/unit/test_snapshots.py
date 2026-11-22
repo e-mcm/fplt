@@ -50,6 +50,27 @@ def test_fetch_copies_new_files_once(tmp_path: Path) -> None:
     assert fetch_snapshots(dest, remote=str(remote)) == []
 
 
+def test_fetch_copies_football_data_csv_once(tmp_path: Path) -> None:
+    remote = tmp_path / "remote"
+    odds = (
+        remote
+        / "data"
+        / "raw"
+        / "football_data"
+        / "season=2024-25"
+        / "captured_at=2025-11-01"
+    )
+    odds.mkdir(parents=True)
+    (odds / "E0.csv").write_text("Div,Date\nE0,01/01/2024\n", encoding="utf-8")
+    _commit(remote, "snapshots")
+    dest = tmp_path / "raw"
+    first = fetch_snapshots(dest, remote=str(remote))
+    assert len(first) == 1
+    assert first[0].name == "E0.csv"
+    assert "football_data" in first[0].parts
+    assert fetch_snapshots(dest, remote=str(remote)) == []
+
+
 def test_fetch_without_a_raw_directory_returns_nothing(tmp_path: Path) -> None:
     remote = tmp_path / "remote"
     remote.mkdir()

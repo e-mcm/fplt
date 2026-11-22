@@ -19,12 +19,18 @@ from fplt.automation.cycle import (
 )
 from fplt.automation.notify import notify
 from fplt.data.benchmark_projections import benchmarks_path
-from fplt.data.snapshots import SnapshotFetchError, fetch_snapshots
+from fplt.data.football_data import list_e0_csv_paths
+from fplt.data.snapshots import (
+    SnapshotFetchError,
+    fetch_snapshots,
+    is_football_data_raw,
+)
 from fplt.data.store import DataStore
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.orchestration.assets import (
     api_football_ingest_job,
     catch_up_job,
+    match_odds_ingest_job,
     pre_deadline_job,
     refresh_staged,
     understat_ingest_job,
@@ -108,15 +114,24 @@ def _side_ingest_tick(
     description="Fetch the snapshots branch and restage when new files arrive.",
 )
 def snapshots_sensor() -> dg.RunRequest | dg.SkipReason:
-    """Copy new snapshot files into ``$FPLT_DATA_DIR/raw`` and request a restage."""
+    """Copy new snapshot files into ``$FPLT_DATA_DIR/raw`` and request a restage.
+
+    Football-data ``E0.csv`` arrivals are copied but do not trigger
+    ``refresh_staged`` — ``match_odds_sensor`` stages those.
+    """
     dest = get_settings().data_dir / "raw"
     try:
         new_files = fetch_snapshots(dest)
     except SnapshotFetchError as exc:
         return dg.SkipReason(str(exc))
-    if not new_files:
+    refresh_files = [path for path in new_files if not is_football_data_raw(path)]
+    if not refresh_files:
+        if new_files:
+            return dg.SkipReason(
+                "only football_data snapshots; match_odds_sensor stages odds"
+            )
         return dg.SkipReason("no new snapshots")
-    return dg.RunRequest(run_key=new_files[-1].as_posix())
+    return dg.RunRequest(run_key=refresh_files[-1].as_posix())
 
 
 @dg.sensor(
@@ -149,6 +164,38 @@ def api_football_sensor(
         prefix="api_football",
         empty_message="no new api_football snapshots",
     )
+
+
+@dg.sensor(
+    job=match_odds_ingest_job,
+    minimum_interval_seconds=_THIRTY_MINUTES,
+    description=(
+        "Stage match_odds when a new football-data E0.csv appears under raw "
+        "(monthly GHA captured_at=… or local make fetch-football-data)."
+    ),
+)
+def match_odds_sensor(
+    context: dg.SensorEvaluationContext,
+) -> dg.RunRequest | dg.SkipReason:
+    """Request ``match_odds_ingest`` when a new write-once E0 CSV is present.
+
+    Relies on ``snapshots_sensor`` (or a local fetch) to place files under
+    ``$FPLT_DATA_DIR/raw/football_data``. Tracks seen paths in the sensor cursor.
+    """
+    raw_root = get_settings().data_dir / "raw"
+    paths = [path.as_posix() for path in list_e0_csv_paths(raw_root)]
+    previous = _cursor_paths(context.cursor)
+    new_paths = [path for path in paths if path not in previous]
+    context.update_cursor("\n".join(paths))
+    if not new_paths:
+        return dg.SkipReason("no new football_data E0.csv")
+    return dg.RunRequest(run_key=new_paths[-1])
+
+
+def _cursor_paths(cursor: str | None) -> set[str]:
+    if not cursor:
+        return set()
+    return {line for line in cursor.split("\n") if line}
 
 
 @dg.sensor(

@@ -14,6 +14,7 @@ from fplt.data.football_data import (
     e0_raw_path,
     estimated_prematch_available_at,
     ingest_football_data,
+    iter_raw_e0,
     load_team_names,
     parse_e0_csv,
     parse_kickoff,
@@ -195,6 +196,19 @@ def test_ingest_keeps_both_kinds_on_unique_key(tmp_path: Path) -> None:
     assert ingest_football_data(store, raw, _TEAMS, join_fixtures=False) == 1
     assert store.read("match_odds").height == 6
     assert ingest_football_data(store, raw, _TEAMS, seasons=["2023-24"]) == 0
+
+
+def test_iter_raw_e0_orders_captured_at_after_legacy(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    legacy = e0_raw_path(raw, "2024-25")
+    early = e0_raw_path(raw, "2024-25", captured_at="2025-10-01")
+    late = e0_raw_path(raw, "2024-25", captured_at="2025-11-01")
+    for path in (legacy, early, late):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Div,Date\n", encoding="utf-8")
+    paths = [path for path, season in iter_raw_e0(raw)]
+    assert paths == [legacy, early, late]
+    assert iter_raw_e0(raw, seasons=["2023-24"]) == []
 
 
 def test_prematch_deadline_coverage_drops_early_deadlines() -> None:

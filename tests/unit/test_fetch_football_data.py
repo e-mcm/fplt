@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import httpx
+import pytest
 
 _PATH = Path(__file__).parents[2] / "scripts" / "fetch_football_data.py"
 _SPEC = importlib.util.spec_from_file_location("fplt_fetch_football_data", _PATH)
@@ -31,10 +32,8 @@ def test_write_once_refuses_overwrite(tmp_path: Path) -> None:
 
 
 def test_fetch_season_skips_existing_without_http(tmp_path: Path) -> None:
-    from fplt.data.football_data import e0_raw_path
-
     root = tmp_path / "raw"
-    dest = e0_raw_path(root, "2024-25")
+    dest = fetch.e0_raw_path(root, "2024-25")
     dest.parent.mkdir(parents=True)
     dest.write_text("already", encoding="utf-8")
 
@@ -62,6 +61,24 @@ def test_fetch_season_writes_once(tmp_path: Path) -> None:
     assert first.path.read_text(encoding="utf-8").startswith("Div,Date")
 
 
+def test_fetch_season_captured_at_is_separate_write_once(tmp_path: Path) -> None:
+    root = tmp_path / "raw"
+    bodies = iter(["first\n", "second\n"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=next(bodies))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    legacy = fetch.fetch_season(client, root, "2024-25")
+    monthly = fetch.fetch_season(client, root, "2024-25", captured_at="2025-11-01")
+    assert legacy.wrote is True
+    assert monthly.wrote is True
+    assert monthly.path == fetch.e0_raw_path(root, "2024-25", captured_at="2025-11-01")
+    assert monthly.path.read_text(encoding="utf-8") == "second\n"
+    again = fetch.fetch_season(client, root, "2024-25", captured_at="2025-11-01")
+    assert again.wrote is False
+
+
 def test_fetch_season_follows_www_to_apex_redirect(tmp_path: Path) -> None:
     """www.football-data.co.uk 302s to the apex host before serving CSV."""
     root = tmp_path / "raw"
@@ -80,3 +97,10 @@ def test_fetch_season_follows_www_to_apex_redirect(tmp_path: Path) -> None:
     result = fetch.fetch_season(client, root, "2024-25")
     assert result.wrote is True
     assert result.path.read_text(encoding="utf-8") == body
+
+
+def test_main_rejects_bad_captured_at(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        fetch.main(
+            ["--out", str(tmp_path), "--season", "2024-25", "--captured-at", "nope"]
+        )
