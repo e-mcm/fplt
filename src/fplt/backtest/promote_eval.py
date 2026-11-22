@@ -1,14 +1,16 @@
 """Standard A/B promote-eval: control vs treatment ModelSpec.
 
 Any lever — new staged data, feature version, hyperparam fork, layered
-component registry swap, or full predictor fork — is expressed as two YAML
-specs plus an ``EvalSpec``. P1 validates orientation, one lever, coverage, and
-leakage before fit. P2 runs ``compare_models`` on both arms and writes
-``recommendation.md``. P2.5 produces each arm via the content-addressed ledger
-cache. Improvement verdicts are ``drop`` (coverage / leak) or ``inconclusive``
-until FDB-73. Paired intervals (HAC + stationary bootstrap) are descriptive for
-improvement levers; equivalence may ``drop`` when an interval lies entirely on
-the bad side (never a ``keep`` rule).
+component registry swap, full predictor fork, lockfile upgrade, or no-behaviour
+refactor — is expressed as two YAML specs plus an ``EvalSpec``. P1 validates
+orientation, one lever, coverage, and leakage before fit. P2 runs
+``compare_models`` on both arms and writes ``recommendation.md``. P2.5 produces
+each arm via the content-addressed ledger cache. P7 adds ``kind: environment``
+and ``kind: refactor`` (worktree + ``uv sync --frozen`` + subprocess) with the
+§3.2 equivalence verdict. Improvement verdicts are ``drop`` (coverage / leak)
+or ``inconclusive`` until FDB-73. Paired intervals (HAC + stationary bootstrap)
+are descriptive for improvement levers; equivalence may ``keep`` on identical
+predictions or ``drop`` when an interval lies entirely on the bad side.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import platform
 import resource
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -33,6 +36,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from fplt.backtest.compare import CompareResult, compare_models
 from fplt.backtest.component_eval import ComponentEvalResult, run_component_eval
+from fplt.backtest.equivalence import (
+    EquivalenceDiff,
+    EquivalenceSpec,
+    add_worktree,
+    compare_prediction_frames,
+    diff_lockfiles,
+    equivalence_verdict,
+    interval_drop_for_frames,
+    is_equivalence_kind,
+    produce_ledger_in_worktree,
+    remove_worktree,
+    resolve_git_sha,
+    sync_frozen,
+)
 from fplt.backtest.intervals import (
     equivalence_drop_from_intervals,
     interval_to_dict,
@@ -45,6 +62,7 @@ from fplt.backtest.ledger import read_predictions
 from fplt.backtest.produce_ledger import (
     StaleLedgerCacheError,
     repo_root,
+    resolved_spec_sha256,
     uv_lock_sha256,
 )
 from fplt.data.store import DataStore
@@ -61,13 +79,23 @@ from fplt.scoring.rules import Rules
 
 logger = logging.getLogger(__name__)
 
-EvalKind = Literal["data", "feature", "config", "component", "model"]
+EvalKind = Literal[
+    "data",
+    "feature",
+    "config",
+    "component",
+    "model",
+    "environment",
+    "refactor",
+]
 Lever = Literal[
     "data_table",
     "feature_version",
     "hyperparam",
     "component_swap",
     "model_fork",
+    "dependency_upgrade",
+    "no_behaviour_change",
 ]
 Tier = Literal["S0", "S1", "S2", "S3", "S4"]
 CompareModeName = Literal["walk_forward", "fixed"]
@@ -120,6 +148,9 @@ class ChangeSpec(BaseModel):
     treatment_kind: str | None = None
     tables: list[str] = Field(default_factory=list)
     features: list[str] = Field(default_factory=list)
+    packages: list[str] = Field(default_factory=list)
+    control_ref: str | None = None
+    treatment_ref: str | None = None
     allow_multi_lever: bool = False
     diff: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -134,6 +165,26 @@ class ChangeSpec(BaseModel):
             raise ValueError("data_table requires change.tables")
         if self.lever == "feature_version" and not self.features:
             raise ValueError("feature_version requires change.features")
+        if self.lever == "dependency_upgrade":
+            if not self.packages:
+                raise ValueError("dependency_upgrade requires change.packages")
+            if not self.control_ref or not self.treatment_ref:
+                raise ValueError(
+                    "dependency_upgrade requires change.control_ref and "
+                    "change.treatment_ref (lock_ref per arm)"
+                )
+            if self.orientation is not None:
+                raise ValueError("dependency_upgrade must leave orientation null")
+        if self.lever == "no_behaviour_change":
+            if not self.control_ref or not self.treatment_ref:
+                raise ValueError(
+                    "no_behaviour_change requires change.control_ref and "
+                    "change.treatment_ref"
+                )
+            if self.orientation is not None:
+                raise ValueError("no_behaviour_change must leave orientation null")
+            if self.packages:
+                raise ValueError("no_behaviour_change must leave packages empty")
         return self
 
 
@@ -237,6 +288,7 @@ class EvalSpec(BaseModel):
     suites: SuitesSpec = Field(default_factory=SuitesSpec)
     gates: GatesSpec = Field(default_factory=GatesSpec)
     report: ReportSpec = Field(default_factory=ReportSpec)
+    equivalence: EquivalenceSpec = Field(default_factory=EquivalenceSpec)
 
     @field_validator("question")
     @classmethod
@@ -254,6 +306,8 @@ class EvalSpec(BaseModel):
             "config": {"hyperparam"},
             "component": {"component_swap"},
             "model": {"model_fork"},
+            "environment": {"dependency_upgrade"},
+            "refactor": {"no_behaviour_change"},
         }
         allowed = expected[self.kind]
         if self.change.lever not in allowed:
@@ -261,7 +315,12 @@ class EvalSpec(BaseModel):
                 f"kind {self.kind!r} expects change.lever in {sorted(allowed)}, "
                 f"got {self.change.lever!r}"
             )
-        if self.control == self.treatment:
+        if is_equivalence_kind(self.kind):
+            if self.control != self.treatment:
+                raise ValueError(
+                    "equivalence kinds require control == treatment ModelSpec name"
+                )
+        elif self.control == self.treatment:
             raise ValueError("control and treatment must differ")
         return self
 
@@ -318,6 +377,12 @@ class PreflightResult:
     treatment_spec: ModelSpec | None = None
     effective_flags: dict[str, Any] = field(default_factory=dict[str, Any])
     pit_caveat: str | None = None
+    control_lock_sha256: str | None = None
+    treatment_lock_sha256: str | None = None
+    control_ref: str | None = None
+    treatment_ref: str | None = None
+    control_ref_sha: str | None = None
+    treatment_ref_sha: str | None = None
 
 
 @dataclass
@@ -335,6 +400,7 @@ class PromoteEvalResult:
     summary: pl.DataFrame | None = None
     components: ComponentEvalResult | None = None
     per_match: pl.DataFrame | None = None
+    equivalence_diff: EquivalenceDiff | None = None
 
 
 def default_evals_dir() -> Path:
@@ -412,6 +478,22 @@ def plan_promote_eval(
     if skip_decisions and suites.decisions:
         suites = suites.model_copy(update={"decisions": False})
         warnings.append("decisions skipped via --skip-decisions")
+    if is_equivalence_kind(spec.kind):
+        if suites.components:
+            warnings.append(
+                f"kind {spec.kind} forces components suite off (prediction ledger only)"
+            )
+            suites = suites.model_copy(update={"components": False})
+        if suites.decisions:
+            warnings.append(
+                f"kind {spec.kind} forces decisions suite off (not a bakeoff)"
+            )
+            suites = suites.model_copy(update={"decisions": False})
+        if not suites.prediction:
+            warnings.append(
+                f"kind {spec.kind} enables prediction suite for ledger equivalence"
+            )
+            suites = suites.model_copy(update={"prediction": True})
     if start > end:
         raise ValueError(f"from_gw {start} > to_gw {end}")
 
@@ -596,13 +678,30 @@ def preflight_promote_eval(
     orient_fails, effective = _check_orientation(spec, control, treatment)
     failures.extend(orient_fails)
 
+    control_lock_sha: str | None = None
+    treatment_lock_sha: str | None = None
+    control_ref = spec.change.control_ref
+    treatment_ref = spec.change.treatment_ref
+    control_ref_sha: str | None = None
+    treatment_ref_sha: str | None = None
+    if is_equivalence_kind(spec.kind):
+        eq_fails, eq_warns, lock_meta = _check_equivalence_preflight(
+            spec, control, treatment
+        )
+        failures.extend(eq_fails)
+        warnings.extend(eq_warns)
+        control_lock_sha = lock_meta.get("control_lock_sha256")
+        treatment_lock_sha = lock_meta.get("treatment_lock_sha256")
+        control_ref_sha = lock_meta.get("control_ref_sha")
+        treatment_ref_sha = lock_meta.get("treatment_ref_sha")
+
     store = DataStore(data_dir)
     failures.extend(_check_tables(spec, store))
 
     coverage: CoverageResult | None = None
     pit_caveat: str | None = None
     leak = False
-    if not failures:
+    if not failures and not is_equivalence_kind(spec.kind):
         try:
             coverage, extra_warnings, pit_caveat = _measure_coverage(
                 spec, plan, store, treatment
@@ -648,6 +747,12 @@ def preflight_promote_eval(
         treatment_spec=treatment,
         effective_flags=effective,
         pit_caveat=pit_caveat,
+        control_lock_sha256=control_lock_sha,
+        treatment_lock_sha256=treatment_lock_sha,
+        control_ref=control_ref,
+        treatment_ref=treatment_ref,
+        control_ref_sha=control_ref_sha,
+        treatment_ref_sha=treatment_ref_sha,
     )
 
 
@@ -818,6 +923,18 @@ def execute_promote_eval(
             recommendation=recommendation,
         )
 
+    if is_equivalence_kind(spec.kind) and tier != "S0":
+        return _execute_equivalence(
+            spec,
+            plan,
+            preflight,
+            data_dir=data_dir,
+            output_dir=out,
+            models_dir=models_dir,
+            allow_dirty=allow_dirty,
+            argv=argv,
+        )
+
     compare_result: CompareResult | None = None
     deltas: dict[str, Any] | None = None
     wall_clock: dict[str, float] = {}
@@ -966,6 +1083,246 @@ def execute_promote_eval(
     )
 
 
+def _execute_equivalence(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    preflight: PreflightResult,
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    models_dir: Path | None,
+    allow_dirty: bool,
+    argv: list[str] | None,
+) -> PromoteEvalResult:
+    """Produce both arms in worktrees and apply the §3.2 verdict."""
+    root = repo_root()
+    control_ref = spec.change.control_ref or "HEAD"
+    treatment_ref = spec.change.treatment_ref or "HEAD"
+    work_root = output_dir / "worktrees"
+    control_wt = work_root / "control"
+    treatment_wt = work_root / "treatment"
+    wall_clock: dict[str, float] = {}
+    peak_rss: dict[str, int] = {}
+    eq_diff: EquivalenceDiff | None = None
+    deltas: dict[str, Any] | None = None
+
+    try:
+        add_worktree(root, control_ref, control_wt)
+        add_worktree(root, treatment_ref, treatment_wt)
+        sync_frozen(control_wt)
+        sync_frozen(treatment_wt)
+
+        mode = plan.modes[0] if plan.modes else "walk_forward"
+        # Environment can reuse the ledger cache (lock hash differs). Refactor
+        # disables cache so identical lock+spec keys cannot collide across refs.
+        use_cache = spec.kind == "environment"
+        control_frames: list[pl.DataFrame] = []
+        treatment_frames: list[pl.DataFrame] = []
+        for season in plan.seasons:
+            arms = (("control", control_wt), ("treatment", treatment_wt))
+            for role, worktree in arms:
+                out_parquet = output_dir / "ledgers" / role / f"{season}_{mode}.parquet"
+                started = time.perf_counter()
+                before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                produce_ledger_in_worktree(
+                    worktree,
+                    data_dir=data_dir,
+                    model_name=plan.control,
+                    season=season,
+                    mode=mode,
+                    test_from_gw=plan.from_gw,
+                    test_to_gw=plan.to_gw,
+                    fit_gw=plan.from_gw if mode == "walk_forward" else None,
+                    steps=plan.suites.steps,
+                    seasons_back=plan.seasons_back,
+                    out_parquet=out_parquet,
+                    use_cache=use_cache,
+                    models_dir=models_dir,
+                )
+                elapsed = time.perf_counter() - started
+                after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                wall_clock[f"{role}:{season}"] = elapsed
+                peak_rss[f"{role}:{season}"] = max(after - before, 0)
+                frame = pl.read_parquet(out_parquet)
+                if role == "control":
+                    control_frames.append(frame)
+                else:
+                    treatment_frames.append(frame)
+
+        control_frame = pl.concat(control_frames, how="vertical_relaxed")
+        treatment_frame = pl.concat(treatment_frames, how="vertical_relaxed")
+        eq_diff = compare_prediction_frames(
+            control_frame, treatment_frame, spec.equivalence.tolerance
+        )
+        actuals = _actuals_for_equivalence(data_dir, plan)
+        interval_drop, interval_dicts = interval_drop_for_frames(
+            control_frame,
+            treatment_frame,
+            control_id=f"{plan.control}::control",
+            treatment_id=f"{plan.control}::treatment",
+            actuals=actuals,
+        )
+        deltas = {
+            "equivalence_interval_drop": interval_drop,
+            "intervals": interval_dicts,
+            "n_rows_compared": eq_diff.n_rows,
+            "n_beyond_tolerance": eq_diff.n_beyond_tolerance,
+            "max_abs_diff": eq_diff.max_abs_diff,
+            "top_offenders": eq_diff.top_offenders,
+        }
+        verdict = equivalence_verdict(
+            eq_diff,
+            interval_drop=interval_drop,
+            force_inconclusive=preflight.force_inconclusive,
+        )
+    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as exc:
+        msg = f"equivalence produce failed: {exc}"
+        logger.exception(msg)
+        failed = PreflightResult(
+            ok=False,
+            failures=[msg],
+            warnings=list(preflight.warnings),
+            git_dirty=preflight.git_dirty,
+            git_sha=preflight.git_sha,
+            control_spec=preflight.control_spec,
+            treatment_spec=preflight.treatment_spec,
+            effective_flags=dict(preflight.effective_flags),
+            control_lock_sha256=preflight.control_lock_sha256,
+            treatment_lock_sha256=preflight.treatment_lock_sha256,
+            control_ref=preflight.control_ref,
+            treatment_ref=preflight.treatment_ref,
+            control_ref_sha=preflight.control_ref_sha,
+            treatment_ref_sha=preflight.treatment_ref_sha,
+        )
+        recommendation = f"preflight failed: {msg}\n"
+        _write_audit(
+            output_dir,
+            spec,
+            plan,
+            failed,
+            data_dir=data_dir,
+            argv=argv,
+            wall_clock=wall_clock,
+            peak_rss=peak_rss,
+            folds=[],
+            verdict="drop",
+        )
+        return PromoteEvalResult(
+            eval_name=spec.name,
+            verdict="drop",
+            exit_code=2,
+            output_dir=output_dir,
+            plan=plan,
+            preflight=failed,
+            recommendation=recommendation,
+        )
+    finally:
+        remove_worktree(root, control_wt)
+        remove_worktree(root, treatment_wt)
+
+    assert eq_diff is not None
+    recommendation = render_recommendation(
+        spec,
+        plan,
+        preflight,
+        verdict=verdict,
+        allow_dirty=allow_dirty,
+        compare=None,
+        deltas=deltas,
+        components_ran=False,
+        decisions_ran=False,
+        prediction_ran=True,
+        equivalence_diff=eq_diff,
+    )
+    _write_recommendation(output_dir, recommendation)
+    _write_audit(
+        output_dir,
+        spec,
+        plan,
+        preflight,
+        data_dir=data_dir,
+        argv=argv,
+        wall_clock=wall_clock,
+        peak_rss=peak_rss,
+        folds=[],
+        verdict=verdict,
+    )
+    _write_spec_diff(output_dir, preflight)
+    _write_summary_json(
+        output_dir,
+        spec,
+        plan,
+        preflight,
+        verdict=verdict,
+        deltas=deltas,
+    )
+    (output_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "eval_name": spec.name,
+                "verdict": verdict,
+                "question_type": "equivalence",
+                "deltas": deltas,
+            },
+            indent=2,
+            default=str,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    exit_code = 0
+    return PromoteEvalResult(
+        eval_name=spec.name,
+        verdict=verdict,
+        exit_code=exit_code,
+        output_dir=output_dir,
+        plan=plan,
+        preflight=preflight,
+        recommendation=recommendation,
+        equivalence_diff=eq_diff,
+    )
+
+
+def _actuals_for_equivalence(
+    data_dir: Path, plan: PromoteEvalPlan
+) -> pl.DataFrame | None:
+    """Build actuals rows for interval scoring when staged stats exist."""
+    store = DataStore(data_dir)
+    try:
+        stats = store.read("player_fixture_stats")
+        gws = store.read("gameweeks")
+    except Exception:
+        return None
+    if stats.is_empty() or gws.is_empty():
+        return None
+    checked = gws.filter(
+        pl.col("season").is_in(plan.seasons)
+        & pl.col("gw").is_between(plan.from_gw, plan.to_gw, closed="both")
+        & (pl.col("data_checked") == True)  # noqa: E712
+    ).select(["season", "gw"])
+    if checked.is_empty():
+        return None
+    joined = stats.join(
+        checked,
+        left_on=["season", "gw"],
+        right_on=["season", "gw"],
+        how="inner",
+    )
+    if "position" in joined.columns:
+        position_expr: pl.Expr = pl.col("position")
+    else:
+        position_expr = pl.lit("MID").alias("position")
+    frame = joined.select(
+        pl.col("season").alias("target_season"),
+        pl.col("gw").alias("target_gw"),
+        "player_key",
+        "fixture_id",
+        pl.col("total_points").alias("actual_pts"),
+        position_expr,
+    ).unique(subset=["target_season", "target_gw", "player_key", "fixture_id"])
+    return frame
+
+
 def render_recommendation(
     spec: EvalSpec,
     plan: PromoteEvalPlan,
@@ -980,6 +1337,7 @@ def render_recommendation(
     decisions_ran: bool = False,
     prediction_ran: bool = False,
     per_match: pl.DataFrame | None = None,
+    equivalence_diff: EquivalenceDiff | None = None,
 ) -> str:
     """Build ``recommendation.md`` in the §9 section order.
 
@@ -1002,19 +1360,25 @@ def render_recommendation(
     """
     title = spec.report.title or spec.name
     orientation = spec.change.orientation or "n/a"
+    question_type = "equivalence" if is_equivalence_kind(spec.kind) else "improvement"
     dirty_note = " [--allow-dirty]" if allow_dirty and preflight.git_dirty else ""
     lines: list[str] = [
         f"# {title}{dirty_note}",
         "",
         f"question: {spec.question}",
-        "question_type: improvement",
+        f"question_type: {question_type}",
         f"kind: {spec.kind}",
-        f"orientation: {orientation}",
-        f"lever: {spec.change.lever}",
-        "diff:",
-        *[f"  - {item}" for item in spec.change.diff],
-        "",
     ]
+    if not is_equivalence_kind(spec.kind):
+        lines.append(f"orientation: {orientation}")
+    lines.extend(
+        [
+            f"lever: {spec.change.lever}",
+            "diff:",
+            *[f"  - {item}" for item in spec.change.diff],
+            "",
+        ]
+    )
     # 2. Arms
     lines.append("## Arms")
     for role, name, arm in (
@@ -1030,20 +1394,34 @@ def render_recommendation(
                 if k.startswith(f"{role}.")
             )
         )
+        lock_sha = (
+            preflight.control_lock_sha256
+            if role == "control"
+            else preflight.treatment_lock_sha256
+        )
+        ref = preflight.control_ref if role == "control" else preflight.treatment_ref
         lines.append(
             f"- {role}: {name}"
             f"{' (production)' if production else ''}"
             f"{f' [{flag_bits}]' if flag_bits else ''}"
             f"{f' model_id={arm.model_id}' if arm is not None else ''}"
+            f"{f' ref={ref}' if ref else ''}"
+            f"{f' uv_lock_sha256={lock_sha}' if lock_sha else ''}"
         )
     lines.append("")
     # 3. Audit summary
+    audit_lock = (
+        f"control={preflight.control_lock_sha256} "
+        f"treatment={preflight.treatment_lock_sha256}"
+        if is_equivalence_kind(spec.kind)
+        else uv_lock_sha256()
+    )
     lines.extend(
         [
             "## Audit",
             f"- git_sha: {preflight.git_sha}",
             f"- git_dirty: {preflight.git_dirty}",
-            f"- uv_lock_sha256: {uv_lock_sha256()}",
+            f"- uv_lock_sha256: {audit_lock}",
             "- full record: audit.json",
             "",
         ]
@@ -1175,15 +1553,37 @@ def render_recommendation(
     else:
         lines.append("- decisions: not run")
     lines.append("")
-    # 11. Equivalence (improvement levers skip)
+    # 11. Equivalence
     lines.append("## Equivalence")
-    lines.append("- n/a (improvement lever)")
+    if not is_equivalence_kind(spec.kind):
+        lines.append("- n/a (improvement lever)")
+    elif equivalence_diff is None:
+        lines.append("- equivalence suite did not run")
+    else:
+        lines.append(f"- predictions compared: {equivalence_diff.n_rows}")
+        lines.append(f"- beyond tolerance: {equivalence_diff.n_beyond_tolerance}")
+        lines.append(f"- max_abs_diff: {equivalence_diff.max_abs_diff}")
+        if equivalence_diff.top_offenders:
+            lines.append("- top offenders:")
+            for row in equivalence_diff.top_offenders[:10]:
+                lines.append(f"  - {row}")
+        else:
+            lines.append("- top offenders: (none)")
     lines.append("")
     # 12. Call
     lines.append("## Call")
     lines.append(f"**{verdict}**")
     lines.append("")
-    lines.append(_verdict_paragraph(spec, verdict, preflight, allow_dirty=allow_dirty))
+    lines.append(
+        _verdict_paragraph(
+            spec,
+            verdict,
+            preflight,
+            allow_dirty=allow_dirty,
+            equivalence_diff=equivalence_diff,
+            deltas=deltas,
+        )
+    )
     if compare is not None:
         lines.append("")
         lines.append(f"(compare output: {compare.output_dir})")
@@ -1196,6 +1596,8 @@ def _verdict_paragraph(
     preflight: PreflightResult,
     *,
     allow_dirty: bool,
+    equivalence_diff: EquivalenceDiff | None = None,
+    deltas: dict[str, Any] | None = None,
 ) -> str:
     if verdict == "drop" and preflight.leak:
         return (
@@ -1219,6 +1621,28 @@ def _verdict_paragraph(
             "Coverage was below the gate with allow_low_coverage; tables are "
             "shown but the call stays inconclusive."
         )
+    if is_equivalence_kind(spec.kind):
+        if verdict == "keep":
+            n = equivalence_diff.n_rows if equivalence_diff is not None else 0
+            return (
+                f"Predictions are identical within tolerance across {n} rows. "
+                "Adopt the candidate lockfile or refactor."
+            )
+        if verdict == "drop":
+            return (
+                "Predictions moved and at least one primary-metric interval "
+                "lies entirely on the bad side. Keep the control ref/lockfile."
+            )
+        n_beyond = (
+            equivalence_diff.n_beyond_tolerance if equivalence_diff is not None else 0
+        )
+        _ = deltas
+        return (
+            f"Predictions differ beyond tolerance on {n_beyond} rows, but no "
+            "primary-metric interval is entirely bad. Call stays inconclusive "
+            "(different, not worse)."
+        )
+    _ = deltas
     return (
         "Improvement levers stay inconclusive until FDB-73 sets keep/drop "
         "thresholds. Deltas are descriptive only; keep_if is not applied."
@@ -1235,6 +1659,9 @@ def _coverage_is_drop(spec: EvalSpec, preflight: PreflightResult) -> bool:
 
 
 def _is_production_arm(spec: EvalSpec, role: str) -> bool:
+    if is_equivalence_kind(spec.kind):
+        # Control is the shipped lockfile / git ref.
+        return role == "control"
     orientation = spec.change.orientation
     if orientation == "opt_out":
         return role == "treatment"
@@ -1316,9 +1743,117 @@ def _check_kinds(spec: EvalSpec, control: ModelSpec, treatment: ModelSpec) -> li
     return failures
 
 
+def _check_equivalence_preflight(
+    spec: EvalSpec, control: ModelSpec, treatment: ModelSpec
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Preflight checks unique to ``environment`` / ``refactor`` (§8)."""
+    failures: list[str] = []
+    warnings: list[str] = []
+    meta: dict[str, str] = {}
+    root = repo_root()
+    control_ref = spec.change.control_ref
+    treatment_ref = spec.change.treatment_ref
+    if not control_ref or not treatment_ref:
+        failures.append(
+            "equivalence kinds require change.control_ref and treatment_ref"
+        )
+        return failures, warnings, meta
+    if control_ref == treatment_ref:
+        failures.append(
+            f"control_ref and treatment_ref are identical ({control_ref!r})"
+        )
+
+    try:
+        control_sha = resolve_git_sha(control_ref, cwd=root)
+        treatment_sha = resolve_git_sha(treatment_ref, cwd=root)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        failures.append(f"could not resolve git refs: {exc}")
+        return failures, warnings, meta
+    meta["control_ref_sha"] = control_sha
+    meta["treatment_ref_sha"] = treatment_sha
+
+    control_hash = resolved_spec_sha256(control)
+    treatment_hash = resolved_spec_sha256(treatment)
+    specs_differ = control_hash != treatment_hash
+
+    # Materialise lockfiles at each ref via git show (no worktree yet).
+    control_lock_text = _git_show_file(control_ref, "uv.lock", cwd=root)
+    treatment_lock_text = _git_show_file(treatment_ref, "uv.lock", cwd=root)
+    if control_lock_text is None or treatment_lock_text is None:
+        failures.append("uv.lock missing on control_ref or treatment_ref")
+        return failures, warnings, meta
+    pyproject = root / "pyproject.toml"
+    with tempfile.TemporaryDirectory(prefix="fplt-equiv-lock-") as tmp_name:
+        tmp = Path(tmp_name)
+        control_lock_path = tmp / "control.uv.lock"
+        treatment_lock_path = tmp / "treatment.uv.lock"
+        control_lock_path.write_text(control_lock_text, encoding="utf-8")
+        treatment_lock_path.write_text(treatment_lock_text, encoding="utf-8")
+        lock_diff = diff_lockfiles(
+            control_lock_path,
+            treatment_lock_path,
+            pyproject=pyproject,
+            declared_packages=list(spec.change.packages),
+        )
+    meta["control_lock_sha256"] = lock_diff.control_sha256
+    meta["treatment_lock_sha256"] = lock_diff.treatment_sha256
+
+    if specs_differ and not lock_diff.identical and not spec.change.allow_multi_lever:
+        failures.append(
+            "spec and environment both differ (two levers); set allow_multi_lever "
+            "only for scaffolds"
+        )
+
+    if spec.kind == "environment":
+        if specs_differ:
+            failures.append(
+                "kind: environment and the resolved spec hashes differ "
+                "(not an environment lever)"
+            )
+        if lock_diff.identical:
+            failures.append(
+                "kind: environment and the lockfiles are identical (no contrast)"
+            )
+        if lock_diff.missing_packages:
+            failures.append(
+                "kind: environment and a changed direct dependency is missing "
+                f"from change.packages: {list(lock_diff.missing_packages)}"
+            )
+        if lock_diff.transitive_changed:
+            warnings.append(
+                "transitive dependency changes on environment lever: "
+                + "; ".join(lock_diff.transitive_changed[:8])
+            )
+    elif spec.kind == "refactor":
+        if specs_differ:
+            failures.append(
+                "kind: refactor and the resolved specs differ (not a refactor)"
+            )
+        if not lock_diff.identical:
+            failures.append("kind: refactor and the lockfile differs (not a refactor)")
+
+    return failures, warnings, meta
+
+
+def _git_show_file(ref: str, path: str, *, cwd: Path) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "show", f"{ref}:{path}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return completed.stdout
+
+
 def _check_one_lever(
     spec: EvalSpec, control: ModelSpec, treatment: ModelSpec
 ) -> list[str]:
+    if is_equivalence_kind(spec.kind):
+        return []
     if spec.change.allow_multi_lever or spec.change.lever == "model_fork":
         return []
     diffs = _component_param_diffs(control, treatment)
@@ -2303,12 +2838,27 @@ def _write_audit(
         fplt_ver = package_version("fplt")
     except Exception:
         fplt_ver = "0.0.0"
+    lock_payload: str | dict[str, str | None]
+    if is_equivalence_kind(spec.kind):
+        lock_payload = {
+            "control": preflight.control_lock_sha256,
+            "treatment": preflight.treatment_lock_sha256,
+        }
+    else:
+        lock_payload = uv_lock_sha256()
     payload = {
         "eval_name": spec.name,
         "verdict": verdict,
+        "question_type": (
+            "equivalence" if is_equivalence_kind(spec.kind) else "improvement"
+        ),
         "git_sha": preflight.git_sha,
         "git_dirty": preflight.git_dirty,
-        "uv_lock_sha256": uv_lock_sha256(),
+        "uv_lock_sha256": lock_payload,
+        "control_ref": preflight.control_ref,
+        "treatment_ref": preflight.treatment_ref,
+        "control_ref_sha": preflight.control_ref_sha,
+        "treatment_ref_sha": preflight.treatment_ref_sha,
         "python": sys.version.split()[0],
         "os": platform.platform(),
         "fplt_version": fplt_ver,
@@ -2390,6 +2940,30 @@ def _commands_for(
     commands: list[str] = []
     arms = f"{spec.control} {spec.treatment}"
     warn = warnings if warnings is not None else []
+    if is_equivalence_kind(spec.kind):
+        control_ref = spec.change.control_ref or "HEAD"
+        treatment_ref = spec.change.treatment_ref or "HEAD"
+        commands.append(
+            f"git worktree add --detach <tmp>/control {control_ref} && uv sync --frozen"
+        )
+        commands.append(
+            f"git worktree add --detach <tmp>/treatment {treatment_ref} && "
+            "uv sync --frozen"
+        )
+        for season in seasons:
+            mode_flag = modes[0] if modes else "walk_forward"
+            for role in ("control", "treatment"):
+                commands.append(
+                    f"uv run --directory <tmp>/{role} --frozen "
+                    f"python -m fplt.backtest._produce_arm_main  "
+                    f"# model={spec.control} season={season} "
+                    f"gw={from_gw}-{to_gw} mode={mode_flag} "
+                    f"seasons_back={seasons_back} steps={suites.steps}"
+                )
+        commands.append(
+            "compare prediction ledgers (assert_frame_equal + §3.2 intervals)"
+        )
+        return commands
     for season in seasons:
         if suites.components:
             commands.append(
@@ -2661,6 +3235,7 @@ __all__ = [
     "format_plan",
     "git_is_dirty",
     "is_effectively_on",
+    "is_equivalence_kind",
     "is_n_sims_lever",
     "is_scoreline_lever",
     "load_eval_spec",

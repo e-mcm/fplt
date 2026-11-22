@@ -544,6 +544,8 @@ def test_repo_example_evals_load() -> None:
         "example_component_minutes_v1_vs_v2",
         "example_model_lgbm_vs_rolling",
         "example_data_odds_prior",
+        "example_environment_lock_upgrade",
+        "example_refactor_no_behaviour",
         "pens_order_involvement_ab",
     ):
         spec = load_eval_spec(name)

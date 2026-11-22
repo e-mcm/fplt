@@ -1,0 +1,55 @@
+# Scaffold: lockfile upgrade equivalence (same ModelSpec, two lock_refs).
+# Replace control_ref / treatment_ref / packages before a real run.
+name: example_environment_lock_upgrade
+kind: environment
+question: "Does upgrading the declared packages keep forecasts identical within tolerance?"
+description: "Scaffold for kind: environment (dependency_upgrade). Same spec; uv.lock differs."
+
+change:
+  lever: dependency_upgrade
+  packages: [numpy]
+  control_ref: main
+  treatment_ref: upgrade/example-dep
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "uv.lock: numpy (set treatment_ref to a lockfile-upgrade commit)"
+  notes: >
+    Scaffold only. control_ref and treatment_ref must differ, and treatment
+    must change a direct dependency listed in packages. Orientation does not apply.
+
+control: dc_layered_v2
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  allow_low_coverage: false
+  keep_if:
+    prediction_any: [mae, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+equivalence:
+  tolerance:
+    xpts_abs: 1.0e-6
+    prob_abs: 1.0e-9
+  compare: predictions
+
+report:
+  title: "Example: environment lockfile upgrade"
+  store_doc: null
