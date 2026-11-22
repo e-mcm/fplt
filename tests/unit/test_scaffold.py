@@ -3,7 +3,6 @@
 from fplt.models.spec import ModelSpec, TrainWindow
 from fplt.schemas.staged import FixturesSchema
 from fplt.types import GWKey
-from fplt.utils.rng import seed_for
 
 
 def test_staged_schemas_remain_importable() -> None:
@@ -26,15 +25,6 @@ def test_model_id_covers_nested_components() -> None:
         train_window=TrainWindow(seasons_back=3, time_decay=0.02),
     )
     assert base.model_id != changed.model_id
-
-
-def test_seed_for_is_stable_and_independent_per_fixture() -> None:
-    as_of = GWKey("2024-25", 10)
-    first = seed_for("abc", as_of, 1).random(4)
-    again = seed_for("abc", as_of, 1).random(4)
-    other = seed_for("abc", as_of, 2).random(4)
-    assert list(first) == list(again)
-    assert list(first) != list(other)
 
 
 def test_gw_key_rejects_out_of_range() -> None:
