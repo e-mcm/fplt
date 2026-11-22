@@ -207,7 +207,7 @@ def policy_for_target_pool(
     base: CandidatePrunePolicy | None = None,
     reference_n: int = DEFAULT_TARGET_POOL,
 ) -> CandidatePrunePolicy:
-    """Scale ``base`` top-xPts / top-value quotas toward nominal pool ``target``.
+    """Scale ``base`` keep quotas toward nominal pool ``target``.
 
     Args:
         target: Desired approximate pool size.
@@ -215,8 +215,9 @@ def policy_for_target_pool(
         reference_n: Nominal size ``base`` was tuned for.
 
     Returns:
-        A new ``CandidatePrunePolicy`` with scaled keep counts. Cheapest
-        fillers are left unchanged.
+        A new ``CandidatePrunePolicy`` with scaled top-xPts, top-value,
+        per-step, and window keep counts. Cheapest fillers and
+        ``window_lengths`` are left unchanged.
 
     Raises:
         ValueError: ``target`` or ``reference_n`` is below squad minima.
@@ -231,6 +232,9 @@ def policy_for_target_pool(
     return CandidatePrunePolicy(
         top_xpts=_scale_counts(policy.top_xpts, factor),
         top_value=_scale_counts(policy.top_value, factor),
+        top_per_step=_scale_counts(policy.top_per_step, factor),
+        top_window=_scale_counts(policy.top_window, factor),
+        window_lengths=policy.window_lengths,
         keep_cheapest=policy.keep_cheapest,
         min_p_60=policy.min_p_60,
         auto_min_horizon=policy.auto_min_horizon,
