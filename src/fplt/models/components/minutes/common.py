@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
+import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.models.distributions import MINUTE_BINS
 
 UNAVAILABLE = frozenset({"i", "s", "u", "n"})
+_INJURY_RANK = {"out": 2, "doubtful": 1}
 WIDTH = len(MINUTE_BINS)
 START_FALLBACK = np.zeros(WIDTH, dtype=np.float64)
 START_FALLBACK[int(np.flatnonzero(MINUTE_BINS == 90)[0])] = 1.0
@@ -27,6 +29,15 @@ class PlayerAvailability:
     chance_this: float | None
     news: str
     news_added: datetime | None
+
+
+@dataclass(frozen=True)
+class PlayerInjury:
+    """Latest staged API-Football injury tag for one mapped player."""
+
+    category: str
+    injury_type: str
+    reason: str
 
 
 def snap(minutes: np.ndarray) -> np.ndarray:
@@ -140,6 +151,82 @@ def gate_for(row: PlayerAvailability, doubtful: float) -> float:
         news=row.news,
         news_added=row.news_added,
     )
+
+
+def injuries(view: PITView) -> dict[int, PlayerInjury]:
+    """Latest mapped injury tags per ``player_key`` visible on ``view``.
+
+    Unmapped rows (null ``player_key``) are ignored. When several fixtures
+    list the same player, the most severe category wins (``out`` over
+    ``doubtful``).
+    """
+    frame = (
+        view.table("player_injuries")
+        .filter(pl.col("player_key").is_not_null())
+        .collect()
+    )
+    if frame.is_empty():
+        return {}
+    found: dict[int, PlayerInjury] = {}
+    ordered = frame.sort("available_at")
+    for row in ordered.iter_rows(named=True):
+        player = int(row["player_key"])
+        category = str(row.get("category") or "doubtful")
+        tag = PlayerInjury(
+            category=category,
+            injury_type=str(row.get("injury_type") or ""),
+            reason=str(row.get("reason") or ""),
+        )
+        previous = found.get(player)
+        if previous is None or _INJURY_RANK.get(category, 0) >= _INJURY_RANK.get(
+            previous.category, 0
+        ):
+            found[player] = tag
+    return found
+
+
+def injury_multiplier(category: str, doubtful: float) -> float:
+    """Minutes gate implied by an injury ``category`` alone."""
+    if category == "out":
+        return 0.0
+    return doubtful
+
+
+def combine_gates(fpl_gate: float, injury_gate: float | None) -> float:
+    """Never raise the FPL gate; only lower it when an injury prior exists.
+
+    Args:
+        fpl_gate: Multiplier from status / chance / news.
+        injury_gate: Optional overlay from ``player_injuries``. ``None`` leaves
+            ``fpl_gate`` unchanged. Never overwrites an FPL zero upward.
+
+    Returns:
+        ``min(fpl_gate, injury_gate)`` when an overlay is present.
+    """
+    if injury_gate is None:
+        return fpl_gate
+    return min(fpl_gate, injury_gate)
+
+
+def availability_gate(
+    tags: PlayerAvailability | None,
+    doubtful: float,
+    *,
+    injury: PlayerInjury | None = None,
+    use_injury_overlay: bool = False,
+) -> float:
+    """FPL availability gate, optionally soft/hard-downgraded by injuries.
+
+    When ``use_injury_overlay`` is false or ``injury`` is missing, behaviour
+    matches ``gate_for`` / ``chance``. Overlay never raises an FPL zero.
+    """
+    if tags is None:
+        fpl = chance(None, None, doubtful)
+    else:
+        fpl = gate_for(tags, doubtful)
+    if not use_injury_overlay or injury is None:
+        return fpl
+    return combine_gates(fpl, injury_multiplier(injury.category, doubtful))
 
 
 def normalise(counts_arr: np.ndarray | None, fallback: np.ndarray) -> np.ndarray:

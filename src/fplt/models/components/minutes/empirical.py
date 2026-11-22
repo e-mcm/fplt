@@ -15,10 +15,11 @@ from fplt.models.components.minutes.common import (
     SUB_FALLBACK,
     WIDTH,
     PlayerAvailability,
+    PlayerInjury,
     availability,
-    chance,
+    availability_gate,
     counts,
-    gate_for,
+    injuries,
     normalise,
     positions,
     shrunk,
@@ -36,6 +37,8 @@ class EmpiricalMinutes:
     appearance. ``doubtful_chance`` is the chance used when status is ``d``
     and the feed omits ``chance_of_playing``. A missing status row is treated
     as available, which is what the vaastav seasons record.
+    ``use_injury_overlay`` multiplies in staged ``player_injuries`` when on
+    (default off so production stays FPL-tags-only until eval).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -43,6 +46,7 @@ class EmpiricalMinutes:
         window = spec.params.get("window", 5)
         shrinkage = spec.params.get("shrinkage", 5.0)
         doubtful = spec.params.get("doubtful_chance", 0.5)
+        overlay = spec.params.get("use_injury_overlay", False)
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -51,9 +55,12 @@ class EmpiricalMinutes:
             raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
         if not 0.0 <= doubtful_value <= 1.0:
             raise ValueError(f"doubtful_chance must be in [0, 1], got {doubtful_value}")
+        if not isinstance(overlay, bool):
+            raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
         self._window = window
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
+        self._use_injury_overlay = overlay
         self._fitted = False
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}
@@ -129,10 +136,11 @@ class EmpiricalMinutes:
             raise ValueError(f"player_fixtures is missing {sorted(missing)}")
         keys = player_fixtures.select("player_key", "fixture_id")
         chance_map = availability(view)
+        injury_map = injuries(view) if self._use_injury_overlay else {}
         pmf = np.zeros((keys.height, WIDTH), dtype=np.float64)
         for index, player in enumerate(keys["player_key"].to_list()):
             tags = chance_map.get(int(player))
-            pmf[index] = self._mix(int(player), tags)
+            pmf[index] = self._mix(int(player), tags, injury_map.get(int(player)))
         return MinutesDist(keys, MINUTE_BINS, pmf)
 
     def _remember_player(self, player: int, recent: pl.DataFrame) -> None:
@@ -146,16 +154,23 @@ class EmpiricalMinutes:
         self._player_start[player] = counts(minutes[starts > 0])
         self._player_sub[player] = counts(minutes[(starts == 0) & (minutes > 0)])
 
-    def _mix(self, player: int, tags: PlayerAvailability | None) -> np.ndarray:
+    def _mix(
+        self,
+        player: int,
+        tags: PlayerAvailability | None,
+        injury: PlayerInjury | None = None,
+    ) -> np.ndarray:
         position = self._position.get(player, "UNK")
         if player in self._player_rate:
             p_start, p_sub = self._player_rate[player]
         else:
             p_start, p_sub = self._position_rate.get(position, (0.0, 0.0))
-        if tags is None:
-            gate = chance(None, None, self._doubtful)
-        else:
-            gate = gate_for(tags, self._doubtful)
+        gate = availability_gate(
+            tags,
+            self._doubtful,
+            injury=injury,
+            use_injury_overlay=self._use_injury_overlay,
+        )
         p_start *= gate
         p_sub *= gate
         # 4/5 + 1/5 is not exactly 1 in float, which would make the zero bin negative.

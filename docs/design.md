@@ -70,6 +70,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | vaastav/Fantasy-Premier-League | Historical seasons | No per-deadline availability snapshots — see §4.5 |
 | Understat | xG / xA / shots / key passes / xGChain / xGBuildup per player per match; team Deep / PPDA / xG per match | Player rows in `understat_player_matches` (`player_key` null until mapped). Team Deep/PPDA/xG in `understat_team_matches` from league-page `teamsData` (not `getMatchData`) |
 | football-data.co.uk E0 CSV | Closing + scheduled-prematch 1X2 (+ O/U 2.5) → staged `match_odds` | Free history. `odds_kind=closing_proxy` (`available_at=kickoff`) and `odds_kind=prematch_scheduled` (non-closing columns; conservative Fri/Tue 17:00 London collection). **Closing ≠ FPL deadline.** Prematch needs the deadline coverage gate when deadline &lt; collection. Team names → `team_key` via `configs/football_data/team_names.yaml` |
+| API-Football (API-Sports) `/injuries` | Structured injury / suspension rows → staged `player_injuries` | Write-once raw under `raw/api_football/...`; `available_at = captured_at`. Player/team ids → FPL codes via `configs/api_football/id_maps.yaml` (unmapped `player_key` null). Auth: `FPLT_API_FOOTBALL_KEY` (fetch also accepts `API_FOOTBALL_KEY` / `APISPORTS_KEY`). Free tier ~100 req/day — capture skips if &lt;4h old. Minutes overlay via `use_injury_overlay` (default off; fork `empirical_minutes_v2_injuries`) |
 
 ### 4.2 Identifiers
 
@@ -96,14 +97,17 @@ data/
 │   │   ├── dates/captured_at=.../dates.json.gz
 │   │   ├── teams/captured_at=.../teams.json.gz  # league teamsData (Deep/PPDA)
 │   │   └── match_id=<id>/match.json.gz   # getMatchData AJAX payload
-│   └── football_data/season=2024-25/
-│       └── E0.csv                 # football-data.co.uk Premier League closing odds
+│   ├── football_data/season=2024-25/
+│   │   └── E0.csv                 # football-data.co.uk Premier League closing odds
+│   └── api_football/season=2026-27/
+│       └── injuries/captured_at=.../injuries.json.gz
 ├── staged/                      # typed parquet, one table per entity, derived from raw
 │   ├── players/  teams/  fixtures/  gameweeks/
 │   ├── player_status/           # status/news/news_added/price/ep_next/chance this+next/penalties_order per snapshot
 │   ├── player_fixture_stats/    # actuals from event_live (+ Opta expected_*)
 │   ├── understat_player_matches/
 │   ├── understat_team_matches/  # Deep / PPDA / team xG per match
+│   ├── player_injuries/         # API-Football injuries; available_at=captured_at
 │   └── match_odds/              # closing_proxy (+ prematch_scheduled); see §4.4
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
@@ -120,6 +124,8 @@ Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`pla
 
 football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` writes `raw/football_data/season=.../E0.csv` once; the Dagster `match_odds_ingest` asset stages `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
 
+API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON onto the `snapshots` branch under `raw/api_football/...`; the Dagster `api_football_ingest` asset stages `player_injuries` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v2` is unchanged until eval.
+
 ### 4.4 Point-in-time access (`PITData`)
 
 Every staged table carries an `available_at` timestamp (UTC):
@@ -129,6 +135,7 @@ Every staged table carries an `available_at` timestamp (UTC):
 - Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that date.
 - Closing match odds (`match_odds`, `odds_kind=closing_proxy`): `available_at = kickoff`. Bookmaker close is pre-KO, not the FPL deadline.
 - Scheduled prematch odds (`match_odds`, `odds_kind=prematch_scheduled`): `available_at` = conservative football-data collection estimate (Fri/Tue 17:00 London). Still not automatically deadline-legal — gate on `available_at <= deadline`.
+- API-Football injuries (`player_injuries`): `available_at = captured_at` of the raw snapshot.
 
 `PITData` is the only way models read data:
 
@@ -309,7 +316,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 | Component | v1 implementation |
 |---|---|
 | `TeamScoreModel` | Dixon-Coles. ξ (`xi`) always comes from the model spec and is the only DC calendar decay — `TrainWindow.time_decay` is ignored here. v1 also fixes home advantage and ρ in YAML and identifies only attack/defence. v2 (`dixon_coles_v2`) jointly estimates ρ and/or home advantage when `fit_rho` / `fit_home_advantage` are set, and shrinks sparse or promoted-team ratings toward the league mean via `new_team_prior_strength` / `promoted_prior_strength`. ρ = 0 is the independent Poisson baseline. Odds-prior specs (`dixon_coles_odds_v1`, used by `dc_layered_odds_v1`) set `market_prior_strength` > 0 to shrink per-match λ toward PIT `match_odds` via `odds_to_lambda` (missing odds → pure DC). History rating prior (`dixon_coles_history_v1` / `dc_layered_history_v1`) sets `market_prior_source: history` so `fit` maps past PIT-visible closes with `odds_to_lambda`, fits market ratings `(a0, d0)` under the same ξ weights, and adds a Gaussian penalty on attack and defence only (HA and ρ unpenalised; absent source keeps the predict-time λ blend). The 1X2-region fork (`dixon_coles_1x2_v1` / `dc_layered_1x2_v1`) sets `market_1x2_strength` > 0 to rescale the joint's home/draw/away regions toward de-vigged bookmaker 1X2 while keeping DC's conditional scoreline shape (the right *target* vs the λ prior when blending match outcomes). The CS-only fork (`dixon_coles_cs_v1` / `dc_layered_cs_v1`) sets `market_cs_strength` > 0 (prefer strengths below 1) to blend clean-sheet / zero-goal margins toward market λ then restore the joint's 1X2 — λ prior and 1X2 strengths stay off; `use_closing_proxy: false` so deadline-legal `prematch_scheduled` rows are used under strict PIT. Vanilla `dixon_coles_v2` / `dc_layered_v2` keep all market strengths off (production default). Closing-proxy odds use `available_at=kickoff`, so they are **not** deadline-visible under strict PIT. `odds_1x2_v1` de-vigs 1X2 directly (no λ fit) onto a neutral scoreline shape; `odds_poisson_v1` still uses `odds_to_lambda` then independent Poisson. Both may read kickoff-stamped closing lines via `PITView.closing_proxy_match_odds` when `use_closing_proxy` is set (labelled **closing_proxy**, not deadline PIT). |
-| `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. v2 (`empirical_minutes_v2`): multi-window start shares, logistic P(start) / P(≥60\|start) with home/rest/DGW/price/opponent context, histogram residuals, and optional soft projection of expected starters toward ~11 per team-fixture |
+| `MinutesModel` | v1: P(start) from the last `window` appearances, status, and chance of playing. Minutes given a start or a substitute appearance come from a per-player histogram shrunk toward the position prior. Support is 0, 15, 30, 45, 60, 75, 90, and draws are independent across players. v2 (`empirical_minutes_v2`): multi-window start shares, logistic P(start) / P(≥60\|start) with home/rest/DGW/price/opponent context, histogram residuals, and optional soft projection of expected starters toward ~11 per team-fixture. Optional `use_injury_overlay` (default off; A/B fork `empirical_minutes_v2_injuries`) applies staged `player_injuries` as a soft/hard downgrade that never raises an FPL zero |
 | `InvolvementModel` | `involvement_shares_v1`: shrunk per-90 shares of team goals/assists; penalty-taker override from latest PIT `penalties_order == 1`, falling back to `penalties_missed` when order is null (vaastav); opt out with `use_penalties_order: false` for A/B (miss-only). `involvement_xg_v1`: blend Opta/FPL-native `expected_goals`/`expected_assists` (falling back to Understat xG/xA) per-90 with FPL goals/assists (`xg_blend`), same penalty override; fits `own_goal_weight` and `p_assist` from visible history for the simulator |
 | `OtherPointsModel` | v1: position-level priors by minutes bucket. `other_player_v1`: player-level means shrunk toward that prior, with a BPS→bonus proxy and defensive contribution from staged `defensive_contribution` when the season rules award it (no-op before 2025-26; opt out with `use_defensive_contribution: false` for A/B); later GBM |
 
@@ -473,7 +480,7 @@ Season rank alone is a noisy live check (evaluation north star §3). Cache Overa
 | Asset | Partitioned | Description |
 |---|---|---|
 | `raw_snapshots` | no (observable source) | Files fetched from the `snapshots` branch |
-| `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats) | season-gw | Typed parquet from raw |
+| `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats, player_injuries) | season-gw | Typed parquet from raw |
 | `feature__<name>__v<version>` | no (as-of via run config / `resolve_as_of`) | One asset per registered feature version (`orchestration/factories.py`) |
 | `model__<name>` | no (same) | Fitted artifact per points-predictor `ModelSpec` (component YAML skipped) |
 | `predictions__<name>` | no (same) | Predictions for horizon 1..H (default 10 via `DEFAULT_PROJECTION_HORIZON`); CLI/catch-up stay authoritative |

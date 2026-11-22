@@ -1,0 +1,69 @@
+{
+  "get": "injuries",
+  "parameters": {"league": "39", "season": "2024"},
+  "errors": [],
+  "results": 3,
+  "paging": {"current": 1, "total": 1},
+  "response": [
+    {
+      "player": {"id": 276, "name": "N. Pope", "photo": ""},
+      "team": {"id": 34, "name": "Newcastle", "logo": ""},
+      "fixture": {
+        "id": 1208000,
+        "timezone": "UTC",
+        "date": "2024-08-17T14:00:00+00:00",
+        "timestamp": 1723903200
+      },
+      "league": {
+        "id": 39,
+        "season": 2024,
+        "name": "Premier League",
+        "country": "England",
+        "logo": "",
+        "flag": ""
+      },
+      "type": "Injury",
+      "reason": "Knee Injury"
+    },
+    {
+      "player": {"id": 999001, "name": "Unmapped Player", "photo": ""},
+      "team": {"id": 40, "name": "Liverpool", "logo": ""},
+      "fixture": {
+        "id": 1208001,
+        "timezone": "UTC",
+        "date": "2024-08-17T16:30:00+00:00",
+        "timestamp": 1723912200
+      },
+      "league": {
+        "id": 39,
+        "season": 2024,
+        "name": "Premier League",
+        "country": "England",
+        "logo": "",
+        "flag": ""
+      },
+      "type": "Suspension",
+      "reason": "Suspended"
+    },
+    {
+      "player": {"id": 277, "name": "Suspended Star", "photo": ""},
+      "team": {"id": 42, "name": "Arsenal", "logo": ""},
+      "fixture": {
+        "id": 1208002,
+        "timezone": "UTC",
+        "date": "2024-08-17T14:00:00+00:00",
+        "timestamp": 1723903200
+      },
+      "league": {
+        "id": 39,
+        "season": 2024,
+        "name": "Premier League",
+        "country": "England",
+        "logo": "",
+        "flag": ""
+      },
+      "type": "Suspension",
+      "reason": "Red Card"
+    }
+  ]
+}

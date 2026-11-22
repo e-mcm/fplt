@@ -51,8 +51,11 @@ class Settings(BaseSettings):
     ``/api/my-team/{entry_id}/`` (selling prices and free transfers) and is
     required for ``fplt apply --confirm`` (``POST /transfers/``, lineup).
     ``fpl_session`` is the retired ``pl_profile`` cookie and is still sent
-    when set. Never commit a real token or cookie; store them with
-    ``fplt auth`` under ``~/.config/fplt/env``.
+    when set. ``api_football_key`` is the API-Sports key for injuries
+    ingest (``FPLT_API_FOOTBALL_KEY``); the fetch script also accepts
+    ``API_FOOTBALL_KEY`` / ``APISPORTS_KEY``. Never commit a real token,
+    cookie, or API key; store them with ``fplt auth`` / env under
+    ``~/.config/fplt/env``.
     """
 
     model_config = SettingsConfigDict(
@@ -66,6 +69,7 @@ class Settings(BaseSettings):
     entry_id: int | None = None
     fpl_api_token: str | None = None
     fpl_session: str | None = None
+    api_football_key: str | None = None
     ntfy_url: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587

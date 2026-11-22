@@ -11,6 +11,7 @@ never committed.
 | `FPLT_ENTRY_ID` | FPL manager entry for live squad plans | For live team |
 | `FPLT_FPL_API_TOKEN` | Bearer token from `x-api-authorization` (selling prices / FT) | For authenticated my-team |
 | `FPLT_FPL_SESSION` | Legacy `pl_profile` cookie | Unused by the current API |
+| `FPLT_API_FOOTBALL_KEY` | API-Sports key for injuries fetch/stage | For `make fetch-api-football` / GHA |
 | `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts | Optional |
 | `FPLT_SMTP_HOST` | SMTP host for recommendation email | Optional\* |
 | `FPLT_SMTP_PORT` | SMTP port (default `587`) | Optional |
