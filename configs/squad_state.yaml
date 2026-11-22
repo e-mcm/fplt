@@ -1,7 +1,8 @@
 # Starting squad for `fplt plan`. An empty owned list is an initial draft.
 # `fplt plan --entry-json` replaces owned and bank from an entry picks payload.
 # `fplt plan --rebuild` clears owned and sets bank = ITB + Σ selling prices.
-# Chip remaining/played stay in this file (Wave C will consume them in the MILP).
+# Chip remaining/played stay in this file; live plan/automation consume them
+# via DEFAULT_LIVE_CHIP_ARM=optimised (scheduler → MILP).
 bank: 1000
 free_transfers: 1
 ft_bank_cap: 5

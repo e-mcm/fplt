@@ -63,6 +63,7 @@ from fplt.optimise.attainable import (
     run_hindsight_oracle,
 )
 from fplt.optimise.decisions import (
+    DEFAULT_LIVE_CHIP_ARM,
     PlanExistsError,
     explain_decision_gameweek,
     format_chip_decision_scoreboard,
@@ -195,7 +196,9 @@ def main(argv: list[str] | None = None) -> None:
     plan = sub.add_parser(
         "plan",
         parents=[log_flags],
-        help="Recommend a squad and transfers",
+        help=(
+            f"Recommend a squad and transfers (default chips: {DEFAULT_LIVE_CHIP_ARM})"
+        ),
     )
     plan.add_argument("--model", required=True)
     plan.add_argument("--season", required=True)
@@ -220,6 +223,23 @@ def main(argv: list[str] | None = None) -> None:
             "Draft fifteen from an empty squad using today's budget "
             "(bank + selling prices). Ignores transfer hits; needs selling "
             "prices from my-team or --entry-json when not using YAML owned"
+        ),
+    )
+    plan.add_argument(
+        "--chip-arm",
+        choices=["off", "rule_based", "optimised"],
+        default=DEFAULT_LIVE_CHIP_ARM,
+        help=(
+            "Chip policy for live planning: optimised runs the season chip "
+            "scheduler then MILP (default); off disables chips; rule_based "
+            "forces landmark windows. Ignored with --decisions (stays chips-off)"
+        ),
+    )
+    plan.add_argument(
+        "--chip-rules-season",
+        help=(
+            "Chip-rules year for --chip-arm (default: --season). "
+            "Ignored when --chip-arm=off or with --decisions"
         ),
     )
     explain = sub.add_parser(
@@ -1062,6 +1082,8 @@ def _plan(args: argparse.Namespace) -> None:
             args.gw,
             args.horizon,
             squad=squad,
+            chip_arm=args.chip_arm,
+            chip_rules_season=args.chip_rules_season,
         )
     except PlanExistsError as exc:
         print(exc.report, end="")

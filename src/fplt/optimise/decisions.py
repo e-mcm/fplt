@@ -4,10 +4,13 @@ A decision backtest starts from an optimal GW1 draft. Only the first step of
 each plan is played; later steps exist so a free transfer can be banked.
 Predictions are whatever the ledger recorded at that deadline.
 
-Chip policy is selected per run: ``off`` (default, chips-off MILP),
-``rule_based`` (forced BB/TC/FH/WC on double/blank landmarks), or
-``optimised`` (season-level ``schedule_chip_windows`` → short-horizon MILP
-under ``ChipRules``). See ``run_chip_decision_board``.
+Chip policy is selected per run: ``off`` (chips-off MILP), ``rule_based``
+(forced BB/TC/FH/WC on double/blank landmarks), or ``optimised``
+(season-level ``schedule_chip_windows`` → short-horizon MILP under
+``ChipRules``). Live ``run_plan`` / automation defaults to ``optimised``
+(``DEFAULT_LIVE_CHIP_ARM``). The chips-off decision backtest
+(``run_decisions`` / ``fplt decisions`` without ``--chip-board``) stays
+``off`` for continuity. See ``run_chip_decision_board``.
 """
 
 from __future__ import annotations
@@ -69,7 +72,13 @@ logger = logging.getLogger(__name__)
 _MIN_COVERAGE = 0.5
 _CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
 
+# Live ``fplt plan`` / automation / ``catch_up`` / ``pre_deadline``. Chosen
+# after the C6 three-arm board (optimised > chips-off > rule-based on
+# 2025-26 H=3). Keep ``DEFAULT_PLAN_HORIZON`` at 3; do not flip from this.
+DEFAULT_LIVE_CHIP_ARM: ChipArm = "optimised"
+
 __all__ = [
+    "DEFAULT_LIVE_CHIP_ARM",
     "PlanExistsError",
     "assert_sane_mean_ppg",
     "candidates_as_of",
@@ -410,12 +419,20 @@ def run_plan(
     horizon: int,
     entry_json: Path | None = None,
     squad: SquadState | None = None,
+    *,
+    chip_arm: ChipArm = DEFAULT_LIVE_CHIP_ARM,
+    chip_rules_season: str | None = None,
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
     When ``squad`` is omitted, squad state comes from ``resolve_squad_state``:
     ``entry_json`` if provided, else the live / public team when
     ``FPLT_ENTRY_ID`` is set, else the YAML draft.
+
+    Chip policy defaults to ``DEFAULT_LIVE_CHIP_ARM`` (``optimised``): the
+    season chip scheduler rebuilds ``ChipUseWindows`` for this deadline, then
+    the short-horizon MILP chooses under ``ChipRules``. Pass ``chip_arm="off"``
+    for the pre-C6 chips-off path.
 
     Args:
         data_dir: Root that contains ``staged/`` and ``ledger/``.
@@ -427,6 +444,9 @@ def run_plan(
             replaces the owned squad and the bank when ``squad`` is omitted.
         squad: Pre-resolved squad state (e.g. from ``resolve_squad_state``).
             When set, ``entry_json`` and ``FPLT_ENTRY_ID`` are ignored.
+        chip_arm: Chip policy (default ``optimised`` for live / automation).
+        chip_rules_season: Chip-rules year when chips are on. Defaults to
+            ``season``.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -438,18 +458,23 @@ def run_plan(
         FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
             ``entry_json`` / ``squad`` was provided.
         ValueError: This deadline has no predictions, a horizon week is
-            missing or all zero, or a week covers fewer than half the
-            candidates.
+            missing or all zero, a week covers fewer than half the
+            candidates, ``chip_arm`` is unknown, or optimised / rule-based
+            chips lack staged fixtures.
     """
+    if chip_arm not in _CHIP_ARMS:
+        raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
-        "run_plan model=%s season=%s gw=%s horizon=%s",
+        "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s",
         model_name,
         season,
         gameweek,
         horizon,
+        chip_arm,
     )
     spec = load_model_specs()[model_name]
-    view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
+    store = DataStore(data_dir)
+    view = PITData(store).view(GWKey(season, gameweek))
     if squad is not None:
         state = squad
         logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
@@ -461,9 +486,8 @@ def run_plan(
         )
     window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
     candidates = candidates_as_of(view)
-    points = points_from_ledger(
-        read_predictions(data_dir), spec.model_id, season, gameweek, window
-    )
+    ledger = read_predictions(data_dir)
+    points = points_from_ledger(ledger, spec.model_id, season, gameweek, window)
     logger.info(
         "optimiser inputs: candidates=%s prediction_rows=%s window=%s initial=%s",
         candidates.height,
@@ -472,12 +496,52 @@ def run_plan(
         not state.owned,
     )
     _require_usable_points(points, candidates, window, model_name)
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    plan_season: str | None = None
+    plan_gameweeks: list[int] | None = None
+    plan_windows: ChipUseWindows | None = None
+    plan_rules_season: str | None = None
+    if chip_arm != "off":
+        rules = ChipRules.for_season(rules_season)
+        state = _ensure_chip_inventory(state, rules)
+        fixtures = store.read("fixtures").filter(pl.col("season") == season)
+        predictions = _prediction_rows(ledger, spec.model_id, season)
+        rest_of_season = list(range(gameweek, 39))
+        if chip_arm == "optimised":
+            plan_windows = _scheduled_windows(
+                fixtures=fixtures,
+                season=season,
+                rules=rules,
+                as_of_gw=gameweek,
+                short_horizon=len(window),
+                predictions=predictions,
+                pool=candidates,
+                state=state,
+                gameweeks=rest_of_season,
+            )
+        else:
+            plan_windows = _static_windows_for_arm(
+                chip_arm,
+                fixtures=fixtures,
+                season=season,
+                rules=rules,
+                predictions=predictions,
+                gameweeks=rest_of_season,
+                chip_windows=None,
+            )
+        plan_season = season
+        plan_gameweeks = window
+        plan_rules_season = rules_season
     solved = plan_squad(
         candidates,
         points,
         state,
         initial=not state.owned,
         horizon=len(window),
+        season=plan_season,
+        gameweeks=plan_gameweeks,
+        chip_windows=plan_windows,
+        chip_rules_season=plan_rules_season,
     )
     table = plan_table(solved, spec.model_id, season, gameweek, window)
     names = _player_names(view)
@@ -499,10 +563,11 @@ def run_plan(
         raise PlanExistsError(Path(str(exc)), report) from exc
     (path.parent / "report.md").write_text(report, encoding="utf-8")
     logger.info(
-        "plan written path=%s hits=%s points=%.2f",
+        "plan written path=%s hits=%s points=%.2f chips=%s",
         path,
         solved.hits,
         solved.points,
+        solved.chips,
     )
     return solved, path, report
 

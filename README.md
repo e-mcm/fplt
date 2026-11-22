@@ -82,7 +82,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Store live-team token (manual paste) | `uv run fplt auth set --entry-id …` |
 | Leaderboard app | `make leaderboard` |
 
-Run `fplt auth set` (or set `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` in `~/.config/fplt/env`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`.
+Run `fplt auth set` (or set `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` in `~/.config/fplt/env`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`. Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
 
 ## Adding things
 
