@@ -43,10 +43,10 @@ class LongHorizonPolicy(BaseModel):
         description="Leading steps that stay binary under relax-and-fix.",
     )
     coarsen_from_step: int | None = Field(
-        default=None,
+        default=3,
         description=(
-            "Drop captain/vice detail from this step onward (0-indexed). "
-            "None disables coarsening."
+            "Drop captain/vice detail from this step onward (0-indexed) when "
+            "``should_auto_apply`` is true. None disables coarsening."
         ),
     )
 
@@ -61,8 +61,16 @@ class LongHorizonPolicy(BaseModel):
         """True when ``horizon`` is long enough for these heuristics."""
         return horizon >= self.auto_min_horizon
 
+    def effective_coarsen_from(self, horizon: int) -> int | None:
+        """Return the first coarsened step, or None when coarsening is off."""
+        if self.coarsen_from_step is None or not self.should_auto_apply(horizon):
+            return None
+        if self.coarsen_from_step >= horizon:
+            return None
+        return self.coarsen_from_step
 
-# Relax-and-fix on at H≥6; coarsening stays off until a follow-up enables it.
+
+# Relax-and-fix + far-step coarsening (from step 3) on at H≥6.
 DEFAULT_LONG_HORIZON_POLICY = LongHorizonPolicy()
 
 

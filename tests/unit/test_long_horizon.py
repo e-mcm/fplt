@@ -19,15 +19,18 @@ from fplt.optimise.pruning_loss import (
 )
 
 
-def test_long_horizon_policy_defaults_relax_and_fix() -> None:
-    """Shipped policy enables relax-and-fix at H≥6; coarsening stays off."""
+def test_long_horizon_policy_defaults_relax_and_coarsen() -> None:
+    """Shipped policy enables relax-and-fix and coarsening from step 3 at H≥6."""
     policy = DEFAULT_LONG_HORIZON_POLICY
     assert policy.auto_min_horizon == LONG_HORIZON_MIN
     assert policy.relax_and_fix is True
     assert policy.binary_steps == 2
-    assert policy.coarsen_from_step is None
+    assert policy.coarsen_from_step == 3
     assert policy.should_auto_apply(5) is False
     assert policy.should_auto_apply(6) is True
+    assert policy.effective_coarsen_from(5) is None
+    assert policy.effective_coarsen_from(6) == 3
+    assert policy.effective_coarsen_from(3) is None
 
 
 def test_long_horizon_policy_rejects_negative_coarsen() -> None:
@@ -148,6 +151,52 @@ def test_small_mip_gap_keeps_week1_actions_vs_proven_optimal() -> None:
     assert result.identical, result.mismatches
 
 
+def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
+    """H=6 with captain/vice dropped from step 3 still matches week-1 actions."""
+    scenario = sample_synthetic_scenarios(
+        1,
+        seed=31,
+        horizon=6,
+        pool_counts={"GK": 6, "DEF": 14, "MID": 18, "FWD": 8},
+    )[0]
+    options = _fast_options()
+    # Full armbands every step; still use relax-and-fix so both arms share it.
+    detailed = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            coarsen_from_step=None,
+            auto_min_horizon=6,
+        ),
+    )
+    coarsened = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            coarsen_from_step=3,
+            auto_min_horizon=6,
+        ),
+    )
+    result = check_week1_equivalence(detailed, coarsened, initial=scenario.initial)
+    assert result.identical, result.mismatches
+    # Coarsened far steps have no captain/vice selected.
+    far = coarsened.picks.filter(pl.col("step") >= 3)
+    assert far.filter(pl.col("captain")).is_empty()
+    assert far.filter(pl.col("vice")).is_empty()
+
+
 def test_relax_and_fix_keeps_week1_actions_at_h6() -> None:
     """H=6 relax-and-fix matches a full-integer solve on week-1 actions."""
     scenario = sample_synthetic_scenarios(
@@ -165,7 +214,10 @@ def test_relax_and_fix_keeps_week1_actions_at_h6() -> None:
         horizon=scenario.horizon,
         prune=False,
         highs_options=options,
-        long_horizon_policy=LongHorizonPolicy(relax_and_fix=False),
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=False,
+            coarsen_from_step=None,
+        ),
     )
     relaxed = plan_squad(
         scenario.players,
@@ -179,6 +231,7 @@ def test_relax_and_fix_keeps_week1_actions_at_h6() -> None:
             relax_and_fix=True,
             binary_steps=2,
             auto_min_horizon=6,
+            coarsen_from_step=None,
         ),
     )
     result = check_week1_equivalence(full, relaxed, initial=scenario.initial)
