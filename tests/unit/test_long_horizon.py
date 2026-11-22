@@ -161,6 +161,8 @@ def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
     )[0]
     options = _fast_options()
     # Full armbands every step; still use relax-and-fix so both arms share it.
+    # Disable lineup_reopt so we assert MILP coarsening, not the post-hoc
+    # EV lineup pass that re-assigns captain/vice on every locked fifteen.
     detailed = plan_squad(
         scenario.players,
         scenario.points,
@@ -169,6 +171,7 @@ def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
         horizon=scenario.horizon,
         prune=False,
         highs_options=options,
+        lineup_reopt=False,
         long_horizon_policy=LongHorizonPolicy(
             relax_and_fix=True,
             coarsen_from_step=None,
@@ -183,6 +186,7 @@ def test_far_step_coarsening_keeps_week1_actions_at_h6() -> None:
         horizon=scenario.horizon,
         prune=False,
         highs_options=options,
+        lineup_reopt=False,
         long_horizon_policy=LongHorizonPolicy(
             relax_and_fix=True,
             coarsen_from_step=3,
