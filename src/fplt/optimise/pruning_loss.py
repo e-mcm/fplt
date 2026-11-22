@@ -232,6 +232,7 @@ def policy_for_target_pool(
         top_xpts=_scale_counts(policy.top_xpts, factor),
         top_value=_scale_counts(policy.top_value, factor),
         keep_cheapest=policy.keep_cheapest,
+        min_p_60=policy.min_p_60,
         auto_min_horizon=policy.auto_min_horizon,
     )
 
