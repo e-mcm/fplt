@@ -79,6 +79,63 @@ def test_stage_event_live_defaults_missing_defensive_contribution() -> None:
     assert frame["defensive_contribution"].to_list() == [0]
 
 
+def test_stage_event_live_keeps_expected_xg() -> None:
+    available = datetime(2024, 8, 17, 18, tzinfo=UTC)
+    frame = stage_event_live(
+        {
+            "elements": [
+                {
+                    "id": 10,
+                    "stats": {
+                        "minutes": 90,
+                        "total_points": 6,
+                        "goals_scored": 1,
+                        "assists": 0,
+                        "starts": 1,
+                        "expected_goals": "0.79",
+                        "expected_assists": "0.18",
+                        "expected_goal_involvements": "0.97",
+                        "expected_goals_conceded": "2.24",
+                    },
+                    "explain": [{"fixture": 99}],
+                }
+            ]
+        },
+        "2024-25",
+        1,
+        available,
+        {10: 100},
+    )
+    row = frame.row(0, named=True)
+    assert row["expected_goals"] == 0.79
+    assert row["expected_assists"] == 0.18
+    assert row["expected_goal_involvements"] == 0.97
+    assert row["expected_goals_conceded"] == 2.24
+    assert row["available_at"] == available
+
+
+def test_stage_event_live_null_expected_when_absent() -> None:
+    frame = stage_event_live(
+        {
+            "elements": [
+                {
+                    "id": 1,
+                    "stats": {"minutes": 90, "total_points": 2, "starts": 1},
+                    "explain": [{"fixture": 1}],
+                }
+            ]
+        },
+        "2021-22",
+        1,
+        datetime(2021, 8, 14, 18, tzinfo=UTC),
+        {1: 10},
+    )
+    assert frame["expected_goals"].to_list() == [None]
+    assert frame["expected_assists"].to_list() == [None]
+    assert frame["expected_goal_involvements"].to_list() == [None]
+    assert frame["expected_goals_conceded"].to_list() == [None]
+
+
 def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
     store = DataStore(tmp_path)
     store.write(
@@ -115,3 +172,7 @@ def test_store_fills_missing_columns_on_widen(tmp_path) -> None:
     assert got["tackles"].to_list() == [0]
     assert got["recoveries"].to_list() == [0]
     assert got["defensive_contribution"].to_list() == [0]
+    assert got["expected_goals"].to_list() == [None]
+    assert got["expected_assists"].to_list() == [None]
+    assert got["expected_goal_involvements"].to_list() == [None]
+    assert got["expected_goals_conceded"].to_list() == [None]

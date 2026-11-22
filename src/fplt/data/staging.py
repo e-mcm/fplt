@@ -2,7 +2,10 @@
 
 Schedule rows are published at ``captured_at``. Result rows are published at
 the capture where ``data_checked`` is true, which is the moment those scores
-become visible to a later point-in-time view.
+become visible to a later point-in-time view. Opta ``expected_goals`` /
+``expected_assists`` / ``expected_goal_involvements`` /
+``expected_goals_conceded`` stage onto ``player_fixture_stats`` with that
+same ``available_at``.
 """
 
 from __future__ import annotations
@@ -97,6 +100,14 @@ def stage_event_live(
                     "recoveries": int(stats.get("recoveries") or 0),
                     "defensive_contribution": int(
                         stats.get("defensive_contribution") or 0
+                    ),
+                    "expected_goals": _optional_stat_float(stats, "expected_goals"),
+                    "expected_assists": _optional_stat_float(stats, "expected_assists"),
+                    "expected_goal_involvements": _optional_stat_float(
+                        stats, "expected_goal_involvements"
+                    ),
+                    "expected_goals_conceded": _optional_stat_float(
+                        stats, "expected_goals_conceded"
                     ),
                     "available_at": available_at.astimezone(UTC),
                     "source": source,
@@ -281,3 +292,16 @@ def _stat_float(stats: dict[str, Any], key: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_stat_float(stats: dict[str, Any], key: str) -> float | None:
+    """Parse an optional FPL live float, or ``None`` when the key is absent."""
+    if key not in stats:
+        return None
+    value = stats[key]
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

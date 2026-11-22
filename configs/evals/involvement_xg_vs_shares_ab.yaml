@@ -1,0 +1,53 @@
+# Wave A3 / M7: involvement_xg (FPL-native Opta xG) vs involvement_shares.
+# Run after restaging so player_fixture_stats carries expected_*.
+name: involvement_xg_vs_shares_ab
+kind: config
+question: >
+  Does blending FPL-native expected_goals / expected_assists
+  (involvement_xg_v1) beat goal/assist shares on xPts and goal-share MAE?
+description: "involvement_xg vs involvement_shares (Wave A3 / M7)."
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: involvement
+  control_kind: involvement_shares
+  treatment_kind: involvement_xg
+  tables: [player_fixture_stats]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.involvement: involvement_shares_v1 → involvement_xg_v1"
+  notes: >
+    Control dc_layered_shares_v2 (v2 stack + shares). Treatment dc_layered_v2
+    (involvement_xg_v1, xg_blend=0.7). Prefers staged expected_* over Understat.
+    Window GW1–20 on 2024-25 (vaastav has expected_* from 2022-23).
+
+control: dc_layered_shares_v2
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    components_any: [mae_goal_share]
+    prediction_any: [mae, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "involvement_xg vs shares (FPL-native xG)"
+  store_doc: involvement-xg-vs-shares-eval.md
