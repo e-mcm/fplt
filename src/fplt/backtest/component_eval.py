@@ -26,6 +26,11 @@ import fplt.models.components.minutes  # noqa: F401  # pyright: ignore[reportUnu
 import fplt.models.components.score  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from fplt.backtest.components import ranked_probability_score, record_scorelines
+from fplt.backtest.horizon_skill import (
+    run_horizon_skill,
+    skill_rows_for_component_eval,
+)
+from fplt.backtest.horizons import DEFAULT_SKILL_STEPS
 from fplt.backtest.walk_forward import allowed_seasons, should_refit
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
@@ -40,6 +45,7 @@ from fplt.schemas.component_eval import (
     ComponentEvalSummarySchema,
     SimsSweepSchema,
 )
+from fplt.schemas.horizon_skill import HORIZON_SKILL_COLUMNS
 from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
@@ -61,6 +67,9 @@ class ComponentEvalResult:
     per_match: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(schema=PER_MATCH_COLUMNS)
     )
+    horizon_skill: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema=HORIZON_SKILL_COLUMNS)
+    )
 
 
 def run_component_eval(
@@ -78,6 +87,8 @@ def run_component_eval(
     output_dir: Path | None = None,
     write_per_match: bool = False,
     extra_score_specs: list[ModelSpec] | None = None,
+    points_models: list[str] | None = None,
+    steps: int = DEFAULT_SKILL_STEPS,
 ) -> ComponentEvalResult:
     """Evaluate layered components over ``from_gw``..``to_gw`` and sweep sims.
 
@@ -102,6 +113,11 @@ def run_component_eval(
             scoreline models under ``per_match.parquet``.
         extra_score_specs: Inline score ``ModelSpec`` objects scored alongside
             ``score_models`` (e.g. a raw de-vig 1X2 market arm).
+        points_models: Optional PointsPredictor YAML names. When set, runs a
+            walk-forward skill-by-horizon curve (MAE/RMSE for H=1…``steps``)
+            via ``run_horizon_skill`` and appends ``component="points"`` rows.
+        steps: Lead times for ``points_models`` (default 10). Ignored when
+            ``points_models`` is empty or omitted.
 
     Returns:
         Validated summary frames and the output path.
@@ -112,11 +128,14 @@ def run_component_eval(
     """
     if from_gw > to_gw:
         raise ValueError(f"from_gw ({from_gw}) must be <= to_gw ({to_gw})")
+    if steps < 1:
+        raise ValueError(f"steps must be positive, got {steps}")
     specs = load_model_specs()
     score_names = list(_DEFAULT_SCORE) if score_models is None else list(score_models)
     minutes_names = _as_name_list(minutes_model, default=_DEFAULT_MINUTES)
     involvement_names = _as_name_list(involvement_model, default=_DEFAULT_INVOLVEMENT)
-    needed = [*score_names, *minutes_names, *involvement_names]
+    points_names = list(points_models) if points_models else []
+    needed = [*score_names, *minutes_names, *involvement_names, *points_names]
     sweep_ns = tuple(sims) if sims is not None else DEFAULT_SIMS
     if sweep_ns:
         if layered_model is None:
@@ -161,6 +180,22 @@ def run_component_eval(
     else:
         sims_frame = pl.DataFrame(schema=SIMS_SWEEP_COLUMNS)
 
+    out = output_dir or (data_dir / "component_eval" / f"{season}_gw{from_gw}-{to_gw}")
+    out.mkdir(parents=True, exist_ok=True)
+    horizon_skill = pl.DataFrame(schema=HORIZON_SKILL_COLUMNS)
+    if points_names:
+        skill = run_horizon_skill(
+            data_dir,
+            season,
+            models=points_names,
+            from_gw=from_gw,
+            to_gw=to_gw,
+            steps=steps,
+            output_dir=out / "horizon_skill",
+        )
+        horizon_skill = skill.curve
+        rows.extend(skill_rows_for_component_eval(horizon_skill))
+
     summary = _validated_summary(
         pl.DataFrame(rows, schema=COMPONENT_EVAL_COLUMNS)
         if rows
@@ -172,12 +207,12 @@ def run_component_eval(
         if per_match_rows
         else pl.DataFrame(schema=PER_MATCH_COLUMNS)
     )
-    out = output_dir or (data_dir / "component_eval" / f"{season}_gw{from_gw}-{to_gw}")
-    out.mkdir(parents=True, exist_ok=True)
     summary.write_parquet(out / "summary.parquet")
     sims_out.write_parquet(out / "sims_sweep.parquet")
     if write_per_match:
         per_match.write_parquet(out / "per_match.parquet")
+    if not horizon_skill.is_empty():
+        horizon_skill.write_parquet(out / "horizon_skill.parquet")
     payload = {
         "season": season,
         "from_gw": from_gw,
@@ -187,14 +222,21 @@ def run_component_eval(
         "minutes_models": minutes_names,
         "involvement_models": involvement_names,
         "layered_model": layered_model,
+        "points_models": points_names,
+        "steps": steps if points_names else None,
         "summary": summary.to_dicts(),
         "sims_sweep": sims_out.to_dicts(),
         "per_match": per_match.to_dicts() if write_per_match else [],
+        "horizon_skill": horizon_skill.to_dicts(),
     }
     (out / "summary.json").write_text(json.dumps(payload, indent=2) + "\n")
     logger.info("wrote component eval under %s", out)
     return ComponentEvalResult(
-        summary=summary, sims=sims_out, output_dir=out, per_match=per_match
+        summary=summary,
+        sims=sims_out,
+        output_dir=out,
+        per_match=per_match,
+        horizon_skill=horizon_skill,
     )
 
 

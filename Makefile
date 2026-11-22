@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -66,9 +66,22 @@ compare-models:
 # ── Layered component eval (RPS / minutes Brier / involvement / n_sims) ────────
 # Usage: make eval-components SEASON=2024-25
 # Optional: ARGS='--from-gw 1 --to-gw 10 --skip-sims'
+# Skill-by-horizon (Wave C4): ARGS='--skip-sims --points-models rolling_mean_v1 --steps 10'
 eval-components:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-components SEASON=2024-25"; exit 1; fi
 	uv run fplt eval-components --season $(SEASON) $(ARGS)
+
+# ── Forecast skill by lead time (MAE/RMSE for H=1…STEPS; wraps compare) ────────
+# Usage: make horizon-skill SEASON=2024-25
+# Optional: STEPS=10 FROM_GW=1 TO_GW=20 ARGS='--models rolling_mean_v1 dc_layered_v2'
+# Does not change DEFAULT_PLAN_HORIZON (still 3). Report curve before retuning H.
+horizon-skill:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make horizon-skill SEASON=2024-25"; exit 1; fi
+	uv run fplt horizon-skill --season $(SEASON) \
+		--from-gw $(or $(FROM_GW),1) \
+		--to-gw $(or $(TO_GW),20) \
+		--steps $(or $(STEPS),10) \
+		$(ARGS)
 
 # ── Promote-eval (control vs treatment EvalSpec; dry-run scaffold) ─────────────
 # Usage: make promote-eval EVAL=example_model_lgbm_vs_rolling
@@ -119,10 +132,13 @@ chip-decision-board:
 		$(ARGS)
 
 # Multi-horizon decision bakeoff. Prediction ledger must already cover max H
-# (backtest --steps >= max HORIZONS). Archives each run because ledger/decisions
-# overwrites by model×gw (no horizon key).
+# (backtest --steps >= max HORIZONS; predict default is now 10). Archives each
+# run because ledger/decisions overwrites by model×gw (no horizon key).
 # Usage: make horizon-decisions SEASON=2024-25
-# Optional: HORIZONS='1 2 3 4' ARGS='--models openfpl_v1 dc_layered_v2 --from-gw 1 --to-gw 38'
+# Optional: HORIZONS='1 2 3 4 8 10' ARGS='--models openfpl_v1 dc_layered_v2 --from-gw 1 --to-gw 38'
+# Chips-on retune (Wave C4 → FDB-120): add ARGS='--chip-board' (or use
+# chip-decision-board in a loop) — do not flip DEFAULT_PLAN_HORIZON from the
+# skill curve alone; season points on the full decision sim is the gate.
 horizon-decisions:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make horizon-decisions SEASON=2024-25"; exit 1; fi
 	@data="$${FPLT_DATA_DIR:-./data}"; \
