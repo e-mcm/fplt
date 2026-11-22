@@ -173,6 +173,39 @@ def test_defensive_contribution_staged_when_present(tmp_path: Path) -> None:
     assert stats["defensive_contribution"].to_list() == [2, 0]
 
 
+def test_expected_xg_null_when_vaastav_columns_absent(tmp_path: Path) -> None:
+    store = DataStore(tmp_path / "store")
+    import_season(store, _write_season(tmp_path), "2021-22")
+    stats = store.read("player_fixture_stats")
+    assert stats["expected_goals"].to_list() == [None, None]
+    assert stats["expected_assists"].to_list() == [None, None]
+    assert stats["expected_goal_involvements"].to_list() == [None, None]
+    assert stats["expected_goals_conceded"].to_list() == [None, None]
+
+
+def test_expected_xg_staged_from_vaastav_when_present(tmp_path: Path) -> None:
+    season = _write_season(tmp_path)
+    gw = pl.read_csv(season / "gws" / "merged_gw.csv")
+    gw = gw.with_columns(
+        pl.Series("expected_goals", [0.55, 0.0]),
+        pl.Series("expected_assists", [0.12, 0.3]),
+        pl.Series("expected_goal_involvements", [0.67, 0.3]),
+        pl.Series("expected_goals_conceded", [1.1, 0.8]),
+    )
+    gw.write_csv(season / "gws" / "merged_gw.csv")
+    store = DataStore(tmp_path / "store")
+    import_season(store, season, "2021-22")
+    stats = store.read("player_fixture_stats").sort("gw")
+    assert stats["expected_goals"].to_list() == [0.55, 0.0]
+    assert stats["expected_assists"].to_list() == [0.12, 0.3]
+    assert stats["expected_goal_involvements"].to_list() == [0.67, 0.3]
+    assert stats["expected_goals_conceded"].to_list() == [1.1, 0.8]
+    assert stats["available_at"].to_list() == [
+        _KICKOFF + timedelta(hours=3),
+        _KICKOFF_GW2 + timedelta(hours=3),
+    ]
+
+
 def test_seasons_before_2021_and_missing_files_are_skipped(tmp_path: Path) -> None:
     store = DataStore(tmp_path / "store")
     early = tmp_path / "2020-21"

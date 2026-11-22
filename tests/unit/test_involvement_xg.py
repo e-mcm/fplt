@@ -73,6 +73,73 @@ def test_missing_understat_falls_back_to_fpl(tmp_path: Path) -> None:
     assert by_player[2]["assist_weight"] == pytest.approx(1.0)
 
 
+def test_fpl_native_xg_used_when_understat_empty(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[
+            _row(1, "FWD", 1, goals=0, expected_goals=1.0, expected_assists=0.0),
+            _row(2, "FWD", 1, goals=2, expected_goals=0.0, expected_assists=0.5),
+        ],
+        understat=[],
+    )
+    frame = _predict(store, xg_blend=1.0)
+    by_player = {row["player_key"]: row for row in frame.iter_rows(named=True)}
+    assert by_player[1]["goal_weight"] == pytest.approx(1.0)
+    assert by_player[2]["goal_weight"] == pytest.approx(0.0)
+    assert by_player[1]["assist_weight"] == pytest.approx(0.0)
+    assert by_player[2]["assist_weight"] == pytest.approx(1.0)
+
+
+def test_fpl_native_xg_prefers_over_understat(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[
+            _row(1, "FWD", 1, expected_goals=1.0, expected_assists=0.0),
+            _row(2, "FWD", 1, expected_goals=0.0, expected_assists=0.0),
+        ],
+        understat=[
+            _ust(1, 1, xg=0.0),
+            _ust(2, 1, xg=1.0),
+        ],
+    )
+    frame = _predict(store, xg_blend=1.0)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(0.0)
+
+
+def test_fpl_native_xg_respects_pit_cutoff(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[
+            _row(1, "FWD", 1, expected_goals=0.0, expected_assists=0.0),
+            _row(2, "FWD", 1, expected_goals=0.0, expected_assists=0.0),
+        ],
+        understat=[],
+    )
+    late = store.read("player_fixture_stats").with_columns(
+        pl.when(pl.col("player_key") == 1)
+        .then(pl.lit(1.0))
+        .otherwise(pl.col("expected_goals"))
+        .alias("expected_goals"),
+        pl.when(pl.col("player_key") == 1)
+        .then(pl.lit(_deadline(3) + timedelta(hours=1)))
+        .otherwise(pl.col("available_at"))
+        .alias("available_at"),
+    )
+    store.path("player_fixture_stats").unlink()
+    store.write("player_fixture_stats", late)
+    frame = _predict(store, xg_blend=1.0)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    # Player 1's xG is after the GW3 deadline → invisible; equal shares.
+    assert weights[1] == pytest.approx(0.5)
+    assert weights[2] == pytest.approx(0.5)
+
+
 def test_blend_mixes_xg_and_goals(tmp_path: Path) -> None:
     store = _store(
         tmp_path,
@@ -176,6 +243,9 @@ def test_nopens_xg_and_layered_specs_load() -> None:
         .params["use_penalties_order"]
         is False
     )
+    shares = specs["dc_layered_shares_v2"].components["involvement"]
+    assert shares.kind == "involvement_shares"
+    assert shares.name == "involvement_shares_v1"
 
 
 def test_sim_params_come_from_history(tmp_path: Path) -> None:
@@ -352,6 +422,8 @@ def _row(
     assists: int = 0,
     pens_missed: int = 0,
     own_goals: int = 0,
+    expected_goals: float | None = None,
+    expected_assists: float | None = None,
 ) -> dict[str, object]:
     return {
         "player": player,
@@ -363,6 +435,8 @@ def _row(
         "assists": assists,
         "pens_missed": pens_missed,
         "own_goals": own_goals,
+        "expected_goals": expected_goals,
+        "expected_assists": expected_assists,
     }
 
 
@@ -455,6 +529,8 @@ def _store(
                     "penalties_saved": [0] * len(fpl),
                     "penalties_missed": [row["pens_missed"] for row in fpl],
                     "starts": [1] * len(fpl),
+                    "expected_goals": [row["expected_goals"] for row in fpl],
+                    "expected_assists": [row["expected_assists"] for row in fpl],
                     "available_at": when,
                     "source": ["fpl_api"] * len(fpl),
                 }

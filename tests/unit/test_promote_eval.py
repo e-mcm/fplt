@@ -366,6 +366,21 @@ def test_components_command_names_involvement_slot_specs() -> None:
     assert "involvement_shares_v1" not in cmd
 
 
+def test_involvement_xg_vs_shares_eval_loads() -> None:
+    spec = load_eval_spec("involvement_xg_vs_shares_ab")
+    assert spec.control == "dc_layered_shares_v2"
+    assert spec.treatment == "dc_layered_v2"
+    assert spec.change.slot == "involvement"
+    assert spec.change.control_kind == "involvement_shares"
+    assert spec.change.treatment_kind == "involvement_xg"
+    assert spec.window.to_gw == 20
+    plan = plan_promote_eval(spec, dry_run=True, to_gw=1)
+    components = [cmd for cmd in plan.commands if "eval-components" in cmd]
+    assert len(components) == 1
+    cmd = components[0]
+    assert "--involvement-model involvement_shares_v1 involvement_xg_v1" in cmd
+
+
 def test_n_sims_lever_omits_skip_sims(tmp_path: Path) -> None:
     payload = _base_payload(
         name="n_sims_ab",

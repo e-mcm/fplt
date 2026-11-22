@@ -1,10 +1,11 @@
 """xG/xA involvement shares blended with FPL goals and assists.
 
-When Understat rows are visible for a player, goal and assist rates mix
-shrunk xG/xA per 90 with shrunk FPL goals/assists. Players with no Understat
-mapping keep the FPL-only rates. ``own_goal_weight`` and ``p_assist`` are
-estimated from the same visible history so the layered simulator can drop the
-YAML guesses.
+When FPL-native ``expected_goals`` / ``expected_assists`` are visible on
+``player_fixture_stats``, goal and assist rates mix those Opta xG/xA per 90
+with shrunk FPL goals/assists (``xg_blend``). Understat match rows fill gaps
+for players with no FPL xG yet. Players with neither keep the FPL-only rates.
+``own_goal_weight`` and ``p_assist`` are estimated from the same visible
+history so the layered simulator can drop the YAML guesses.
 """
 
 from __future__ import annotations
@@ -31,16 +32,18 @@ _DEFAULT_P_ASSIST = 0.75
 
 
 class InvolvementXg:
-    """Team-relative goal/assist weights from Understat xG/xA plus FPL.
+    """Team-relative goal/assist weights from FPL/Understat xG/xA plus FPL.
 
     ``window`` and ``shrinkage`` match ``InvolvementShares``. ``xg_blend`` in
-    ``[0, 1]`` is the weight on the Understat rate when both signals exist.
-    ``penalty_bonus`` is added to the blended goal rate for the primary
-    penalty taker (``penalties_order == 1``), falling back to a visible
-    penalty miss when order is null. Set ``use_penalties_order: false`` to
-    force the miss-only heuristic for A/B (default ``true``). After ``fit``,
-    ``own_goal_weight`` and ``p_assist`` hold calibrated simulator knobs
-    (defaults when history is empty).
+    ``[0, 1]`` is the weight on the xG rate when both signals exist.
+    Preference for the xG signal: FPL-native ``expected_goals`` /
+    ``expected_assists`` on ``player_fixture_stats``, then Understat
+    ``understat_player_matches``. ``penalty_bonus`` is added to the blended
+    goal rate for the primary penalty taker (``penalties_order == 1``),
+    falling back to a visible penalty miss when order is null. Set
+    ``use_penalties_order: false`` to force the miss-only heuristic for A/B
+    (default ``true``). After ``fit``, ``own_goal_weight`` and ``p_assist``
+    hold calibrated simulator knobs (defaults when history is empty).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -178,6 +181,53 @@ def _fpl_rates(
 def _xg_rates(
     view: PITView, history: pl.DataFrame, window: int, shrinkage: float
 ) -> tuple[dict[int, float], dict[int, float]]:
+    """Prefer FPL-native Opta xG; fall back to Understat for gaps."""
+    fpl_goal, fpl_assist = _fpl_native_xg_rates(history, window, shrinkage)
+    ust_goal, ust_assist = _understat_xg_rates(view, history, window, shrinkage)
+    goal = {**ust_goal, **fpl_goal}
+    assist = {**ust_assist, **fpl_assist}
+    return goal, assist
+
+
+def _fpl_native_xg_rates(
+    history: pl.DataFrame, window: int, shrinkage: float
+) -> tuple[dict[int, float], dict[int, float]]:
+    if history.is_empty() or "expected_goals" not in history.columns:
+        return {}, {}
+    recent = latest_rows(history, window)
+    has_xg = pl.col("expected_goals").is_not_null()
+    has_xa = pl.col("expected_assists").is_not_null()
+    with_xg = recent.filter(has_xg | has_xa)
+    if with_xg.is_empty():
+        return {}, {}
+    keyed = with_xg.with_columns(
+        pl.col("expected_goals").fill_null(0.0),
+        pl.col("expected_assists").fill_null(0.0),
+    )
+    prior = _xg_position_rates(keyed, "expected_goals", "expected_assists")
+    goal: dict[int, float] = {}
+    assist: dict[int, float] = {}
+    grouped = keyed.group_by("player_key").agg(
+        pl.col("position").last(),
+        pl.col("expected_goals").sum().alias("xg"),
+        pl.col("expected_assists").sum().alias("xa"),
+        pl.col("minutes").sum(),
+    )
+    for row in grouped.iter_rows(named=True):
+        player = int(row["player_key"])
+        position = row["position"] if row["position"] in POSITIONS else ""
+        goal_prior, assist_prior = prior.get(position, (0.0, 0.0))
+        nineties = float(row["minutes"]) / 90.0
+        goal[player] = shrunk_rate(float(row["xg"]), nineties, goal_prior, shrinkage)
+        assist[player] = shrunk_rate(
+            float(row["xa"]), nineties, assist_prior, shrinkage
+        )
+    return goal, assist
+
+
+def _understat_xg_rates(
+    view: PITView, history: pl.DataFrame, window: int, shrinkage: float
+) -> tuple[dict[int, float], dict[int, float]]:
     matches = (
         view.table("understat_player_matches")
         .filter(pl.col("player_key").is_not_null())
@@ -204,7 +254,7 @@ def _xg_rates(
     keyed = matches.with_columns(pl.col("player_key").cast(pl.Int64)).join(
         positions, on="player_key", how="left"
     )
-    prior = _xg_position_rates(keyed)
+    prior = _xg_position_rates(keyed, "xg", "xa")
     recent = _latest_matches(keyed, window)
     goal: dict[int, float] = {}
     assist: dict[int, float] = {}
@@ -226,15 +276,17 @@ def _xg_rates(
     return goal, assist
 
 
-def _xg_position_rates(matches: pl.DataFrame) -> dict[str, tuple[float, float]]:
+def _xg_position_rates(
+    matches: pl.DataFrame, xg_col: str, xa_col: str
+) -> dict[str, tuple[float, float]]:
     played = matches.filter(
         (pl.col("minutes") > 0) & pl.col("position").is_in(list(POSITIONS))
     )
     if played.is_empty():
         return {}
     totals = played.group_by("position").agg(
-        pl.col("xg").sum().alias("xg"),
-        pl.col("xa").sum().alias("xa"),
+        pl.col(xg_col).sum().alias("xg"),
+        pl.col(xa_col).sum().alias("xa"),
         (pl.col("minutes") / 90.0).sum().alias("nineties"),
     )
     rates: dict[str, tuple[float, float]] = {}

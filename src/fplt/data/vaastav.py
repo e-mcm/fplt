@@ -5,7 +5,9 @@ flagged ``source = "vaastav"``. Result rows become visible at kickoff + 3h.
 Status still lacks news, chance-of-playing, and ``penalties_order``, but
 per-gameweek ``value`` from ``merged_gw.csv`` is staged as
 ``player_status.price`` at that GW's deadline so historical transfer budgets
-bind.
+bind. Opta ``expected_goals`` / ``expected_assists`` /
+``expected_goal_involvements`` / ``expected_goals_conceded`` are staged when
+present (2022-23 onwards); earlier seasons leave them null.
 """
 
 from __future__ import annotations
@@ -174,6 +176,23 @@ def _as_float(value: object, default: float = 0.0) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _optional_float(row: dict[str, Any], key: str) -> float | None:
+    """Parse an optional float column, or ``None`` when the field is absent.
+
+    Vaastav shipped Opta ``expected_*`` on merged gameweeks from 2022-23
+    onwards; earlier seasons omit the columns entirely.
+    """
+    if key not in row:
+        return None
+    value = row[key]
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _players(
@@ -430,6 +449,14 @@ def _stats(
                 "tackles": _as_int(row.get("tackles")),
                 "recoveries": _as_int(row.get("recoveries")),
                 "defensive_contribution": _as_int(row.get("defensive_contribution")),
+                "expected_goals": _optional_float(row, "expected_goals"),
+                "expected_assists": _optional_float(row, "expected_assists"),
+                "expected_goal_involvements": _optional_float(
+                    row, "expected_goal_involvements"
+                ),
+                "expected_goals_conceded": _optional_float(
+                    row, "expected_goals_conceded"
+                ),
                 "available_at": kickoff + _RESULT_LAG,
                 "source": "vaastav",
             }

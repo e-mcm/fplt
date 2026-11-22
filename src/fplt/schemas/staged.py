@@ -171,6 +171,10 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
     tackles: int = pa.Field(ge=0)
     recoveries: int = pa.Field(ge=0)
     defensive_contribution: int = pa.Field(ge=0)
+    expected_goals: float = pa.Field(nullable=True, ge=0)
+    expected_assists: float = pa.Field(nullable=True, ge=0)
+    expected_goal_involvements: float = pa.Field(nullable=True, ge=0)
+    expected_goals_conceded: float = pa.Field(nullable=True, ge=0)
     available_at: datetime
     source: str
 
@@ -318,6 +322,10 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "tackles": pl.Int64(),
         "recoveries": pl.Int64(),
         "defensive_contribution": pl.Int64(),
+        "expected_goals": pl.Float64(),
+        "expected_assists": pl.Float64(),
+        "expected_goal_involvements": pl.Float64(),
+        "expected_goals_conceded": pl.Float64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },
