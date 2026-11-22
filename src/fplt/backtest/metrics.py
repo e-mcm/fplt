@@ -2,6 +2,11 @@
 
 These numbers are for the leaderboard. Pytest does not use them as a model
 quality gate.
+
+Mean-seeking boards (compare / promote-eval / bakeoff) treat **RMSE** as the
+headline point metric and keep **MAE** as a secondary continuity metric. Callers
+should filter to the decision-relevant pool (``filter_decision_pool``) before
+summarising when matching the evaluation north star.
 """
 
 from __future__ import annotations
@@ -12,11 +17,12 @@ import polars as pl
 
 
 def summarise(ledger: pl.DataFrame) -> pl.DataFrame:
-    """MAE, RMSE, Spearman, top-10 precision and Brier scores by slice.
+    """RMSE, MAE, Spearman, top-10 precision and Brier scores by slice.
 
     Rows with a null ``actual_pts`` are skipped. Spearman correlates ranks
-    within position and gameweek. Top-10 uses fewer than 10 players when the
-    slice is smaller. Brier scores are null when the probability column is null.
+    within position and gameweek. ``top10_precision`` is the mean of per-
+    gameweek top-k precision (k = min(10, n_gw)), not a single pooled top-10.
+    Brier scores are null when the probability column is null.
 
     Args:
         ledger: A prediction ledger, usually ``read_predictions``.
@@ -35,8 +41,9 @@ def summarise(ledger: pl.DataFrame) -> pl.DataFrame:
 def overall_summary(ledger: pl.DataFrame) -> pl.DataFrame:
     """Pool positions: one row per model, horizon and target season.
 
-    Spearman ranks within gameweek across all positions. Top-10 is over the
-    pooled player set. Includes ``n``, the number of scored rows in the slice.
+    Spearman ranks within gameweek across all positions. ``top10_precision`` is
+    the mean of per-gameweek top-k precision over the pooled player set.
+    Includes ``n``, the number of scored rows in the slice.
 
     Args:
         ledger: A prediction ledger, usually ``read_predictions``.
@@ -72,25 +79,19 @@ def _summarise(
     rows: list[dict[str, object]] = []
     for key, group in parts.items():
         parsed = _parse_key(key, include_position=include_position)
-        k = min(10, group.height)
-        predicted = group.sort("xpts", descending=True).head(k)
-        pred_top = set(predicted["player_key"].to_list())
-        actual_top = set(
-            group.sort("actual_pts", descending=True).head(k)["player_key"].to_list()
-        )
+        error = (group["xpts"] - group["actual_pts"]).cast(pl.Float64)
         haul = group.filter(pl.col("p_haul").is_not_null())
         played = group.filter(
             pl.col("p_60").is_not_null() & pl.col("actual_minutes").is_not_null()
         )
-        error = (group["xpts"] - group["actual_pts"]).cast(pl.Float64)
         row: dict[str, object] = {
             "model_id": parsed["model_id"],
             "horizon": parsed["horizon"],
             "target_season": parsed["target_season"],
-            "mae": _mean(error.abs()),
             "rmse": _mean(error.pow(2)) ** 0.5,
+            "mae": _mean(error.abs()),
             "spearman": group.select(pl.corr("pred_rank", "actual_rank")).item(),
-            "top10_precision": len(pred_top & actual_top) / k,
+            "top10_precision": _mean_topk_precision(group),
             "brier_haul": _brier(haul, "p_haul", haul["actual_pts"] >= 10)
             if haul.height
             else None,
@@ -104,6 +105,30 @@ def _summarise(
             row["n"] = group.height
         rows.append(row)
     return pl.DataFrame(rows)
+
+
+def _mean_topk_precision(group: pl.DataFrame, *, k: int = 10) -> float:
+    """Average top-k precision across target gameweeks in ``group``."""
+    if group.is_empty():
+        return 0.0
+    precisions: list[float] = []
+    for gw_frame in group.partition_by("target_gw", as_dict=True).values():
+        n = gw_frame.height
+        if n == 0:
+            continue
+        top = min(k, n)
+        pred_top = set(
+            gw_frame.sort("xpts", descending=True).head(top)["player_key"].to_list()
+        )
+        actual_top = set(
+            gw_frame.sort("actual_pts", descending=True)
+            .head(top)["player_key"]
+            .to_list()
+        )
+        precisions.append(len(pred_top & actual_top) / top)
+    if not precisions:
+        return 0.0
+    return float(sum(precisions) / len(precisions))
 
 
 def _brier(frame: pl.DataFrame, column: str, outcome: pl.Series) -> float:
@@ -152,22 +177,22 @@ def _empty_summary(
         "model_id": pl.Utf8(),
         "horizon": pl.Int64(),
         "target_season": pl.Utf8(),
-        "mae": pl.Float64(),
         "rmse": pl.Float64(),
+        "mae": pl.Float64(),
         "spearman": pl.Float64(),
         "top10_precision": pl.Float64(),
         "brier_haul": pl.Float64(),
         "brier_60": pl.Float64(),
     }
     if include_position:
-        # Keep column order stable with the historical summarise frame.
+        # Keep column order stable: identity → RMSE headline → MAE → rest.
         schema = {
             "model_id": pl.Utf8(),
             "horizon": pl.Int64(),
             "position": pl.Utf8(),
             "target_season": pl.Utf8(),
-            "mae": pl.Float64(),
             "rmse": pl.Float64(),
+            "mae": pl.Float64(),
             "spearman": pl.Float64(),
             "top10_precision": pl.Float64(),
             "brier_haul": pl.Float64(),
@@ -176,3 +201,6 @@ def _empty_summary(
     if include_n:
         schema["n"] = pl.Int64()
     return pl.DataFrame(schema=schema)
+
+
+__all__ = ["overall_summary", "summarise"]

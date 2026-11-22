@@ -372,7 +372,7 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see. Optional `train_window.time_decay` down-weights older rows inside that window for trainers that implement it (see §5.2); it does not expand or shrink the season set.
 
-Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes MAE/RMSE/Spearman/top-10/Brier summary JSON + parquet under `$FPLT_DATA_DIR/compare/` for the leaderboard or a later Streamlit view.
+Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes RMSE (headline) / MAE (secondary) / Spearman / mean per-GW top-10 / Brier summary JSON + parquet under `$FPLT_DATA_DIR/compare/`, scored on the decision-relevant player pool (see §7.3).
 
 ### 7.2 Ledger
 
@@ -391,10 +391,10 @@ Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same 
 
 ### 7.3 Metrics
 
-Prediction level (by model × horizon × position × season):
-- MAE, RMSE on points
+Prediction level (by model × horizon × position × season), on the **decision-relevant player pool** by default for compare / promote-eval / bakeoff (as-of price ≥ £4.5m and either price ≥ £7.0m, ≥ 90 prior season minutes, or as_of GW ≤ 2; PIT via `available_at ≤ deadline` — see `fplt.backtest.decision_pool`):
+- **RMSE** is the headline point metric for mean-seeking / expected-points boards (what the optimiser consumes). **MAE** stays as a secondary continuity metric so older A/Bs remain readable; do not delete it. When MAE and RMSE disagree (W9-style), prefer the RMSE side for mean-seeking calls.
 - Spearman rank correlation within position per GW
-- Top-k precision (were the top 10 predicted players in the actual top 10?)
+- Top-k precision: mean of per-gameweek top-10 precision (not a single pooled top-10 over the window)
 - Calibration of `p_haul` and `p_60` (reliability curves, Brier score)
 
 Decision level — what actually matters:
@@ -414,7 +414,7 @@ Any lever — new staged data, feature version, hyperparam / `train_window` fork
 
 Control is the off state and treatment is the on state. Production stays whichever of those it already is; fork the other arm, and never edit that production YAML to manufacture the contrast. `use_penalties_order` and `use_defensive_contribution` default on, so the control is `dc_layered_nopens_v1` / `dc_layered_nodefcon_v1` and the treatment is `dc_layered_v2`. `market_prior_strength` defaults to 0, so the control is `dc_layered_v2` and the treatment is `dc_layered_odds_v1`. That landed blend is a recorded arm. The next odds model is `market_prior_source: history`: a Gaussian penalty on attack and defence toward ratings fit from past closes already visible at the deadline, reported against raw de-vigged 1X2. `odds_poisson` is a model column, not that book. Lockfile upgrades and no-behaviour refactors are equivalence checks (prediction identity, then an interval), not improvement A/Bs. Forks gain a one-parent `extends`. Coverage is the model's real PIT read (`available_at <= deadline`). A post-deadline feature on a fixture being scored fails the run. Closing odds (`available_at = kickoff`) are a labelled side rate. Every run writes `audit.json` (git SHA, lockfile hash, data hashes, resolved spec). `--allow-dirty` forces `inconclusive`. A recommendation does not flip `PRODUCTION_MODELS`. Decision bakeoffs are opt-in and are not required for these config promos. The metric loop calls `compare` / `eval-components` / `decisions`. Paired intervals use `statsmodels` and `arch` (§7.6).
 
-**Multi-arm bakeoff (championship ranking).** For several ModelSpecs on one shared window — a dose of one knob via EvalSpec `arms:`, or a prediction championship via `fplt bakeoff` / `BakeoffSpec` — reuse the same `compare` produce path and ledger cache; report SPA/MCS and a MAE rank table. That readout is descriptive and is not a `keep` (confirmation needs a fresh window). Decision season totals stay on `fplt decisions`. Do not invent a second eval framework.
+**Multi-arm bakeoff (championship ranking).** For several ModelSpecs on one shared window — a dose of one knob via EvalSpec `arms:`, or a prediction championship via `fplt bakeoff` / `BakeoffSpec` — reuse the same `compare` produce path and ledger cache; report SPA/MCS and an **RMSE** rank table (MAE still in the metric table). That readout is descriptive and is not a `keep` (confirmation needs a fresh window). Decision season totals stay on `fplt decisions`. Do not invent a second eval framework.
 
 ### 7.5 Benchmarks
 

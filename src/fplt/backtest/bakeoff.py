@@ -23,6 +23,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fplt.backtest.compare import CompareResult, compare_models, format_summary_table
+from fplt.backtest.decision_pool import HEADLINE_METRIC, filter_decision_pool
 from fplt.backtest.intervals import (
     multi_arm_selection,
     per_gw_losses,
@@ -36,6 +37,7 @@ from fplt.backtest.promote_eval import (
     execute_promote_eval,
     load_eval_spec,
 )
+from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 
 logger = logging.getLogger(__name__)
@@ -505,7 +507,7 @@ def selection_payloads(
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Build SPA/MCS JSON payloads when at least three arms share the window.
 
-    Arms with no per-GW MAE losses (empty ledgers) are skipped and listed under
+    Arms with no per-GW RMSE losses (empty ledgers) are skipped and listed under
     ``skipped_empty`` so a dead CORE_MODELS baseline cannot abort the board.
 
     Args:
@@ -528,6 +530,15 @@ def selection_payloads(
     scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
     if scored.is_empty():
         return None, None
+    try:
+        scored = filter_decision_pool(scored, DataStore(data_dir))
+    except Exception:
+        logger.warning(
+            "bakeoff decision pool filter failed; SPA/MCS uses full ledger",
+            exc_info=True,
+        )
+    if scored.is_empty():
+        return None, None
 
     keys: pl.DataFrame | None = None
     per_arm: dict[str, pl.DataFrame] = {}
@@ -536,12 +547,16 @@ def selection_payloads(
         mid = id_by_name.get(name)
         if mid is None:
             return None, None
-        losses = per_gw_losses(scored, model_id=mid, metric="mae")
+        losses = per_gw_losses(scored, model_id=mid, metric=HEADLINE_METRIC)
         if losses.is_empty():
             # Arms with no scored ledger rows (e.g. ep_next on vaastav) must
             # not abort SPA/MCS for the rest of the championship set.
             skipped_empty.append(name)
-            logger.warning("bakeoff SPA/MCS skipping %s: no per-GW MAE losses", name)
+            logger.warning(
+                "bakeoff SPA/MCS skipping %s: no per-GW %s losses",
+                name,
+                HEADLINE_METRIC.upper(),
+            )
             continue
         per_arm[name] = losses
         gw_keys = losses.select(["target_season", "target_gw"])
@@ -631,18 +646,21 @@ def render_ranking(
         format_summary_table(summary).rstrip(),
         "```",
         "",
-        "## Rank by MAE (walk-forward, horizon=1 when present)",
+        (
+            f"## Rank by {HEADLINE_METRIC.upper()} "
+            "(walk-forward, horizon=1 when present; MAE secondary in table)"
+        ),
         "",
     ]
-    ranked = _rank_by_mae(summary)
+    ranked = _rank_by_headline(summary)
     if not ranked:
         lines.append("_No scored rows._")
     else:
-        for i, (name, mae) in enumerate(ranked, start=1):
+        for i, (name, value) in enumerate(ranked, start=1):
             marker = " ← control" if name == plan.control else ""
-            lines.append(f"{i}. `{name}` MAE={mae:.4f}{marker}")
+            lines.append(f"{i}. `{name}` {HEADLINE_METRIC.upper()}={value:.4f}{marker}")
 
-    lines.extend(["", "## SPA / MCS (MAE per-GW losses)", ""])
+    lines.extend(["", f"## SPA / MCS ({HEADLINE_METRIC.upper()} per-GW losses)", ""])
     if spa is None or mcs is None:
         lines.append(
             "_SPA/MCS unavailable (need ≥3 arms with aligned gameweek losses)._"
@@ -700,8 +718,10 @@ def _str_list(value: object) -> list[str]:
     return out
 
 
-def _rank_by_mae(summary: pl.DataFrame) -> list[tuple[str, float]]:
-    if summary.is_empty() or "mae" not in summary.columns:
+def _rank_by_headline(summary: pl.DataFrame) -> list[tuple[str, float]]:
+    """Rank arms by the mean-seeking headline metric (RMSE)."""
+    metric = HEADLINE_METRIC
+    if summary.is_empty() or metric not in summary.columns:
         return []
     frame = summary
     if "mode" in frame.columns:
@@ -713,18 +733,18 @@ def _rank_by_mae(summary: pl.DataFrame) -> list[tuple[str, float]]:
         if not h1.is_empty():
             frame = h1
     rows = (
-        frame.select(["model_name", "mae"])
+        frame.select(["model_name", metric])
         .drop_nulls()
         .unique(subset=["model_name"], keep="first")
-        .sort("mae")
+        .sort(metric)
         .to_dicts()
     )
     out: list[tuple[str, float]] = []
     for row in rows:
         name = row.get("model_name")
-        mae = row.get("mae")
-        if isinstance(name, str) and isinstance(mae, int | float):
-            out.append((name, float(mae)))
+        value = row.get(metric)
+        if isinstance(name, str) and isinstance(value, int | float):
+            out.append((name, float(value)))
     return out
 
 
