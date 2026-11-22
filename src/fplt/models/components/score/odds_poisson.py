@@ -74,8 +74,8 @@ class OddsPoissonScore:
         if fixtures.is_empty():
             empty = np.zeros((0, MAX_GOALS + 1, MAX_GOALS + 1))
             return ScorelineDist(np.array([], dtype=np.int64), empty)
-        odds = _odds_frame(view, allow_closing_proxy=self._use_closing_proxy)
-        joined = _join_odds(fixtures, odds)
+        odds = odds_frame(view, allow_closing_proxy=self._use_closing_proxy)
+        joined = join_odds(fixtures, odds)
         lambda_h = np.empty(joined.height, dtype=np.float64)
         lambda_a = np.empty(joined.height, dtype=np.float64)
         for index, row in enumerate(joined.iter_rows(named=True)):
@@ -124,7 +124,7 @@ def _independent_poisson_pmf(
     return np.clip(home[:, :, None] * away[:, None, :], 0, None)
 
 
-def _odds_frame(view: PITView, *, allow_closing_proxy: bool) -> pl.DataFrame:
+def odds_frame(view: PITView, *, allow_closing_proxy: bool) -> pl.DataFrame:
     """PIT odds, optionally filled with closing-proxy rows for missing keys."""
     pit = view.latest("match_odds", by=_ODDS_KEYS).collect()
     if not allow_closing_proxy:
@@ -146,7 +146,7 @@ def _odds_frame(view: PITView, *, allow_closing_proxy: bool) -> pl.DataFrame:
     return pl.concat([pit, gap], how="diagonal_relaxed")
 
 
-def _join_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
+def join_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
     """Attach odds onto fixtures by ``fixture_id``, else season+teams+date.
 
     Team-only joins are rejected: the same clubs meet more than once a season,
@@ -166,13 +166,16 @@ def _join_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
     empty_odds = [pl.lit(None).cast(pl.Float64).alias(name) for name in odds_cols]
     if odds.is_empty():
         return base.with_columns(empty_odds)
+    id_keys = ["fixture_id"]
+    if "season" in base.columns and "season" in odds.columns:
+        id_keys = ["season", "fixture_id"]
     by_id = (
         odds.filter(pl.col("fixture_id").is_not_null())
         .sort("available_at")
-        .unique(subset=["fixture_id"], keep="last")
-        .select("fixture_id", *odds_cols)
+        .unique(subset=id_keys, keep="last")
+        .select(*id_keys, *odds_cols)
     )
-    joined = base.join(by_id, on="fixture_id", how="left")
+    joined = base.join(by_id, on=id_keys, how="left")
     missing = joined.filter(pl.col("home_odds").is_null())
     if missing.is_empty() or "kickoff_time" not in base.columns:
         return joined
@@ -209,4 +212,8 @@ def _join_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
 
 register_component("odds_poisson")(OddsPoissonScore)
 
-__all__ = ["OddsPoissonScore"]
+# Private aliases kept for older call sites / tests.
+_odds_frame = odds_frame
+_join_odds = join_odds
+
+__all__ = ["OddsPoissonScore", "join_odds", "odds_frame"]

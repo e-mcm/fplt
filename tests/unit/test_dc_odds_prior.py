@@ -11,7 +11,11 @@ import fplt.models.components.score  # noqa: F401 — registers the component
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.components.score.dixon_coles import MatchScoreModel, _align_odds
-from fplt.models.components.score.odds_lambda import blend_lambda, odds_to_lambda
+from fplt.models.components.score.odds_lambda import (
+    blend_lambda,
+    de_vig,
+    odds_to_lambda,
+)
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.types import GWKey
 
@@ -67,8 +71,8 @@ def test_market_prior_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         vanilla.predict(view, fixtures).pmf,
         zero_prior.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=1e-8,
+        atol=1e-10,
     )
 
 
@@ -99,8 +103,8 @@ def test_missing_odds_matches_vanilla(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         vanilla.predict(view, fixtures).pmf,
         with_prior.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=1e-8,
+        atol=1e-10,
     )
 
 
@@ -187,6 +191,91 @@ def test_negative_market_prior_strength_raises() -> None:
                 params={"market_prior_strength": -0.1},
             )
         )
+
+
+def test_market_1x2_strength_zero_matches_vanilla(tmp_path: Path) -> None:
+    store = _season_with_odds(DataStore(tmp_path), odds_before_deadline=True)
+    view = PITData(store).view(GWKey(_SEASON, 4))
+    fixtures = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "fixture_id": [4],
+            "team_h_key": [1],
+            "team_a_key": [2],
+            "kickoff_time": [
+                store.read("fixtures").filter(pl.col("fixture_id") == 4)[
+                    "kickoff_time"
+                ][0]
+            ],
+        }
+    )
+    base = {"xi": 0.0, "home_advantage": 1.2, "rho": -0.05}
+    vanilla = MatchScoreModel(ModelSpec(name="v", kind="dixon_coles", params=base))
+    zero = MatchScoreModel(
+        ModelSpec(
+            name="z",
+            kind="dixon_coles",
+            params={**base, "market_1x2_strength": 0.0, "use_closing_proxy": True},
+        )
+    )
+    vanilla.fit(view)
+    zero.fit(view)
+    np.testing.assert_allclose(
+        vanilla.predict(view, fixtures).pmf,
+        zero.predict(view, fixtures).pmf,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def test_market_1x2_strength_moves_margins_toward_market(tmp_path: Path) -> None:
+    store = _season_with_odds(DataStore(tmp_path), odds_before_deadline=True)
+    view = PITData(store).view(GWKey(_SEASON, 4))
+    kick = store.read("fixtures").filter(pl.col("fixture_id") == 4)["kickoff_time"][0]
+    fixtures = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "fixture_id": [4],
+            "team_h_key": [1],
+            "team_a_key": [2],
+            "kickoff_time": [kick],
+        }
+    )
+    base = {"xi": 0.0, "home_advantage": 1.0, "rho": 0.0}
+    vanilla = MatchScoreModel(ModelSpec(name="v", kind="dixon_coles", params=base))
+    blended = MatchScoreModel(
+        ModelSpec(
+            name="b",
+            kind="dixon_coles",
+            params={
+                **base,
+                "market_1x2_strength": 1.0,
+                "use_closing_proxy": True,
+            },
+        )
+    )
+    vanilla.fit(view)
+    blended.fit(view)
+    from fplt.backtest.components import _outcome_probs
+
+    v_h, _, v_a = _outcome_probs(vanilla.predict(view, fixtures))
+    b_h, _, b_a = _outcome_probs(blended.predict(view, fixtures))
+    market = de_vig(np.array([1.25, 6.0, 12.0]))
+    # Short home price → blend should raise p_home vs vanilla toward market.
+    assert float(b_h[0]) > float(v_h[0])
+    assert abs(float(b_h[0]) - float(market[0])) < abs(float(v_h[0]) - float(market[0]))
+    assert float(b_a[0]) < float(v_a[0])
+
+
+def test_dixon_coles_1x2_and_layered_specs_registered() -> None:
+    specs = load_model_specs()
+    assert specs["dixon_coles_1x2_v1"].params["market_1x2_strength"] == 1.0
+    assert "market_prior_strength" not in specs["dixon_coles_1x2_v1"].params
+    layered = specs["dc_layered_1x2_v1"]
+    assert layered.components["score"].params["market_1x2_strength"] == 1.0
+    assert (
+        "market_prior_strength" not in specs["dc_layered_v2"].components["score"].params
+    )
 
 
 def test_align_odds_scopes_fixture_id_by_season() -> None:

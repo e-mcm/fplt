@@ -150,3 +150,87 @@ def blend_lambda(
         return dc_lambda
     weight = float(strength)
     return (float(dc_lambda) + weight * float(market_lambda)) / (1.0 + weight)
+
+
+def outcome_probs_from_joint(
+    joint: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Home / draw / away probabilities from a joint scoreline grid.
+
+    Args:
+        joint: Non-negative masses with shape ``(F, G, G)`` or ``(G, G)``.
+
+    Returns:
+        ``(p_home, p_draw, p_away)`` each shape ``(F,)`` (or scalars wrapped).
+    """
+    grid = np.asarray(joint, dtype=np.float64)
+    single = grid.ndim == 2
+    if single:
+        grid = grid[None, ...]
+    if grid.ndim != 3 or grid.shape[1] != grid.shape[2]:
+        raise ValueError(f"joint must have shape (F, G, G), got {grid.shape}")
+    goals = np.arange(grid.shape[1], dtype=np.int64)
+    home_gt = goals[:, None] > goals[None, :]
+    home_eq = goals[:, None] == goals[None, :]
+    home_lt = goals[:, None] < goals[None, :]
+    p_home = grid[:, home_gt].sum(axis=1)
+    p_draw = grid[:, home_eq].sum(axis=1)
+    p_away = grid[:, home_lt].sum(axis=1)
+    if single:
+        return p_home[0:1], p_draw[0:1], p_away[0:1]
+    return p_home, p_draw, p_away
+
+
+def rescale_joint_to_1x2(
+    joint: np.ndarray,
+    p_home: float | np.ndarray,
+    p_draw: float | np.ndarray,
+    p_away: float | np.ndarray,
+) -> np.ndarray:
+    """Rescale H/D/A regions of ``joint`` so their masses match target 1X2.
+
+    Conditional scoreline shape inside each outcome region is preserved.
+    Empty regions fall back to a single representative scoreline so the
+    target mass is still placed.
+
+    Args:
+        joint: Non-negative masses, shape ``(F, G, G)`` or ``(G, G)``.
+        p_home / p_draw / p_away: Target outcome probs (scalars or ``(F,)``).
+
+    Returns:
+        Rescaled joint with the same shape as ``joint``, rows summing to 1.
+    """
+    grid = np.asarray(joint, dtype=np.float64).copy()
+    single = grid.ndim == 2
+    if single:
+        grid = grid[None, ...]
+    if grid.ndim != 3 or grid.shape[1] != grid.shape[2]:
+        raise ValueError(f"joint must have shape (F, G, G), got {grid.shape}")
+    n, width, _ = grid.shape
+    goals = np.arange(width, dtype=np.int64)
+    home_gt = goals[:, None] > goals[None, :]
+    home_eq = goals[:, None] == goals[None, :]
+    home_lt = goals[:, None] < goals[None, :]
+    targets = (
+        np.broadcast_to(np.asarray(p_home, dtype=np.float64), (n,)),
+        np.broadcast_to(np.asarray(p_draw, dtype=np.float64), (n,)),
+        np.broadcast_to(np.asarray(p_away, dtype=np.float64), (n,)),
+    )
+    masks = (home_gt, home_eq, home_lt)
+    reps = ((1, 0), (0, 0), (0, 1))
+    out = np.zeros_like(grid)
+    for target, mask, (h_rep, a_rep) in zip(targets, masks, reps, strict=True):
+        region = np.where(mask[None, ...], grid, 0.0)
+        mass = region.sum(axis=(1, 2))
+        for index in range(n):
+            want = float(target[index])
+            if want <= 0:
+                continue
+            if mass[index] > 0:
+                out[index] += region[index] * (want / mass[index])
+            else:
+                out[index, h_rep, a_rep] += want
+    totals = out.sum(axis=(1, 2), keepdims=True)
+    totals = np.where(totals > 0, totals, 1.0)
+    out = out / totals
+    return out[0] if single else out
