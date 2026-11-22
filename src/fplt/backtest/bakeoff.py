@@ -505,6 +505,9 @@ def selection_payloads(
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Build SPA/MCS JSON payloads when at least three arms share the window.
 
+    Arms with no per-GW MAE losses (empty ledgers) are skipped and listed under
+    ``skipped_empty`` so a dead CORE_MODELS baseline cannot abort the board.
+
     Args:
         data_dir: Ledger root.
         compare: Completed multi-arm compare.
@@ -528,13 +531,18 @@ def selection_payloads(
 
     keys: pl.DataFrame | None = None
     per_arm: dict[str, pl.DataFrame] = {}
+    skipped_empty: list[str] = []
     for name in models:
         mid = id_by_name.get(name)
         if mid is None:
             return None, None
         losses = per_gw_losses(scored, model_id=mid, metric="mae")
         if losses.is_empty():
-            return None, None
+            # Arms with no scored ledger rows (e.g. ep_next on vaastav) must
+            # not abort SPA/MCS for the rest of the championship set.
+            skipped_empty.append(name)
+            logger.warning("bakeoff SPA/MCS skipping %s: no per-GW MAE losses", name)
+            continue
         per_arm[name] = losses
         gw_keys = losses.select(["target_season", "target_gw"])
         keys = (
@@ -542,7 +550,9 @@ def selection_payloads(
             if keys is None
             else keys.join(gw_keys, on=["target_season", "target_gw"], how="inner")
         )
-    if keys is None or keys.is_empty():
+    if control not in per_arm:
+        return None, None
+    if len(per_arm) < 3 or keys is None or keys.is_empty():
         return None, None
 
     loss_by_arm: dict[str, Any] = {}
@@ -563,12 +573,14 @@ def selection_payloads(
             "pvalue_upper": spa.pvalue_upper,
             "n_gw": spa.n_gw,
             "n_models": spa.n_models,
+            "skipped_empty": skipped_empty,
         },
         {
             "included": list(mcs.included),
             "excluded": list(mcs.excluded),
             "size": mcs.size,
             "n_gw": mcs.n_gw,
+            "skipped_empty": skipped_empty,
         },
     )
 
@@ -648,6 +660,12 @@ def render_ranking(
             lines.append(f"- MCS excluded: {', '.join(f'`{n}`' for n in excluded)}")
         else:
             lines.append("- MCS excluded: (none)")
+        skipped = _str_list(spa.get("skipped_empty"))
+        if skipped:
+            lines.append(
+                "- Skipped empty arms (no scored ledger rows): "
+                + ", ".join(f"`{n}`" for n in skipped)
+            )
 
     lines.extend(["", "## Pairwise promote-eval", ""])
     if pairwise:
