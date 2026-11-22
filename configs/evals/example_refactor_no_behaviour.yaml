@@ -1,0 +1,55 @@
+# Scaffold: no-behaviour refactor equivalence (same ModelSpec + lockfile, two git refs).
+# Replace control_ref / treatment_ref before a real run.
+name: example_refactor_no_behaviour
+kind: refactor
+question: "Does the refactor leave forecasts identical within tolerance?"
+description: "Scaffold for kind: refactor (no_behaviour_change). Specs and uv.lock identical."
+
+change:
+  lever: no_behaviour_change
+  control_ref: main
+  treatment_ref: refactor/example-no-behaviour
+  tables: []
+  features: []
+  packages: []
+  allow_multi_lever: false
+  diff:
+    - "git ref only (set treatment_ref to the refactor commit)"
+  notes: >
+    Scaffold only. control_ref and treatment_ref must differ; resolved specs
+    and uv.lock must match. Orientation does not apply.
+
+control: dc_layered_v2
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  allow_low_coverage: false
+  keep_if:
+    prediction_any: [mae, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+equivalence:
+  tolerance:
+    xpts_abs: 1.0e-6
+    prob_abs: 1.0e-9
+  compare: predictions
+
+report:
+  title: "Example: refactor no-behaviour change"
+  store_doc: null
