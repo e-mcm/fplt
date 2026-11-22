@@ -1,0 +1,11 @@
+name: odds_1x2_v1
+kind: odds_1x2
+params:
+  # Raw de-vig of 1X2 (no odds_to_lambda). Closing lines use the labelled
+  # closing_proxy escape hatch — not deadline PIT.
+  use_closing_proxy: true
+  fallback_p_home: 0.3333333333
+  fallback_p_draw: 0.3333333333
+  fallback_p_away: 0.3333333334
+refit: never
+seed: 0

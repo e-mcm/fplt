@@ -7,6 +7,11 @@ and early-season forecasts degrade less than a hard neutral prior.
 
 When ``market_prior_strength`` > 0, ``predict`` shrinks per-match λ toward
 odds-implied rates from PIT ``match_odds``. Missing odds leave pure DC.
+
+When ``market_1x2_strength`` > 0, ``predict`` instead (or afterwards) rescales
+the joint's home/draw/away regions toward de-vigged bookmaker 1X2, preserving
+DC's conditional scoreline shape. Prefer this over the λ prior when the goal
+is match-outcome calibration.
 """
 
 # scipy does not ship type stubs.
@@ -21,7 +26,13 @@ from scipy.optimize import minimize
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
-from fplt.models.components.score.odds_lambda import blend_lambda, odds_to_lambda
+from fplt.models.components.score.odds_lambda import (
+    blend_lambda,
+    de_vig,
+    odds_to_lambda,
+    outcome_probs_from_joint,
+    rescale_joint_to_1x2,
+)
 from fplt.models.distributions import MAX_GOALS, ScorelineDist
 from fplt.models.spec import ModelSpec, register_component
 
@@ -106,6 +117,10 @@ class MatchScoreModel:
       earlier seasons visible at the deadline.
     - ``market_prior_strength`` — pseudo-count shrink of per-match λ toward
       PIT ``match_odds`` (0 = off / vanilla). Missing odds → pure DC.
+    - ``market_1x2_strength`` — pseudo-count shrink of the joint's 1X2
+      margins toward de-vigged bookmaker prices (0 = off). Prefer over the
+      λ prior for match-outcome calibration. ``use_closing_proxy`` (default
+      true when this strength is set) admits kickoff-stamped closing lines.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -118,10 +133,19 @@ class MatchScoreModel:
         self._new_prior = float(spec.params.get("new_team_prior_strength", 0.0))
         self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
         self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
+        self._market_1x2 = float(spec.params.get("market_1x2_strength", 0.0))
         if self._market_prior < 0:
             raise ValueError(
                 f"market_prior_strength must be >= 0, got {self._market_prior}"
             )
+        if self._market_1x2 < 0:
+            raise ValueError(
+                f"market_1x2_strength must be >= 0, got {self._market_1x2}"
+            )
+        default_proxy = self._market_1x2 > 0
+        self._use_closing_proxy = bool(
+            spec.params.get("use_closing_proxy", default_proxy)
+        )
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}
         self._defence: dict[int, float] = {}
@@ -207,7 +231,9 @@ class MatchScoreModel:
         Args:
             view: Deadline the ratings belong to. Ratings come from ``fit``.
                 When ``market_prior_strength`` > 0, also supplies PIT
-                ``match_odds`` for the per-match λ blend.
+                ``match_odds`` for the per-match λ blend. When
+                ``market_1x2_strength`` > 0, rescales 1X2 margins toward
+                de-vigged bookmaker prices after the joint is built.
             fixtures: Columns ``fixture_id``, ``team_h_key``, and ``team_a_key``.
                 ``season`` helps the odds join when ``fixture_id`` is missing.
 
@@ -242,7 +268,16 @@ class MatchScoreModel:
                         float(dc_a), market_away, self._market_prior
                     )
             lambda_h, lambda_a = blended_h, blended_a
-        return ScorelineDist(ids, _joint(lambda_h, lambda_a, self._rho))
+        joint = _joint(lambda_h, lambda_a, self._rho)
+        if self._market_1x2 > 0:
+            joint = _blend_joint_1x2(
+                view,
+                fixtures,
+                joint,
+                strength=self._market_1x2,
+                use_closing_proxy=self._use_closing_proxy,
+            )
+        return ScorelineDist(ids, joint)
 
     def _rates(self, home: list[int], away: list[int]) -> tuple[np.ndarray, np.ndarray]:
         attack_h = np.array([self._attack.get(team, _NEUTRAL) for team in home])
@@ -375,6 +410,43 @@ def _market_rates(
         except ValueError:
             continue
     return lambda_h, lambda_a
+
+
+def _blend_joint_1x2(
+    view: PITView,
+    fixtures: pl.DataFrame,
+    joint: np.ndarray,
+    *,
+    strength: float,
+    use_closing_proxy: bool,
+) -> np.ndarray:
+    """Rescale each fixture's H/D/A mass toward de-vigged bookmaker 1X2."""
+    # Imported lazily so odds_poisson can reuse Dixon–Coles helpers without cycles.
+    from fplt.models.components.score.odds_poisson import join_odds, odds_frame
+
+    odds = odds_frame(view, allow_closing_proxy=use_closing_proxy)
+    aligned = join_odds(fixtures, odds)
+    dc_h, dc_d, dc_a = outcome_probs_from_joint(joint)
+    out = joint.copy()
+    for index, row in enumerate(aligned.iter_rows(named=True)):
+        home_odds = row.get("home_odds")
+        draw_odds = row.get("draw_odds")
+        away_odds = row.get("away_odds")
+        if home_odds is None or draw_odds is None or away_odds is None:
+            continue
+        try:
+            market = de_vig(
+                np.array([float(home_odds), float(draw_odds), float(away_odds)])
+            )
+        except ValueError:
+            continue
+        weight = float(strength)
+        denom = 1.0 + weight
+        target_h = (float(dc_h[index]) + weight * float(market[0])) / denom
+        target_d = (float(dc_d[index]) + weight * float(market[1])) / denom
+        target_a = (float(dc_a[index]) + weight * float(market[2])) / denom
+        out[index] = rescale_joint_to_1x2(joint[index], target_h, target_d, target_a)
+    return out
 
 
 def _align_odds(fixtures: pl.DataFrame, odds: pl.DataFrame) -> pl.DataFrame:
