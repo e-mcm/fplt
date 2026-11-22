@@ -2,7 +2,7 @@
 
 Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, a full predictor fork, a lockfile upgrade, or a no-behaviour refactor — uses one path: **control vs treatment → walk-forward suites → a written recommendation**. Improvement levers are two ModelSpecs. Equivalence levers share the spec and differ in the lockfile or the git ref. Decision bakeoffs stay opt-in.
 
-**Status:** P1+P2 preflight/compare execute is on main. P3 adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. Numeric keep/drop thresholds wait on FDB-73. Paired intervals (`statsmodels` / `arch`), ledger cache, and environment kinds are still later packages.
+**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. P3 adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. Intervals are descriptive for improvement levers; equivalence may `drop` when an interval is entirely on the bad side (not a `keep` rule). Numeric keep/drop thresholds wait on FDB-73. Ledger cache and environment kinds are still later packages.
 
 **Related:** project-store `docs/odds-dc-implementation-plan.md` (W7–W9), `docs/model-compare-tooling.md`, `docs/model-hyperparameters-and-train-window.md` (S0–S5), `docs/defensive-contribution-eval-2025-26.md` (W9 numbers). Repo rules: `docs/design.md` §7.4 and §7.6, `AGENTS.md`.
 
@@ -521,7 +521,7 @@ compare(ledger_control, ledger_treatment, suites) -> summary + recommendation.md
 - Per-GW win counts, as now.
 - A position slice, with its own interval, when the lever is position-specific.
 
-These columns are descriptive for improvement levers until FDB-73. They may `drop` an equivalence lever (§3.2). When several arms share a window, also report `arch.bootstrap.SPA` ("does any arm beat the control?") and `arch.bootstrap.MCS` (arms not separable from the best). `keep` still comes from a confirmation window. `statsmodels` and `arch` are not dependencies today. The runner does not reimplement Newey–West or a stationary bootstrap.
+These columns are descriptive for improvement levers until FDB-73. They may `drop` an equivalence lever (§3.2). When several arms share a window, also report `arch.bootstrap.SPA` ("does any arm beat the control?") and `arch.bootstrap.MCS` (arms not separable from the best). `keep` still comes from a confirmation window. Implemented in `fplt.backtest.intervals` via `statsmodels` and `arch`; the runner does not reimplement Newey–West or a stationary bootstrap.
 
 P2 prediction command is already the right shape: `fplt compare --models <control> <treatment>` with the shared window. P2 does not override `n_sims`. W9 at `n_sims: 10000` was about three minutes an arm. A cheaper screen is a pair of specs that both set the same lower `n_sims`, declared in `change.diff` only when `n_sims` is the lever.
 
@@ -600,7 +600,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 |---|---|---|
 | **P1+P2** | Preflight in §8 for the levers that exist today: orientation, one lever, coverage, leak, missing spec. `question`. `audit.json` with the §9 fields that do not need `extends` or the cache. `--allow-dirty` forces `inconclusive`. Compare both arms. `recommendation.md`. | `statsmodels` / `arch`. Paired-seed change. `extends`. Numeric `keep_if`. Decisions. Environment subprocesses. |
 | **CRN** | Eval-only paired streams (§9). `seed_for` unchanged. Bit-identical ledgers when the resolved spec and the environment match. | Landing it inside the P1+P2 PR. |
-| **Stats** | HAC and stationary-bootstrap columns on the per-gameweek series. SPA and MCS when several arms share a window. Descriptive for improvement levers. | Using an interval as a `keep`. |
+| **Stats** | Done: HAC and stationary-bootstrap columns on the per-gameweek series (`fplt.backtest.intervals`). SPA and MCS when several arms share a window. Descriptive for improvement levers; equivalence may `drop` on an entirely-bad interval. | Using an interval as a `keep`. |
 | **P1.5** | `extends` / `overrides` on the ModelSpec loader. Deep-merge a dict, then the existing pydantic model. One parent. Migrate `dc_layered_nopens_v1`, `dc_layered_nodefcon_v1`, and `dc_layered_odds_v1`. Resolved hash equals the old copy. No model run. | OmegaConf. Chains. |
 | **P2.5** | `produce_ledger` and the content-addressed parquet cache. `fplt compare` CLI unchanged. | `joblib`. |
 | **P3** | Components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |

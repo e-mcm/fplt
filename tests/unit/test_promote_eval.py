@@ -993,9 +993,26 @@ def test_render_recommendation_order() -> None:
         verdict="inconclusive",
         allow_dirty=False,
         compare=None,
-        deltas={"mae": 0.01, "per_gw_wins": {"control": 1, "treatment": 2, "ties": 0}},
+        deltas={
+            "mae": 0.01,
+            "per_gw_wins": {"control": 1, "treatment": 2, "ties": 0},
+            "intervals": [
+                {
+                    "metric": "mae",
+                    "position": None,
+                    "mean": 0.01,
+                    "hac_se": 0.02,
+                    "hac_pvalue": 0.5,
+                    "hac_ci": [-0.03, 0.05],
+                    "bootstrap_ci": [-0.02, 0.04],
+                }
+            ],
+        },
         prediction_ran=True,
     )
+    assert "HAC_CI=" in text
+    assert "bootstrap_CI=" in text
+    assert "not a keep rule" in text
     # §9 order: title/question → arms → audit → window → coverage → join → caveat
     # → deltas → components → decisions → equivalence → call
     markers = [
