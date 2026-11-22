@@ -1,8 +1,8 @@
 # Feature / data / config / component eval pipeline
 
-Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, or a full predictor fork — uses one path: **control ModelSpec vs treatment ModelSpec → walk-forward suites → a written recommendation**. Decision bakeoffs stay opt-in.
+Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, a full predictor fork, a lockfile upgrade, or a no-behaviour refactor — uses one path: **control vs treatment → walk-forward suites → a written recommendation**. Improvement levers are two ModelSpecs. Equivalence levers share the spec and differ in the lockfile or the git ref. Decision bakeoffs stay opt-in.
 
-**Status:** P0 dry-run scaffold is on main (`fplt promote-eval --dry-run`, `configs/evals/`, repo `docs/feature-eval-pipeline.md`). This pass folds in the W7–W9 hand evals and the scoreline-lab design (§17). Next code is **P1 preflight + P2 prediction execute**, calling `fplt compare` rather than a new metric stack. Numeric keep/drop thresholds wait on FDB-73. No external eval library clears a ~90% bar (§13, repo `docs/design.md` §7.6).
+**Status:** P0 dry-run scaffold is on main (`fplt promote-eval --dry-run`, `configs/evals/`, repo `docs/feature-eval-pipeline.md`). This pass folds in the W7–W9 hand evals and the second experiment-framework draft (§17). The Hydra / MLflow draft is discarded. Next code is **P1 preflight + P2 prediction execute**, calling `fplt compare` rather than a new metric stack. Numeric keep/drop thresholds for improvement levers wait on FDB-73. The walk-forward stays in-repo. Paired intervals use `statsmodels` and `arch` (§9, repo `docs/design.md` §7.6).
 
 **Related:** project-store `docs/odds-dc-implementation-plan.md` (W7–W9), `docs/model-compare-tooling.md`, `docs/model-hyperparameters-and-train-window.md` (S0–S5), `docs/defensive-contribution-eval-2025-26.md` (W9 numbers). Repo rules: `docs/design.md` §7.4 and §7.6, `AGENTS.md`.
 
@@ -14,7 +14,8 @@ Each lever had been inventing its own eval. The shape that survived the hand run
 
 | Lever | Arms that are real on main | What the hand run taught |
 |---|---|---|
-| Odds prior (W7) | `dc_layered_v2` vs `dc_layered_odds_v1` | Production strength is **0**. Treatment is the on-fork. Closing odds are invisible under strict PIT. The landed prior blends λ at predict time; the next study is a rating prior against raw de-vigged 1X2 (§5.1, §17). |
+| Odds prior (W7) | `dc_layered_v2` vs `dc_layered_odds_v1` | Production strength is **0**. Treatment is the on-fork. The landed prior blends λ at predict time and cannot see closing lines. The next study is a history rating prior against raw de-vigged 1X2 (§5.1). |
+| Lockfile, refactor | none yet | Same spec. Question is "did forecasts move, and did they get worse?" (§3.2). |
 | `penalties_order` (W8) | `dc_layered_nopens_v1` vs `dc_layered_v2` | Production default is **on**. Control is the off-fork. Vaastav writes the column null, so the arms tie. |
 | `defensive_contribution` (W9) | `dc_layered_nodefcon_v1` vs `dc_layered_v2` | Same opt-out shape. Only 2025-26+ rules award the points. MAE and RMSE disagreed; the call was `tune`. |
 | Minutes swap, direct-model fork, `xi` / `seasons_back` | still future | Same EvalSpec. One lever. |
@@ -32,6 +33,8 @@ Promote-eval does not special-case “dataset” vs “XGBoost” in the runner.
 | `config` | `hyperparam` | Same `kind` and component graph; one param family |
 | `component` | `component_swap` | One `components.<slot>.kind` |
 | `model` | `model_fork` | Top-level `kind` (`lgbm_direct` → `xgb_direct`) |
+| `environment` | `dependency_upgrade` | `uv.lock` only. Resolved specs byte-identical. Equivalence (§3.2). |
+| `refactor` | `no_behaviour_change` | Git ref only. Specs and lockfile identical. Equivalence (§3.2). |
 
 ```text
 off YAML  ──┐
@@ -60,7 +63,8 @@ Other hard rules, unchanged:
 - New `kind` values go through `register_model` / `register_component` and the contract suite, including the leakage test, before an eval.
 - Models read only through `PITView`. New staged tables carry `available_at`.
 - Artifacts stay under `artifacts/<model_id>/as_of=…/` via that model’s `save` / `load`.
-- One lever per EvalSpec. `change.diff` lists it. A named sweep of one continuous knob (`arms:`) is still one lever (§17). A second slot, flag, or feature is not.
+- One lever per EvalSpec. `change.diff` lists it. A dose of one continuous knob (`arms:`, or several EvalSpecs on one cached control) is still one lever. It is a descriptive readout. `keep` comes from a confirmation window that did not rank the arms (§9). A second slot, flag, feature, or an unlisted direct dependency is not one lever.
+- Improvement levers (`data`, `feature`, `config`, `component`, `model`) ask whether forecasts got better. Equivalence levers (`environment`, `refactor`) ask whether they moved, and whether they got worse (§3.2).
 
 The three flags above are `kind: config` once the consumer is on main. Staging the table is a prerequisite PR, not the A/B. `kind: data` remains for a consumer that has no off switch. `example_data_odds_prior.yaml` predates the flag and mis-labels W7 as `data`. Copy the specs in §4.2.
 
@@ -105,6 +109,26 @@ Odds today: control `dc_layered_v2` (`market_prior_strength` absent → 0), trea
 | `drop` | Leave production unchanged. |
 | `tune` | Keep the fork. Do not promote it. |
 | `inconclusive` | P2’s only metric call until FDB-73. |
+
+### 3.2 Equivalence levers
+
+`kind: environment` and `kind: refactor` do not ask whether the change is better. Control is the production state (the lockfile on `main`, or the git ref we ship). Treatment is the candidate. An environment lever keeps the resolved specs byte-identical. A refactor keeps the specs and the lockfile identical. Orientation does not apply. A spec that also changes is a second lever and fails preflight unless `allow_multi_lever: true`.
+
+Verdict, in this order:
+
+1. **Identical.** Every prediction in every fold is within `equivalence.tolerance` (`xpts_abs` default `1e-6`, `prob_abs` default `1e-9`). Compare ledgers sorted by key with `polars.testing.assert_frame_equal` (`rtol=0`). Verdict: **`keep`**. The report is the count of rows compared.
+2. **Different, not worse.** Some rows exceed tolerance, and no primary-metric interval (§9) lies entirely on the bad side. Verdict: **`inconclusive`**. List the largest diffs by fixture and player. A changed RNG stream, a changed default, or a changed tie-break lands here.
+3. **Worse.** At least one primary metric has its interval entirely on the bad side. Verdict: **`drop`**.
+
+This `keep` and this `drop` do not wait on FDB-73, and they do not apply to improvement levers. MAE can tie while individual forecasts move. The ledger diff is the check. Once FDB-73 sets a non-inferiority margin, step 3 may become a paired TOST on the per-gameweek loss differentials. Until then the interval rule stands.
+
+```yaml
+equivalence:
+  tolerance:
+    xpts_abs: 1.0e-6
+    prob_abs: 1.0e-9
+  compare: predictions
+```
 
 ---
 
@@ -181,6 +205,8 @@ report:
 | `feature` | prediction | Spearman, MAE |
 | `component` | components, then prediction | slot metric before xPts `keep` |
 | `model` | prediction; decisions only when claiming squad points | MAE, Spearman, Brier |
+| `environment` | prediction ledger diff | count and size of diffs; metric intervals |
+| `refactor` | resolved-spec hash first; ledger diff only if the hashes differ | identical yes/no |
 
 `suites.decisions` defaults off. A data or config promo does not need a decision bakeoff. W9’s `tune` was a prediction-only call. `kind: model` still needs S3+ before a production flip that claims transfers. `kind: component` needs a slot-metric win before an xPts `keep`; decisions stay optional.
 
@@ -196,7 +222,20 @@ These are the P1 targets. `gates.coverage` and `change.orientation` will not val
 
 This spec still fails preflight on coverage until a model PR opts the score component into a labelled proxy. Do not lower `min_coverage`. Do not teach the runner a second cutoff.
 
-**Next odds model (separate PR, then one EvalSpec).** A Gaussian penalty on attack and defence toward market-implied ratings during the fit (`τ → 0` recovers vanilla), or a pool of DC probabilities with de-vigged 1X2. `c`, home advantage, and `ρ` stay unpenalised in v1. Shin vs proportional devig is a param on that component; production `de_vig` today is proportional. The EvalSpec for that model is a named `τ` sweep (§17), always reported against a **raw de-vig 1X2** row on the same clock as `coverage.read`. `odds_poisson_v1` is not that row. Promotion copies one τ.
+**Next odds model (its own model PR, then one EvalSpec).** `market_prior_source: history` on the score component. `fit` does not read odds. `market_prior_strength` only blends λ inside `predict`, on the fixtures being scored. With `history`:
+
+1. Take odds for **past** fixtures visible through `PITView` at the deadline. A past close has `available_at = kickoff`, and that kickoff is already before the deadline, so the row is visible. No second cutoff. No `use_closing_proxy`.
+2. Convert with the existing `odds_to_lambda`. Production `de_vig` is proportional. Shin is a later param on that function, not a runner choice.
+3. Fit market ratings `(a0, d0)` in the Dixon–Coles parametrisation, with the same `ξ` time-decay weights the fit already uses.
+4. Add `0.5 · strength · (Σ(a − a0)² + Σ(d − d0)²)` to the objective. `strength → 0` matches vanilla. Home advantage and `ρ` stay unpenalised in v1.
+
+`market_prior_source: history` is the same switch as `odds_history: pre_kickoff`. One param. The target-fixture blend stays the recorded arm above.
+
+Coverage for this model is `odds_history_join` (§6), not the target-fixture `odds_join` gate. The EvalSpec is `kind: config`, `opt_in`, control `dc_layered_v2`, treatment the history fork (built with `extends`, §11). A dose such as 0.25 / 1 / 4 on one window is descriptive. Report Hansen's SPA and the model confidence set (§9). `keep` is a later EvalSpec on a window that did not rank the values. The benchmark row is **raw de-vigged 1X2** on the same clock as `coverage.read`. `odds_poisson_v1` may be printed as a model column. It is not the book.
+
+Optuna, if used, tunes on a dev window that does not overlap the eval window and writes an `extends` fork. It does not run inside promote-eval.
+
+A deadline snapshot table (`match_odds_deadline`, `odds_kind=deadline_snapshot`, `available_at` = capture time) is what a **target-fixture** prior still needs. Football-data has no `captured_at` and no book named for that fetch. The history prior does not wait on it.
 
 ```yaml
 name: odds_prior_dc_layered
@@ -383,6 +422,7 @@ One formula per `gates.coverage.metric`. The YAML does not redefine the numerato
 | `metric` | Denominator | Numerator | `min_coverage` | Also print, do not gate |
 |---|---|---|---|---|
 | `odds_join` | Fixtures the arm predicts | 1X2 non-null after the **model’s** join, on the read in `coverage.read` | `0.80` | Closing-proxy join %; fixture_id-only join % |
+| `odds_history_join` | Training-window fixtures, weighted by the Dixon–Coles time-decay weight | 1X2 non-null via a date-safe `fixture_id` join | `0.80` | Target-fixture strict join % (not the gate for `market_prior_source: history`) |
 | `penalties_order_non_null` | Player–fixtures scored | Latest PIT `player_status.penalties_order` non-null at that deadline | `0.01` | `== 1` rate; share of rows with `source=fpl_api` |
 | `dc_season_eligible` | Target fixtures | Season has non-empty `defensive_contributions` in scoring YAML | `1.0` | Award rate among `minutes > 0`; share of played rows with the staged column null |
 
@@ -398,13 +438,13 @@ Odds join keys, in order: `fixture_id`, else `season + team_h_key + team_a_key +
 
 Predicted fixtures use one clock: `PITView` keeps rows with `available_at <=` the gameweek deadline. A feature row for a fixture being scored whose timestamp is after that deadline **fails the run** (exit 2), even when coverage is high. Promote-eval does not silently call `closing_proxy_match_odds()` for models that use `latest`.
 
-Past matches used only to build ratings may take a different snapshot. That choice is a **model param** (`odds_history: pre_kickoff | as_of`), written in the component YAML and copied into `recommendation.md`. `pre_kickoff` means the latest line with `available_at < kickoff`. The runner does not flip it. Closing history for training is not a second cutoff inside the eval loop.
+Past closes are already on that clock. A finished match has `available_at = kickoff`, and that kickoff is before the next deadline, so `PITView.latest` returns the row. The history prior (§5.1) is the model that reads those rows. `market_prior_source: history` is the same switch as `odds_history: pre_kickoff`. The component YAML sets it. The runner does not flip it, and it does not invent a second cutoff. The target-fixture blend does not read them.
 
 When `change.tables` includes `match_odds`, or any joined row has `odds_kind=closing_proxy`, the plan and `recommendation.md` print this caveat plus both rates, including when the run then fails:
 
-> Closing lines are stamped `available_at=kickoff`, after the FPL deadline. This run did not move the PIT cutoff. Strict-PIT odds join = {strict:.1%}. Closing-proxy join (labelled; used only by specs with `use_closing_proxy: true`) = {proxy:.1%}. Odds history for past matches = {odds_history}.
+> Closing lines are stamped `available_at=kickoff`, after the FPL deadline. This run did not move the PIT cutoff. Strict-PIT odds join = {strict:.1%}. Closing-proxy join (labelled; used only by specs with `use_closing_proxy: true`) = {proxy:.1%}. market_prior_source = {market_prior_source}.
 
-Football-data has no `captured_at`. A deadline-honest odds promo needs a snapshot taken at or before the deadline. Until then the strict-PIT gate fails, and the closing-proxy rate says whether the file itself joined.
+Football-data has no `captured_at`. A deadline-honest **target-fixture** prior needs a snapshot taken at or before the deadline, from a named book. Until that feed exists the strict-PIT `odds_join` gate fails, and the closing-proxy rate says whether the file itself joined. The history prior uses `odds_history_join` instead, and can run on the closes already staged.
 
 A model change that wants the close on the fixtures being predicted sets `use_closing_proxy: true` on that spec, same as `odds_poisson_v1`, and the EvalSpec sets `coverage.read: closing_proxy_labelled`. The caveat still prints. The leakage test still owns deadline safety. The report must not call that run a deadline result.
 
@@ -428,6 +468,15 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | A predicted-match feature is timestamped after the deadline | Leak. Print the coverage rates, then exit 2 |
 | `coverage.read` disagrees with the treatment spec (`closing_proxy_labelled` without `use_closing_proxy: true`) | The gate would count rows the model never sees |
 | `kind: config` diff touches more than the declared param family | Same as multi-lever |
+| Spec and environment both differ, and `allow_multi_lever` is false | Two levers |
+| `kind: environment` and the resolved spec hashes differ | Not an environment lever |
+| `kind: environment` and the lockfiles are identical | No contrast |
+| `kind: environment` and a changed **direct** dependency is missing from `change.packages` | The diff is a story |
+| `kind: refactor` and the specs or the lockfile differ | Not a refactor |
+| `extends` target missing, or a chain deeper than one | Unresolvable fork |
+| Effective diff of the resolved specs ≠ `change.diff` | The diff is a story. Applies once `extends` exists (P1.5) |
+| Dirty tree without `--allow-dirty` | Not reproducible |
+| Cached ledger whose stored key ≠ the key just computed | Stale cache (P2.5) |
 
 **Warn, and continue**
 
@@ -442,6 +491,9 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | Optional shared table empty on both arms (Understat missing in W9) | Not a differential |
 | `kind: model` on a single season | Fine for S1. Decisions claim still needs a later tier |
 | Pooled `top10_precision` listed in `keep_if` | Print it; do not let it decide |
+| Transitive dependency changes on an environment lever | List them. Direct omissions still fail |
+| Several EvalSpecs, same control, same lever, one window | Print the selection caveat. `keep` needs a fresh window (§9) |
+| Learner swap with non-deterministic threading (`deterministic: false` and similar) | Report the seed-to-seed spread |
 
 Scaffold files `example_config_dc_v1_vs_v2.yaml` and `example_component_minutes_v1_vs_v2.yaml` compare `dc_layered_v1` with `dc_layered_v2` (several slots). They exist so the loader has something to resolve. P1 sets `allow_multi_lever: true` on those two names. A real minutes swap copies `dc_layered_v2` and changes one slot.
 
@@ -450,6 +502,26 @@ Scaffold files `example_config_dc_v1_vs_v2.yaml` and `example_component_minutes_
 ## 9. Metrics, commands, artifacts
 
 Reuse `compare`, `eval-components`, and `decisions`. No forked metric math.
+
+Produce and compare are separate:
+
+```text
+produce_ledger(arm, window, seed) -> ledger.parquet
+compare(ledger_control, ledger_treatment, suites) -> summary + recommendation.md
+```
+
+`fplt compare` keeps its CLI. Internally it becomes produce twice, then compare. Cache each ledger in a content-addressed directory keyed by `(resolved spec hash, uv.lock hash, staged-data hashes, window, seasons_back, n_sims, seed)`. Store the key beside the parquet and verify it on read. A mismatch fails preflight. This is parquet on disk, not `joblib.Memory`. P2.5. The control is usually production, so most EvalSpecs reuse it. Environment arms run each produce in its own subprocess, under `uv sync --frozen`, in a worktree at that arm's `lock_ref` (P7).
+
+**Paired seeds.** `seed_for(model_id, as_of, fixture_id)` stays the single-model stream: SHA-256 of that triple, one `Generator` per fixture, then scorelines, every player's minutes in `player_key` order, and the match simulator. Two forks do not share it, because `model_id` is in the key, and one extra player shifts every later draw. Promote-eval pairing uses an eval seed that does not include `model_id`, and a player stream spawned from `(seed, season, gw, fixture_id, player_key)` (`numpy.random.SeedSequence`). That is its own PR. It does not rewrite `seed_for`. Acceptance: identical resolved spec and environment produce bit-identical ledgers. A NumPy or RNG upgrade that changes streams is "different, not worse" (§3.2).
+
+**Intervals.** For each primary metric, `d_t` is the per-gameweek mean loss of the control minus the loss of the treatment, signed so positive means the treatment is better. The unit is the gameweek, so doubles and blanks fall out. Report:
+
+- Diebold–Mariano / Giacomini–White: `statsmodels` OLS of `d_t` on a constant, `cov_type="HAC"`. Mean, HAC standard error, p-value. With a refit every deadline this tests the method as run, estimation noise included (Giacomini and White, Econometrica 2006; Diebold and Mariano, JBES 1995).
+- A 95% interval from `arch.bootstrap.StationaryBootstrap` on that same gameweek series (default 2,000 resamples, fixed seed). Thirty-eight gameweeks is a small sample for the HAC limit (Politis and Romano, JASA 1994).
+- Per-GW win counts, as now.
+- A position slice, with its own interval, when the lever is position-specific.
+
+These columns are descriptive for improvement levers until FDB-73. They may `drop` an equivalence lever (§3.2). When several arms share a window, also report `arch.bootstrap.SPA` ("does any arm beat the control?") and `arch.bootstrap.MCS` (arms not separable from the best). `keep` still comes from a confirmation window. `statsmodels` and `arch` are not dependencies today. The runner does not reimplement Newey–West or a stationary bootstrap.
 
 P2 prediction command is already the right shape: `fplt compare --models <control> <treatment>` with the shared window. P2 does not override `n_sims`. W9 at `n_sims: 10000` was about three minutes an arm. A cheaper screen is a pair of specs that both set the same lower `n_sims`, declared in `change.diff` only when `n_sims` is the lever.
 
@@ -472,38 +544,40 @@ $FPLT_DATA_DIR/promote_eval/<eval_name>/<stamp>/
 
 | Field | How |
 |---|---|
-| `git_sha`, `git_dirty` | Dirty tree fails unless `--allow-dirty`, which sets `git_dirty: true` |
-| `uv_lock_sha256` | Hash of `uv.lock` |
-| `python`, `os` | Version strings |
-| `data` | SHA-256 of each staged parquet the run actually read |
-| `config` | Hash of the resolved ModelSpec YAML per arm |
-| `seed` | The eval seed; model draws still use `seed_for` |
+| `git_sha`, `git_dirty` | Dirty tree fails unless `--allow-dirty`. That flag forces `inconclusive` and is printed on line 1 of `recommendation.md` |
+| `uv_lock_sha256` | Hash of the lockfile the arm actually ran under. The two arms differ only for `kind: environment` |
+| `python`, `os`, `fplt_version`, `argv` | Version strings and the command line |
+| `data` | Per staged parquet actually read: SHA-256, row count, max `available_at` |
+| `config` | SHA-256 of the resolved ModelSpec per arm, after `extends` |
+| `seed`, `n_sims` | Eval seed for pairing. Single-model draws still use `seed_for` |
 | `folds` | `{season, gw, as_of, n_train, n_test}` |
-| `odds_history` | The model param, when the lever reads odds |
+| `market_prior_source` | The score-component param, when the lever reads odds |
+| `wall_clock_s`, `peak_rss` | Per arm. Reported for learner swaps and upgrades. Never a gate |
 
 Same SHA, data hashes, and config must reproduce per-match metrics bit for bit. Seeded simulation is included; an unseeded draw fails the audit check.
 
 Scoreline levers (`slot: score`, or `change.tables` contains `match_odds`) also write:
 
-- The **raw de-vig 1X2** row on the same clock as `coverage.read`. Proportional devig unless the arm's spec says otherwise. `odds_poisson_v1` is not a substitute.
-- Per-gameweek paired deltas versus the control and versus that market row.
-- A **block bootstrap over gameweeks** (matches in one gameweek stay together): mean delta, 95% CI, and the share of gameweeks the arm improved. Breakdowns by season. This is a report, not an automatic `keep`, until FDB-73.
+- The **raw de-vig 1X2** row on the same clock as `coverage.read`. Proportional devig unless the arm's spec says otherwise. `odds_poisson_v1` is a model column, not this row.
+- Per-gameweek paired deltas versus the control and versus that market row, with the HAC interval and the stationary-bootstrap interval from above.
+- Breakdowns by season. This is a report, not an automatic `keep`, until FDB-73.
 
 Player metrics stay on per-GW win counts, mean xPts versus mean actual, and position slices. A bootstrap CI does not replace the W9 reading (MAE and RMSE can disagree).
 
 `recommendation.md` always has these lines, in this order:
 
-1. Title, `question`, `kind`, `orientation`, lever, `change.diff`.
-2. Arms (spec name, effective flag, which one is production). Named `τ` sweeps list every arm; the call names the one arm a promotion would copy.
-3. Audit: git SHA, dirty flag, `uv.lock` hash, data hashes. Full record is `audit.json`.
+1. Title, `question`, question type (`improvement` or `equivalence`), `kind`, `orientation` (improvement only), lever, `change.diff`. Dirty-tree flag on this line when `--allow-dirty` was set.
+2. Arms (spec name, effective flag, which one is production, lockfile hash when the lever is `environment`). A dose lists every arm. The call does not promote the winner of this window.
+3. Audit: git SHA, dirty flag, `uv.lock` hash, data hashes, resolved-spec hash, wall-clock, peak RSS. Full record is `audit.json`.
 4. Window: seasons, GWs, `seasons_back`, mode, `n_sims`. Folds live in `audit.json`.
 5. Coverage: metric name, numerator, denominator, rate, `min_coverage`, pass or fail.
-6. Join key and the `available_at` rule actually used. `odds_history` when the lever reads odds.
+6. Join key and the `available_at` rule actually used. `market_prior_source` when the lever reads odds.
 7. PIT caveat, when §7 says to print it, with both odds rates.
-8. Deltas: MAE, RMSE, Spearman, per-GW win counts, mean predicted xPts vs mean actual. Position slices when the lever is position-specific (defcon). Scoreline levers add the market row and the block-bootstrap CI.
+8. Deltas: MAE, RMSE, Spearman, per-GW win counts, mean predicted xPts vs mean actual, HAC interval, bootstrap interval, signed so positive means the treatment is better. Position slices when the lever is position-specific (defcon). Scoreline levers add the raw de-vig row. Several arms on one window add SPA and the model confidence set.
 9. Component deltas, when that suite ran.
 10. `decisions: not run` when the suite is off. This is a complete promo for data and config.
-11. Call (`keep` / `tune` / `drop` / `inconclusive`) and one paragraph. P2 may only emit `drop` (coverage or a leak) or `inconclusive`.
+11. Equivalence only: predictions compared, count beyond tolerance, max absolute diff, top 10 offenders.
+12. Call (`keep` / `tune` / `drop` / `inconclusive`) and one paragraph. Improvement P2 may only emit `drop` (coverage or a leak) or `inconclusive`. Equivalence uses §3.2.
 
 ---
 
@@ -516,6 +590,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 5. Decisions mean-PPG above `max_mean_ppg` → `drop`, and only when that suite ran.
 6. Component slot metric gates xPts `keep` once P3 exists. An xPts-only win with a worse slot metric is `tune`.
 7. Quality numbers stay out of pytest.
+8. Equivalence (§3.2): identical predictions → `keep`; an interval entirely on the bad side → `drop`; otherwise `inconclusive`. That rule does not promote an improvement lever.
 
 ---
 
@@ -523,11 +598,18 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 
 | Next | What lands | What stays out |
 |---|---|---|
-| **P1+P2** | Preflight table in §8. Coverage formulas. `orientation`. `question`. `audit.json` (dirty tree fails). Compare both arms. `recommendation.md` with the coverage line and the PIT caveat. | Numeric `keep_if`. Decisions. Arm-aware `eval-components`. Bootstrap. |
-| **P3** | Components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet`, raw de-vig benchmark, block bootstrap. | Using `odds_poisson_v1` as the market row. |
+| **P1+P2** | Preflight in §8 for the levers that exist today: orientation, one lever, coverage, leak, missing spec. `question`. `audit.json` with the §9 fields that do not need `extends` or the cache. `--allow-dirty` forces `inconclusive`. Compare both arms. `recommendation.md`. | `statsmodels` / `arch`. Paired-seed change. `extends`. Numeric `keep_if`. Decisions. Environment subprocesses. |
+| **CRN** | Eval-only paired streams (§9). `seed_for` unchanged. Bit-identical ledgers when the resolved spec and the environment match. | Landing it inside the P1+P2 PR. |
+| **Stats** | HAC and stationary-bootstrap columns on the per-gameweek series. SPA and MCS when several arms share a window. Descriptive for improvement levers. | Using an interval as a `keep`. |
+| **P1.5** | `extends` / `overrides` on the ModelSpec loader. Deep-merge a dict, then the existing pydantic model. One parent. Migrate `dc_layered_nopens_v1`, `dc_layered_nodefcon_v1`, and `dc_layered_odds_v1`. Resolved hash equals the old copy. No model run. | OmegaConf. Chains. |
+| **P2.5** | `produce_ledger` and the content-addressed parquet cache. `fplt compare` CLI unchanged. | `joblib`. |
+| **P3** | Components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
 | **P4** | Decisions suite. Still opt-in. Data and config promos do not wait for it. | — |
-| **Thresholds** | After FDB-73. The bootstrap CI is an input, not a licence to invent ε earlier. | — |
-| **Next odds model** | Separate PR: rating prior or a 1X2 pool (§5.1). Then one EvalSpec with named `τ` arms. | Re-running `market_prior_strength` as if it were that study. Optuna. |
+| **P7** | `kind: environment` and `kind: refactor`, including the §3.2 verdict. Worktree, `uv sync --frozen`, subprocess. | `nox`, until more than one such eval exists. An unlisted `uv lock --upgrade` as a single lever. |
+| **History prior** | `market_prior_source: history` as specified in §5.1. Then one EvalSpec. A dose on that window is descriptive. | Re-running the predict-time λ blend as that study. Optuna inside the runner. Blocking this PR on `match_odds_deadline`. |
+| **Tuning** | After P1.5. Optuna on a dev window that does not overlap the eval window. It writes an `extends` fork. Confirmation is a fresh EvalSpec. | Searching over which component or feature exists. |
+| **Deadline odds** | A staging PR only after a book and a capture time exist. | A fetcher aimed at football-data closing files. |
+| **Thresholds** | After FDB-73. The intervals are an input. | Inventing ε from W9 alone. |
 | **P5** | Commit the recorded odds spec and `defcon_other_2025_26`. Extend the pens EvalSpec with coverage. | Running them is not a blocker for P1+P2. |
 | **P6** | None. No Dagster job in v1. | Hydra, a second `src/fpl` tree, MLflow. |
 
@@ -538,7 +620,9 @@ P1 and P2 ship together: a compare run that skips the vacuous-A/B check will hap
 ## 12. Sharp edges on main
 
 - **The landed λ blend is a no-op on ingested closing lines.** `view.latest` hides kickoff timestamps. A labelled `use_closing_proxy` flag is a model change. The runner must not call the escape hatch on the model's behalf.
-- **The landed odds prior is the wrong next experiment.** Predict-time λ blend plus `odds_poisson_v1` does not test "does the book help?". Raw de-vig 1X2 is the bar (§5.1). The next model is a rating prior or a 1X2 pool, as its own ModelSpec.
+- **The landed odds prior is the wrong next experiment.** Predict-time λ blend does not test "does the book help?". The next model is `market_prior_source: history` (§5.1). Raw de-vig 1X2 is the bar. `odds_poisson_v1` is not.
+- **Fork YAMLs are full copies.** `dc_layered_nodefcon_v1` repeats `dc_layered_v2` to flip one flag. `extends` (P1.5) is how new forks are written. Migrating the three existing copies is a hash check, not a model run.
+- **`seed_for` includes `model_id` and is shared across players in a fixture.** A pen or defcon delta mixes the lever with a different Monte Carlo stream, and one extra player shifts later draws. Pairing is the CRN PR (§9). Do not change `seed_for` to get there.
 - **`_align_odds` can attach another fixture’s line** when `fixture_id` is missing, because the fallback key drops the date. Coverage reports both rates and warns. The repair belongs in the model.
 - **`eval-components` in the dry-run is not the A/B.** Defaults are `dixon_coles_v1`, `poisson_score_v1`, `odds_poisson_v1`, `empirical_minutes_v1`, `involvement_shares_v1`.
 - **`example_data_odds_prior.yaml` is the wrong `kind`.** W7 is `config`.
@@ -615,14 +699,19 @@ Papers behind checks we keep in our own runner:
 - **Bottou et al.**, “Counterfactual Reasoning and Learning Systems”, JMLR 2013. Inverse-propensity methods are for policies you cannot rerun. We can refit both specs.
 - **Decroos, Bransen, Van Haaren, Davis**, “Actions Speak Louder than Goals”, KDD 2019. Score the component that has a label before trusting the composite. Same reason a worse MAE can still be `tune`.
 - **Dixon and Coles**, JRSS-C 1997, and **Štrumbelj**, International Journal of Forecasting 2014. The scoreline model and the de-vig. `odds_to_lambda` already is the de-vig.
+- **Diebold and Mariano**, JBES 1995, and **Giacomini and White**, Econometrica 2006. Paired loss differentials, including re-estimation. This is the test §9 runs through `statsmodels`.
+- **Politis and Romano**, JASA 1994. Stationary bootstrap, via `arch`.
+- **White**, Econometrica 2000; **Hansen**, JBES 2005; **Hansen, Lunde, and Nason**, Econometrica 2011. Reality Check, SPA, and the model confidence set, for a dose compared on one window.
 
 ### 13.4 Recommendation
 
 Do not add an external library as the promote-eval runner. Call `compare`, `eval-components`, and `decisions`.
 
-That preference flips if a library walks a deadline calendar, refits a caller-supplied model each step, scores two arms on that window, and accepts a coverage fraction plus Spearman-by-GW as gates. None of the libraries above do those four things. Wrapping `PointsPredictor` so one of them can score a frame we already built with `PITView` is more code than the orchestrator, and the clock ends up outside the library.
+Do add `statsmodels` and `arch` for the paired intervals and for SPA / MCS (§9). That is the 90% bar applied to the statistics, which is a different job from walking deadlines. Neither package is a runner, a metric store, or a config system.
 
-Copy these habits into the thin runner, without the dependency: Evidently’s critical vs non-critical status (§8), TFX’s blessing file in front of the production edit, Feast’s printed as-of and unmatched count (the coverage block), and VAEP’s component-before-composite order.
+That runner preference flips if a library walks a deadline calendar, refits a caller-supplied model each step, scores two arms on that window, and accepts a coverage fraction plus Spearman-by-GW as gates. None of the libraries above do those four things. Wrapping `PointsPredictor` so one of them can score a frame we already built with `PITView` is more code than the orchestrator, and the clock ends up outside the library.
+
+Copy these habits into the thin runner, without those dependencies: Evidently’s critical vs non-critical status (§8), TFX’s blessing file in front of the production edit, Feast’s printed as-of and unmatched count (the coverage block), and VAEP’s component-before-composite order. Deep-merge forks with a dict and pydantic. Do not add OmegaConf. Cache ledgers as parquet. Do not add `joblib`.
 
 ---
 
@@ -635,33 +724,38 @@ Copy these habits into the thin runner, without the dependency: Evidently’s cr
 3. make check (new kinds need the leakage suite).
 4. fplt promote-eval --eval <name> --tier S1
      preflight fails a vacuous A/B, a leak, or a dirty tree
+     --allow-dirty still runs, and the verdict is inconclusive
      compare writes deltas
-     scoreline arms also write the raw de-vig row and a block-bootstrap CI
-     recommendation is inconclusive, or drop on coverage
+     scoreline arms also write the raw de-vig row and the HAC / bootstrap intervals
+     improvement recommendation is inconclusive, or drop on coverage
+     equivalence recommendation follows the identical / not-worse / worse rule
 5. Decisions only if the claim is the squad (kind: model, or an explicit opt-in).
 6. Production change is a later PR. keep on an opt-out means "leave it on".
-   A τ sweep promotes one named arm, not the whole grid.
+   A dose on one window does not promote. Confirmation is a fresh window.
 
 ODDS     recorded arm: control dc_layered_v2, treatment dc_layered_odds_v1
          gate: strict-PIT odds join >= 80%. Closing kickoff lines fail this.
-         benchmark row: raw de-vig 1X2, not odds_poisson.
-         next model: rating prior or 1X2 pool, named τ arms.
+         benchmark row: raw de-vig 1X2. odds_poisson is only a model column.
+         next model: market_prior_source history. Gate is odds_history_join.
 PENS     control dc_layered_nopens_v1, treatment dc_layered_v2
          gate: penalties_order non-null rate >= 1% (zero-detector, not 80%).
 DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v2
          gate: 100% of target fixtures in a season whose rules award DC.
+ENV      same spec, two lockfiles. Verdict from prediction identity, then intervals.
 ```
 
 ---
 
 ## 15. Out of scope for the runner
 
-- Cartesian grids, and Optuna over which component or feature is included. A named sweep of one continuous knob is in scope (§17). Nested tuning of `ξ` inside the training window is a later milestone.
-- Hydra, a parallel `src/fpl` tree, and MLflow as the system of record. The audit list from that design is `audit.json`.
+- Choosing a treatment value inside the runner. Optuna on a disjoint dev window is the Tuning row in §11. A dose compared on the eval window is descriptive.
+- Cartesian grids, and search over which component or feature is included.
+- OmegaConf, Hydra, a parallel `src/fpl` tree, MLflow, and `joblib.Memory`.
 - Editing `PRODUCTION_MODELS`.
-- Letting the runner invent a closing-odds cutoff. `odds_history` on past matches is a model param (§7).
-- Numeric keep/drop thresholds before FDB-73.
-- An external eval library as the runner (§13). The metric loop stays `compare` / `eval-components` / `decisions`.
+- Letting the runner invent a closing-odds cutoff, or fetch a deadline snapshot before a book and a capture time exist.
+- Rewriting `seed_for`. Paired streams are an eval seed (§9).
+- Numeric keep/drop thresholds for improvement levers before FDB-73.
+- An external eval library as the runner (§13). The metric loop stays `compare` / `eval-components` / `decisions`. `statsmodels` and `arch` are the interval layer only.
 - Network in tests. Quality asserts in pytest.
 - Replacing the Streamlit leaderboard.
 
@@ -675,43 +769,42 @@ DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v2
 | `orientation` checked against effective params | Absent `use_*` is true. Absent `market_prior_strength` is 0. |
 | Coverage formula named by the metric | Stops an 80% gate on a pecking order, and a 12% gate on defcon awards. |
 | Odds gate is strict PIT | The model under test cannot see kickoff stamps. Failing the eval is the honest result. Print the closing-proxy rate anyway. |
-| Predicted fixtures vs rating history | A post-deadline row on a fixture being scored fails the run. Past matches may use `odds_history: pre_kickoff` if the model YAML says so and the report repeats it. |
-| One question, named τ arms | A sweep of one knob is one experiment. Promotion copies one arm. |
-| Scoreline reports include the book | Raw de-vig 1X2 and a block bootstrap over gameweeks. `odds_poisson` is not the book. Not an auto-keep. |
-| `audit.json`, not MLflow | Git SHA, lockfile hash, data hashes, resolved config, folds. Same inputs must reproduce per-match metrics. |
-| Next odds model is a rating prior or a 1X2 pool | W7: raw closing 1X2 RPS 0.196, DC 0.334, odds-Poisson 0.363. The landed λ blend does not ask that question. |
-| P2 emits `inconclusive` unless coverage drops | W9 MAE-only keep would have been the wrong call. |
+| Predicted fixtures vs rating history | A post-deadline row on a fixture being scored fails the run. Past closes are already visible at the next deadline. `market_prior_source: history` is the model that reads them. |
+| Dose on one window is not a promotion | SPA and the model confidence set describe the set. `keep` is a fresh window. |
+| Scoreline reports include the book | Raw de-vig 1X2, plus HAC and a stationary bootstrap on gameweeks. `odds_poisson` is a model column. Not an auto-keep. |
+| `audit.json`, not MLflow | Git SHA, lockfile hash, data hashes, resolved spec, folds, wall-clock, peak RSS. `--allow-dirty` forces `inconclusive`. |
+| Next odds model is the history rating prior | W7: raw closing 1X2 RPS 0.196, DC 0.334, odds-Poisson 0.363. The landed λ blend only sees the fixtures passed to `predict`. |
+| Equivalence is a second verdict | Identical predictions adopt a lockfile or a refactor. An interval entirely on the bad side pins the old one. Improvement levers do not use this `keep`. |
+| `extends`, one parent | The off-forks are full copies today. Deep-merge, then pydantic. Hash-check the migration. |
+| Paired seeds do not change `seed_for` | The production stream includes `model_id`. The eval stream does not. |
+| `statsmodels` and `arch` for intervals | Diebold–Mariano / Giacomini–White and a stationary bootstrap. Not a runner and not a metric store. |
+| P2 emits `inconclusive` unless coverage drops | W9 MAE-only keep would have been the wrong call. Equivalence is the exception in §3.2. |
 | Decisions opt-in for data and config | W9 did not need a bakeoff to recommend `tune`. |
 | P1+P2 together | Compare without the vacuous-A/B fail scores a no-op as a result. |
-| No external eval library as the runner | None of MLflow evaluate, Deepchecks, Giskard, Evidently, or TFX walks deadlines and refits. They cover a static frame. ~90% of the metric loop is already `fplt compare`. |
+| No external eval library as the runner | None of MLflow evaluate, Deepchecks, Giskard, Evidently, or TFX walks deadlines and refits. They cover a static frame. ~90% of the metric loop is already `fplt compare`. `statsmodels` and `arch` cover the paired test, which is the piece that cleared the bar. |
 | Fail vs warn as in §8 | Evidently’s critical bit, applied to our checks, without the library. |
 
 ---
 
-## 17. Scoreline lab vs this runner
+## 17. What the second draft changed
 
-A separate design ("Experiment framework for the FPL / Dixon-Coles model") targets the odds-prior question with Hydra config groups, a new `src/fpl/` tree, local MLflow (parent run per experiment, child run per arm), and Optuna later. It is the better **study**. It is not a replacement for this runner.
+The Hydra / MLflow / new-`src/fpl` draft is discarded. The follow-up ("one change, one verdict") extends this file. The sections above are that extension. This section is the conflict list, so a later edit does not revive a rejected line.
 
-| | Scoreline lab | This doc |
-|---|---|---|
-| Question | Does a Gaussian prior on DC attack/defence, strength `τ`, beat vanilla DC and the raw book? | Did this one ModelSpec change help, for any lever, including player points and an optional squad? |
-| Baseline | Always `prior: none` | Off state. Production may already be the on state (pens, defcon). |
-| Stack | Hydra, MLflow SQLite, new protocols | `configs/models/*.yaml`, `compare` / `eval-components` / `decisions`. M10 removed Hydra and MLflow. |
-| Stats | Per-GW paired deltas, block bootstrap, share of GWs improved | Deltas and win counts. Bootstrap added for scoreline arms only (§9). |
-| Market bar | De-vigged 1X2, always | Same, and only when the lever touches odds. `odds_poisson_v1` is not that bar. |
-| PIT | Fail if any predicted-match row is after `as_of`. Past matches may use a pre-kickoff line via config. | Same split (§7). Also print both join rates so a 0% strict join is visible when the file itself matched. |
-| Many arms | Named overrides of one knob, not a Cartesian product | `arms:` on one EvalSpec. Promotion copies one arm. |
+Taken:
 
-What we take from that design, without its stack:
+- Equivalence kinds and the three-step verdict (§3.2).
+- `extends` / `overrides`, one parent (P1.5).
+- Ledger split and a content-addressed parquet cache (P2.5).
+- Diebold–Mariano / Giacomini–White and a stationary bootstrap, via `statsmodels` and `arch`. SPA and MCS when several arms share a window.
+- The history rating prior (§5.1). Checked against the code: `market_prior_strength` blends λ only for the fixtures passed to `predict`. `fit` never reads `match_odds`.
+- Provenance extras, and `--allow-dirty` forces `inconclusive`.
+- Optuna only upstream of the runner, on a window that does not overlap the eval.
 
-- A required `question`. The runner refuses a blank one.
-- `audit.json`: git SHA, dirty flag, `uv.lock` hash, parquet hashes, resolved config, fold list. Bit-identical per-match metrics given those inputs.
-- Per-match scoreline parquet, the raw de-vig row, and a block bootstrap over gameweeks.
-- The next odds **model**: penalty on ratings during the fit, or a pool with de-vigged 1X2. `τ → 0` matches vanilla. The landed `market_prior_strength` blend stays a recorded arm.
+Left:
 
-What we leave:
-
-- Hydra and a second source tree. New behaviour is a registered component and a ModelSpec.
-- MLflow as the place the number lives. The report and `audit.json` are that place. `make ui` is not a target.
-- Optuna in v1. Tuning `ξ` inside the training window can come later. Searching over which component exists stays an explicit arm.
-- Dropping player points and the squad. Those suites are why pens and defcon fit this doc and not the lab.
+- `odds_poisson_v1` as the market column. The book is raw de-vigged 1X2 (RPS 0.196 against 0.363 for odds-Poisson, 2024-25 GW1–38).
+- OmegaConf and `joblib.Memory`.
+- CRN, `statsmodels`, and `arch` inside the P1+P2 PR.
+- Replacing `seed_for`. Today it hashes `(model_id, season, gw, fixture_id)` and one generator serves every player in that fixture, in `player_key` order.
+- A `match_odds_deadline` fetcher before a book and a capture time exist.
+- Promoting the best of a dose from the window that ranked it. `plan.json` on main is still the dry-run command list. It does not record provenance. The three off-forks are full YAML copies. There is no `extends` loader.
