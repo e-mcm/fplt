@@ -47,6 +47,10 @@ from fplt.backtest.promote_eval import (
     plan_to_json,
 )
 from fplt.backtest.run import run_backtest
+from fplt.backtest.simulated_season import (
+    format_simulated_season_report,
+    run_chip_arm_sim_season,
+)
 from fplt.browser_auth import BrowserAuthError, auth_from_browser
 from fplt.data.benchmark_projections import (
     BenchmarkArchiveError,
@@ -375,6 +379,62 @@ def main(argv: list[str] | None = None) -> None:
         choices=["off", "rule_based", "optimised"],
         default=["off", "rule_based", "optimised"],
         help="Chip arms for --chip-board (default: all three)",
+    )
+    sim_season = sub.add_parser(
+        "sim-season",
+        parents=[log_flags],
+        help=(
+            "Chip-arm simulated-season SE (N6): CRN Monte Carlo season totals "
+            "and paired standard errors for off / rule_based / optimised"
+        ),
+    )
+    sim_season.add_argument("--season", required=True)
+    sim_season.add_argument("--from-gw", type=int, default=1)
+    sim_season.add_argument(
+        "--to-gw",
+        type=int,
+        default=3,
+        help="Last gameweek inclusive (default: 3 for a short smoke window)",
+    )
+    sim_season.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PLAN_HORIZON,
+        help=f"Planner look-ahead (default: {DEFAULT_PLAN_HORIZON})",
+    )
+    sim_season.add_argument(
+        "--models",
+        nargs="+",
+        default=list(CORE_MODELS)[:1],
+        help="YAML spec names (default: first CORE_MODELS entry)",
+    )
+    sim_season.add_argument(
+        "--chip-arms",
+        nargs="+",
+        choices=["off", "rule_based", "optimised"],
+        default=["off", "rule_based", "optimised"],
+        help="Chip arms to CRN-compare (default: all three)",
+    )
+    sim_season.add_argument(
+        "--chip-rules-season",
+        help="Chip-rules year (default: --season)",
+    )
+    sim_season.add_argument(
+        "--n-paths",
+        type=int,
+        default=5,
+        help="Monte Carlo paths (default: 5; keep small for smoke)",
+    )
+    sim_season.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Master seed for CRN path draws (default: 0)",
+    )
+    sim_season.add_argument(
+        "--with-attainable",
+        action="store_true",
+        help="Also report share-of-attainable SEs (N5 chips-off oracle per path)",
     )
     eval_components = sub.add_parser(
         "eval-components",
@@ -795,6 +855,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "decisions":
         _decisions(args)
+        return
+    if args.command == "sim-season":
+        _sim_season(args)
         return
     if args.command == "eval-components":
         _eval_components(args)
@@ -1279,6 +1342,32 @@ def _bakeoff(args: argparse.Namespace) -> None:
     print(f"wrote {result.output_dir}", file=sys.stderr)
     if result.exit_code != 0:
         raise SystemExit(result.exit_code)
+
+
+def _sim_season(args: argparse.Namespace) -> None:
+    data_dir = get_settings().data_dir
+    try:
+        for model_name in list(args.models):
+            report = run_chip_arm_sim_season(
+                data_dir,
+                model_name,
+                args.season,
+                int(args.from_gw),
+                int(args.to_gw),
+                int(args.horizon),
+                arms=list(args.chip_arms),
+                chip_rules_season=args.chip_rules_season,
+                n_paths=int(args.n_paths),
+                seed=int(args.seed),
+                with_attainable=bool(args.with_attainable),
+            )
+            print(f"## model={model_name}")
+            print(format_simulated_season_report(report))
+            print()
+    except (KeyError, ValueError) as exc:
+        logger.error("sim-season failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 def _decisions(args: argparse.Namespace) -> None:

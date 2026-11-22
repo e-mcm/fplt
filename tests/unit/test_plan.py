@@ -13,10 +13,10 @@ from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
     DEFAULT_LIVE_CHIP_ARM,
     PlanExistsError,
-    _actual_rows,
-    _prediction_rows,
     _require_usable_points,
+    actual_rows_from_ledger,
     points_from_ledger,
+    prediction_rows_from_ledger,
     run_decision_bakeoff,
     run_decisions,
     run_plan,
@@ -385,7 +385,7 @@ def test_prediction_rows_do_not_double_count_appended_fixtures() -> None:
             "xpts": [2.0, 2.1, 3.0, 3.2],
         }
     )
-    out = _prediction_rows(ledger, "m", "2024-25")
+    out = prediction_rows_from_ledger(ledger, "m", "2024-25")
     assert out.height == 1
     # keep="last" per fixture, then sum distinct fixtures (DGW).
     assert out["xpts"].to_list() == [pytest.approx(2.1 + 3.2)]
@@ -423,7 +423,7 @@ def test_actual_rows_do_not_double_count_horizon_duplicates() -> None:
             "actual_minutes": [90, 90, 75, 75],
         }
     )
-    out = _actual_rows(ledger, "m", "2024-25").sort("player_key")
+    out = actual_rows_from_ledger(ledger, "m", "2024-25").sort("player_key")
     assert out["actual_pts"].to_list() == [6, 3]
     assert out["actual_minutes"].to_list() == [90, 75]
 
@@ -442,7 +442,7 @@ def test_actual_rows_still_sum_distinct_fixtures_in_a_dgw() -> None:
             "actual_minutes": [90, 90, 90, 90],
         }
     )
-    out = _actual_rows(ledger, "m", "2024-25")
+    out = actual_rows_from_ledger(ledger, "m", "2024-25")
     assert out.height == 1
     assert out["actual_pts"].to_list() == [9]
     assert out["actual_minutes"].to_list() == [180]

@@ -7,6 +7,10 @@ truth intensity (or accepts pre-drawn actuals), runs each decision policy on
 errors on paired policy differences for season points and, optionally, share
 of attainable points (N5).
 
+Supports the C6 chip board arms (``off`` / ``rule_based`` / ``optimised``)
+via ``DecisionPolicy.chip_arm`` and the same ``chip_windows`` / scheduler
+contract as ``simulate_decisions``. Chips-off remains the default.
+
 Reuses ``simulate_decisions`` / ``summarise_decisions`` and the constrained
 hindsight oracle — the same decision sim as promote-eval's decisions suite.
 Does not change ``PRODUCTION_MODELS`` or fetch FPL Review.
@@ -15,33 +19,56 @@ Does not change ``PRODUCTION_MODELS`` or fetch FPL Review.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from fplt.backtest.ledger import read_predictions
+from fplt.data.pit import PITData
+from fplt.data.store import DataStore
+from fplt.models.spec import load_model_specs
 from fplt.optimise.attainable import attainable_share, simulate_hindsight_oracle
-from fplt.optimise.decisions import simulate_decisions
+from fplt.optimise.chip_windows import ChipArm, ChipUseWindows, chip_arm_model_id
+from fplt.optimise.decisions import (
+    actual_rows_from_ledger,
+    candidates_as_of,
+    prediction_rows_from_ledger,
+    simulate_decisions,
+)
 from fplt.optimise.realised import summarise_decisions
-from fplt.optimise.state import SquadState
+from fplt.optimise.state import SquadState, load_squad_state
 from fplt.schemas.simulated_season import (
     PolicyDiffSESchema,
     SimulatedPathActualsSchema,
     SimulatedSeasonPathSchema,
     TruthRateSchema,
 )
+from fplt.types import GWKey
 
 ORACLE_PATH_MODEL_ID = "hindsight_oracle_sim_v1"
+_CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class DecisionPolicy:
-    """One decision arm: opaque planner ``xpts`` under a stable id."""
+    """One decision arm: opaque planner ``xpts`` under a stable id.
+
+    ``chip_arm`` defaults to chips-off. Non-off arms use the same windows /
+    scheduler contract as the C6 chip decision board
+    (``simulate_decisions(..., chip_arm=...)``).
+    """
 
     policy_id: str
     predictions: pl.DataFrame
+    chip_arm: ChipArm = "off"
+    chip_windows: ChipUseWindows | None = None
+    chip_rules_season: str | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +266,119 @@ def policy_diff_board(
     return _diffs(pl.concat(frames))
 
 
+def truth_rates_from_actuals(actuals: pl.DataFrame) -> pl.DataFrame:
+    """Build held-out Poisson rates from observed player–GW actuals.
+
+    ``actual_pts`` becomes the Poisson mean; ``actual_minutes`` (when present)
+    becomes ``minutes_rate``. Use this for smoke / CRN boards when a separate
+    truth model is not available.
+
+    Args:
+        actuals: ``gw``, ``player_key``, ``actual_pts``, optional
+            ``actual_minutes``.
+
+    Returns:
+        Rows matching ``TruthRateSchema``.
+
+    Raises:
+        ValueError: Required columns are missing or the frame is empty.
+    """
+    required = {"gw", "player_key", "actual_pts"}
+    missing = required - set(actuals.columns)
+    if missing:
+        raise ValueError(f"actuals missing columns: {sorted(missing)}")
+    if actuals.is_empty():
+        raise ValueError("actuals must be non-empty")
+    cols: list[pl.Expr] = [
+        pl.col("gw").cast(pl.Int64),
+        pl.col("player_key").cast(pl.Int64),
+        pl.col("actual_pts").cast(pl.Float64).clip(0.0, None).alias("rate"),
+    ]
+    if "actual_minutes" in actuals.columns:
+        cols.append(
+            pl.col("actual_minutes")
+            .cast(pl.Float64)
+            .clip(0.0, 90.0)
+            .alias("minutes_rate")
+        )
+    else:
+        cols.append(pl.lit(None).cast(pl.Float64).alias("minutes_rate"))
+    frame = actuals.select(cols)
+    # One rate per player–GW (DGW actuals should already be collapsed).
+    frame = frame.group_by("gw", "player_key").agg(
+        pl.col("rate").sum(),
+        pl.col("minutes_rate").max(),
+    )
+    checked = TruthRateSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    return checked
+
+
+def chip_arm_policies(
+    predictions: pl.DataFrame,
+    *,
+    base_model_id: str,
+    arms: Sequence[ChipArm] = _CHIP_ARMS,
+    chip_rules_season: str | None = None,
+    chip_windows: Mapping[ChipArm, ChipUseWindows] | None = None,
+) -> list[DecisionPolicy]:
+    """Build decision policies for the C6 chip arms on shared predictions.
+
+    Ledger-style ``policy_id`` values match the chip board: chips-off keeps
+    ``base_model_id``; other arms use ``chip_arm_model_id``.
+
+    Args:
+        predictions: Shared planner ``xpts`` for every arm.
+        base_model_id: Model id without a ``::chip_`` suffix.
+        arms: Chip arms to include (default all three).
+        chip_rules_season: Chip-rules year for non-off arms.
+        chip_windows: Optional precomputed windows per arm (otherwise
+            rule-based builds landmarks and optimised schedules weekly).
+
+    Returns:
+        One ``DecisionPolicy`` per arm.
+
+    Raises:
+        ValueError: ``arms`` is empty or contains an unknown arm.
+    """
+    if not arms:
+        raise ValueError("arms must be non-empty")
+    policies: list[DecisionPolicy] = []
+    for arm in arms:
+        if arm not in _CHIP_ARMS:
+            raise ValueError(f"unknown chip_arm {arm!r}")
+        policy_id = (
+            base_model_id if arm == "off" else chip_arm_model_id(base_model_id, arm)
+        )
+        windows = None if chip_windows is None else chip_windows.get(arm)
+        policies.append(
+            DecisionPolicy(
+                policy_id=policy_id,
+                predictions=predictions,
+                chip_arm=arm,
+                chip_windows=windows,
+                chip_rules_season=chip_rules_season,
+            )
+        )
+    return policies
+
+
+def chip_arm_control_pairs(policies: Sequence[DecisionPolicy]) -> list[tuple[str, str]]:
+    """Pair each non-off chip arm against the chips-off control when present.
+
+    Falls back to every unordered pair when no chips-off policy is in the set.
+    """
+    by_arm = {policy.chip_arm: policy.policy_id for policy in policies}
+    control = by_arm.get("off")
+    if control is None:
+        return []
+    return [
+        (control, policy.policy_id)
+        for policy in policies
+        if policy.chip_arm != "off" and policy.policy_id != control
+    ]
+
+
 def run_simulated_season_eval(
     candidates: pl.DataFrame,
     policies: Sequence[DecisionPolicy],
@@ -253,6 +393,7 @@ def run_simulated_season_eval(
     path_actuals: pl.DataFrame | None = None,
     with_attainable: bool = False,
     pairs: Sequence[tuple[str, str]] | None = None,
+    fixtures: pl.DataFrame | None = None,
 ) -> SimulatedSeasonReport:
     """Run every policy on shared outcome paths and report paired SEs.
 
@@ -262,7 +403,8 @@ def run_simulated_season_eval(
 
     Args:
         candidates: ``gw``, ``player_key``, ``position``, ``team_key``, ``price``.
-        policies: Decision arms with planner predictions.
+        policies: Decision arms with planner predictions (and optional
+            ``chip_arm`` / windows).
         state: Starting squad (typically empty owned, bank 1000).
         season: Season label written onto decision rows.
         gameweeks: Deadlines to play, in order.
@@ -272,16 +414,20 @@ def run_simulated_season_eval(
         truth_rates: Held-out intensities (``TruthRateSchema``).
         path_actuals: Pre-drawn paths (``SimulatedPathActualsSchema``).
         with_attainable: When true, run the N5 hindsight oracle on each path
-            and attach share of attainable.
+            and attach share of attainable (oracle stays chips-off).
         pairs: Optional explicit ``(control, treatment)`` pairs for the SE
             board; default is every unordered pair once (control < treatment
-            lexicographically via ``policy_diff_board``).
+            lexicographically via ``policy_diff_board``), unless chip arms
+            include chips-off — then each non-off arm is paired against off.
+        fixtures: Staged fixtures for rule-based landmarks / optimised
+            ``schedule_chip_windows`` (required when any policy is not chips-off).
 
     Returns:
         ``SimulatedSeasonReport`` with path totals and pairwise SEs.
 
     Raises:
-        ValueError: Bad inputs, empty policies/gameweeks, or missing draw args.
+        ValueError: Bad inputs, empty policies/gameweeks, missing fixtures for
+            chip arms, or missing draw args.
     """
     weeks = list(gameweeks)
     if not weeks:
@@ -291,6 +437,9 @@ def run_simulated_season_eval(
     ids = [policy.policy_id for policy in policies]
     if len(ids) != len(set(ids)):
         raise ValueError(f"duplicate policy_id: {ids}")
+    needs_fixtures = any(policy.chip_arm != "off" for policy in policies)
+    if needs_fixtures and (fixtures is None or fixtures.is_empty()):
+        raise ValueError("chip arms require non-empty fixtures")
 
     drawn = _resolve_paths(
         truth_rates=truth_rates,
@@ -302,6 +451,11 @@ def run_simulated_season_eval(
     metrics: list[str] = ["season_points"]
     if with_attainable:
         metrics.append("share_of_attainable")
+    chosen_pairs = list(pairs) if pairs is not None else None
+    if chosen_pairs is None:
+        chip_pairs = chip_arm_control_pairs(policies)
+        if chip_pairs:
+            chosen_pairs = chip_pairs
 
     rows: list[dict[str, object]] = []
     for path_id in path_ids:
@@ -336,6 +490,10 @@ def run_simulated_season_eval(
                 season=season,
                 gameweeks=weeks,
                 horizon=horizon,
+                chip_arm=policy.chip_arm,
+                chip_rules_season=policy.chip_rules_season,
+                chip_windows=policy.chip_windows,
+                fixtures=fixtures,
             )
             summary = summarise_decisions(decisions)
             total = int(summary["total_points"][0]) if not summary.is_empty() else 0
@@ -354,13 +512,112 @@ def run_simulated_season_eval(
             )
 
     path_frame = _season_paths(pl.DataFrame(rows) if rows else _empty_season_paths())
-    diffs = policy_diff_board(path_frame, pairs=pairs, metrics=tuple(metrics))
+    diffs = policy_diff_board(path_frame, pairs=chosen_pairs, metrics=tuple(metrics))
     return SimulatedSeasonReport(
         paths=path_frame,
         diffs=diffs,
         n_paths=len(path_ids),
         seed=seed,
         with_attainable=with_attainable,
+    )
+
+
+def run_chip_arm_sim_season(
+    data_dir: Path,
+    model_name: str,
+    season: str,
+    from_gw: int,
+    to_gw: int,
+    horizon: int,
+    *,
+    arms: Sequence[ChipArm] = _CHIP_ARMS,
+    chip_rules_season: str | None = None,
+    n_paths: int = 5,
+    seed: int = 0,
+    with_attainable: bool = False,
+) -> SimulatedSeasonReport:
+    """Run chip-arm simulated-season SE from staged data + the prediction ledger.
+
+    Builds truth rates from ledger actuals (Poisson around observed points),
+    then CRN-runs the requested chip arms. Intended for short smoke windows
+    (few GWs × small ``n_paths``), not a full 38×large-N board in CI.
+
+    Args:
+        data_dir: Root with ``staged/`` and ``ledger/``.
+        model_name: YAML spec name.
+        season: Fixture / prediction season.
+        from_gw: First gameweek.
+        to_gw: Last gameweek, inclusive.
+        horizon: Planner horizon (does not flip ``DEFAULT_PLAN_HORIZON``).
+        arms: Chip arms (default all three).
+        chip_rules_season: Chip-rules year (default ``season``).
+        n_paths: Monte Carlo path count.
+        seed: Master draw seed.
+        with_attainable: Optional N5 share SE (oracle remains chips-off).
+
+    Returns:
+        ``SimulatedSeasonReport`` with path totals and paired SEs.
+
+    Raises:
+        KeyError: Unknown model spec or missing deadline.
+        ValueError: Empty arms, missing ledger actuals, or chip fixtures.
+    """
+    if not arms:
+        raise ValueError("arms must be non-empty")
+    spec = load_model_specs()[model_name]
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    squad_rules = load_squad_state()
+    draft = squad_rules.model_copy(
+        update={"owned": [], "bank": 1000, "free_transfers": 1}
+    )
+    store = DataStore(data_dir)
+    gameweeks = list(range(from_gw, to_gw + 1))
+    pools = [
+        candidates_as_of(PITData(store).view(GWKey(season, gw))).with_columns(
+            pl.lit(gw).alias("gw")
+        )
+        for gw in gameweeks
+    ]
+    ledger = read_predictions(data_dir)
+    predictions = prediction_rows_from_ledger(ledger, spec.model_id, season)
+    actuals = actual_rows_from_ledger(ledger, spec.model_id, season)
+    if actuals.is_empty():
+        raise ValueError(
+            f"no ledger actuals for model_id={spec.model_id!r} season={season!r}"
+        )
+    week_actuals = actuals.filter(pl.col("gw").is_in(gameweeks))
+    if week_actuals.is_empty():
+        raise ValueError(
+            f"no ledger actuals in GW{from_gw}–{to_gw} for {spec.model_id!r}"
+        )
+    fixtures = store.read("fixtures").filter(pl.col("season") == season)
+    policies = chip_arm_policies(
+        predictions,
+        base_model_id=spec.model_id,
+        arms=arms,
+        chip_rules_season=rules_season,
+    )
+    logger.info(
+        "chip-arm sim-season model=%s season=%s gw=%s-%s arms=%s n_paths=%s",
+        model_name,
+        season,
+        from_gw,
+        to_gw,
+        list(arms),
+        n_paths,
+    )
+    return run_simulated_season_eval(
+        pl.concat(pools),
+        policies,
+        draft,
+        season=season,
+        gameweeks=gameweeks,
+        horizon=horizon,
+        n_paths=n_paths,
+        seed=seed,
+        truth_rates=truth_rates_from_actuals(week_actuals),
+        with_attainable=with_attainable,
+        fixtures=fixtures,
     )
 
 
