@@ -1,11 +1,16 @@
 """Import vaastav historical seasons into the staged parquet tables.
 
 Availability is not observed per deadline in this source, so every row is
-flagged ``source = "vaastav"``. Result rows become visible at kickoff + 3h.
-Status still lacks news, chance-of-playing, and ``penalties_order``, but
-per-gameweek ``value`` from ``merged_gw.csv`` is staged as
-``player_status.price`` at that GW's deadline so historical transfer budgets
-bind. Opta ``expected_goals`` / ``expected_assists`` /
+flagged ``source = "vaastav"``. Fixture **schedule** rows use
+``season_start`` (1 July) as the earliest-known proxy so mid-season
+deadlines can see the rest of the season (honest H=8–10 planning). Vaastav
+ships only the final ``fixtures.csv``, so late rearrangements present only
+in that file can appear earlier than they were published — prefer FPL API
+snapshot fixtures when they exist for the season. Result rows become
+visible at kickoff + 3h. Status still lacks news, chance-of-playing, and
+``penalties_order``, but per-gameweek ``value`` from ``merged_gw.csv`` is
+staged as ``player_status.price`` at that GW's deadline so historical
+transfer budgets bind. Opta ``expected_goals`` / ``expected_assists`` /
 ``expected_goal_involvements`` / ``expected_goals_conceded`` are staged when
 present (2022-23 onwards); earlier seasons leave them null.
 """
@@ -62,7 +67,7 @@ def import_season(store: DataStore, season_dir: Path, season: str) -> None:
         store.write("teams", _teams(teams, season, start))
     deadlines: dict[int, datetime] = {}
     if fixtures is not None:
-        store.write("fixtures", _fixtures(fixtures, team_code, season))
+        store.write("fixtures", _fixtures(fixtures, team_code, season, start))
         gw_meta = _gameweeks(fixtures, season, start)
         store.write("gameweeks", gw_meta)
         deadlines = {
@@ -244,8 +249,19 @@ def _teams(teams: pl.DataFrame, season: str, start: datetime) -> pl.DataFrame:
 
 
 def _fixtures(
-    fixtures: pl.DataFrame, team_code: dict[int, int], season: str
+    fixtures: pl.DataFrame,
+    team_code: dict[int, int],
+    season: str,
+    start: datetime,
 ) -> pl.DataFrame:
+    """Stage schedule at ``start`` and results at kickoff + 3h.
+
+    Args:
+        fixtures: Vaastav ``fixtures.csv`` frame.
+        team_code: FPL team id → ``team_key``.
+        season: Season label.
+        start: Earliest-known schedule stamp (``season_start``).
+    """
     rows: list[dict[str, Any]] = []
     for row in fixtures.iter_rows(named=True):
         if row.get("event") is None:
@@ -268,7 +284,7 @@ def _fixtures(
                 "team_h_score": None,
                 "team_a_score": None,
                 "finished": False,
-                "available_at": kickoff - timedelta(days=14),
+                "available_at": start,
             }
         )
         if row.get("finished") and row.get("team_h_score") is not None:
