@@ -315,20 +315,43 @@ def summarise_decisions(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def format_decision_scoreboard(summary: pl.DataFrame) -> str:
-    """Render a markdown table of season totals ranked by realised points."""
+    """Render a markdown table of season totals ranked by realised points.
+
+    When ``attainable_points`` / ``share_of_attainable`` are present (from
+    ``enrich_decision_summary``), those columns are appended.
+    """
     if summary.is_empty():
         return "_No decision rows to score._"
+    has_share = (
+        "attainable_points" in summary.columns
+        and "share_of_attainable" in summary.columns
+    )
+    headers = ["Rank", "Model", "Season", "Points", "GWs", "Mean/GW"]
+    aligns = ["---:", "---", "---", "---:", "---:", "---:"]
+    if has_share:
+        headers.extend(["Attainable", "Share"])
+        aligns.extend(["---:", "---:"])
     lines = [
-        "| Rank | Model | Season | Points | GWs | Mean/GW |",
-        "| ---: | --- | --- | ---: | ---: | ---: |",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(aligns) + " |",
     ]
     for index, row in enumerate(summary.iter_rows(named=True), start=1):
         gameweeks = int(row["gameweeks"])
         mean = float(row["total_points"]) / gameweeks if gameweeks else 0.0
-        lines.append(
-            f"| {index} | {row['model_id']} | {row['season']} | "
-            f"{row['total_points']} | {gameweeks} | {mean:.1f} |"
-        )
+        cells = [
+            str(index),
+            str(row["model_id"]),
+            str(row["season"]),
+            str(row["total_points"]),
+            str(gameweeks),
+            f"{mean:.1f}",
+        ]
+        if has_share:
+            att = row["attainable_points"]
+            share = row["share_of_attainable"]
+            cells.append("-" if att is None else str(int(att)))
+            cells.append("-" if share is None else f"{float(share):.3f}")
+        lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
