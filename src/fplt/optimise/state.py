@@ -1,4 +1,4 @@
-"""Squad state: cash, free transfers, and who is already owned."""
+"""Squad state: cash, free transfers, chips, and who is already owned."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from typing import Any, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from fplt.scoring.chips import ChipName, empty_remaining
 
 _CONFIG = Path(__file__).resolve().parents[3] / "configs" / "squad_state.yaml"
 
@@ -20,11 +22,44 @@ class OwnedPlayer(BaseModel):
     selling_price: int = Field(ge=0)
 
 
+class ChipPlay(BaseModel):
+    """A chip that has already been played this season."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: ChipName
+    gw: int = Field(ge=1, le=38)
+
+
+class ChipInventory(BaseModel):
+    """Remaining chip uses and the gameweeks they were already played."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    remaining: dict[ChipName, int] = Field(default_factory=empty_remaining)
+    played: list[ChipPlay] = Field(default_factory=lambda: [])
+
+    @model_validator(mode="after")
+    def _non_negative_and_known(self) -> ChipInventory:
+        expected = set(empty_remaining())
+        keys = set(self.remaining)
+        if keys != expected:
+            raise ValueError(
+                f"remaining must include exactly {sorted(expected)}, got {sorted(keys)}"
+            )
+        for name, count in self.remaining.items():
+            if count < 0:
+                raise ValueError(f"remaining[{name!r}] must be >= 0")
+        return self
+
+
 class SquadState(BaseModel):
     """What the planner is allowed to know about the current squad.
 
     An empty ``owned`` list is an initial draft: the bank is the whole
-    budget and the fifteen picks are not transfers. Chips are not read.
+    budget and the fifteen picks are not transfers. ``chips`` stores
+    remaining uses and play history for Wave C; the MILP does not consume
+    them yet.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -36,6 +71,7 @@ class SquadState(BaseModel):
     decay: float = Field(gt=0, le=1, default=1.0)
     bench_weight: float = Field(ge=0, default=0.0)
     owned: list[OwnedPlayer] = Field(default_factory=lambda: [])
+    chips: ChipInventory = Field(default_factory=ChipInventory)
 
     @model_validator(mode="after")
     def _transfers_fit_the_cap(self) -> SquadState:
@@ -57,7 +93,8 @@ def rebuild_squad_state(state: SquadState) -> SquadState:
 
     Returns:
         A copy with ``owned`` empty and ``bank`` equal to the previous bank
-        plus every owned selling price. Free transfers and rules are unchanged.
+        plus every owned selling price. Free transfers, chips, and rules are
+        unchanged.
     """
     total = state.bank + sum(player.selling_price for player in state.owned)
     return state.model_copy(update={"owned": [], "bank": total})
@@ -70,7 +107,7 @@ def load_squad_state(path: Path | None = None) -> SquadState:
         path: File to read. Defaults to ``configs/squad_state.yaml``.
 
     Returns:
-        The parsed state.
+        The parsed state, including ``chips`` remaining and played entries.
 
     Raises:
         FileNotFoundError: The file is missing.
@@ -91,13 +128,15 @@ def apply_entry_picks(
     """Replace the owned squad and bank from an entry picks payload.
 
     Args:
-        state: Overrides that stay in place (free transfers, decay, cap).
+        state: Overrides that stay in place (free transfers, decay, cap,
+            chips).
         payload: Body of ``entry/{id}/event/{gw}/picks``. ``picks`` and
             ``entry_history.bank`` are read.
         element_to_key: FPL element id to ``player_key``.
 
     Returns:
-        A copy with ``owned`` and ``bank`` taken from the payload.
+        A copy with ``owned`` and ``bank`` taken from the payload. Chip
+        inventory is left unchanged (still YAML / caller-owned).
 
     Raises:
         KeyError: A pick's element has no ``player_key``.

@@ -1,0 +1,27 @@
+# Pre-2025/26: two wildcards (one per half); one FH, BB, and TC for the season.
+one_chip_per_gameweek: true
+free_hit_keeps_free_transfers: true
+windows:
+  - id: first_wildcard
+    start_event: 2
+    stop_event: 19
+    carries_over: false
+  - id: second_wildcard
+    start_event: 20
+    stop_event: 38
+    carries_over: false
+  - id: season
+    start_event: 2
+    stop_event: 38
+    carries_over: false
+grants:
+  - name: wildcard
+    window: first_wildcard
+  - name: wildcard
+    window: second_wildcard
+  - name: freehit
+    window: season
+  - name: bboost
+    window: season
+  - name: "3xc"
+    window: season
