@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from fplt.optimise.plan import GameweekPlan, plan_squad
+from fplt.optimise.prices import apply_market_prices, market_prices_from_candidates
 from fplt.optimise.state import SquadState
 from fplt.schemas.plan import (
     CandidateSchema,
@@ -144,6 +145,7 @@ def optimize_transfers(
     window = _window(gameweeks)
     pool = CandidateSchema.validate(candidates)
     assert isinstance(pool, pl.DataFrame)
+    state = apply_market_prices(state, market_prices_from_candidates(pool))
     solved = plan_squad(
         pool,
         horizon_points(expected_points, window),

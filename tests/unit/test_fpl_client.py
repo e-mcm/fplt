@@ -92,6 +92,8 @@ def test_picks_payload_feeds_apply_entry_picks() -> None:
     assert updated.bank == 21
     assert len(updated.owned) == 15
     assert updated.owned[0].selling_price == team.picks[0].selling_price
+    assert updated.owned[0].purchase_price == team.picks[0].purchase_price
+    assert "purchase_price" in team.picks_payload()["picks"][0]
     assert updated.free_transfers == state.free_transfers
 
 

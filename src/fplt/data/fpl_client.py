@@ -77,16 +77,17 @@ class CurrentTeam(BaseModel):
                 raise ValueError(
                     "selling_price missing; fetch via my-team with FPLT_FPL_API_TOKEN"
                 )
-            owned.append(
-                {
-                    "element": pick.element,
-                    "position": pick.position,
-                    "selling_price": pick.selling_price,
-                    "multiplier": pick.multiplier,
-                    "is_captain": pick.is_captain,
-                    "is_vice_captain": pick.is_vice_captain,
-                }
-            )
+            row: dict[str, Any] = {
+                "element": pick.element,
+                "position": pick.position,
+                "selling_price": pick.selling_price,
+                "multiplier": pick.multiplier,
+                "is_captain": pick.is_captain,
+                "is_vice_captain": pick.is_vice_captain,
+            }
+            if pick.purchase_price is not None:
+                row["purchase_price"] = pick.purchase_price
+            owned.append(row)
         return {
             "active_chip": self.active_chip,
             "entry_history": {
