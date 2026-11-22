@@ -150,6 +150,10 @@ class CompositePredictor:
             pl.col("xpts_sd"),
             pl.col("p_haul"),
             pl.col("p_60"),
+            p_played=pl.col("p_played"),
+            p_goal=pl.col("p_goal"),
+            p_assist=pl.col("p_assist"),
+            p_cs=pl.col("p_cs"),
         )
 
     def save(self, path: Path) -> None:
@@ -242,8 +246,12 @@ def _fixture(
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),
         pl.Series("xpts_sd", result.points.std(axis=1)),
-        pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
+        pl.Series("p_played", (minutes > 0).mean(axis=1)),
         pl.Series("p_60", (minutes >= 60).mean(axis=1)),
+        pl.Series("p_goal", (result.goals >= 1).mean(axis=1)),
+        pl.Series("p_assist", (result.assists >= 1).mean(axis=1)),
+        pl.Series("p_cs", result.clean_sheets.mean(axis=1)),
+        pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
     )
 
 

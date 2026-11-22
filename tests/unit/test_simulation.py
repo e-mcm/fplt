@@ -81,6 +81,7 @@ def test_clean_sheet_needs_sixty_minutes_and_a_scoreless_opponent() -> None:
         seed=5,
     )
     assert result.points[0].tolist() == pytest.approx([6.0, 1.0, 2.0])
+    assert result.clean_sheets[0].tolist() == [True, False, False]
 
 
 def test_goals_conceded_scale_with_minutes() -> None:

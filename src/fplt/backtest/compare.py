@@ -42,7 +42,12 @@ from fplt.backtest.eval_set import (
     resolve_eval_models,
 )
 from fplt.backtest.ledger import append_predictions, fill_actuals, read_predictions
-from fplt.backtest.metrics import overall_summary, summarise
+from fplt.backtest.metrics import (
+    calibration_tables,
+    format_calibration_markdown,
+    overall_summary,
+    summarise,
+)
 from fplt.backtest.produce_ledger import produce_ledger
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, load_model_specs
@@ -81,6 +86,7 @@ class CompareResult:
     summary: pl.DataFrame
     detail: pl.DataFrame
     output_dir: Path
+    calibration: pl.DataFrame | None = None
     time_decay: float | None = None
     skipped_openfpl: str | None = None
 
@@ -264,6 +270,7 @@ def compare_models(
     )
     detail = _attach_meta(summarise(pool), id_meta)
     summary = _attach_meta(overall_summary(pool), id_meta)
+    calibration = _attach_meta(calibration_tables(pool), id_meta)
     result = CompareResult(
         season=season,
         test_from_gw=test_from_gw,
@@ -275,6 +282,7 @@ def compare_models(
         summary=summary,
         detail=detail,
         output_dir=out,
+        calibration=calibration,
         time_decay=time_decay,
         skipped_openfpl=skipped,
     )
@@ -302,8 +310,18 @@ def format_summary_table(summary: pl.DataFrame) -> str:
             "mae",
             "spearman",
             "top10_precision",
-            "brier_haul",
+            "brier_played",
             "brier_60",
+            "brier_goal",
+            "brier_assist",
+            "brier_cs",
+            "brier_haul",
+            "log_played",
+            "log_60",
+            "log_goal",
+            "log_assist",
+            "log_cs",
+            "log_haul",
             "n",
             "model_id",
         )
@@ -399,9 +417,15 @@ def _write_outputs(
     out = result.output_dir
     summary_path = out / "summary.parquet"
     detail_path = out / "detail.parquet"
+    calibration_path = out / "calibration.parquet"
     json_path = out / "summary.json"
+    md_path = out / "summary.md"
     result.summary.write_parquet(summary_path)
     result.detail.write_parquet(detail_path)
+    calibration = (
+        result.calibration if result.calibration is not None else pl.DataFrame()
+    )
+    calibration.write_parquet(calibration_path)
     payload = {
         "season": result.season,
         "test_from_gw": result.test_from_gw,
@@ -428,14 +452,41 @@ def _write_outputs(
             for run in result.runs
         ],
         "summary": result.summary.to_dicts(),
+        "calibration": calibration.to_dicts(),
         "skipped_openfpl": result.skipped_openfpl,
         "files": {
             "summary_parquet": str(summary_path),
             "detail_parquet": str(detail_path),
+            "calibration_parquet": str(calibration_path),
             "summary_json": str(json_path),
+            "summary_md": str(md_path),
         },
     }
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(_format_summary_markdown(result, calibration), encoding="utf-8")
+
+
+def _format_summary_markdown(result: CompareResult, calibration: pl.DataFrame) -> str:
+    """Markdown companion to ``summary.json`` for compare / promote-eval."""
+    lines = [
+        f"# Compare {result.season} gw {result.test_from_gw}-{result.test_to_gw}",
+        "",
+        "Headline point metric is RMSE (MAE secondary). Event Brier / log "
+        "scores cover played, 60+, goal, assist, clean sheet, and haul when "
+        "the arm emits those probabilities.",
+        "",
+        "## Summary",
+        "",
+        "```",
+        format_summary_table(result.summary),
+        "```",
+        "",
+        "## Calibration (xPts decile and position)",
+        "",
+        format_calibration_markdown(calibration),
+        "",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 __all__ = [

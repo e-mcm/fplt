@@ -76,6 +76,10 @@ def test_dc_layered_v2_scores_a_gameweek(tmp_path: Path) -> None:
     checked = PredictionSchema.validate(frame)
     assert checked.height == 2
     assert checked["xpts"].is_not_null().all()
+    for col in ("p_played", "p_60", "p_goal", "p_assist", "p_cs", "p_haul"):
+        assert checked[col].is_not_null().all()
+        assert checked[col].min() >= 0.0
+        assert checked[col].max() <= 1.0
 
 
 def test_a_gameweek_is_scored_and_written(
@@ -139,9 +143,17 @@ def test_paired_eval_predictions_are_bit_identical(tmp_path: Path) -> None:
         second = model.predict(view, [GWKey("2024-25", 1)]).sort(
             "player_key", "fixture_id"
         )
-    assert first.select("xpts", "xpts_sd", "p_haul", "p_60").equals(
-        second.select("xpts", "xpts_sd", "p_haul", "p_60")
-    )
+    cols = [
+        "xpts",
+        "xpts_sd",
+        "p_played",
+        "p_60",
+        "p_goal",
+        "p_assist",
+        "p_cs",
+        "p_haul",
+    ]
+    assert first.select(cols).equals(second.select(cols))
 
 
 def test_paired_eval_seed_pairs_across_model_ids(tmp_path: Path) -> None:
@@ -163,9 +175,17 @@ def test_paired_eval_seed_pairs_across_model_ids(tmp_path: Path) -> None:
     with paired_eval_seed(23):
         paired_left = left.predict(view, [as_of]).sort("player_key", "fixture_id")
         paired_right = right.predict(view, [as_of]).sort("player_key", "fixture_id")
-    assert paired_left.select("xpts", "xpts_sd", "p_haul", "p_60").equals(
-        paired_right.select("xpts", "xpts_sd", "p_haul", "p_60")
-    )
+    cols = [
+        "xpts",
+        "xpts_sd",
+        "p_played",
+        "p_60",
+        "p_goal",
+        "p_assist",
+        "p_cs",
+        "p_haul",
+    ]
+    assert paired_left.select(cols).equals(paired_right.select(cols))
 
 
 def test_crn_minutes_ignore_an_extra_player() -> None:

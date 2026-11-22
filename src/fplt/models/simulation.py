@@ -35,13 +35,15 @@ class MatchSimulation:
 
     ``goals`` counts only goals given to a player. ``unattributed_home`` and
     ``unattributed_away`` are the own-goal bucket, so each side's player
-    goals plus that bucket equal the sampled scoreline.
+    goals plus that bucket equal the sampled scoreline. ``clean_sheets`` is
+    the per-sim indicator after the red-card void draw.
     """
 
     player_key: np.ndarray
     points: np.ndarray
     goals: np.ndarray
     assists: np.ndarray
+    clean_sheets: np.ndarray
     unattributed_home: np.ndarray
     unattributed_away: np.ndarray
 
@@ -123,7 +125,7 @@ def simulate_match(
         goals[mask] = side_goals_out
         assists[mask] = side_assists
         unattributed[side_index] = missed
-    points = _points(
+    points, clean_sheets = _points(
         rules,
         positions,
         sides,
@@ -143,6 +145,7 @@ def simulate_match(
         points=points,
         goals=goals,
         assists=assists,
+        clean_sheets=clean_sheets,
         unattributed_home=unattributed[0],
         unattributed_away=unattributed[1],
     )
@@ -219,7 +222,7 @@ def _points(
     cs_red_void_prob: float,
     conceded_mode: ConcededMode,
     sample_other: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     goal_value = np.array([rules.goals[pos] for pos in positions], dtype=np.float64)
     sheet_value = np.array(
         [rules.clean_sheets[pos] for pos in positions], dtype=np.float64
@@ -251,7 +254,7 @@ def _points(
     bucket = np.where(minutes <= 0, 0, np.where(minutes < _BUCKET_EDGES[1], 1, 2))
     other_mean = np.take_along_axis(other_points, bucket, axis=1)
     other = _draw_other(other_mean, rng) if sample_other else other_mean
-    return (
+    points = (
         appearance
         + goal_value[:, None] * goals
         + rules.assists * assists
@@ -259,6 +262,7 @@ def _points(
         + conceded
         + other
     )
+    return points, clean_sheet.astype(np.bool_)
 
 
 def _draw_other(means: np.ndarray, rng: np.random.Generator) -> np.ndarray:

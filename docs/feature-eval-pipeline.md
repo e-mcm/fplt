@@ -195,7 +195,7 @@ report:
   store_doc: null
 ```
 
-`keep_if` names match the tools: prediction `rmse` (headline), `mae` (secondary continuity), `spearman`, `top10_precision` (mean per-GW), `brier_haul`, `brier_60`; components `rps`, `logloss`, `brier_cs_home`, `brier_cs_away`, `brier_played`, `brier_60`, `mae_goal_share`. Mean-seeking boards score the decision-relevant pool (`fplt.backtest.decision_pool`). Print per-GW win counts (RMSE headline; MAE beside for continuity).
+`keep_if` names match the tools: prediction `rmse` (headline), `mae` (secondary continuity), `spearman`, `top10_precision` (mean per-GW), `brier_played`, `brier_60`, `brier_goal`, `brier_assist`, `brier_cs`, `brier_haul`, and the matching `log_*` event scores; components `rps`, `logloss`, `brier_cs_home`, `brier_cs_away`, `brier_played`, `brier_60`, `mae_goal_share`. Mean-seeking boards score the decision-relevant pool (`fplt.backtest.decision_pool`). Print per-GW win counts (RMSE headline; MAE beside for continuity). Compare / promote-eval also write calibration tables by xPts decile and position.
 
 ### 4.1 Default suites
 

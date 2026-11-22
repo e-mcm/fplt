@@ -46,7 +46,7 @@ _KEY_COLS = (
     "fixture_id",
 )
 _XPTS_COLS = ("xpts", "xpts_sd")
-_PROB_COLS = ("p_haul", "p_60")
+_PROB_COLS = ("p_played", "p_60", "p_goal", "p_assist", "p_cs", "p_haul")
 _COMPARE_COLS = (*_KEY_COLS, *_XPTS_COLS, *_PROB_COLS)
 _PACKAGE_BLOCK = re.compile(
     r"\[\[package\]\]\s*\nname = \"([^\"]+)\"\s*\nversion = \"([^\"]+)\"",
@@ -511,7 +511,8 @@ def compare_prediction_frames(
             continue
         delta = (joined[col] - joined[right_col]).abs()
         joined = joined.with_columns(delta.alias(f"abs_{col}"))
-        col_max = float(delta.max()) if delta.len() else 0.0  # type: ignore[arg-type]
+        peak = delta.max() if delta.len() else 0.0
+        col_max = float(peak) if isinstance(peak, int | float) else 0.0
         max_diff = max(max_diff, col_max)
         mask = delta > tol
         n_bad = int(mask.sum())  # type: ignore[arg-type]
@@ -632,10 +633,16 @@ def load_arm_spec(
 
 
 def _prep_predictions(frame: pl.DataFrame) -> pl.DataFrame:
-    missing = [col for col in _COMPARE_COLS if col not in frame.columns]
+    required = (*_KEY_COLS, *_XPTS_COLS)
+    missing = [col for col in required if col not in frame.columns]
     if missing:
         raise ValueError(f"prediction frame missing columns: {missing}")
-    return frame.select(list(_COMPARE_COLS)).sort(list(_KEY_COLS))
+    extras: list[pl.Expr] = []
+    for col in _PROB_COLS:
+        if col not in frame.columns:
+            extras.append(pl.lit(None).cast(pl.Float64).alias(col))
+    aligned = frame.with_columns(extras) if extras else frame
+    return aligned.select(list(_COMPARE_COLS)).sort(list(_KEY_COLS))
 
 
 def _attach_actuals(preds: pl.DataFrame, actuals: pl.DataFrame) -> pl.DataFrame:
