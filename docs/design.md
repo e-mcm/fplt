@@ -109,6 +109,7 @@ data/
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
 ├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
+├── archive_compare/<stamp>/     # N2 paired board vs archives (§7.5)
 ├── ledger/                      # backtest ledger (§7.2)
 └── plans/<model_id>/as_of=.../  # optimiser outputs
 ```
@@ -422,6 +423,8 @@ Control is the off state and treatment is the on state. Production stays whichev
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
 
 **Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` + Dagster `benchmark_archive`) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. FPL Review enters only via manual CSV/JSON drop (`fplt ingest-review` / `fplt.data.fpl_review`) after a terms check — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md), [`docs/fpl_review.md`](fpl_review.md).
+
+**Paired archive compare (N2).** `fplt archive-compare` / `fplt.backtest.archive_compare.compare_to_archives` joins a candidate ledger arm to archived sources on identical player–fixtures. Coverage gate: only rows where every compared arm has a pre-deadline snapshot (`available_at` strictly before the deadline for archives; ledger presence for ours). Default board: RMSE headline, MAE secondary, Spearman by position, OpenFPL groups (zeros / blanks / tickers / haulers). Paired significance reuses Diebold–Mariano / HAC + stationary bootstrap (`fplt.backtest.intervals`). Does not scrape FPL Review.
 
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.

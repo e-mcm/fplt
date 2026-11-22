@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -165,6 +165,18 @@ archive-benchmarks:
 	else \
 		uv run fplt archive-benchmarks $(ARGS); \
 	fi
+
+# ── Paired archive compare (N2: ledger vs benchmark_projections) ─────────────
+# Usage: make archive-compare SEASON=2024-25 MODEL=dc_layered_v2
+# Optional: FROM_GW=1 TO_GW=38 ARGS='--sources ep_next openfpl'
+archive-compare:
+	@if [ -z "$(SEASON)" ] || [ -z "$(MODEL)" ]; then \
+		echo "Usage: make archive-compare SEASON=2024-25 MODEL=dc_layered_v2"; exit 1; \
+	fi
+	uv run fplt archive-compare --season $(SEASON) --model $(MODEL) \
+		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
+		$(if $(TO_GW),--to-gw $(TO_GW),) \
+		$(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:

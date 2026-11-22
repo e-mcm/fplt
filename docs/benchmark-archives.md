@@ -100,3 +100,23 @@ frame = visible_benchmarks(data_dir, cutoff)
 ```
 
 Archives are invisible before their `available_at` stamp.
+
+## Paired compare (N2)
+
+Once archives exist and the candidate model is on the prediction ledger:
+
+```bash
+make archive-compare SEASON=2024-25 MODEL=dc_layered_v2
+# or
+uv run fplt archive-compare --season 2024-25 --model dc_layered_v2 \
+  --from-gw 1 --to-gw 38 --sources ep_next openfpl
+```
+
+Library: `fplt.backtest.archive_compare.compare_to_archives`.
+
+- Joins on player–fixture (+ as-of / target keys).
+- Drops any row missing a pre-deadline snapshot on any compared arm.
+- Board: RMSE (headline), MAE, Spearman by position, zeros/blanks/tickers/haulers.
+- Intervals: existing HAC / stationary bootstrap vs each archive source.
+- Writes `$FPLT_DATA_DIR/archive_compare/<stamp>/` (JSON, parquet, `board.md`).
+- `fpl_review` is accepted as a `--sources` value when those rows exist; there is still no scrape path.
