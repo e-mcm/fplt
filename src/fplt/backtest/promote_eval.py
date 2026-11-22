@@ -36,6 +36,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from fplt.backtest.compare import CompareResult, compare_models
 from fplt.backtest.component_eval import ComponentEvalResult, run_component_eval
+from fplt.backtest.decision_pool import (
+    HEADLINE_METRIC,
+    POOL_FILTER_DESCRIPTION,
+    filter_decision_pool,
+)
 from fplt.backtest.equivalence import (
     EquivalenceDiff,
     EquivalenceSpec,
@@ -1529,15 +1534,27 @@ def render_recommendation(
     if not prediction_ran or deltas is None:
         lines.append("- prediction: not run")
     else:
-        for key in ("mae", "rmse", "spearman", "top10_precision"):
+        # RMSE is the mean-seeking headline; MAE stays for continuity with old A/Bs.
+        for key in ("rmse", "mae", "spearman", "top10_precision"):
             if key in deltas:
-                lines.append(f"- {key}_delta (treatment better > 0): {deltas[key]}")
+                label = "headline" if key == "rmse" else "secondary"
+                lines.append(
+                    f"- {key}_delta ({label}; treatment better > 0): {deltas[key]}"
+                )
         if "per_gw_wins" in deltas:
             wins = deltas["per_gw_wins"]
             lines.append(
-                f"- per_gw_wins: control={wins.get('control', 0)} "
+                f"- per_gw_wins (RMSE): control={wins.get('control', 0)} "
                 f"treatment={wins.get('treatment', 0)} "
                 f"ties={wins.get('ties', 0)}"
+            )
+        if "per_gw_wins_mae" in deltas:
+            wins_mae = deltas["per_gw_wins_mae"]
+            lines.append(
+                "- per_gw_wins (MAE, continuity): "
+                f"control={wins_mae.get('control', 0)} "
+                f"treatment={wins_mae.get('treatment', 0)} "
+                f"ties={wins_mae.get('ties', 0)}"
             )
         if "mean_xpts" in deltas:
             lines.append(f"- mean_xpts: {deltas['mean_xpts']}")
@@ -1557,6 +1574,13 @@ def render_recommendation(
         lines.append(
             "- intervals are descriptive for improvement levers "
             "(not a keep rule; equivalence may drop on entirely-bad intervals)"
+        )
+        lines.append(f"- player pool: {POOL_FILTER_DESCRIPTION}")
+        lines.append(
+            "- W9-style MAE/RMSE split: RMSE is the mean-seeking headline "
+            "(optimiser consumes expected points); MAE alone can prefer "
+            "median-seeking forecasts that underprice haul upside — read both, "
+            "prefer RMSE when they disagree on a mean-seeking board"
         )
         if (
             is_scoreline_lever(spec)
@@ -1692,7 +1716,8 @@ def _verdict_paragraph(
     _ = deltas
     return (
         "Improvement levers stay inconclusive until FDB-73 sets keep/drop "
-        "thresholds. Deltas are descriptive only; keep_if is not applied."
+        "thresholds. Deltas are descriptive only; keep_if is not applied. "
+        f"Headline point metric is {HEADLINE_METRIC} on the decision-relevant pool."
     )
 
 
@@ -2626,7 +2651,8 @@ def _prediction_deltas(
     t = treatment_rows.to_dicts()[0]
     deltas: dict[str, Any] = {}
     # Lower is better → control - treatment; higher is better → treatment - control.
-    for key in ("mae", "rmse"):
+    # RMSE first (headline); MAE kept for continuity with older A/Bs.
+    for key in ("rmse", "mae"):
         if c.get(key) is not None and t.get(key) is not None:
             deltas[key] = float(c[key]) - float(t[key])
     for key in ("spearman", "top10_precision"):
@@ -2650,22 +2676,35 @@ def _prediction_deltas(
     if scored.is_empty():
         deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
         return deltas
+    try:
+        scored = filter_decision_pool(scored, DataStore(data_dir))
+    except Exception:
+        logger.warning(
+            "decision pool filter failed; intervals use full scored ledger",
+            exc_info=True,
+        )
+    if scored.is_empty():
+        deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
+        return deltas
 
     positions = ("DEF", "MID", "FWD", "GKP") if position_specific else None
     paired = intervals_for_pair(
         scored,
         control_id=control_id,
         treatment_id=treatment_id,
-        metrics=("mae", "rmse", "spearman"),
+        metrics=("rmse", "mae", "spearman"),
         positions=positions,
     )
     deltas["intervals"] = [interval_to_dict(item) for item in paired]
     # Equivalence-only signal; improvement runners ignore this for the call.
     deltas["equivalence_interval_drop"] = equivalence_drop_from_intervals(paired)
 
+    control_rmse = per_gw_losses(scored, model_id=control_id, metric="rmse")
+    treatment_rmse = per_gw_losses(scored, model_id=treatment_id, metric="rmse")
+    deltas["per_gw_wins"] = per_gw_wins_from_losses(control_rmse, treatment_rmse)
     control_mae = per_gw_losses(scored, model_id=control_id, metric="mae")
     treatment_mae = per_gw_losses(scored, model_id=treatment_id, metric="mae")
-    deltas["per_gw_wins"] = per_gw_wins_from_losses(control_mae, treatment_mae)
+    deltas["per_gw_wins_mae"] = per_gw_wins_from_losses(control_mae, treatment_mae)
 
     # SPA / MCS only when several arms share the window (dose / multi-arm).
     spa_mcs = _spa_mcs_from_ledger(
@@ -2694,7 +2733,7 @@ def _spa_mcs_from_ledger(
         mid = id_by_name.get(name)
         if mid is None:
             return None
-        losses = per_gw_losses(scored, model_id=mid, metric="mae")
+        losses = per_gw_losses(scored, model_id=mid, metric=HEADLINE_METRIC)
         if losses.is_empty():
             return None
         per_arm[name] = losses

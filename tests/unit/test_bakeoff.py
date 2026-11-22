@@ -241,7 +241,7 @@ def test_execute_bakeoff_writes_ranking(tmp_path: Path) -> None:
     assert (result.output_dir / "summary.parquet").is_file()
 
 
-def test_render_ranking_orders_by_mae() -> None:
+def test_render_ranking_orders_by_rmse() -> None:
     spec = BakeoffSpec.model_validate(_base_payload())
     with patch(
         "fplt.backtest.bakeoff.load_model_specs",
@@ -257,6 +257,7 @@ def test_render_ranking_orders_by_mae() -> None:
             "model_name": ["rolling_mean_v1", "dc_layered_v2", "lgbm_direct_v1"],
             "mode": ["walk_forward"] * 3,
             "horizon": [1, 1, 1],
+            "rmse": [2.2, 1.8, 1.9],
             "mae": [1.2, 0.9, 1.0],
         }
     )
@@ -267,10 +268,12 @@ def test_render_ranking_orders_by_mae() -> None:
         spa=None,
         mcs=None,
     )
-    # Best MAE first.
+    # Best RMSE first (headline); MAE remains in the metric table path.
+    assert "Rank by RMSE" in text
+    assert "SPA / MCS (RMSE" in text
     dc_pos = text.index("`dc_layered_v2`")
     lgbm_pos = text.index("`lgbm_direct_v1`")
-    rm_pos = text.index("`rolling_mean_v1` MAE")
+    rm_pos = text.index("`rolling_mean_v1` RMSE")
     assert dc_pos < lgbm_pos < rm_pos
 
 

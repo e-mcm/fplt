@@ -8,8 +8,9 @@ Runs every selected model over the same test gameweeks in two modes:
 
 Internally each arm × mode is produced via ``produce_ledger`` (P2.5 content-
 addressed parquet cache), then appended to the shared ledger. Predictions land
-in the usual ledger. A JSON + parquet summary (MAE, RMSE, Spearman, top-10
-precision, Brier) is written for Streamlit or ad-hoc review. The ``fplt
+in the usual ledger. A JSON + parquet summary (RMSE headline, MAE secondary,
+Spearman, mean per-GW top-10 precision, Brier) is written for Streamlit or
+ad-hoc review, scored on the decision-relevant player pool. The ``fplt
 compare`` CLI surface is unchanged.
 """
 
@@ -29,6 +30,11 @@ import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport
 import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from fplt.backtest.decision_pool import (
+    HEADLINE_METRIC,
+    POOL_FILTER_DESCRIPTION,
+    filter_decision_pool,
+)
 from fplt.backtest.eval_set import (
     CORE_MODELS,
     OPENFPL_MODEL,
@@ -242,6 +248,13 @@ def compare_models(
     ledger = read_predictions(data_dir)
     model_ids = {run.spec.model_id for run in runs}
     scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
+    pool = filter_decision_pool(scored, store)
+    logger.info(
+        "decision pool: %s/%s scored rows (%s)",
+        pool.height,
+        scored.height,
+        POOL_FILTER_DESCRIPTION,
+    )
     id_meta = pl.DataFrame(
         {
             "model_id": [run.spec.model_id for run in runs],
@@ -249,8 +262,8 @@ def compare_models(
             "mode": [run.mode for run in runs],
         }
     )
-    detail = _attach_meta(summarise(scored), id_meta)
-    summary = _attach_meta(overall_summary(scored), id_meta)
+    detail = _attach_meta(summarise(pool), id_meta)
+    summary = _attach_meta(overall_summary(pool), id_meta)
     result = CompareResult(
         season=season,
         test_from_gw=test_from_gw,
@@ -266,14 +279,17 @@ def compare_models(
         skipped_openfpl=skipped,
     )
     logger.info("writing %s", out)
-    _write_outputs(result)
+    _write_outputs(result, pool_n=pool.height, full_n=scored.height)
     if skipped:
         logger.info(skipped)
     return result
 
 
 def format_summary_table(summary: pl.DataFrame) -> str:
-    """Render the overall summary as a plain-text table for the CLI."""
+    """Render the overall summary as a plain-text table for the CLI.
+
+    Column order puts RMSE (headline) before MAE (continuity).
+    """
     if summary.is_empty():
         return "(no scored rows — check actuals / data_checked)"
     cols = [
@@ -282,8 +298,8 @@ def format_summary_table(summary: pl.DataFrame) -> str:
             "model_name",
             "mode",
             "horizon",
-            "mae",
             "rmse",
+            "mae",
             "spearman",
             "top10_precision",
             "brier_haul",
@@ -374,7 +390,12 @@ def _attach_meta(frame: pl.DataFrame, id_meta: pl.DataFrame) -> pl.DataFrame:
     return frame.join(id_meta, on="model_id", how="left")
 
 
-def _write_outputs(result: CompareResult) -> None:
+def _write_outputs(
+    result: CompareResult,
+    *,
+    pool_n: int | None = None,
+    full_n: int | None = None,
+) -> None:
     out = result.output_dir
     summary_path = out / "summary.parquet"
     detail_path = out / "detail.parquet"
@@ -390,6 +411,10 @@ def _write_outputs(result: CompareResult) -> None:
         "time_decay": result.time_decay,
         "modes": list(result.modes),
         "models": [run.model_name for run in result.runs],
+        "headline_metric": HEADLINE_METRIC,
+        "player_pool": POOL_FILTER_DESCRIPTION,
+        "player_pool_n": pool_n,
+        "player_pool_full_n": full_n,
         "runs": [
             {
                 "model_name": run.model_name,

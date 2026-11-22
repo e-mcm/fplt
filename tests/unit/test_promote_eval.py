@@ -971,7 +971,11 @@ def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
     assert result.verdict == "inconclusive"
     assert result.exit_code == 0
     rec = (out / "recommendation.md").read_text(encoding="utf-8")
+    assert "rmse_delta" in rec
     assert "mae_delta" in rec
+    assert rec.index("rmse_delta") < rec.index("mae_delta")
+    assert "headline" in rec
+    assert "W9-style" in rec or "decision-relevant" in rec or "player pool" in rec
     assert "**inconclusive**" in rec
     assert "decisions: not run" in rec
     assert (out / "audit.json").is_file()

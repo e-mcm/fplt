@@ -79,12 +79,20 @@ def test_compare_runs_both_modes_and_writes_summary(
     assert payload["season"] == _TEST
     assert payload["fit_gw"] == 1
     assert {row["mode"] for row in payload["runs"]} == {"walk_forward", "fixed"}
+    assert "rmse" in result.summary.columns
     assert "mae" in result.summary.columns
+    assert list(result.summary.columns).index("rmse") < list(
+        result.summary.columns
+    ).index("mae")
+    assert payload.get("headline_metric") == "rmse"
+    assert "decision-relevant" in str(payload.get("player_pool", ""))
     assert "model_name" in result.summary.columns
     assert set(result.summary["model_name"].to_list()) == {"rolling_mean_v1"}
     assert set(result.summary["mode"].to_list()) == {"walk_forward", "fixed"}
     table = format_summary_table(result.summary)
     assert "shape:" in table or table.startswith("(no scored")
+    if "rmse" in table and "mae" in table:
+        assert table.index("rmse") < table.index("mae")
 
 
 def test_fixed_fit_gw_before_test_drops_pre_test_rows(tmp_path: Path) -> None:

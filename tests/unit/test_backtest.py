@@ -193,7 +193,50 @@ def test_summarise_skips_rows_without_actuals() -> None:
     forward = summary.filter(pl.col("position") == "FWD")
     assert summary.height == 2
     assert mid["mae"].to_list() == [0.0]
+    assert list(summary.columns).index("rmse") < list(summary.columns).index("mae")
     assert mid["brier_60"].to_list() == [0.0]
     assert forward["brier_haul"].to_list() == [None]
     assert forward["brier_60"].to_list() == [None]
     assert summarise(ledger.clear()).is_empty()
+
+
+def test_overall_summary_topk_is_mean_over_gameweeks() -> None:
+    """Pooled top-10 over a season is wrong; mean per-GW precision is the default."""
+    from fplt.backtest.metrics import overall_summary
+
+    # 12 players per GW so k=10 is strict (not the whole set).
+    rows: list[dict[str, object]] = []
+    for gw in (1, 2):
+        for i in range(12):
+            key = gw * 100 + i
+            # Predictions: prefer low ids. Actuals: prefer high ids on GW2 only.
+            if gw == 1:
+                xpts = float(12 - i)
+                actual = 12 - i
+            else:
+                xpts = float(12 - i)
+                actual = i
+            rows.append(
+                {
+                    "model_id": "m",
+                    "horizon": 1,
+                    "position": "MID",
+                    "target_season": "2024-25",
+                    "target_gw": gw,
+                    "player_key": key,
+                    "xpts": xpts,
+                    "actual_pts": actual,
+                    "actual_minutes": 90,
+                    "p_haul": None,
+                    "p_60": None,
+                }
+            )
+    ledger = pl.DataFrame(rows)
+    # GW1: pred top-10 = keys 100..109; actual top-10 = same → 1.0
+    # GW2: pred top-10 = 200..209; actual top-10 = 211..202 descending i=11..2
+    #   → keys 202..211; intersection {202..209} = 8/10 = 0.8
+    # mean = 0.9. Pooled over 24 rows would pick 10 globally and differ.
+    summary = overall_summary(ledger)
+    assert summary["top10_precision"][0] == pytest.approx(0.9)
+    assert "rmse" in summary.columns
+    assert list(summary.columns).index("rmse") < list(summary.columns).index("mae")

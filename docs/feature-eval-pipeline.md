@@ -195,17 +195,17 @@ report:
   store_doc: null
 ```
 
-`keep_if` names match the tools: prediction `mae`, `rmse`, `spearman`, `top10_precision`, `brier_haul`, `brier_60`; components `rps`, `logloss`, `brier_cs_home`, `brier_cs_away`, `brier_played`, `brier_60`, `mae_goal_share`. Pooled `top10_precision` over a whole season is a weak readout (W9). Print per-GW win counts beside it.
+`keep_if` names match the tools: prediction `rmse` (headline), `mae` (secondary continuity), `spearman`, `top10_precision` (mean per-GW), `brier_haul`, `brier_60`; components `rps`, `logloss`, `brier_cs_home`, `brier_cs_away`, `brier_played`, `brier_60`, `mae_goal_share`. Mean-seeking boards score the decision-relevant pool (`fplt.backtest.decision_pool`). Print per-GW win counts (RMSE headline; MAE beside for continuity).
 
 ### 4.1 Default suites
 
 | `kind` | Suites | Primary readout |
 |---|---|---|
-| `config` (flag or one knob) | prediction; components when the slot has a metric | slot metric, then xPts slices |
+| `config` (flag or one knob) | prediction; components when the slot has a metric | slot metric, then xPts slices (RMSE headline) |
 | `data` | prediction; components if the consumer has one | same, plus coverage |
-| `feature` | prediction | Spearman, MAE |
+| `feature` | prediction | Spearman, RMSE (MAE secondary) |
 | `component` | components, then prediction | slot metric before xPts `keep` |
-| `model` | prediction; decisions only when claiming squad points | MAE, Spearman, Brier |
+| `model` | prediction; decisions only when claiming squad points | RMSE, Spearman, Brier (MAE secondary) |
 | `environment` | prediction ledger diff | count and size of diffs; metric intervals |
 | `refactor` | resolved-spec hash first; ledger diff only if the hashes differ | identical yes/no |
 
@@ -574,7 +574,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 5. Coverage: metric name, numerator, denominator, rate, `min_coverage`, pass or fail.
 6. Join key and the `available_at` rule actually used. `market_prior_source` when the lever reads odds.
 7. PIT caveat, when §7 says to print it, with both odds rates.
-8. Deltas: MAE, RMSE, Spearman, per-GW win counts, mean predicted xPts vs mean actual, HAC interval, bootstrap interval, signed so positive means the treatment is better. Position slices when the lever is position-specific (defcon). Scoreline levers add the raw de-vig row. Several arms on one window add SPA and the model confidence set.
+8. Deltas: **RMSE** (headline), MAE (continuity), Spearman, per-GW win counts on RMSE (MAE wins listed beside), mean predicted xPts vs mean actual, HAC interval, bootstrap interval, signed so positive means the treatment is better. Scored on the decision-relevant pool. Position slices when the lever is position-specific (defcon). Scoreline levers add the raw de-vig row. Several arms on one window add SPA and the model confidence set (RMSE losses). W9-style MAE-worse / RMSE-better splits: prefer RMSE for mean-seeking calls.
 9. Component deltas, when that suite ran.
 10. `decisions: not run` when the suite is off. This is a complete promo for data and config.
 11. Equivalence only: predictions compared, count beyond tolerance, max absolute diff, top 10 offenders.
@@ -607,7 +607,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 | **P3** | Done: components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
 | **P4** | Decisions suite. Still opt-in. Data and config promos do not wait for it. | — |
 | **P7** | Done: `kind: environment` and `kind: refactor`, including the §3.2 verdict. Worktree, `uv sync --frozen`, subprocess produce per arm; ledger identity via `assert_frame_equal` then intervals. | `nox`, until more than one such eval exists. An unlisted `uv lock --upgrade` as a single lever. |
-| **Bakeoff** | Done: thin multi-arm wrapper on compare / promote-eval. `fplt bakeoff` + `BakeoffSpec` (≥3 ModelSpecs, shared window, SPA/MCS + MAE rank → `ranking.md`). EvalSpec optional `arms:` for a dose on the promote-eval compare. Shared ledgers via the content-addressed cache. Optional `pairwise_evals:` compose N promote-eval runs. | Running the Deep/PPDA + odds championship itself (FDB-99). A second framework. Emitting `keep` from the ranking window. |
+| **Bakeoff** | Done: thin multi-arm wrapper on compare / promote-eval. `fplt bakeoff` + `BakeoffSpec` (≥3 ModelSpecs, shared window, SPA/MCS + **RMSE** rank → `ranking.md`; MAE still in the metric table). EvalSpec optional `arms:` for a dose on the promote-eval compare. Shared ledgers via the content-addressed cache. Optional `pairwise_evals:` compose N promote-eval runs. | Running the Deep/PPDA + odds championship itself (FDB-99). A second framework. Emitting `keep` from the ranking window. |
 | **History prior** | `market_prior_source: history` as specified in §5.1. Then one EvalSpec. A dose on that window is descriptive. | Re-running the predict-time λ blend as that study. Optuna inside the runner. Blocking this PR on `match_odds_deadline`. |
 | **Tuning** | After P1.5. Optuna on a dev window that does not overlap the eval window. It writes an `extends` fork. Confirmation is a fresh EvalSpec. | Searching over which component or feature exists. |
 | **Deadline odds** | A staging PR only after a book and a capture time exist. | A fetcher aimed at football-data closing files. |
@@ -750,7 +750,7 @@ PENS     control dc_layered_nopens_v1, treatment dc_layered_v2
 DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v2
          gate: 100% of target fixtures in a season whose rules award DC.
 ENV      same spec, two lockfiles. Verdict from prediction identity, then intervals.
-BAKEOFF  ≥3 ModelSpecs, shared window; SPA/MCS + MAE rank. Not a keep.
+BAKEOFF  ≥3 ModelSpecs, shared window; SPA/MCS + RMSE rank (MAE secondary). Not a keep.
 ```
 
 ---
