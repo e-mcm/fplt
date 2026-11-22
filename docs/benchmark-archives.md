@@ -72,17 +72,22 @@ OpenFPL needs a usable `model_dir` (see [`docs/openfpl.md`](openfpl.md)).
 Without Understat team Deep/PPDA, rows are still written with
 `quality_flag=openfpl_degraded`.
 
-## FPL Review (blocked)
+## FPL Review (manual ingest)
 
-FPL Review is a paid service. **Check its terms before any ingest.** Until
-then:
+FPL Review is a paid service. **Check its terms before any real data lands**
+(summary in [`docs/fpl_review.md`](fpl_review.md)).
 
-- Schema already accepts `source=fpl_review`.
-- `fpl_review_projections(...)` raises `NotImplementedError`.
-- No scrape / download path exists in this repo.
+- Schema accepts `source=fpl_review`.
+- Automated fetch stub `fpl_review_projections(...)` still raises (no scrape).
+- Manual path: `fplt ingest-review path/to/drop.csv` →
+  `fplt.data.fpl_review` merges into the same deadline parquet via
+  `merge_benchmark_source` (keeps existing `ep_next` / `openfpl` rows).
 
-When terms allow, FDB-118 should add a **manual** loader that writes the same
-`BenchmarkProjectionSchema` rows (same directory layout), not a second table.
+```bash
+fplt ingest-review ./exports/gw12.csv \
+  --available-at 2025-11-21T17:00:00Z \
+  --copy-raw
+```
 
 ## PIT reads
 

@@ -97,7 +97,7 @@ def test_archive_stamp_is_strictly_before_deadline() -> None:
 
 def test_fpl_review_stub_raises(tmp_path: Path) -> None:
     view = PITData(build_league(DataStore(tmp_path))).view(_AS_OF)
-    with pytest.raises(NotImplementedError, match="terms-of-use"):
+    with pytest.raises(NotImplementedError, match="ingest-review"):
         fpl_review_projections(view, [_AS_OF], _SAVE)
 
 

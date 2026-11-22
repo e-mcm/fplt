@@ -460,6 +460,30 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Do not require OpenFPL rows (ep_next only; not for production)",
     )
+    ingest_review = sub.add_parser(
+        "ingest-review",
+        parents=[log_flags],
+        help=(
+            "Merge a manual FPL Review CSV/JSON drop into "
+            "benchmark_projections (source=fpl_review; no scrape)"
+        ),
+    )
+    ingest_review.add_argument(
+        "path",
+        type=Path,
+        help="Drop file (.csv or .json) with player_key/fixture_id/xpts",
+    )
+    ingest_review.add_argument(
+        "--available-at",
+        help="UTC ISO timestamp when the file omits available_at",
+    )
+    ingest_review.add_argument("--season", help="Override as_of season")
+    ingest_review.add_argument("--gw", type=int, help="Override as_of gameweek")
+    ingest_review.add_argument(
+        "--copy-raw",
+        action="store_true",
+        help="Also copy the drop under data/raw/fpl_review/ (write-once)",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -563,7 +587,54 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "archive-benchmarks":
         _archive_benchmarks(args)
         return
+    if args.command == "ingest-review":
+        _ingest_review(args)
+        return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _ingest_review(args: argparse.Namespace) -> None:
+    """Merge a manual FPL Review drop into benchmark_projections."""
+    from datetime import datetime
+
+    from fplt.data.fpl_review import (
+        copy_drop_to_raw,
+        ingest_fpl_review_drop,
+        load_fpl_review_drop,
+    )
+
+    path = args.path.expanduser()
+    as_of: GWKey | None = None
+    if args.season is not None or args.gw is not None:
+        if args.season is None or args.gw is None:
+            print("--season and --gw must be set together", file=sys.stderr)
+            raise SystemExit(2)
+        as_of = GWKey(args.season, args.gw)
+    try:
+        frame = load_fpl_review_drop(path, available_at=args.available_at, as_of=as_of)
+        key = GWKey(str(frame["as_of_season"][0]), int(frame["as_of_gw"][0]))
+        if args.copy_raw:
+            stamp = frame["available_at"][0]
+            if not isinstance(stamp, datetime):
+                raise ValueError("drop is missing available_at")
+            dest = copy_drop_to_raw(
+                get_settings().data_dir,
+                path,
+                as_of=key,
+                captured_at=stamp,
+            )
+            print(f"raw: {dest}")
+        out, n = ingest_fpl_review_drop(
+            get_settings().data_dir,
+            path,
+            available_at=args.available_at,
+            as_of=as_of,
+        )
+    except (FileExistsError, FileNotFoundError, ValueError) as exc:
+        logger.error("ingest-review failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"staged {n} fpl_review rows into {out}")
 
 
 def _predict(args: argparse.Namespace) -> None:
