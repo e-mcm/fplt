@@ -552,6 +552,55 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write horizon_skill JSON/parquet here",
     )
+    pruning_loss = sub.add_parser(
+        "pruning-loss",
+        parents=[log_flags],
+        help=(
+            "Measure week-1 action loss from candidate-pool pruning "
+            "(reference vs N sweep + current policy)"
+        ),
+    )
+    pruning_loss.add_argument(
+        "--n-scenarios",
+        type=int,
+        default=24,
+        help="Synthetic squad states to sample (default: 24; aim 20–30)",
+    )
+    pruning_loss.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="RNG seed for synthetic scenario sampling",
+    )
+    pruning_loss.add_argument(
+        "--horizon",
+        type=int,
+        default=5,
+        help="Plan horizon for each solve (default: 5)",
+    )
+    pruning_loss.add_argument(
+        "--targets",
+        type=int,
+        nargs="+",
+        help="Pool-size targets to sweep (default: 80 100 130 160 200 300)",
+    )
+    pruning_loss.add_argument(
+        "--reference-time-limit",
+        type=float,
+        default=3600.0,
+        help="HiGHS time limit for the full-pool reference (seconds)",
+    )
+    pruning_loss.add_argument(
+        "--sweep-time-limit",
+        type=float,
+        default=600.0,
+        help="HiGHS time limit for pruned arms (seconds)",
+    )
+    pruning_loss.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write rows/summary parquet + summary.json here",
+    )
     bakeoff = sub.add_parser(
         "bakeoff",
         parents=[log_flags],
@@ -896,6 +945,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "horizon-skill":
         _horizon_skill(args)
+        return
+    if args.command == "pruning-loss":
+        _pruning_loss(args)
         return
     if args.command == "promote-eval":
         _promote_eval(args)
@@ -1290,6 +1342,56 @@ def _horizon_skill(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(format_skill_curve(result.curve))
     print(f"wrote {result.output_dir / 'horizon_skill.json'}")
+
+
+def _pruning_loss(args: argparse.Namespace) -> None:
+    from fplt.optimise.highs_options import HighsSolveOptions
+    from fplt.optimise.pruning_loss import (
+        DEFAULT_POOL_TARGETS,
+        default_sweep_arms,
+        format_pruning_loss_summary,
+        run_pruning_loss_harness,
+        sample_synthetic_scenarios,
+        write_pruning_loss_report,
+    )
+
+    targets = (
+        tuple(int(value) for value in args.targets)
+        if args.targets
+        else DEFAULT_POOL_TARGETS
+    )
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir is not None
+        else get_settings().data_dir / "pruning_loss"
+    )
+    try:
+        scenarios = sample_synthetic_scenarios(
+            int(args.n_scenarios),
+            seed=int(args.seed),
+            horizon=int(args.horizon),
+        )
+        report = run_pruning_loss_harness(
+            scenarios,
+            arms=default_sweep_arms(targets),
+            reference_options=HighsSolveOptions(
+                time_limit=float(args.reference_time_limit),
+                mip_rel_gap=0.0,
+                accept_time_limit=True,
+            ),
+            sweep_options=HighsSolveOptions(
+                time_limit=float(args.sweep_time_limit),
+                mip_rel_gap=0.0,
+                accept_time_limit=True,
+            ),
+        )
+        paths = write_pruning_loss_report(report, output_dir)
+    except ValueError as exc:
+        logger.error("pruning-loss failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_pruning_loss_summary(report.summary))
+    print(f"wrote {paths['json']}")
 
 
 def _promote_eval(args: argparse.Namespace) -> None:

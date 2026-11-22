@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -100,6 +100,18 @@ horizon-skill:
 		--from-gw $(or $(FROM_GW),1) \
 		--to-gw $(or $(TO_GW),20) \
 		--steps $(or $(STEPS),10) \
+		$(ARGS)
+
+# Candidate-prune loss curve (week-1 action agreement vs pool size N).
+# Usage: make pruning-loss
+# Optional: N_SCENARIOS=24 SEED=0 HORIZON=5 ARGS='--targets 80 100 130 160 200 300'
+# Writes $$FPLT_DATA_DIR/pruning_loss/ (override with ARGS='--output-dir …').
+# Does not retune DEFAULT_PRUNE_POLICY; use the report to pick N later.
+pruning-loss:
+	uv run fplt pruning-loss \
+		--n-scenarios $(or $(N_SCENARIOS),24) \
+		--seed $(or $(SEED),0) \
+		--horizon $(or $(HORIZON),5) \
 		$(ARGS)
 
 # ── Promote-eval (control vs treatment EvalSpec; dry-run scaffold) ─────────────
