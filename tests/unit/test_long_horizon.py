@@ -19,11 +19,12 @@ from fplt.optimise.pruning_loss import (
 )
 
 
-def test_long_horizon_policy_defaults_off() -> None:
-    """Shipped policy waits for H≥6 and leaves shrink heuristics off."""
+def test_long_horizon_policy_defaults_relax_and_fix() -> None:
+    """Shipped policy enables relax-and-fix at H≥6; coarsening stays off."""
     policy = DEFAULT_LONG_HORIZON_POLICY
     assert policy.auto_min_horizon == LONG_HORIZON_MIN
-    assert policy.relax_and_fix is False
+    assert policy.relax_and_fix is True
+    assert policy.binary_steps == 2
     assert policy.coarsen_from_step is None
     assert policy.should_auto_apply(5) is False
     assert policy.should_auto_apply(6) is True
@@ -144,6 +145,79 @@ def test_small_mip_gap_keeps_week1_actions_vs_proven_optimal() -> None:
         ),
     )
     result = check_week1_equivalence(proven, gapped, initial=scenario.initial)
+    assert result.identical, result.mismatches
+
+
+def test_relax_and_fix_keeps_week1_actions_at_h6() -> None:
+    """H=6 relax-and-fix matches a full-integer solve on week-1 actions."""
+    scenario = sample_synthetic_scenarios(
+        1,
+        seed=23,
+        horizon=6,
+        pool_counts={"GK": 6, "DEF": 14, "MID": 18, "FWD": 8},
+    )[0]
+    options = _fast_options()
+    full = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(relax_and_fix=False),
+    )
+    relaxed = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            binary_steps=2,
+            auto_min_horizon=6,
+        ),
+    )
+    result = check_week1_equivalence(full, relaxed, initial=scenario.initial)
+    assert result.identical, result.mismatches
+
+
+def test_relax_and_fix_skipped_below_auto_min_horizon() -> None:
+    """Short horizons ignore relax-and-fix even when the flag is on."""
+    scenario = sample_synthetic_scenarios(
+        1,
+        seed=29,
+        horizon=3,
+        pool_counts={"GK": 6, "DEF": 14, "MID": 18, "FWD": 8},
+    )[0]
+    options = _fast_options()
+    plain = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(relax_and_fix=False),
+    )
+    flagged = plan_squad(
+        scenario.players,
+        scenario.points,
+        scenario.state,
+        initial=scenario.initial,
+        horizon=scenario.horizon,
+        prune=False,
+        highs_options=options,
+        long_horizon_policy=LongHorizonPolicy(
+            relax_and_fix=True,
+            auto_min_horizon=6,
+        ),
+    )
+    result = check_week1_equivalence(plain, flagged, initial=scenario.initial)
     assert result.identical, result.mismatches
 
 

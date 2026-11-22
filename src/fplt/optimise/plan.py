@@ -44,7 +44,11 @@ from fplt.optimise.highs_options import (
     HighsSolveOptions,
     log_solve_status,
 )
-from fplt.optimise.long_horizon import shift_horizon_picks
+from fplt.optimise.long_horizon import (
+    DEFAULT_LONG_HORIZON_POLICY,
+    LongHorizonPolicy,
+    shift_horizon_picks,
+)
 from fplt.optimise.prices import fpl_selling_price
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
@@ -127,6 +131,7 @@ def plan_squad(
     highs_options: HighsSolveOptions | None = None,
     warm_start: GameweekPlan | None = None,
     warm_start_shift: int = 1,
+    long_horizon_policy: LongHorizonPolicy | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -164,6 +169,9 @@ def plan_squad(
             or an already-shifted plan with ``warm_start_shift=0``.
         warm_start_shift: Leading steps to drop from ``warm_start`` before
             seeding (1 maps prior step 1 → this step 0).
+        long_horizon_policy: H≥6 MILP shrink knobs. Defaults to
+            ``DEFAULT_LONG_HORIZON_POLICY`` (relax-and-fix on for
+            ``horizon >= auto_min_horizon``).
 
     Returns:
         Squad members and sales at every step.
@@ -226,6 +234,11 @@ def plan_squad(
             fpl_selling_price(player.purchase_price, int(list_price[at]))
         )
     options = DEFAULT_HIGHS_OPTIONS if highs_options is None else highs_options
+    lh_policy = (
+        DEFAULT_LONG_HORIZON_POLICY
+        if long_horizon_policy is None
+        else long_horizon_policy
+    )
     columns = _columns(expected, state, horizon, initial)
     solver = _solver(columns.costs, options)
     _constrain(
@@ -252,9 +265,14 @@ def plan_squad(
         )
     solver.setMaximize()
     started = time.perf_counter()
-    solver.run()
+    status = _run_solver(
+        solver,
+        columns=columns,
+        options=options,
+        horizon=horizon,
+        long_horizon=lh_policy,
+    )
     elapsed = time.perf_counter() - started
-    status = solver.getModelStatus()
     _log.info(
         "plan_squad solve horizon=%s pool=%s binaries≈%s status=%s elapsed=%.2fs",
         horizon,
@@ -1381,6 +1399,145 @@ def _expected(
             continue
         expected[index[key], step] += float(row["xpts"])
     return expected
+
+
+def _run_solver(
+    solver: highspy.Highs,
+    *,
+    columns: _Columns,
+    options: HighsSolveOptions,
+    horizon: int,
+    long_horizon: LongHorizonPolicy,
+) -> highspy.HighsModelStatus:
+    """Run HiGHS, optionally via relax-and-fix for long horizons.
+
+    When ``long_horizon.relax_and_fix`` applies, keep the first
+    ``binary_steps`` integer, relax later steps to continuous, solve, fix
+    week-1 variables to the incumbent, then re-solve with mid-horizon
+    steps restored to integer (far steps stay continuous).
+    """
+    use_raf = (
+        long_horizon.relax_and_fix
+        and long_horizon.should_auto_apply(horizon)
+        and long_horizon.binary_steps < horizon
+    )
+    if not use_raf:
+        solver.run()
+        return solver.getModelStatus()
+
+    binary_steps = min(long_horizon.binary_steps, horizon)
+    far = _column_indices_for_steps(columns, range(binary_steps, horizon))
+    _set_integrality(solver, far, integer=False)
+    _log.info(
+        "relax-and-fix phase1 binary_steps=%s far_vars=%s",
+        binary_steps,
+        len(far),
+    )
+    solver.run()
+    status = solver.getModelStatus()
+    if not options.accepts_status(status):
+        return status
+
+    values = np.asarray(solver.getSolution().col_value, dtype=np.float64)
+    week1 = _column_indices_for_steps(columns, range(0, 1))
+    _fix_columns(solver, week1, values)
+    # Seed the second solve with the relaxed incumbent (week-1 already fixed).
+    solver.setSolution(
+        len(values),
+        np.arange(len(values), dtype=np.int32),
+        values,
+    )
+    mid = _column_indices_for_steps(columns, range(1, binary_steps))
+    if mid:
+        _set_integrality(solver, mid, integer=True)
+    _log.info(
+        "relax-and-fix phase2 fixed_week1=%s mid_integer=%s",
+        len(week1),
+        len(mid),
+    )
+    solver.clearSolver()
+    solver.run()
+    return solver.getModelStatus()
+
+
+def _column_indices_for_steps(
+    columns: _Columns,
+    steps: range,
+) -> list[int]:
+    """Collect all variable indices belonging to the given horizon steps."""
+    indices: list[int] = []
+    for step in steps:
+        if step < 0 or step >= columns.horizon:
+            continue
+        for block in (
+            columns.squad[step],
+            columns.xi[step],
+            columns.captain[step],
+            columns.vice[step],
+            columns.buy[step],
+            columns.sell[step],
+            columns.triple_extra[step],
+            columns.bench_score[step],
+            columns.score_squad[step],
+            columns.score_xi[step],
+            columns.score_captain[step],
+            columns.score_vice[step],
+            columns.score_triple[step],
+            columns.score_bench[step],
+            columns.fh_squad[step],
+            columns.fh_xi[step],
+            columns.fh_captain[step],
+            columns.fh_vice[step],
+        ):
+            indices.extend(int(index) for index in block)
+        indices.extend(
+            [
+                columns.wc[step],
+                columns.fh[step],
+                columns.bb[step],
+                columns.tc[step],
+            ]
+        )
+        if step in columns.moves:
+            indices.extend(int(index) for index in columns.moves[step])
+            indices.extend(int(index) for index in columns.free[step].values())
+            indices.extend(int(index) for index in columns.link[step].values())
+            indices.extend(int(index) for index in columns.hit_pay[step].values())
+    return indices
+
+
+def _set_integrality(
+    solver: highspy.Highs,
+    indices: list[int],
+    *,
+    integer: bool,
+) -> None:
+    """Mark ``indices`` as integer or continuous."""
+    if not indices:
+        return
+    kind = (
+        int(highspy.HighsVarType.kInteger)
+        if integer
+        else int(highspy.HighsVarType.kContinuous)
+    )
+    cols = np.asarray(indices, dtype=np.int32)
+    kinds = np.full(cols.shape[0], kind, dtype=np.uint8)
+    status = solver.changeColsIntegrality(cols.shape[0], cols, kinds)
+    if status != highspy.HighsStatus.kOk:
+        raise RuntimeError(f"HiGHS rejected integrality change: {status}")
+
+
+def _fix_columns(
+    solver: highspy.Highs,
+    indices: list[int],
+    values: np.ndarray,
+) -> None:
+    """Pin columns to 0/1 from a (possibly fractional) incumbent."""
+    for index in indices:
+        fixed = 1.0 if float(values[index]) > 0.5 else 0.0
+        status = solver.changeColBounds(int(index), fixed, fixed)
+        if status != highspy.HighsStatus.kOk:
+            raise RuntimeError(f"HiGHS rejected fix of col {index}: {status}")
 
 
 def shift_gameweek_plan(plan: GameweekPlan, *, steps: int = 1) -> GameweekPlan:

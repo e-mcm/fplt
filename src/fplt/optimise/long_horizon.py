@@ -31,7 +31,7 @@ class LongHorizonPolicy(BaseModel):
         description="Minimum horizon before relax-and-fix / coarsening auto-apply.",
     )
     relax_and_fix: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Keep the first ``binary_steps`` steps integer; relax later steps "
             "to continuous, solve, then fix week-1 and re-solve."
@@ -62,6 +62,7 @@ class LongHorizonPolicy(BaseModel):
         return horizon >= self.auto_min_horizon
 
 
+# Relax-and-fix on at H≥6; coarsening stays off until a follow-up enables it.
 DEFAULT_LONG_HORIZON_POLICY = LongHorizonPolicy()
 
 
