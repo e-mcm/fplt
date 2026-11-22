@@ -51,6 +51,7 @@ from fplt.optimise.lineup import (
 from fplt.optimise.long_horizon import (
     DEFAULT_LONG_HORIZON_POLICY,
     LongHorizonPolicy,
+    coarsen_steps,
     shift_horizon_picks,
 )
 from fplt.optimise.prices import fpl_selling_price
@@ -181,7 +182,8 @@ def plan_squad(
         long_horizon_policy: H≥6 MILP shrink knobs. Defaults to
             ``DEFAULT_LONG_HORIZON_POLICY`` (relax-and-fix on and
             captain/vice coarsening from step 3 when
-            ``horizon >= auto_min_horizon``).
+            ``horizon >= auto_min_horizon``). Forced-chip gameweeks keep
+            armband detail so TC/FH landmarks stay feasible.
         lineup_reopt: After the transfer MILP, re-choose XI / captain /
             vice on each locked fifteen via sample-average (or EV +
             ``p_haul``) lineup selection. Default on (Wave D1); set
@@ -257,9 +259,13 @@ def plan_squad(
         else long_horizon_policy
     )
     coarsen_from = lh_policy.effective_coarsen_from(horizon)
-    columns = _columns(
-        expected, state, horizon, initial, coarsen_from_step=coarsen_from
+    coarse_steps = coarsen_steps(
+        horizon,
+        coarsen_from,
+        gameweeks=targets,
+        chip_windows=chip_windows,
     )
+    columns = _columns(expected, state, horizon, initial, coarsen_steps=coarse_steps)
     solver = _solver(columns.costs, options)
     _constrain(
         solver,
@@ -274,7 +280,7 @@ def plan_squad(
         rules,
         targets,
         chip_windows,
-        coarsen_from_step=coarsen_from,
+        coarsen_steps=coarse_steps,
     )
     if warm_start is not None:
         _apply_warm_start(
@@ -631,20 +637,22 @@ def _columns(
     horizon: int,
     initial: bool,
     *,
-    coarsen_from_step: int | None = None,
+    coarsen_steps: frozenset[int] | None = None,
 ) -> _Columns:
     count = expected.shape[0]
     columns = _Columns(count, horizon)
     zeros = np.zeros(count, dtype=np.float64)
+    coarse: frozenset[int] = coarsen_steps if coarsen_steps is not None else frozenset()
     for step in range(horizon):
         weight = state.decay**step
         points = np.asarray(expected[:, step], dtype=np.float64)
         bench = _scaled(points, weight * state.bench_weight)
         played = _scaled(points, weight * (1.0 - state.bench_weight))
-        coarse = coarsen_from_step is not None and step >= coarsen_from_step
         # Far steps drop captain/vice (and TC) objective; XI / BB remain.
-        armband = zeros if coarse else _scaled(points, weight)
-        vice = zeros if coarse else _scaled(points, weight * _VICE_WEIGHT)
+        # Forced-chip steps are excluded from ``coarse`` (see coarsen_steps).
+        drop_armbands = step in coarse
+        armband = zeros if drop_armbands else _scaled(points, weight)
+        vice = zeros if drop_armbands else _scaled(points, weight * _VICE_WEIGHT)
         bb_boost = _scaled(points, weight)
         # Structural lineup / transfer vars (objective lives on score_* / fh_*).
         columns.squad.append(columns.block(zeros))
@@ -701,12 +709,12 @@ def _constrain(
     gameweeks: list[int] | None,
     chip_windows: ChipUseWindows | None,
     *,
-    coarsen_from_step: int | None = None,
+    coarsen_steps: frozenset[int] | None = None,
 ) -> None:
     positions = pool["position"].to_list()
     clubs = pool["team_key"].to_list()
+    coarse: frozenset[int] = coarsen_steps if coarsen_steps is not None else frozenset()
     for step in range(horizon):
-        coarse = coarsen_from_step is not None and step >= coarsen_from_step
         _lineup(
             solver,
             columns.squad[step],
@@ -715,7 +723,7 @@ def _constrain(
             columns.vice[step],
             positions,
             clubs,
-            armbands=not coarse,
+            armbands=step not in coarse,
         )
     _transition(solver, columns, owned, horizon)
     _cash(solver, columns, price, sell_price, state.bank, horizon)
@@ -734,7 +742,7 @@ def _constrain(
         positions,
         clubs,
         chip_windows,
-        coarsen_from_step=coarsen_from_step,
+        coarsen_steps=coarse,
     )
 
 
@@ -794,12 +802,13 @@ def _chips(
     clubs: list[int],
     chip_windows: ChipUseWindows | None,
     *,
-    coarsen_from_step: int | None = None,
+    coarsen_steps: frozenset[int] | None = None,
 ) -> None:
     """Wire chip binaries, Free Hit temporary squad, and BB/TC scoring gates."""
     priced = set(_priced(horizon, initial))
+    coarse: frozenset[int] = coarsen_steps if coarsen_steps is not None else frozenset()
     for step in range(horizon):
-        coarse = coarsen_from_step is not None and step >= coarsen_from_step
+        drop_armbands = step in coarse
         for index in range(columns.count):
             extra = int(columns.triple_extra[step][index])
             bench = int(columns.bench_score[step][index])
@@ -809,11 +818,14 @@ def _chips(
             _at_most(solver, [bench, int(columns.xi[step][index])], 1)
             _pair(solver, bench, columns.bb[step])
             _gate_score(solver, columns, step, index)
-            _free_hit_player(solver, columns, step, index, armbands=not coarse)
-        _free_hit_lineup(solver, columns, step, positions, clubs, armbands=not coarse)
+            _free_hit_player(solver, columns, step, index, armbands=not drop_armbands)
+        _free_hit_lineup(
+            solver, columns, step, positions, clubs, armbands=not drop_armbands
+        )
         _free_hit_budget(solver, columns, step, price, sell_price, bank)
-        if coarse:
+        if drop_armbands:
             # TC needs a captain; coarsened steps pin captains off.
+            # Forced-chip steps are excluded from ``coarse``.
             _equal(solver, [columns.tc[step]], [1.0], 0.0)
         if step not in priced:
             _equal(solver, [columns.wc[step]], [1.0], 0.0)
