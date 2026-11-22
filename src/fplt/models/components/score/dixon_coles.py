@@ -5,8 +5,15 @@ attack and defence. v2 can jointly estimate ρ and/or home advantage, and
 shrinks sparse or promoted-team ratings toward the league mean so fixed-mode
 and early-season forecasts degrade less than a hard neutral prior.
 
-When ``market_prior_strength`` > 0, ``predict`` shrinks per-match λ toward
-odds-implied rates from PIT ``match_odds``. Missing odds leave pure DC.
+When ``market_prior_strength`` > 0 and ``market_prior_source`` is absent,
+``predict`` shrinks per-match λ toward odds-implied rates from PIT
+``match_odds``. Missing odds leave pure DC.
+
+When ``market_prior_source: history``, ``fit`` instead reads past closes
+already visible at the deadline, maps them with ``odds_to_lambda``, fits
+market ratings ``(a0, d0)`` under the same ξ weights, and adds a Gaussian
+penalty on attack and defence only. Home advantage and ρ stay unpenalised.
+``strength → 0`` recovers vanilla; predict-time λ blending is off in this mode.
 
 When ``market_1x2_strength`` > 0, ``predict`` instead (or afterwards) rescales
 the joint's home/draw/away regions toward de-vigged bookmaker 1X2, preserving
@@ -71,8 +78,16 @@ def _neg_log_likelihood(
     rho: float,
     fit_home: bool,
     fit_rho: bool,
+    attack_prior: np.ndarray | None = None,
+    defence_prior: np.ndarray | None = None,
+    prior_strength: float = 0.0,
 ) -> float:
-    """Weighted negative log-likelihood; ρ / HA may sit in ``params``."""
+    """Weighted negative log-likelihood; ρ / HA may sit in ``params``.
+
+    When ``prior_strength`` > 0 and market ratings are supplied, adds
+    ``0.5 · strength · (Σ(a − a0)² + Σ(d − d0)²)``. Home advantage and ρ
+    are never penalised.
+    """
     attack = params[:n_teams]
     defence = params[n_teams : 2 * n_teams]
     offset = 2 * n_teams
@@ -97,7 +112,17 @@ def _neg_log_likelihood(
     tau[away_one] = 1 + lambda_h[away_one] * rho
     tau[home_one] = 1 + lambda_a[home_one] * rho
     tau[both_one] = 1 - rho
-    return -float(np.sum(weights * (log_p + np.log(np.clip(tau, 1e-10, None)))))
+    nll = -float(np.sum(weights * (log_p + np.log(np.clip(tau, 1e-10, None)))))
+    if prior_strength > 0 and attack_prior is not None and defence_prior is not None:
+        nll += (
+            0.5
+            * prior_strength
+            * (
+                float(np.sum((attack - attack_prior) ** 2))
+                + float(np.sum((defence - defence_prior) ** 2))
+            )
+        )
+    return nll
 
 
 class MatchScoreModel:
@@ -115,8 +140,14 @@ class MatchScoreModel:
       the league mean; effective strength is larger for promoted sides.
     - ``promoted_prior_strength`` — extra pseudo-matches for teams absent from
       earlier seasons visible at the deadline.
-    - ``market_prior_strength`` — pseudo-count shrink of per-match λ toward
-      PIT ``match_odds`` (0 = off / vanilla). Missing odds → pure DC.
+    - ``market_prior_strength`` — with absent ``market_prior_source``,
+      pseudo-count shrink of per-match λ toward PIT ``match_odds`` at
+      predict time (0 = off / vanilla; missing odds → pure DC). With
+      ``market_prior_source: history``, Gaussian strength on attack /
+      defence toward market ratings fitted from past closes (0 = vanilla).
+    - ``market_prior_source`` — absent keeps the predict-time λ blend.
+      ``history`` fits ``(a0, d0)`` from past PIT-visible closes and
+      penalises attack/defence only (HA and ρ unpenalised).
     - ``market_1x2_strength`` — pseudo-count shrink of the joint's 1X2
       margins toward de-vigged bookmaker prices (0 = off). Prefer over the
       λ prior for match-outcome calibration. ``use_closing_proxy`` (default
@@ -134,6 +165,11 @@ class MatchScoreModel:
         self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
         self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
         self._market_1x2 = float(spec.params.get("market_1x2_strength", 0.0))
+        raw_source = spec.params.get("market_prior_source")
+        if raw_source is None or raw_source == "":
+            self._market_source: str | None = None
+        else:
+            self._market_source = str(raw_source)
         if self._market_prior < 0:
             raise ValueError(
                 f"market_prior_strength must be >= 0, got {self._market_prior}"
@@ -142,16 +178,27 @@ class MatchScoreModel:
             raise ValueError(
                 f"market_1x2_strength must be >= 0, got {self._market_1x2}"
             )
+        if self._market_source is not None and self._market_source != "history":
+            raise ValueError(
+                "market_prior_source must be absent or 'history', "
+                f"got {self._market_source!r}"
+            )
         default_proxy = self._market_1x2 > 0
         self._use_closing_proxy = bool(
             spec.params.get("use_closing_proxy", default_proxy)
         )
+        self._history_prior = self._market_source == "history"
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}
         self._defence: dict[int, float] = {}
 
     def fit(self, view: PITView) -> None:
-        """Estimate ratings from finished fixtures visible at ``view.as_of``."""
+        """Estimate ratings from finished fixtures visible at ``view.as_of``.
+
+        With ``market_prior_source: history`` and ``market_prior_strength`` > 0,
+        also fits market ratings from past PIT-visible closes and adds a
+        Gaussian penalty on attack and defence toward those ratings.
+        """
         played = _finished(view)
         self._teams = []
         self._attack = {}
@@ -169,6 +216,23 @@ class MatchScoreModel:
         days = (kick.max() - kick) / np.timedelta64(1, "D")
         weights = np.exp(-self._xi * days.astype(np.float64))
         n_teams = len(teams)
+        home_idx = indexed["idx"].to_numpy()
+        away_idx = indexed["idx_right"].to_numpy()
+        attack_prior: np.ndarray | None = None
+        defence_prior: np.ndarray | None = None
+        prior_strength = 0.0
+        if self._history_prior and self._market_prior > 0:
+            attack_prior, defence_prior = _fit_history_market_ratings(
+                view,
+                indexed,
+                home_idx,
+                away_idx,
+                weights,
+                n_teams,
+                self._home,
+            )
+            if attack_prior is not None:
+                prior_strength = self._market_prior
         start = np.ones(2 * n_teams)
         bounds: list[tuple[float, float]] = [(0.2, 3.0)] * (2 * n_teams)
         if self._fit_home:
@@ -183,14 +247,17 @@ class MatchScoreModel:
             args=(
                 indexed["team_h_score"].to_numpy().astype(np.float64),
                 indexed["team_a_score"].to_numpy().astype(np.float64),
-                indexed["idx"].to_numpy(),
-                indexed["idx_right"].to_numpy(),
+                home_idx,
+                away_idx,
                 weights,
                 n_teams,
                 self._home,
                 self._rho,
                 self._fit_home,
                 self._fit_rho,
+                attack_prior,
+                defence_prior,
+                prior_strength,
             ),
             method="L-BFGS-B",
             bounds=bounds,
@@ -230,9 +297,10 @@ class MatchScoreModel:
 
         Args:
             view: Deadline the ratings belong to. Ratings come from ``fit``.
-                When ``market_prior_strength`` > 0, also supplies PIT
-                ``match_odds`` for the per-match λ blend. When
-                ``market_1x2_strength`` > 0, rescales 1X2 margins toward
+                When ``market_prior_strength`` > 0 and ``market_prior_source``
+                is absent, also supplies PIT ``match_odds`` for the per-match
+                λ blend. History mode applies the prior at fit time only.
+                When ``market_1x2_strength`` > 0, rescales 1X2 margins toward
                 de-vigged bookmaker prices after the joint is built.
             fixtures: Columns ``fixture_id``, ``team_h_key``, and ``team_a_key``.
                 ``season`` helps the odds join when ``fixture_id`` is missing.
@@ -247,7 +315,9 @@ class MatchScoreModel:
         lambda_h, lambda_a = self._rates(
             fixtures["team_h_key"].to_list(), fixtures["team_a_key"].to_list()
         )
-        if self._market_prior > 0:
+        # Predict-time λ blend is the absent-source path only; history mode
+        # already folded the book into the fit via the Gaussian rating prior.
+        if self._market_prior > 0 and not self._history_prior:
             market_h, market_a = _market_rates(view, fixtures)
             blended_h = np.empty_like(lambda_h)
             blended_a = np.empty_like(lambda_a)
@@ -374,6 +444,73 @@ def _joint(lambda_h: np.ndarray, lambda_a: np.ndarray, rho: float) -> np.ndarray
         ]
         joint[:, home_goals, away_goals] *= np.asarray(factor)
     return np.clip(joint, 0, None)
+
+
+def _rescale_attack_defence(
+    attack: np.ndarray, defence: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pin mean attack to 1 while preserving attack × defence products."""
+    scale = float(attack.mean())
+    if scale <= 0:
+        return attack, defence
+    return attack / scale, defence * scale
+
+
+def _fit_history_market_ratings(
+    view: PITView,
+    played: pl.DataFrame,
+    home_idx: np.ndarray,
+    away_idx: np.ndarray,
+    weights: np.ndarray,
+    n_teams: int,
+    home_advantage: float,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Fit DC ``(a0, d0)`` to past closes visible at the deadline.
+
+    Past football-data closes use ``available_at = kickoff``. Finished matches
+    kick off before the next FPL deadline, so ``PITView.latest`` already returns
+    those rows — no second cutoff and no ``use_closing_proxy``.
+
+    Args:
+        view: Deadline view used to read ``match_odds``.
+        played: Finished fixtures indexed with ``idx`` / ``idx_right``.
+        home_idx: Home team indices aligned with ``played``.
+        away_idx: Away team indices aligned with ``played``.
+        weights: Dixon–Coles ξ time-decay weights for ``played``.
+        n_teams: Number of teams in the identification.
+        home_advantage: Fixed HA used while fitting market ratings (unpenalised
+            in the subsequent result fit).
+
+    Returns:
+        Rescaled ``(attack_prior, defence_prior)``, or ``(None, None)`` when no
+        usable past closes join.
+    """
+    market_h, market_a = _market_rates(view, played)
+    usable = np.isfinite(market_h) & np.isfinite(market_a)
+    if not np.any(usable):
+        return None, None
+    start = np.ones(2 * n_teams, dtype=np.float64)
+    bounds: list[tuple[float, float]] = [(0.2, 3.0)] * (2 * n_teams)
+
+    def _market_sse(params: np.ndarray) -> float:
+        attack = params[:n_teams]
+        defence = params[n_teams:]
+        pred_h = attack[home_idx] * defence[away_idx] * home_advantage
+        pred_a = attack[away_idx] * defence[home_idx]
+        residual = (pred_h - market_h) ** 2 + (pred_a - market_a) ** 2
+        return 0.5 * float(np.sum(weights[usable] * residual[usable]))
+
+    result = minimize(
+        _market_sse,
+        start,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"maxiter": 300, "ftol": 1e-8},
+    )
+    fitted = np.asarray(result.x, dtype=np.float64)
+    attack = fitted[:n_teams]
+    defence = fitted[n_teams:]
+    return _rescale_attack_defence(attack, defence)
 
 
 def _market_rates(
