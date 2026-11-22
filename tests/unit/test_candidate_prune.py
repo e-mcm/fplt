@@ -15,9 +15,11 @@ from fplt.optimise.candidate_prune import (
     DEFAULT_PRUNE_POLICY,
     DEFAULT_TOP_VALUE,
     DEFAULT_TOP_XPTS,
+    MAX_PER_CLUB,
     MIN_POS_POOL,
     CandidatePrunePolicy,
     _rank_players,
+    drop_dominated_players,
 )
 from fplt.optimise.plan import (
     DEFAULT_CANDIDATE_TOP_K,
@@ -360,8 +362,9 @@ def test_playing_fillers_prefer_p_60_over_cheaper_bench() -> None:
     """keep_cheapest skips non-playing cheap players when enough play."""
     players = _players()
     cand = players.drop("sum_xpts")
-    # Price-40 GKs sorted by key: pick the lowest-xPts one as non-playing so
-    # top_xpts (GK=2) cannot rescue it.
+    # Price-40 GKs by ascending xPts. Give the two mid ones a unique late
+    # spike so exact dominance cannot drop them before keep_cheapest runs;
+    # the lowest-xPts GK stays cheap + non-playing with a different spike.
     gk40 = players.filter((pl.col("position") == "GK") & (pl.col("price") == 40)).sort(
         "sum_xpts"
     )
@@ -370,7 +373,19 @@ def test_playing_fillers_prefer_p_60_over_cheaper_bench() -> None:
         int(gk40.row(1, named=True)["player_key"]),
         int(gk40.row(2, named=True)["player_key"]),
     ]
-    points = _points(players).with_columns(
+    horizon = 5
+    rows: list[dict[str, object]] = []
+    for row in players.iter_rows(named=True):
+        key = int(row["player_key"])
+        base = float(row["sum_xpts"]) / horizon
+        for step in range(horizon):
+            xpts = base
+            if key in playing_keys and step == horizon - 1:
+                xpts = base + 20.0
+            elif key == cheap_non_playing and step == horizon - 2:
+                xpts = base + 20.0
+            rows.append({"player_key": key, "step": step, "xpts": xpts})
+    points = pl.DataFrame(rows).with_columns(
         pl.when(pl.col("player_key").is_in(playing_keys))
         .then(0.8)
         .otherwise(0.1)
@@ -411,7 +426,7 @@ def test_playing_fillers_fall_back_when_too_few() -> None:
 
 
 def test_owned_survive_every_rule() -> None:
-    """Owned keys survive decayed ranking and playing-filler cuts."""
+    """Owned keys survive dominance, decayed ranking, and filler cuts."""
     players = _players()
     cand = players.drop("sum_xpts")
     owned_key = int(
@@ -419,19 +434,253 @@ def test_owned_survive_every_rule() -> None:
         .sort("sum_xpts")
         .head(1)["player_key"][0]
     )
+    # Make owned strictly dominated on price and every step so only the
+    # owned safeguard can keep them.
     points = _points(players).with_columns(
         pl.when(pl.col("player_key") == owned_key)
         .then(0.0)
-        .otherwise(pl.col("xpts"))
+        .otherwise(pl.col("xpts") + 1.0)
         .alias("xpts"),
         pl.when(pl.col("player_key") == owned_key)
         .then(0.0)
         .otherwise(0.9)
         .alias("p_60"),
     )
+    cand = cand.with_columns(
+        pl.when(pl.col("player_key") == owned_key)
+        .then(pl.col("price") + 20)
+        .otherwise(pl.col("price"))
+        .alias("price")
+    )
     policy = _tight_policy(keep_cheapest=2, min_p_60=0.5)
     pruned = policy.apply(cand, points, owned_keys=[owned_key], decay=0.9)
     assert owned_key in set(pruned["player_key"].to_list())
+    # Without owned protection the same player is dropped by dominance.
+    bare = drop_dominated_players(cand, points, owned_keys=())
+    assert owned_key not in set(bare["player_key"].to_list())
+
+
+def test_dominance_drops_clearly_dominated() -> None:
+    """A dearer worse-at-every-step player is dropped before top-k."""
+    players = _players()
+    cand = players.drop("sum_xpts")
+    # Inflate the worst MID's price and zero their xPts so many cheaper
+    # better MIDs dominate them under the MID quota of 5.
+    victim = int(
+        players.filter(pl.col("position") == "MID")
+        .sort("sum_xpts")
+        .head(1)["player_key"][0]
+    )
+    cand = cand.with_columns(
+        pl.when(pl.col("player_key") == victim)
+        .then(90)
+        .otherwise(pl.col("price"))
+        .alias("price")
+    )
+    points = _points(players).with_columns(
+        pl.when(pl.col("player_key") == victim)
+        .then(0.0)
+        .otherwise(pl.col("xpts"))
+        .alias("xpts")
+    )
+    # Heuristic quotas large enough that only dominance can remove them.
+    policy = CandidatePrunePolicy(
+        top_xpts={"GK": 5, "DEF": 12, "MID": 20, "FWD": 8},
+        top_value=None,
+        keep_cheapest=0,
+    )
+    pruned = policy.apply(cand, points)
+    assert victim not in set(pruned["player_key"].to_list())
+    assert pruned.height < cand.height
+
+
+def test_dominance_compares_per_step_not_sums() -> None:
+    """Higher Σ xPts alone does not dominate when any step is worse."""
+    # Two steps: front-loaded cheap player fails to dominate a flat rival.
+    players = pl.DataFrame(
+        {
+            "player_key": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 6 + ["FWD"] * 3),
+            "team_key": [1, 2, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 1, 2, 3],
+            "price": [45, 45, 45, 45, 45, 45, 45, 40, 45, 45, 45, 45, 45, 45, 45, 45],
+        }
+    )
+    # key 8 (MID, price 40): [10, 0] — higher sum than key 9's [4, 4].
+    # key 9 (MID, price 45): [4, 4] — not dominated by 8 on step 1.
+    rows: list[dict[str, object]] = []
+    for key in players["player_key"].to_list():
+        for step in range(2):
+            if key == 8:
+                xpts = 10.0 if step == 0 else 0.0
+            elif key == 9:
+                xpts = 4.0
+            else:
+                xpts = 3.0
+            rows.append({"player_key": int(key), "step": step, "xpts": xpts})
+    points = pl.DataFrame(rows)
+    kept = drop_dominated_players(players, points)
+    assert 9 in set(kept["player_key"].to_list())
+
+
+def test_dominance_club_cap_safeguard() -> None:
+    """Dominators from one club cannot fill quota beyond MAX_PER_CLUB."""
+    # Five club-1 DEFs dominate an expensive DEF, but club-feasible count
+    # is only 3 < DEF quota 5, so the victim survives.
+    rows: list[dict[str, object]] = []
+    key = 1
+    for _ in range(2):
+        rows.append(
+            {"player_key": key, "position": "GK", "team_key": 10 + key, "price": 45}
+        )
+        key += 1
+    # Five cheap high-xPts DEFs, all club 1.
+    club1_defs: list[int] = []
+    for _ in range(5):
+        club1_defs.append(key)
+        rows.append({"player_key": key, "position": "DEF", "team_key": 1, "price": 40})
+        key += 1
+    victim = key
+    rows.append({"player_key": key, "position": "DEF", "team_key": 9, "price": 70})
+    key += 1
+    # Two more DEFs that do *not* dominate (dearer, worse points).
+    for _ in range(2):
+        rows.append({"player_key": key, "position": "DEF", "team_key": 8, "price": 80})
+        key += 1
+    for _ in range(5):
+        rows.append(
+            {"player_key": key, "position": "MID", "team_key": 20 + key, "price": 50}
+        )
+        key += 1
+    for _ in range(3):
+        rows.append(
+            {"player_key": key, "position": "FWD", "team_key": 30 + key, "price": 55}
+        )
+        key += 1
+    players = pl.DataFrame(rows)
+    point_rows: list[dict[str, object]] = []
+    for prow in players.iter_rows(named=True):
+        pk = int(prow["player_key"])
+        for step in range(2):
+            if pk in club1_defs:
+                xpts = 8.0
+            elif pk == victim:
+                xpts = 1.0
+            else:
+                xpts = 0.5
+            point_rows.append({"player_key": pk, "step": step, "xpts": xpts})
+    points = pl.DataFrame(point_rows)
+    assert MAX_PER_CLUB == 3
+    kept = drop_dominated_players(players, points)
+    assert victim in set(kept["player_key"].to_list())
+    # Adding three more club-diverse dominators makes the drop legal.
+    extra = pl.DataFrame(
+        {
+            "player_key": [key, key + 1, key + 2],
+            "position": ["DEF", "DEF", "DEF"],
+            "team_key": [2, 3, 4],
+            "price": [40, 40, 40],
+        }
+    )
+    wider = pl.concat([players, extra]).sort("player_key")
+    extra_pts = pl.DataFrame(
+        [
+            {"player_key": k, "step": s, "xpts": 8.0}
+            for k in (key, key + 1, key + 2)
+            for s in range(2)
+        ]
+    )
+    wider_pts = pl.concat([points, extra_pts])
+    dropped = drop_dominated_players(wider, wider_pts)
+    assert victim not in set(dropped["player_key"].to_list())
+
+
+def _week1_actions(plan: object) -> tuple[object, ...]:
+    """Squad / XI / C / V / buys / sells at step 0 (no quality metrics)."""
+    picks = plan.picks  # type: ignore[attr-defined]
+    assert isinstance(picks, pl.DataFrame)
+    step0 = picks.filter(pl.col("step") == 0)
+    squad = tuple(sorted(step0.filter(~pl.col("sold"))["player_key"].to_list()))
+    xi = tuple(sorted(step0.filter(pl.col("in_xi"))["player_key"].to_list()))
+    captains = step0.filter(pl.col("captain"))["player_key"].to_list()
+    vices = step0.filter(pl.col("vice"))["player_key"].to_list()
+    bought = tuple(sorted(step0.filter(pl.col("bought"))["player_key"].to_list()))
+    sold = tuple(sorted(step0.filter(pl.col("sold"))["player_key"].to_list()))
+    return (
+        squad,
+        xi,
+        int(captains[0]) if captains else None,
+        int(vices[0]) if vices else None,
+        bought,
+        sold,
+    )
+
+
+def test_dominance_lossless_week1_actions() -> None:
+    """Dominance-only filter keeps optimal week-1 actions on a synthetic pool."""
+    players = _players().drop("sum_xpts")
+    # Inject three clearly dominated MIDs (dear, zero xPts) that a legal
+    # XI never needs — full-pool and dominance-filtered solves must match.
+    base_key = int(players["player_key"].max()) + 1
+    extras = pl.DataFrame(
+        {
+            "player_key": [base_key, base_key + 1, base_key + 2],
+            "position": ["MID", "MID", "MID"],
+            "team_key": [91, 92, 93],
+            "price": [95, 96, 97],
+        }
+    )
+    full = pl.concat([players, extras]).sort("player_key")
+    # Unique per-player step-0 scores so the optimal XI / C / V is unique;
+    # dominated extras stay at 0.
+    point_rows: list[dict[str, object]] = []
+    for key in full["player_key"].to_list():
+        for step in range(2):
+            if key in (base_key, base_key + 1, base_key + 2):
+                xpts = 0.0
+            else:
+                # Strictly decreasing in player_key so ties cannot reshuffle XI.
+                xpts = 30.0 - 0.1 * int(key) if step == 0 else 1.0
+            point_rows.append({"player_key": int(key), "step": step, "xpts": xpts})
+    points = pl.DataFrame(point_rows)
+    seed = plan_squad(
+        players,
+        pl.DataFrame(
+            [
+                {
+                    "player_key": int(key),
+                    "step": 0,
+                    "xpts": 30.0 - 0.1 * int(key),
+                }
+                for key in players["player_key"].to_list()
+            ]
+        ),
+        _draft_state(),
+        initial=True,
+        horizon=1,
+        prune=False,
+    )
+    seed_keys = seed.picks.filter((pl.col("step") == 0) & ~pl.col("sold"))[
+        "player_key"
+    ].to_list()
+    owned = [
+        OwnedPlayer(
+            player_key=int(key),
+            purchase_price=int(players.filter(pl.col("player_key") == key)["price"][0]),
+            selling_price=int(players.filter(pl.col("player_key") == key)["price"][0]),
+        )
+        for key in seed_keys
+    ]
+    bank = 1000 - sum(player.selling_price for player in owned)
+    state = _draft_state(bank=bank, free_transfers=1, owned=owned)
+    reference = plan_squad(full, points, state, initial=False, horizon=2, prune=False)
+    filtered = drop_dominated_players(full, points, owned_keys=seed_keys)
+    assert filtered.height < full.height
+    for key in (base_key, base_key + 1, base_key + 2):
+        assert key not in set(filtered["player_key"].to_list())
+    dominated_plan = plan_squad(
+        filtered, points, state, initial=False, horizon=2, prune=False
+    )
+    assert _week1_actions(reference) == _week1_actions(dominated_plan)
 
 
 def test_prune_never_expands_pool_and_covers_minima() -> None:
