@@ -9,16 +9,16 @@ counts from ``chip_windows``).
 **Option-value heuristic.** For each remaining chip in each active
 ``ChipRules`` half-window, score every gameweek from ``as_of_gw`` through
 that window's end (fixture doubles/blanks, team-level expected points,
-squad continuity). The option-value cut is keyed by ``(chip, window)`` —
-``deferred_best`` / ``best_score`` never mix first- and second-half
-opportunities. Let ``H`` be the short planning horizon and
-``V* = max score`` over weeks of that window strictly after the short
-horizon (0 if none). A near-term week is allowed only when its score is at
-least ``V*`` — play now only if the gain beats the best expected
-opportunity left in the same half. Later near-best weeks stay allowed so
-the MILP can wait. The unique best week is forced when it falls inside the
-short horizon and clears ``V*``. Near-horizon weeks where every remaining
-chip is held join ``no_chip``.
+squad continuity). The option-value cut is keyed by ``ChipGrant`` (chip ×
+window id) — ``deferred_best`` / ``best_score`` never mix first- and
+second-half opportunities, and bare chip-name maps cannot fold grants.
+Let ``H`` be the short planning horizon and ``V* = max score`` over weeks
+of that window strictly after the short horizon (0 if none). A near-term
+week is allowed only when its score is at least ``V*`` — play now only if
+the gain beats the best expected opportunity left in the same half. Later
+near-best weeks stay allowed so the MILP can wait. The unique best week is
+forced when it falls inside the short horizon and clears ``V*``.
+Near-horizon weeks where every remaining chip is held join ``no_chip``.
 
 **Force-play at window end.** Remaining unused chips in a half-season
 ``ChipRules`` window are packed onto the last eligible gameweeks of that
@@ -43,7 +43,7 @@ from fplt.optimise.chip_windows import (
 )
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.state import ChipInventory
-from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
+from fplt.scoring.chips import ChipGrant, ChipName, ChipRules, ChipWindow
 
 _CHIP_ORDER: tuple[ChipName, ...] = ("bboost", "3xc", "freehit", "wildcard")
 _SCORE_EPS = 1e-9
@@ -57,6 +57,11 @@ class ChipOpportunity:
     window: str
     gameweek: int
     score: float
+
+    @property
+    def grant(self) -> ChipGrant:
+        """Typed chip×window key for opportunity maps (never bare chip name)."""
+        return ChipGrant(name=self.chip, window=self.window)
 
 
 def schedule_chip_windows(
@@ -180,10 +185,11 @@ def score_chip_opportunities(
     for window in rules.windows:
         if as_of_gw > window.stop_event:
             continue
-        grants = {grant.name for grant in rules.grants_for_window(window.id)}
+        grants = {grant.name: grant for grant in rules.grants_for_window(window.id)}
         gws = _window_gameweeks(window, as_of_gw, gameweeks)
         for chip in _CHIP_ORDER:
-            if chip not in grants:
+            grant = grants.get(chip)
+            if grant is None:
                 continue
             if _window_uses_left(rules, bag, chip, window) <= 0:
                 continue
@@ -201,8 +207,8 @@ def score_chip_opportunities(
                 )
                 scored.append(
                     ChipOpportunity(
-                        chip=chip,
-                        window=window.id,
+                        chip=grant.name,
+                        window=grant.window,
                         gameweek=gameweek,
                         score=score,
                     )
@@ -235,17 +241,16 @@ def windows_from_opportunities(
         Allowed / forced / no-chip hooks for the short-horizon MILP.
     """
     near_end = min(38, as_of_gw + short_horizon - 1)
-    by_chip_window: dict[tuple[ChipName, str], list[ChipOpportunity]] = {}
-    by_chip: dict[ChipName, list[ChipOpportunity]] = {}
+    # Grant-keyed only: bare chip-name maps would fold first-/second-half uses.
+    by_grant: dict[ChipGrant, list[ChipOpportunity]] = {}
     for row in opportunities:
-        by_chip_window.setdefault((row.chip, row.window), []).append(row)
-        by_chip.setdefault(row.chip, []).append(row)
+        by_grant.setdefault(row.grant, []).append(row)
 
     allowed: dict[ChipName, set[int]] = {}
     forced_candidates: dict[ChipName, int] = {}
-    # Option-value cut is per (chip, half-window): second-half doubles must not
-    # empty the first-half allow-list (and vice versa).
-    for (chip, _window_id), rows in by_chip_window.items():
+    # Option-value cut is per ChipGrant: second-half doubles must not empty the
+    # first-half allow-list (and vice versa).
+    for grant, rows in by_grant.items():
         scores = {row.gameweek: row.score for row in rows}
         if not scores:
             continue
@@ -263,25 +268,25 @@ def windows_from_opportunities(
             gw for gw, score in scores.items() if abs(score - best_score) <= _SCORE_EPS
         ]
         keep.update(best_gws)
-        allowed.setdefault(chip, set()).update(keep)
+        allowed.setdefault(grant.name, set()).update(keep)
         if (
             len(best_gws) == 1
             and best_gws[0] <= near_end
             and best_score + _SCORE_EPS >= deferred_best
         ):
-            forced_candidates[chip] = best_gws[0]
+            forced_candidates[grant.name] = best_gws[0]
 
     if force_play and rules is not None:
         _apply_force_play_packing(
             rules,
-            by_chip=by_chip,
+            by_grant=by_grant,
             allowed=allowed,
             forced_candidates=forced_candidates,
             as_of_gw=as_of_gw,
             near_end=near_end,
         )
 
-    forced = _resolve_forced_collisions(forced_candidates, by_chip)
+    forced = _resolve_forced_collisions(forced_candidates, by_grant)
     # Force-play packing may have dropped a colliding option-value force;
     # keep every surviving forced week allowed.
     for chip, gameweek in forced.items():
@@ -307,7 +312,7 @@ def windows_from_opportunities(
 def _apply_force_play_packing(
     rules: ChipRules,
     *,
-    by_chip: Mapping[ChipName, Sequence[ChipOpportunity]],
+    by_grant: Mapping[ChipGrant, Sequence[ChipOpportunity]],
     allowed: dict[ChipName, set[int]],
     forced_candidates: dict[ChipName, int],
     as_of_gw: int,
@@ -321,63 +326,64 @@ def _apply_force_play_packing(
     Assignments overwrite option-value forces for the same chip; per-GW
     collisions are resolved later by ``_resolve_forced_collisions``.
     """
-    score_at = {
-        (row.chip, row.gameweek): row.score for rows in by_chip.values() for row in rows
-    }
     for window in rules.windows:
         if as_of_gw > window.stop_event:
             continue
-        chips_left: list[ChipName] = [
-            chip
+        grants_left: list[ChipGrant] = [
+            ChipGrant(name=chip, window=window.id)
             for chip in _CHIP_ORDER
-            if any(
-                window.start_event <= row.gameweek <= window.stop_event
-                for row in by_chip.get(chip, ())
-            )
+            if by_grant.get(ChipGrant(name=chip, window=window.id))
         ]
-        if not chips_left:
+        if not grants_left:
             continue
         eligible = list(range(max(window.start_event, as_of_gw), window.stop_event + 1))
         if not eligible:
             continue
         stop_in_horizon = window.stop_event <= near_end
-        scarce = len(eligible) <= len(chips_left)
+        scarce = len(eligible) <= len(grants_left)
         if not stop_in_horizon and not scarce:
             continue
-        n_pack = min(len(chips_left), len(eligible))
+        n_pack = min(len(grants_left), len(eligible))
         pack_gws = eligible[-n_pack:]
-        ranked: list[ChipName] = sorted(
-            chips_left,
-            key=lambda chip: (
+        score_at = {
+            (row.chip, row.gameweek): row.score
+            for grant in grants_left
+            for row in by_grant.get(grant, ())
+        }
+        ranked: list[ChipGrant] = sorted(
+            grants_left,
+            key=lambda grant: (
                 max(
-                    (score_at.get((chip, gw), 0.0) for gw in pack_gws),
+                    (score_at.get((grant.name, gw), 0.0) for gw in pack_gws),
                     default=0.0,
                 ),
-                -_CHIP_ORDER.index(chip),
+                -_CHIP_ORDER.index(grant.name),
             ),
             reverse=True,
         )
         available = set(pack_gws)
-        for chip in ranked[:n_pack]:
+        for grant in ranked[:n_pack]:
             best_gw = max(
                 available,
                 key=lambda gw: (
-                    score_at.get((chip, gw), 0.0),
+                    score_at.get((grant.name, gw), 0.0),
                     gw,  # prefer later GW on ties → last eligible
                 ),
             )
-            forced_candidates[chip] = best_gw
-            allowed.setdefault(chip, set()).add(best_gw)
+            forced_candidates[grant.name] = best_gw
+            allowed.setdefault(grant.name, set()).add(best_gw)
             available.remove(best_gw)
 
 
 def _resolve_forced_collisions(
     forced_candidates: Mapping[ChipName, int],
-    by_chip: Mapping[ChipName, Sequence[ChipOpportunity]],
+    by_grant: Mapping[ChipGrant, Sequence[ChipOpportunity]],
 ) -> dict[ChipName, int]:
     """Keep at most one forced chip per gameweek (higher score wins)."""
     score_at = {
-        (row.chip, row.gameweek): row.score for rows in by_chip.values() for row in rows
+        (row.chip, row.gameweek): row.score
+        for rows in by_grant.values()
+        for row in rows
     }
     by_gw: dict[int, list[ChipName]] = {}
     for chip, gameweek in forced_candidates.items():
