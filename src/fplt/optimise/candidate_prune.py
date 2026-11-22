@@ -3,10 +3,10 @@
 Binary count scales with priced players × horizon. Before heuristic top-k
 cuts, drop players who are exactly dominated on price and per-step xPts
 (§2.5). Then keep the union of, per position: top decayed Σ xPts, top
-decayed Σ xPts / price, top raw xPts at each step, top raw Σ xPts over
-rolling 2–3-step windows, and the cheapest *playing* fillers — plus any
-currently owned players. Defaults are tuned so a full FPL pool (~700)
-shrinks to about 200 candidates.
+points-above-replacement per £ (vs the cheapest playable option), top raw
+xPts at each step, top raw Σ xPts over rolling 2–3-step windows, and the
+cheapest *playing* fillers — plus any currently owned players. Defaults
+are tuned so a full FPL pool (~700) shrinks to about 200 candidates.
 """
 
 from __future__ import annotations
@@ -113,7 +113,11 @@ class CandidatePrunePolicy(BaseModel):
     1. Exact dominance pre-filter (never drops ``owned_keys``).
     2. Always keep ``owned_keys``.
     3. Union top ``top_xpts`` by decayed Σ xPts per position.
-    4. Union top ``top_value`` by decayed Σ xPts / price per position.
+    4. Union top ``top_value`` by points-above-replacement per £:
+       ``(xPts_i − xPts_r) / (price_i − price_r)`` with decayed xPts,
+       where *r* is the cheapest playable option at the position
+       (``p_60 >= min_p_60``; fall back to plain cheapest when none
+       pass). Players priced at or below *r* are skipped.
     5. Union top ``top_per_step`` by raw xPts at each horizon step.
     6. Union top ``top_window`` by raw Σ xPts over each rolling window
        whose length is in ``window_lengths`` (default 2 and 3).
@@ -135,7 +139,8 @@ class CandidatePrunePolicy(BaseModel):
     top_value: dict[str, int] | None = Field(
         default_factory=lambda: dict(DEFAULT_TOP_VALUE),
         description=(
-            "Per-position keep counts by decayed Σ xPts / price. None disables."
+            "Per-position keep counts by points-above-replacement per £ "
+            "(decayed xPts vs cheapest playable). None disables."
         ),
     )
     top_per_step: dict[str, int] | None = Field(
@@ -334,7 +339,7 @@ class CandidatePrunePolicy(BaseModel):
 
         # Exact dominance before heuristic top-k (§2.5).
         pool = drop_dominated_players(pool, points, owned_keys=sorted(keep))
-        ranked = _rank_players(pool, points, decay=decay)
+        ranked = _rank_players(pool, points, decay=decay, min_p_60=self.min_p_60)
 
         if self.top_xpts is not None:
             for position, quota in self.top_xpts.items():
@@ -346,7 +351,7 @@ class CandidatePrunePolicy(BaseModel):
             for position, quota in self.top_value.items():
                 if quota <= 0:
                     continue
-                keep.update(_top_keys(ranked, position, quota, "xpts_per_price"))
+                keep.update(_top_keys(ranked, position, quota, "par_value"))
 
         if self.top_per_step is not None:
             keep.update(_top_keys_at_each_step(pool, points, quotas=self.top_per_step))
@@ -385,7 +390,7 @@ class CandidatePrunePolicy(BaseModel):
         return pruned
 
 
-# Default: ~200-player union of top xPts, top value, and cheapest.
+# Default: ~200-player union of top xPts, PAR value, step/window, cheapest.
 DEFAULT_PRUNE_POLICY = CandidatePrunePolicy.target_pool()
 
 
@@ -480,14 +485,25 @@ def _rank_players(
     points: pl.DataFrame,
     *,
     decay: float = 1.0,
+    min_p_60: float = DEFAULT_MIN_P_60,
 ) -> pl.DataFrame:
-    """Attach decayed Σ xPts, value ratio, and mean ``p_60`` to ``pool``."""
+    """Attach decayed Σ xPts, PAR value, and mean ``p_60`` to ``pool``.
+
+    Points-above-replacement per £ uses the cheapest *playable* option
+    per position as replacement *r* (same ``p_60 >= min_p_60`` notion as
+    playing fillers; fall back to plain cheapest when none pass):
+
+    ``par_value = (sum_xpts_i − sum_xpts_r) / (price_i − price_r)``
+
+    Players priced at or below *r* get a null ``par_value`` and are
+    skipped by the top-value cut.
+    """
     if points.is_empty():
-        return pool.with_columns(
+        ranked = pool.with_columns(
             pl.lit(0.0).alias("sum_xpts"),
-            pl.lit(0.0).alias("xpts_per_price"),
             pl.lit(None).cast(pl.Float64).alias("p_60"),
         )
+        return _attach_par_value(ranked, min_p_60=min_p_60)
     required = {"player_key", "xpts"}
     missing = required - set(points.columns)
     if missing:
@@ -517,13 +533,52 @@ def _rank_players(
     )
     if "p_60" not in ranked.columns:
         ranked = ranked.with_columns(pl.lit(None).cast(pl.Float64).alias("p_60"))
-    # price is in tenths of a million; ratio scale only ranks within a pool.
-    return ranked.with_columns(
-        (
-            pl.col("sum_xpts")
-            / pl.col("price").cast(pl.Float64()).clip(lower_bound=1.0)
-        ).alias("xpts_per_price")
-    )
+    return _attach_par_value(ranked, min_p_60=min_p_60)
+
+
+def _attach_par_value(
+    ranked: pl.DataFrame,
+    *,
+    min_p_60: float,
+) -> pl.DataFrame:
+    """Attach ``par_value`` vs the cheapest playable option per position."""
+    if ranked.is_empty():
+        return ranked.with_columns(pl.lit(None).cast(pl.Float64).alias("par_value"))
+    replacements: list[dict[str, object]] = []
+    for position in MIN_POS_POOL:
+        part = ranked.filter(pl.col("position") == position)
+        if part.is_empty():
+            continue
+        playing = part.filter(
+            pl.col("p_60").is_not_null() & (pl.col("p_60") >= min_p_60)
+        )
+        # Same playable notion as keep_cheapest fillers: prefer p_60, else
+        # fall back to the plain cheapest at the position.
+        source = playing if playing.height > 0 else part
+        replacement = source.sort(["price", "player_key"]).head(1)
+        replacements.append(
+            {
+                "position": position,
+                "price_r": int(replacement["price"][0]),
+                "xpts_r": float(replacement["sum_xpts"][0]),
+            }
+        )
+    if not replacements:
+        return ranked.with_columns(pl.lit(None).cast(pl.Float64).alias("par_value"))
+    rep = pl.DataFrame(replacements)
+    joined = ranked.join(rep, on="position", how="left")
+    return joined.with_columns(
+        pl.when(pl.col("price") > pl.col("price_r"))
+        .then(
+            (pl.col("sum_xpts") - pl.col("xpts_r"))
+            / (
+                pl.col("price").cast(pl.Float64())
+                - pl.col("price_r").cast(pl.Float64())
+            )
+        )
+        .otherwise(None)
+        .alias("par_value")
+    ).drop("price_r", "xpts_r")
 
 
 def _cheapest_keys(
@@ -554,7 +609,9 @@ def _top_keys(
     quota: int,
     score_col: str,
 ) -> set[int]:
-    part = ranked.filter(pl.col("position") == position)
+    part = ranked.filter(pl.col("position") == position).filter(
+        pl.col(score_col).is_not_null()
+    )
     if part.is_empty() or quota <= 0:
         return set()
     keys = (

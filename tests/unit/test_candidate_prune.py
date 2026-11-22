@@ -136,38 +136,55 @@ def test_default_policy_knobs_target_about_200() -> None:
 
 
 def test_prune_keeps_top_xpts_value_owned_and_cheapest() -> None:
-    """Union keeps top xPts, a cheap high-value mid, owned, and cheapest."""
+    """Union keeps top xPts, a high-PAR mid, owned, and cheapest fillers."""
     players = _players()
-    # A mid-priced MID with mid xPts but excellent value should survive
-    # top_value even if outside a tight top_xpts cut.
-    value_mid = int(
-        players.filter(pl.col("position") == "MID")
-        .sort("sum_xpts", descending=True)
-        .row(6, named=True)["player_key"]
-    )
-    owned_key = int(
-        players.filter(pl.col("position") == "MID")
-        .sort("sum_xpts")
-        .head(1)["player_key"][0]
+    mids = players.filter(pl.col("position") == "MID").sort("sum_xpts", descending=True)
+    # Outside tight top_xpts=5; mid price premium over *r* → elite PAR.
+    value_mid = int(mids.row(6, named=True)["player_key"])
+    # Two lowest-xPts MIDs: playable replacement *r* (owned) + a filler so
+    # keep_cheapest cannot be what saves value_mid.
+    replacement = int(mids.row(-1, named=True)["player_key"])
+    cheap_filler = int(mids.row(-2, named=True)["player_key"])
+    owned_key = replacement
+    cand = players.drop("sum_xpts").with_columns(
+        pl.when(pl.col("player_key") == replacement)
+        .then(40)
+        .when(pl.col("player_key") == cheap_filler)
+        .then(41)
+        .when(pl.col("player_key") == value_mid)
+        .then(55)
+        .when(pl.col("position") == "MID")
+        .then(70)
+        .otherwise(pl.col("price"))
+        .alias("price")
     )
     points = _points(players).with_columns(
         pl.when(pl.col("player_key") == owned_key)
         .then(0.0)
         .otherwise(pl.col("xpts"))
-        .alias("xpts")
-    )
-    # Drop that mid's list price so xpts/price is elite while xPts rank is mid.
-    cand = players.drop("sum_xpts").with_columns(
-        pl.when(pl.col("player_key") == value_mid)
-        .then(40)
-        .otherwise(pl.col("price"))
-        .alias("price")
+        .alias("xpts"),
+        pl.lit(0.8).alias("p_60"),
     )
     policy = _tight_policy()
     pruned = policy.apply(cand, points, owned_keys=[owned_key])
     kept = set(pruned["player_key"].to_list())
     assert owned_key in kept
     assert value_mid in kept
+    assert cheap_filler in kept  # keep_cheapest path
+    # value_mid is outside top_xpts and outside keep_cheapest (price 55).
+    xpts_and_cheap = CandidatePrunePolicy(
+        top_xpts={"GK": 3, "DEF": 6, "MID": 5, "FWD": 4},
+        top_value=None,
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=2,
+        min_p_60=0.5,
+    )
+    without_par = set(
+        xpts_and_cheap.apply(cand, points, owned_keys=[owned_key])["player_key"]
+    )
+    assert value_mid not in without_par
     mid = pruned.filter(pl.col("position") == "MID")
     assert mid.height < 20
     assert mid.height >= 5
@@ -305,6 +322,135 @@ def test_plan_squad_prune_retains_owned_after_zero_xpts() -> None:
         prune=True,
     )
     assert owned_key in plan.picks.filter(pl.col("step") == 0)["player_key"].to_list()
+
+
+def test_par_value_formula_uses_decayed_xpts_and_skips_at_or_below_r() -> None:
+    """PAR = (xPts_i − xPts_r) / (price_i − price_r); null when price ≤ r."""
+    players = pl.DataFrame(
+        {
+            "player_key": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 5 + ["FWD"] * 3),
+            "team_key": [1, 2, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3],
+            # MID 8 = replacement (cheapest playable); 9–12 above *r*.
+            "price": [45, 45, 45, 45, 45, 45, 45, 40, 50, 45, 60, 41, 45, 45, 45],
+        }
+    )
+    # Flat per-step xPts so decayed sums are easy to check.
+    # key 8 (r): 2/step; key 9: 5/step early-heavy; key 12: 4/step.
+    rows: list[dict[str, object]] = []
+    for key in players["player_key"].to_list():
+        for step in range(3):
+            if key == 8:
+                xpts = 2.0
+            elif key == 9:
+                xpts = 5.0 if step == 0 else 1.0
+            elif key == 12:
+                xpts = 4.0
+            else:
+                xpts = 3.0
+            rows.append(
+                {
+                    "player_key": int(key),
+                    "step": step,
+                    "xpts": xpts,
+                    "p_60": 0.8,
+                }
+            )
+    points = pl.DataFrame(rows)
+    decay = 0.9
+    ranked = _rank_players(players, points, decay=decay, min_p_60=0.5)
+    by_key = {
+        int(row["player_key"]): row
+        for row in ranked.select(
+            "player_key", "sum_xpts", "par_value", "price"
+        ).iter_rows(named=True)
+    }
+    xpts_r = float(by_key[8]["sum_xpts"])
+    assert xpts_r == pytest.approx(2.0 * (1.0 + decay + decay**2))
+    assert by_key[8]["par_value"] is None  # priced at *r*
+    # key 12 price 41: (sum_12 − sum_r) / (41 − 40)
+    sum_12 = float(by_key[12]["sum_xpts"])
+    assert by_key[12]["par_value"] == pytest.approx((sum_12 - xpts_r) / 1.0)
+    sum_9 = float(by_key[9]["sum_xpts"])
+    assert by_key[9]["par_value"] == pytest.approx((sum_9 - xpts_r) / 10.0)
+    assert sum_9 == pytest.approx(5.0 + 1.0 * decay + 1.0 * (decay**2))
+
+
+def test_par_replacement_is_cheapest_playable_not_bench() -> None:
+    """Replacement *r* prefers p_60 ≥ min_p_60 over a cheaper non-player."""
+    players = pl.DataFrame(
+        {
+            "player_key": list(range(1, 16)),
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 5 + ["FWD"] * 3),
+            "team_key": [1 + (i % 5) for i in range(15)],
+            # MID 8 cheapest but non-playing; 9 next-cheapest and playable = *r*.
+            "price": [45, 45, 45, 45, 45, 45, 45, 40, 42, 55, 60, 70, 45, 45, 45],
+        }
+    )
+    points = pl.DataFrame(
+        [
+            {
+                "player_key": key,
+                "step": step,
+                "xpts": 1.0 if key == 8 else (2.0 if key == 9 else 5.0),
+                "p_60": 0.1 if key == 8 else 0.9,
+            }
+            for key in players["player_key"].to_list()
+            for step in range(2)
+        ]
+    )
+    ranked = _rank_players(players, points, decay=1.0, min_p_60=0.5)
+    # *r* = key 9 (price 42). key 8 is cheaper but not playable → not *r*,
+    # so key 8 has null PAR only if priced ≤ *r*; 40 < 42 → still skipped.
+    mid = {
+        int(row["player_key"]): row["par_value"]
+        for row in ranked.filter(pl.col("position") == "MID")
+        .select("player_key", "par_value")
+        .iter_rows(named=True)
+    }
+    assert mid[8] is None
+    assert mid[9] is None  # *r* itself
+    # key 10 at 55: (10 − 4) / (55 − 42) with flat sums over 2 steps.
+    assert mid[10] == pytest.approx((10.0 - 4.0) / (55.0 - 42.0))
+
+
+def test_par_value_cut_skips_players_at_or_below_replacement() -> None:
+    """top_value never selects a player priced at or below replacement."""
+    players = pl.DataFrame(
+        {
+            "player_key": list(range(1, 18)),
+            "position": (["GK", "GK"] + ["DEF"] * 5 + ["MID"] * 7 + ["FWD"] * 3),
+            "team_key": [1 + (i % 6) for i in range(17)],
+            # MID 8 = *r* at 40; MID 9 also 40 (≤ *r*); 10–14 dearer.
+            "price": [45] * 7 + [40, 40, 50, 55, 60, 65, 70] + [45, 45, 45],
+        }
+    )
+    points = pl.DataFrame(
+        [
+            {
+                "player_key": key,
+                "step": 0,
+                "xpts": 10.0 if key >= 10 else 1.0,
+                "p_60": 0.9,
+            }
+            for key in players["player_key"].to_list()
+        ]
+    )
+    policy = CandidatePrunePolicy(
+        top_xpts=None,
+        top_value={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=0,
+        min_p_60=0.5,
+    )
+    pruned = policy.apply(players, points, decay=1.0)
+    kept_mids = set(pruned.filter(pl.col("position") == "MID")["player_key"].to_list())
+    # Five dearer MIDs fill top_value (= MID minima); price-40 pair stays out.
+    assert kept_mids == {10, 11, 12, 13, 14}
+    assert 8 not in kept_mids
+    assert 9 not in kept_mids
 
 
 def test_rank_uses_passed_decay_not_flat_sum() -> None:
