@@ -1,10 +1,10 @@
 """Realised FPL points from a decision-ledger gameweek.
 
 Applies automatic substitutions and vice-captain-on-blank captaincy, then
-deducts transfer hits once per gameweek. Bench order is deterministic
-(position then ``player_key``) because the optimiser does not store FPL
-bench slots. Selling-price rises are out of scope: decision sims already
-freeze selling at purchase price.
+deducts transfer hits once per gameweek. When picks include ``bench_slot``
+(1–4 for the ordered bench), that order is used for autosubs; otherwise
+bench order is position then ``player_key``. Selling-price rises are out of
+scope: decision sims already freeze selling at purchase price.
 """
 
 from __future__ import annotations
@@ -183,10 +183,7 @@ def _score_parts(
         (row for row in rows if row.in_xi),
         key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
     )
-    bench = sorted(
-        (row for row in rows if not row.in_xi),
-        key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
-    )
+    bench = _ordered_bench(kept, [row for row in rows if not row.in_xi])
     active_keys = {row.player_key for row in starters}
     counts = _position_counts(starters)
     used_bench: set[int] = set()
@@ -429,6 +426,28 @@ def _resolve_chip(picks: pl.DataFrame, chip: str | None) -> str | None:
         if value is not None and str(value) != "":
             return str(value)
     return None
+
+
+def _ordered_bench(kept: pl.DataFrame, bench_rows: list[_Pick]) -> list[_Pick]:
+    """Order the bench for autosubs: ``bench_slot`` when present, else pos/key."""
+    if not bench_rows:
+        return []
+    if "bench_slot" not in kept.columns:
+        return sorted(
+            bench_rows,
+            key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
+        )
+    slots = {
+        _as_int(row["player_key"]): row.get("bench_slot")
+        for row in kept.iter_rows(named=True)
+        if not bool(row["in_xi"])
+    }
+    if any(slots.get(row.player_key) is None for row in bench_rows):
+        return sorted(
+            bench_rows,
+            key=lambda row: (_POS_ORDER.get(row.position, 99), row.player_key),
+        )
+    return sorted(bench_rows, key=lambda row: _as_int(slots[row.player_key]))
 
 
 def _pick_from_row(row: dict[str, object]) -> _Pick:
