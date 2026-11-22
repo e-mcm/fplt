@@ -170,7 +170,8 @@ def plan_squad(
         warm_start_shift: Leading steps to drop from ``warm_start`` before
             seeding (1 maps prior step 1 → this step 0).
         long_horizon_policy: H≥6 MILP shrink knobs. Defaults to
-            ``DEFAULT_LONG_HORIZON_POLICY`` (relax-and-fix on for
+            ``DEFAULT_LONG_HORIZON_POLICY`` (relax-and-fix on and
+            captain/vice coarsening from step 3 when
             ``horizon >= auto_min_horizon``).
 
     Returns:
@@ -239,7 +240,10 @@ def plan_squad(
         if long_horizon_policy is None
         else long_horizon_policy
     )
-    columns = _columns(expected, state, horizon, initial)
+    coarsen_from = lh_policy.effective_coarsen_from(horizon)
+    columns = _columns(
+        expected, state, horizon, initial, coarsen_from_step=coarsen_from
+    )
     solver = _solver(columns.costs, options)
     _constrain(
         solver,
@@ -254,6 +258,7 @@ def plan_squad(
         rules,
         targets,
         chip_windows,
+        coarsen_from_step=coarsen_from,
     )
     if warm_start is not None:
         _apply_warm_start(
@@ -600,6 +605,8 @@ def _columns(
     state: SquadState,
     horizon: int,
     initial: bool,
+    *,
+    coarsen_from_step: int | None = None,
 ) -> _Columns:
     count = expected.shape[0]
     columns = _Columns(count, horizon)
@@ -609,8 +616,11 @@ def _columns(
         points = np.asarray(expected[:, step], dtype=np.float64)
         bench = _scaled(points, weight * state.bench_weight)
         played = _scaled(points, weight * (1.0 - state.bench_weight))
-        captain = _scaled(points, weight)
-        vice = _scaled(points, weight * _VICE_WEIGHT)
+        coarse = coarsen_from_step is not None and step >= coarsen_from_step
+        # Far steps drop captain/vice (and TC) objective; XI / BB remain.
+        armband = zeros if coarse else _scaled(points, weight)
+        vice = zeros if coarse else _scaled(points, weight * _VICE_WEIGHT)
+        bb_boost = _scaled(points, weight)
         # Structural lineup / transfer vars (objective lives on score_* / fh_*).
         columns.squad.append(columns.block(zeros))
         columns.xi.append(columns.block(zeros))
@@ -623,14 +633,14 @@ def _columns(
         # Points when Free Hit is off (gated by 1 - fh_t).
         columns.score_squad.append(columns.block(bench))
         columns.score_xi.append(columns.block(played))
-        columns.score_captain.append(columns.block(captain))
+        columns.score_captain.append(columns.block(armband))
         columns.score_vice.append(columns.block(vice))
-        columns.score_triple.append(columns.block(captain))
-        columns.score_bench.append(columns.block(captain))
+        columns.score_triple.append(columns.block(armband))
+        columns.score_bench.append(columns.block(bb_boost))
         # Temporary Free Hit lineup (gated by fh_t).
         columns.fh_squad.append(columns.block(bench))
         columns.fh_xi.append(columns.block(played))
-        columns.fh_captain.append(columns.block(captain))
+        columns.fh_captain.append(columns.block(armband))
         columns.fh_vice.append(columns.block(vice))
         columns.wc.append(columns.flag())
         columns.fh.append(columns.flag())
@@ -665,10 +675,13 @@ def _constrain(
     rules: ChipRules | None,
     gameweeks: list[int] | None,
     chip_windows: ChipUseWindows | None,
+    *,
+    coarsen_from_step: int | None = None,
 ) -> None:
     positions = pool["position"].to_list()
     clubs = pool["team_key"].to_list()
     for step in range(horizon):
+        coarse = coarsen_from_step is not None and step >= coarsen_from_step
         _lineup(
             solver,
             columns.squad[step],
@@ -677,6 +690,7 @@ def _constrain(
             columns.vice[step],
             positions,
             clubs,
+            armbands=not coarse,
         )
     _transition(solver, columns, owned, horizon)
     _cash(solver, columns, price, sell_price, state.bank, horizon)
@@ -695,6 +709,7 @@ def _constrain(
         positions,
         clubs,
         chip_windows,
+        coarsen_from_step=coarsen_from_step,
     )
 
 
@@ -706,16 +721,25 @@ def _lineup(
     vice: np.ndarray,
     positions: list[str],
     clubs: list[int],
+    *,
+    armbands: bool = True,
 ) -> None:
     _sum(solver, squad, _SQUAD_SIZE, _SQUAD_SIZE)
     _sum(solver, xi, _XI_SIZE, _XI_SIZE)
-    _sum(solver, captain, 1, 1)
-    _sum(solver, vice, 1, 1)
+    if armbands:
+        _sum(solver, captain, 1, 1)
+        _sum(solver, vice, 1, 1)
+    else:
+        # Far-step coarsening: pin captain/vice off.
+        for index in range(squad.shape[0]):
+            _equal(solver, [int(captain[index])], [1.0], 0.0)
+            _equal(solver, [int(vice[index])], [1.0], 0.0)
     for index in range(squad.shape[0]):
         _pair(solver, int(xi[index]), int(squad[index]))
-        _pair(solver, int(captain[index]), int(xi[index]))
-        _pair(solver, int(vice[index]), int(xi[index]))
-        _at_most(solver, [int(captain[index]), int(vice[index])], 1)
+        if armbands:
+            _pair(solver, int(captain[index]), int(xi[index]))
+            _pair(solver, int(vice[index]), int(xi[index]))
+            _at_most(solver, [int(captain[index]), int(vice[index])], 1)
     for position, quota in _SQUAD.items():
         members = [i for i, name in enumerate(positions) if name == position]
         _sum(solver, [int(squad[i]) for i in members], quota, quota)
@@ -744,10 +768,13 @@ def _chips(
     positions: list[str],
     clubs: list[int],
     chip_windows: ChipUseWindows | None,
+    *,
+    coarsen_from_step: int | None = None,
 ) -> None:
     """Wire chip binaries, Free Hit temporary squad, and BB/TC scoring gates."""
     priced = set(_priced(horizon, initial))
     for step in range(horizon):
+        coarse = coarsen_from_step is not None and step >= coarsen_from_step
         for index in range(columns.count):
             extra = int(columns.triple_extra[step][index])
             bench = int(columns.bench_score[step][index])
@@ -757,9 +784,12 @@ def _chips(
             _at_most(solver, [bench, int(columns.xi[step][index])], 1)
             _pair(solver, bench, columns.bb[step])
             _gate_score(solver, columns, step, index)
-            _free_hit_player(solver, columns, step, index)
-        _free_hit_lineup(solver, columns, step, positions, clubs)
+            _free_hit_player(solver, columns, step, index, armbands=not coarse)
+        _free_hit_lineup(solver, columns, step, positions, clubs, armbands=not coarse)
         _free_hit_budget(solver, columns, step, price, sell_price, bank)
+        if coarse:
+            # TC needs a captain; coarsened steps pin captains off.
+            _equal(solver, [columns.tc[step]], [1.0], 0.0)
         if step not in priced:
             _equal(solver, [columns.wc[step]], [1.0], 0.0)
             _equal(solver, [columns.fh[step]], [1.0], 0.0)
@@ -864,7 +894,12 @@ def _gate_score(
 
 
 def _free_hit_player(
-    solver: highspy.Highs, columns: _Columns, step: int, index: int
+    solver: highspy.Highs,
+    columns: _Columns,
+    step: int,
+    index: int,
+    *,
+    armbands: bool = True,
 ) -> None:
     """Temporary Free Hit player vars; freeze permanent transfers that week."""
     fh = columns.fh[step]
@@ -874,9 +909,13 @@ def _free_hit_player(
     vice = int(columns.fh_vice[step][index])
     _pair(solver, squad, fh)
     _pair(solver, xi, squad)
-    _pair(solver, captain, xi)
-    _pair(solver, vice, xi)
-    _at_most(solver, [captain, vice], 1)
+    if armbands:
+        _pair(solver, captain, xi)
+        _pair(solver, vice, xi)
+        _at_most(solver, [captain, vice], 1)
+    else:
+        _equal(solver, [captain], [1.0], 0.0)
+        _equal(solver, [vice], [1.0], 0.0)
     _at_most(solver, [int(columns.buy[step][index]), fh], 1)
     _at_most(solver, [int(columns.sell[step][index]), fh], 1)
 
@@ -887,6 +926,8 @@ def _free_hit_lineup(
     step: int,
     positions: list[str],
     clubs: list[int],
+    *,
+    armbands: bool = True,
 ) -> None:
     """Enforce a valid temporary squad/XI when Free Hit is on."""
     fh = columns.fh[step]
@@ -906,8 +947,12 @@ def _free_hit_lineup(
         [*([1.0] * columns.count), -float(_XI_SIZE)],
         0.0,
     )
-    _equal(solver, [*captain.tolist(), fh], [*([1.0] * columns.count), -1.0], 0.0)
-    _equal(solver, [*vice.tolist(), fh], [*([1.0] * columns.count), -1.0], 0.0)
+    if armbands:
+        _equal(solver, [*captain.tolist(), fh], [*([1.0] * columns.count), -1.0], 0.0)
+        _equal(solver, [*vice.tolist(), fh], [*([1.0] * columns.count), -1.0], 0.0)
+    else:
+        _sum(solver, captain, 0, 0)
+        _sum(solver, vice, 0, 0)
     for position, quota in _SQUAD.items():
         members = [i for i, name in enumerate(positions) if name == position]
         _equal(
