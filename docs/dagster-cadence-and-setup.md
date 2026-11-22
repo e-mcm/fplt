@@ -15,40 +15,43 @@ Two layers: **remote capture** (GitHub Actions → `snapshots` branch) and **loc
 | `.github/workflows/snapshot.yml` | Every **15 min** (`*/15 * * * *`) + manual | FPL API JSON → `snapshots` branch under `data/raw/fpl_api/...` | Poll often; `scripts/snapshot.py` **throttles writes**: ≤15m in the last 3h before a deadline, ≤1h in the 3–6h window, else when the last capture is >12h old. After `data_checked` also captures `event/{gw}/live` |
 | `.github/workflows/api_football.yml` | Every **6h** (`15 */6 * * *`) + manual | API-Football `/injuries` JSON → `data/raw/api_football/...` | Free tier ~100 req/day; fetch also skips if &lt;4h old. Needs repo secret `API_FOOTBALL_KEY` (or `APISPORTS_KEY` / `FPLT_API_FOOTBALL_KEY`); skips quietly if unset |
 | `.github/workflows/understat.yml` | `30 22 * * 0,1,6` (Sat/Sun/Mon 22:30 UTC) + manual | Understat match JSON → same `snapshots` branch | Match xG settles after weekend kickoffs; not needed continuously |
+| `.github/workflows/football_data.yml` | **1st of month 06:00 UTC** + manual | E0 CSV → `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` on `snapshots` | Growing season file; write-once per day so monthly refreshes do not overwrite |
 
-**Not on GHA:** football-data E0 odds (`make fetch-football-data`), vaastav bootstrap (`make bootstrap-vaastav`), Touchline predicted XI (opt-in `FPLT_TOUCHLINE_LINEUPS_ENABLED`), FPL Review CSV drop.
+**Not on GHA:** vaastav bootstrap (`make bootstrap-vaastav`), Touchline predicted XI (opt-in `FPLT_TOUCHLINE_LINEUPS_ENABLED`), FPL Review CSV drop. Local `make fetch-football-data` still works for one-off captures.
 
 ### Dagster sensors (need daemon; poll locally)
 
 | Sensor | Min interval | Job / assets | Fires when | Why |
 |---|---|---|---|---|
-| `snapshots_sensor` | **10 min** | `refresh_staged` (`raw_snapshots` → `staged_ingest` → staged tables) | New files fetched from `snapshots` into `$FPLT_DATA_DIR/raw` | Pull remote captures soon after GHA publishes; skip if nothing new |
-| `catchup_sensor` | **30 min** | `catch_up` → `recommendation_report` | A checked gameweek has no plan yet for `PRODUCTION_MODELS` @ horizon 3 | Self-heals missed deadlines / downtime; walk-forward fit+plan per missing GW |
-| `pre_deadline_sensor` | **15 min** | `pre_deadline` → `pre_deadline_plan` + `benchmark_archive` | Next deadline is **within 3 hours** and plan and/or `benchmark_projections` still missing | Near-deadline plan + archive `ep_next`/OpenFPL |
+| `snapshots_sensor` | **10 min** | `refresh_staged` | New non-odds files fetched from `snapshots` into `$FPLT_DATA_DIR/raw` | Pull remote captures soon after GHA publishes; football-data arrivals are copied but **not** restaged here |
+| `understat_sensor` | **10 min** | `understat_ingest` | New Understat raw under `raw/understat` | Stage after weekend GHA (or local fetch) |
+| `api_football_sensor` | **10 min** | `api_football_ingest` | New injury raw under `raw/api_football` (lineups excluded) | Stage after 6h GHA captures |
+| `match_odds_sensor` | **30 min** | `match_odds_ingest` | New write-once `E0.csv` under `raw/football_data` | Monthly GHA or `make fetch-football-data` |
+| `catchup_sensor` | **30 min** | `catch_up` → `recommendation_report` | A checked GW has no plan yet for live production models @ ops horizon | Self-heals missed deadlines / downtime |
+| `pre_deadline_sensor` | **15 min** | `pre_deadline` → plan + `benchmark_archive` | Next deadline **within 3 hours** and plan and/or `benchmark_projections` still missing | Near-deadline plan + archive `ep_next`/OpenFPL |
 | `notify_run_failure` | on failure | n/a | Any run fails and `FPLT_NTFY_URL` is set | Ops alert only |
 
-Production live list today: `PRODUCTION_MODELS = ["dc_layered_v2"]`, horizon `DEFAULT_PLAN_HORIZON = 3` (both in `fplt.automation.cycle` / plan defaults — not env yet).
+Live models + planner horizon: `configs/ops/production.yaml` via `fplt.automation.production.load_production_ops` (defaults today: `dc_layered_v2`, horizon **3**). Override without a PR: `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` (env wins). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML for imports; prefer `load_production_ops()` so overrides apply. CLI / `make plan` still use `DEFAULT_PLAN_HORIZON` in `fplt.optimise.plan`.
 
 ### Dagster jobs without sensors (manual UI / CLI)
 
-| Job / asset | Purpose | Gap |
+| Job / asset | Purpose | Notes |
 |---|---|---|
 | `refresh_staged` | Full FPL raw → staged restage | Also triggered by `snapshots_sensor` |
-| `understat_ingest` | Stage Understat from `$FPLT_DATA_DIR/raw/understat` + id maps | GHA captures; **no sensor** after pull |
-| `api_football_ingest` | Stage injuries from `raw/api_football` + id maps | GHA captures; **no sensor** |
-| `match_odds_ingest` | Stage football-data odds | **No GHA + no sensor** |
 | `predicted_lineups_ingest` | Stage Touchline / AF lineups | Opt-in capture; **no sensor** |
 | `catch_up` / `pre_deadline` | Plan missing checked GWs / imminent deadline | Also triggered by sensors |
 | `eval_board` / `lineage_job` | Multi-model ledger / factory lineage | On-demand only |
+
+Understat, API-Football injuries, and match odds each have a dedicated sensor (table above). Materialize those jobs manually only when debugging or when the daemon was down long enough that you want an immediate restage.
 
 ### Training & planning (what “feeds + training” means)
 
 | Cadence | What happens | Where |
 |---|---|---|
-| **Continuous (daemon up)** | Pull snapshots → restage FPL (+ vaastav dirs if present) | `snapshots_sensor` |
-| **Post-GW (checked)** | `run_backtest` fit/score for production model(s) → `run_plan` (live squad if `FPLT_ENTRY_ID` set) → ntfy/SMTP recommendation | `catchup_sensor` → `catch_up` |
+| **Continuous (daemon up)** | Pull snapshots → restage FPL (+ vaastav dirs if present); side-ingest Understat / AF / odds when raw lands | `snapshots_sensor` + side-ingest sensors |
+| **Post-GW (checked)** | Fit/score production model(s) → plan (live squad if `FPLT_ENTRY_ID` set) → ntfy/SMTP recommendation | `catchup_sensor` → `catch_up` |
 | **Pre-deadline (≤3h)** | Archive benchmarks; plan if missing; notify | `pre_deadline_sensor` |
-| **Weekly-ish (manual)** | Understat after weekend; injuries every 6h on GHA but **stage by hand** | GHA + manual jobs |
+| **Monthly** | football-data E0 refresh on GHA → `match_odds_sensor` stages | GHA + sensor |
 | **On-demand** | `make eval-board`, `fplt compare`, bakeoffs, `fplt predict` / `fplt plan` | CLI — **no scheduled multi-model train** |
 
 ### One-shot / CLI (not sensors)
@@ -56,15 +59,16 @@ Production live list today: `PRODUCTION_MODELS = ["dc_layered_v2"]`, horizon `DE
 | Command | When |
 |---|---|
 | `make bootstrap-vaastav` | Once (or rare): historical seasons under `$FPLT_DATA_DIR` |
-| `make fetch-football-data SEASON=…` then materialize `match_odds_ingest` | Per season / when CSV updates |
+| `make fetch-football-data SEASON=…` | Local write-once E0 when you cannot wait for monthly GHA |
+| `make ops-catchup` | Drain backlog after travel / daemon downtime (`fplt ops-catchup`) |
 | `uv run fplt backtest` / `make eval-board` | On demand for train/eval |
 | `uv run fplt predict` / `fplt plan` | On demand or until sensors cover your entry |
 
 ### Gaps to know
 
-1. Understat / API-Football GHA write to the `snapshots` branch; `snapshots_sensor` fetches them into `raw/`, but **staging** those feeds is separate (`understat_ingest`, `api_football_ingest`) with **no sensor**. After weekend / AF captures, materialize those jobs in the UI (or add sensors later).
-2. Odds and predicted lineups are fully manual (or opt-in) today.
-3. Laptop sleep through the 3h pre-deadline window misses that tick until wake; catch-up still heals **checked** GWs after the fact.
+1. Predicted lineups remain opt-in / manual (`predicted_lineups_ingest` has no sensor).
+2. Laptop sleep through the 3h pre-deadline window misses that tick until wake; catch-up still heals **checked** GWs after the fact. Use `make ops-catchup` for a one-shot drain without the UI.
+3. Keep the live model list short — never silently multi-arm production.
 
 ### Daily / weekly mental model
 
@@ -72,10 +76,11 @@ Production live list today: `PRODUCTION_MODELS = ["dc_layered_v2"]`, horizon `DE
 GHA (cloud)                          Always-on host (laptop/VPS)
 ─────────────────                    ──────────────────────────
 15m FPL snapshot ──┐                 dagster-daemon
-6h  API-Football ──┼→ snapshots ──→  snapshots_sensor (10m) → refresh_staged
-weekend Understat ─┘   branch        catchup_sensor (30m)   → fit+plan missing GWs
+6h  API-Football ──┤                 snapshots_sensor (10m) → refresh_staged
+weekend Understat ─┼→ snapshots ──→  understat / api_football sensors → ingest
+monthly E0 odds ───┘   branch        match_odds_sensor (30m) → match_odds_ingest
+                                     catchup_sensor (30m)   → fit+plan missing GWs
                                      pre_deadline_sensor    → archive+plan ≤3h
-                                     [manual] understat / api_football / odds ingest
 ```
 
 ---
@@ -128,7 +133,7 @@ Set at least: `FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN` (via `uv run fplt auth from-
 
 ### Minimum mental model
 
-1. GHA captures → `snapshots` branch (no local process): 15m FPL (throttled writes), 6h API-Football (if secret set), weekend Understat.  
-2. Always-on **daemon** polls sensors → refresh staged / catch-up / pre-deadline.  
+1. GHA captures → `snapshots` branch (no local process): 15m FPL (throttled writes), 6h API-Football (if secret set), weekend Understat, monthly football-data E0.  
+2. Always-on **daemon** polls sensors → refresh staged, side-ingest Understat / AF / odds, catch-up, pre-deadline.  
 3. Optional **webserver** for UI.  
-4. Manually run `understat_ingest` / `api_football_ingest` (or add sensors later) after those files land in `raw/`.
+4. Live models / horizon: `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`).

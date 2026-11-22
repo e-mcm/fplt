@@ -3,12 +3,14 @@
 This file is the standing brief for any AI coding agent (Claude Code, Codex, etc.) working on `fplt`. Read it fully before making changes. `CLAUDE.md` points here.
  
 ## 1. Read the design first
- 
+
 `docs/design.md` is the authoritative architecture. Before implementing anything:
- 
+
 1. Read the sections of `docs/design.md` relevant to the task (the issue should name them).
 2. If the task conflicts with the design, **stop and say so** in the PR/issue rather than silently diverging.
 3. If you make a design-relevant change (new contract, schema, asset, config shape), update `docs/design.md` in the same PR.
+
+Doc map and per-directory context: [`docs/README.md`](docs/README.md); short READMEs under `configs/`, `scripts/`, `src/fplt/`, `tests/`, `deploy/`, `external/`, `data/`.
 ## 2. Hard rules
  
 These are non-negotiable. A PR that breaks one of these is wrong even if tests pass.

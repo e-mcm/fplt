@@ -4,6 +4,8 @@ Always-on templates for `dagster-webserver` and `dagster-daemon`. Secrets for th
 live squad and recommendation alerts are injected from the environment; they are
 never committed.
 
+**Agents:** cadence and sensor map → [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md); architecture §8 → [`docs/design.md`](../docs/design.md). Live models → `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`). Do not put secrets in plists or compose committed files.
+
 ## What to set
 
 | Variable | Purpose | Required? |
