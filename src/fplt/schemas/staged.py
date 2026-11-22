@@ -192,6 +192,33 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
         coerce = True
 
 
+class PlayerInjuriesSchema(pa.DataFrameModel):
+    """One API-Football injury / suspension row at a capture time.
+
+    ``player_key`` / ``team_key`` are null when the API id is unmapped.
+    ``fixture_id`` is the FPL fixture id when known (Package B leaves it
+    null); ``api_fixture_id`` is the upstream fixture id. ``category`` is
+    ``out`` or ``doubtful`` for the minutes gate overlay.
+    """
+
+    season: str
+    player_key: int = pa.Field(nullable=True)
+    api_player_id: int
+    team_key: int = pa.Field(nullable=True)
+    api_team_id: int
+    api_fixture_id: int
+    fixture_id: int = pa.Field(nullable=True)
+    injury_type: str
+    reason: str
+    category: str
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 class MatchOddsSchema(pa.DataFrameModel):
     """Bookmaker 1X2 (+ O/U 2.5) for one EPL match.
 
@@ -235,6 +262,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "player_fixture_stats": PlayerFixtureStatsSchema,
     "understat_player_matches": UnderstatPlayerMatchSchema,
     "understat_team_matches": UnderstatTeamMatchSchema,
+    "player_injuries": PlayerInjuriesSchema,
     "match_odds": MatchOddsSchema,
 }
 
@@ -252,6 +280,12 @@ TABLE_KEYS: dict[str, list[str]] = {
         "available_at",
     ],
     "understat_team_matches": ["season", "match_id", "team_key", "available_at"],
+    "player_injuries": [
+        "season",
+        "api_player_id",
+        "api_fixture_id",
+        "available_at",
+    ],
     "match_odds": [
         "season",
         "team_h_key",
@@ -379,6 +413,20 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "ppda_allowed_def": pl.Float64(),
         "xg": pl.Float64(),
         "xga": pl.Float64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "player_injuries": {
+        "season": pl.Utf8(),
+        "player_key": pl.Int64(),
+        "api_player_id": pl.Int64(),
+        "team_key": pl.Int64(),
+        "api_team_id": pl.Int64(),
+        "api_fixture_id": pl.Int64(),
+        "fixture_id": pl.Int64(),
+        "injury_type": pl.Utf8(),
+        "reason": pl.Utf8(),
+        "category": pl.Utf8(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

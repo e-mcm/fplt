@@ -94,6 +94,45 @@ def test_null_chance_with_news_is_not_treated_as_available(tmp_path: Path) -> No
     assert dist.pmf[0, ninety] == pytest.approx(0.5)
 
 
+def test_injury_overlay_soft_downgrades_when_fpl_still_available(
+    tmp_path: Path,
+) -> None:
+    """API injury + FPL status=a/null chance → doubtful prior when overlay on."""
+    store = _store(tmp_path, [(1, "MID", 1, 90, 1)], {1: ("a", None)})
+    _write_injury(store, player_key=1, category="doubtful")
+    off = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    ninety = int(np.flatnonzero(MINUTE_BINS == 90)[0])
+    assert off.pmf[0, ninety] == pytest.approx(1.0)
+    on = EmpiricalMinutes(_spec(use_injury_overlay=True))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    on.fit(view)
+    dist = on.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    assert dist.pmf[0, 0] == pytest.approx(0.5)
+    assert dist.pmf[0, ninety] == pytest.approx(0.5)
+
+
+def test_injury_overlay_zeros_suspension_without_raising_fpl_zero(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path, [(1, "MID", 1, 90, 1)], {1: ("a", 100.0)})
+    _write_injury(store, player_key=1, category="out")
+    model = EmpiricalMinutes(_spec(use_injury_overlay=True))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    model.fit(view)
+    dist = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    assert dist.pmf[0, 0] == pytest.approx(1.0)
+    # FPL already at 0% stays at 0 even if overlay somehow softer.
+    store_zero = _store(tmp_path / "zero", [(1, "MID", 1, 90, 1)], {1: ("a", 0.0)})
+    _write_injury(store_zero, player_key=1, category="doubtful")
+    zero_model = EmpiricalMinutes(_spec(use_injury_overlay=True))
+    zero_view = PITData(store_zero).view(GWKey(_SEASON, 8))
+    zero_model.fit(zero_view)
+    zero_dist = zero_model.predict(
+        zero_view, pl.DataFrame({"player_key": [1], "fixture_id": [8]})
+    )
+    assert zero_dist.pmf[0, 0] == pytest.approx(1.0)
+
+
 def test_a_substitute_snaps_positive_minutes_off_zero(tmp_path: Path) -> None:
     store = _store(tmp_path, [(1, "MID", 1, 1, 0)], {1: ("a", 100.0)})
     dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
@@ -369,6 +408,32 @@ def _store(
 
 def _kick(gw: int) -> datetime:
     return datetime(2024, 8, 10, 15, tzinfo=UTC) + timedelta(days=7 * (gw - 1))
+
+
+def _write_injury(store: DataStore, *, player_key: int, category: str) -> None:
+    store.write(
+        "player_injuries",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [_SEASON],
+                    "player_key": [player_key],
+                    "api_player_id": [9000 + player_key],
+                    "team_key": [1],
+                    "api_team_id": [34],
+                    "api_fixture_id": [1],
+                    "fixture_id": pl.Series("fixture_id", [None], dtype=pl.Int64),
+                    "injury_type": [
+                        "Injury" if category == "doubtful" else "Suspension"
+                    ],
+                    "reason": ["Knock" if category == "doubtful" else "Suspended"],
+                    "category": [category],
+                    "available_at": [_START],
+                    "source": ["api_football"],
+                }
+            )
+        ),
+    )
 
 
 def _utc(frame: pl.DataFrame) -> pl.DataFrame:

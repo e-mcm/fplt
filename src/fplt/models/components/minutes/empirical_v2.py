@@ -20,9 +20,9 @@ from fplt.models.components.minutes.common import (
     SUB_FALLBACK,
     WIDTH,
     availability,
-    chance,
+    availability_gate,
     counts,
-    gate_for,
+    injuries,
     normalise,
     positions,
     shrunk,
@@ -45,6 +45,8 @@ class EmpiricalMinutesV2:
     fit on appearances visible at the deadline. Conditional minute shapes
     still come from shrunk start/sub histograms. Availability
     (status / chance_of_playing) gates both rates after the logits.
+    Optional ``use_injury_overlay`` also applies staged ``player_injuries``
+    (default off — production stays FPL-tags-only until eval).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -56,6 +58,7 @@ class EmpiricalMinutesV2:
         target = spec.params.get("target_starters", 11.0)
         strength = spec.params.get("soft_squad_strength", 0.5)
         l2 = spec.params.get("l2", 1.0)
+        overlay = spec.params.get("use_injury_overlay", False)
         parsed = _parse_windows(windows)
         shrinkage_value = _as_float(shrinkage)
         doubtful_value = _as_float(doubtful)
@@ -76,6 +79,8 @@ class EmpiricalMinutesV2:
             raise ValueError(f"l2 must be non-negative, got {l2_value}")
         if not isinstance(soft, bool):
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
+        if not isinstance(overlay, bool):
+            raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
         self._windows = tuple(sorted(set(parsed)))
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
@@ -83,6 +88,7 @@ class EmpiricalMinutesV2:
         self._target_starters = target_value
         self._soft_strength = strength_value
         self._l2 = l2_value
+        self._use_injury_overlay = overlay
         self._fitted = False
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}
@@ -191,6 +197,7 @@ class EmpiricalMinutesV2:
             return MinutesDist(keys, MINUTE_BINS, np.zeros((0, WIDTH)))
         context = _predict_context(view, keys)
         chance_map = availability(view)
+        injury_map = injuries(view) if self._use_injury_overlay else {}
         p_start = np.zeros(keys.height, dtype=np.float64)
         p_sub = np.zeros(keys.height, dtype=np.float64)
         p_long = np.zeros(keys.height, dtype=np.float64)
@@ -200,10 +207,11 @@ class EmpiricalMinutesV2:
             player = int(row["player_key"])
             position = self._position.get(player, "UNK")
             tags = chance_map.get(player)
-            gate = (
-                chance(None, None, self._doubtful)
-                if tags is None
-                else gate_for(tags, self._doubtful)
+            gate = availability_gate(
+                tags,
+                self._doubtful,
+                injury=injury_map.get(player),
+                use_injury_overlay=self._use_injury_overlay,
             )
             features = self._player_features.get(player, _empty_player_features())
             start_x = _start_vector(features, row)

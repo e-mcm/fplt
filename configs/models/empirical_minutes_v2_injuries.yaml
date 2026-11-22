@@ -1,0 +1,7 @@
+# A/B fork: empirical_minutes_v2 with API-Football injury overlay on.
+# Does not change PRODUCTION_MODELS / dc_layered_v2.
+name: empirical_minutes_v2_injuries
+extends: empirical_minutes_v2
+overrides:
+  params:
+    use_injury_overlay: true

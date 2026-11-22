@@ -1,0 +1,64 @@
+name: api_football
+
+on:
+  schedule:
+    # Every 6h UTC — free tier ~100 req/day; fetch also skips if <4h old.
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Capture API-Football injuries
+        env:
+          # Prefer repo secret API_FOOTBALL_KEY (also accepts APISPORTS_KEY).
+          # Local / Settings name is FPLT_API_FOOTBALL_KEY.
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
+          FPLT_API_FOOTBALL_KEY: ${{ secrets.FPLT_API_FOOTBALL_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FPLT_API_FOOTBALL_KEY:-}${API_FOOTBALL_KEY:-}${APISPORTS_KEY:-}" ]; then
+            echo "No API-Football key in secrets (API_FOOTBALL_KEY / APISPORTS_KEY / FPLT_API_FOOTBALL_KEY); skipping."
+            exit 0
+          fi
+          python scripts/fetch_api_football.py --out "$RUNNER_TEMP/raw"
+
+      - name: Publish to the snapshots branch
+        run: |
+          set -euo pipefail
+          if [ -z "$(find "$RUNNER_TEMP/raw" -type f -name '*.json.gz' 2>/dev/null | head -n 1)" ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin snapshots || true
+          if git rev-parse --verify origin/snapshots >/dev/null 2>&1; then
+            git checkout --track origin/snapshots
+          else
+            git checkout --orphan snapshots
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p data
+          cp -a "$RUNNER_TEMP/raw/." data/raw/
+          git add data/raw
+          if git diff --cached --quiet; then
+            echo "api_football snapshots already present"
+            exit 0
+          fi
+          git commit -m "Capture API-Football injuries JSON"
+          git push origin HEAD:snapshots

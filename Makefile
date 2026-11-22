@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan explain apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -10,6 +10,14 @@ bootstrap-vaastav:
 fetch-understat:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-understat SEASON=2024-25"; exit 1; fi
 	uv run python scripts/fetch_understat.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
+
+# ── API-Football injuries (API-Sports) ────────────────────────────────────────
+# Usage: make fetch-api-football SEASON=2024-25
+# Needs FPLT_API_FOOTBALL_KEY (or API_FOOTBALL_KEY / APISPORTS_KEY) in the env.
+# Writes write-once gzipped JSON under $$FPLT_DATA_DIR/raw/api_football/...
+fetch-api-football:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-api-football SEASON=2024-25"; exit 1; fi
+	uv run python scripts/fetch_api_football.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
 
 # ── football-data.co.uk E0 odds (closing + scheduled prematch) ────────────────
 # Usage: make fetch-football-data SEASON=2024-25

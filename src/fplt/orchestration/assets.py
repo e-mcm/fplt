@@ -24,6 +24,15 @@ from fplt.automation.cycle import (
     reports,
 )
 from fplt.automation.notify import notify_recommendation
+from fplt.data.api_football import (
+    default_id_maps_path as api_football_id_maps_path,
+)
+from fplt.data.api_football import (
+    ingest_api_football,
+)
+from fplt.data.api_football import (
+    load_id_maps as load_api_football_id_maps,
+)
 from fplt.data.benchmark_projections import archive_if_missing, benchmarks_path
 from fplt.data.football_data import (
     default_team_map_path,
@@ -174,6 +183,31 @@ def understat_ingest() -> int:
 understat_ingest_job = dg.define_asset_job(
     name="understat_ingest",
     selection=dg.AssetSelection.assets(understat_ingest),
+)
+
+
+@dg.asset(name="api_football_ingest")
+def api_football_ingest() -> int:
+    """Stage API-Football injuries from write-once raw JSON.
+
+    Reads ``$FPLT_DATA_DIR/raw/api_football/...`` and the repo id maps at
+    ``configs/api_football/id_maps.yaml``. Unmapped players keep a null
+    ``player_key``. Does not touch FPL snapshot ingest or
+    ``PRODUCTION_MODELS``.
+    """
+    settings = get_settings()
+    player_keys, team_keys = load_api_football_id_maps(api_football_id_maps_path())
+    return ingest_api_football(
+        DataStore(settings.data_dir),
+        settings.data_dir / "raw",
+        player_keys,
+        team_keys,
+    )
+
+
+api_football_ingest_job = dg.define_asset_job(
+    name="api_football_ingest",
+    selection=dg.AssetSelection.assets(api_football_ingest),
 )
 
 
