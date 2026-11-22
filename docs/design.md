@@ -321,7 +321,7 @@ Truncate scorelines at `G` = 32 and renormalise; assert mass lost < 1e-6. Attack
 - `windows`: named closed gameweek intervals with `carries_over` (first-half chips that expire at a deadline set `carries_over: false`)
 - `grants`: one entry per chip use (`wildcard` / `freehit` / `bboost` / `3xc`), each tied to a window
 
-From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`); the optimiser MILP does not yet consume chip variables (Wave C).
+From 2025-26 there are two of each chip: a first window through GW19 that does not carry, and a second from GW20–38. Earlier seasons keep two wildcards (one per half) and one each of Free Hit, Bench Boost, and Triple Captain for the season. `fplt.scoring.ChipRules.for_season(season)` loads and validates them. Squad remaining/played counts live in `configs/squad_state.yaml` (`SquadState.chips`). When `plan_squad` is given `season` and `gameweeks`, the MILP uses Bench Boost and Triple Captain under those rules (one chip per GW, half-season caps from windows + remaining inventory). Wildcard and Free Hit binaries are present for the one-chip constraint but stay fixed at zero until Wave C2.
 
 ### 5.6 Simulation engine (composition)
 
@@ -531,11 +531,11 @@ A checked gameweek is waiting until `dc_layered_v2` has a plan parquet for that 
 
 ### 10.2 Formulation (multi-period ILP)
 
-Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out. Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer. Objective: Σ_t decay^t × (XI points + captain bonus + small bench weight) − hit costs. Solve with HiGHS (`highspy`).
+Decision variables per GW t in horizon and player p: in squad, in XI, captain, vice, transferred in/out, plus chip binaries `wc_t` / `fh_t` / `bb_t` / `tc_t` (and TC extra-captain / BB bench-score player vars). Constraints: budget with selling prices, 2 GK / 5 DEF / 5 MID / 3 FWD, ≤ 3 per club, valid XI formation (1 GK, ≥3 DEF, ≥2 MID, ≥1 FWD), FT accounting with banking cap and -4 per extra transfer, one chip per GW, half-season BB/TC caps from `ChipRules` + `SquadState.chips`. Objective: Σ_t decay^t × (XI points + captain bonus + TC extra + BB bench + small bench weight) − hit costs. Solve with HiGHS (`highspy`). Wildcard / Free Hit effects are not modelled yet (`wc_t` = `fh_t` = 0).
 
 Library entry point: `fplt.optimise.optimize_transfers(candidates, expected_points, state, gameweeks=...)`. Predictions are opaque (`ExpectedPointsSchema`: `player_key`, `gw`, `xpts`); the engine does not call predictors or the data store. `fplt plan` is the CLI wrapper that loads candidates and ledger rows, then calls the same solver.
 
-v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can use `p_haul` / samples as a tiebreak.
+v1: single-GW XI + captain. v2: multi-period transfers. v3: chips (BB/TC in MILP; WC/FH next). Captaincy can use `p_haul` / samples as a tiebreak.
 
 ### 10.3 Output
 
@@ -543,7 +543,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips. Captaincy can
 
 `fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 
-Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, owned selling prices, and `chips` (`remaining` counts plus `played` `{name, gw}` history). An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players; chip inventory stays in YAML. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget. Chip variables are not in the MILP yet (v3); season allotments are in `configs/chips/<season>.yaml`.
+Squad state lives in `configs/squad_state.yaml`: bank, free transfers, the banking cap, hit cost, decay, a bench weight below 0.01, owned selling prices, and `chips` (`remaining` counts plus `played` `{name, gw}` history). An empty squad is an initial draft. `resolve_squad_state` (and `fplt plan --entry-json`) replace owned players and bank from an entry picks payload, mapping element ids through staged players; chip inventory stays in YAML. `fplt plan --rebuild` clears ownership after that resolve and sets `bank` to today's available funds (`bank + Σ selling_price`), so the optimiser drafts fifteen from scratch under the current budget (wildcard-style; no transfer hits). Needs selling prices from authenticated `my-team` or `--entry-json`. The decision backtest ignores that squad and starts from an optimal draft with a 1000 budget; it still omits `season`/`gameweeks` on `plan_squad`, so chips stay off there until the three-arm board (Wave C3). Season allotments are in `configs/chips/<season>.yaml`.
 
 ---
 

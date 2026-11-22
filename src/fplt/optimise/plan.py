@@ -5,6 +5,11 @@ so a free transfer is kept when it is worth more next week. Hits are four
 points (or ``SquadState.hit_cost``) for each transfer beyond the free ones,
 and they are not discounted. Points are. A blank ``owned`` squad is an
 initial draft and those buys are not transfers.
+
+Pass ``season`` and ``gameweeks`` to enable Bench Boost and Triple Captain
+from ``ChipRules`` and ``SquadState.chips``. Wildcard and Free Hit variables
+exist for the one-chip-per-gameweek constraint but stay fixed at zero until
+Wave C2.
 """
 
 from __future__ import annotations
@@ -30,13 +35,14 @@ from fplt.optimise.squad import (
     _row,  # pyright: ignore[reportPrivateUsage]
     _sum,  # pyright: ignore[reportPrivateUsage]
 )
-from fplt.optimise.state import OwnedPlayer, SquadState
+from fplt.optimise.state import ChipInventory, OwnedPlayer, SquadState
 from fplt.schemas.plan import (
     CandidateSchema,
     HorizonPickSchema,
     HorizonPointsSchema,
     PlanSchema,
 )
+from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
 
 _Schema = (
     type[CandidateSchema]
@@ -56,12 +62,17 @@ DEFAULT_PLAN_HORIZON = 3
 
 @dataclass(frozen=True)
 class GameweekPlan:
-    """Solved horizon. ``points`` is decayed XI plus captain, minus hits."""
+    """Solved horizon. ``points`` is decayed XI plus captain, minus hits.
+
+    ``chips`` is one entry per horizon step: ``\"bboost\"``, ``\"3xc\"``, or
+    ``None``. Wildcard and Free Hit are not chosen yet.
+    """
 
     picks: pl.DataFrame
     hits: tuple[float, ...]
     free_transfers: tuple[int, ...]
     points: float
+    chips: tuple[str | None, ...] = ()
 
 
 def plan_squad(
@@ -71,6 +82,8 @@ def plan_squad(
     *,
     initial: bool,
     horizon: int,
+    season: str | None = None,
+    gameweeks: list[int] | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -80,9 +93,14 @@ def plan_squad(
             Rows for ``player_key`` values absent from ``players`` are
             ignored (common for mid-season additions that appear in the
             prediction universe before they have a PIT price).
-        state: Bank, free transfers, and owned selling prices.
+        state: Bank, free transfers, owned selling prices, and chip
+            inventory.
         initial: The owned list is empty and the first week is a draft.
         horizon: Number of gameweeks, including the one to act on.
+        season: Season label for ``ChipRules.for_season``. Required with
+            ``gameweeks`` to allow Bench Boost / Triple Captain.
+        gameweeks: Target gameweek for each horizon step, in order. Must
+            match ``horizon`` when set.
 
     Returns:
         Squad members and sales at every step.
@@ -92,6 +110,8 @@ def plan_squad(
     """
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
+    targets = _chip_gameweeks(season, gameweeks, horizon)
+    rules = ChipRules.for_season(season) if season is not None else None
     pool = _frame(players.sort("player_key"), CandidateSchema)
     scored = _frame(points, HorizonPointsSchema)
     owned = _owned(state, initial)
@@ -120,6 +140,8 @@ def plan_squad(
         state,
         initial,
         horizon,
+        rules,
+        targets,
     )
     solver.setMaximize()
     solver.run()
@@ -394,6 +416,12 @@ class _Columns:
         self.vice: list[np.ndarray] = []
         self.buy: list[np.ndarray] = []
         self.sell: list[np.ndarray] = []
+        self.triple_extra: list[np.ndarray] = []
+        self.bench_score: list[np.ndarray] = []
+        self.wc: list[int] = []
+        self.fh: list[int] = []
+        self.bb: list[int] = []
+        self.tc: list[int] = []
         self.moves: dict[int, list[int]] = {}
         self.free: dict[int, dict[int, int]] = {}
         self.link: dict[int, dict[tuple[int, int], int]] = {}
@@ -430,9 +458,17 @@ def _columns(
         columns.xi.append(columns.block(_scaled(points, weight * played)))
         columns.captain.append(columns.block(_scaled(points, weight)))
         columns.vice.append(columns.block(_scaled(points, weight * _VICE_WEIGHT)))
+        # Triple Captain: third copy of captain points when tc_t is on.
+        columns.triple_extra.append(columns.block(_scaled(points, weight)))
+        # Bench Boost: full bench points when bb_t is on.
+        columns.bench_score.append(columns.block(_scaled(points, weight)))
         zeros = np.zeros(count, dtype=np.float64)
         columns.buy.append(columns.block(zeros))
         columns.sell.append(columns.block(zeros))
+        columns.wc.append(columns.flag())
+        columns.fh.append(columns.flag())
+        columns.bb.append(columns.flag())
+        columns.tc.append(columns.flag())
     for step in _priced(horizon, initial):
         columns.moves[step] = [columns.flag() for _ in range(_MAX_MOVES + 1)]
         columns.free[step] = {
@@ -456,6 +492,8 @@ def _constrain(
     state: SquadState,
     initial: bool,
     horizon: int,
+    rules: ChipRules | None,
+    gameweeks: list[int] | None,
 ) -> None:
     positions = pool["position"].to_list()
     clubs = pool["team_key"].to_list()
@@ -472,6 +510,7 @@ def _constrain(
     _transition(solver, columns, owned, horizon)
     _cash(solver, columns, price, sell_price, state.bank, horizon)
     _transfers(solver, columns, state, initial, horizon)
+    _chips(solver, columns, state.chips, rules, gameweeks, horizon)
 
 
 def _lineup(
@@ -504,6 +543,121 @@ def _lineup(
     for club in sorted(set(clubs)):
         chosen = [int(squad[i]) for i, key in enumerate(clubs) if key == club]
         _sum(solver, chosen, 0, _MAX_PER_CLUB)
+
+
+def _chips(
+    solver: highspy.Highs,
+    columns: _Columns,
+    inventory: ChipInventory,
+    rules: ChipRules | None,
+    gameweeks: list[int] | None,
+    horizon: int,
+) -> None:
+    """Add Bench Boost / Triple Captain vars; keep Wildcard and Free Hit at 0."""
+    for step in range(horizon):
+        # Wave C2 owns Wildcard / Free Hit effects; keep the binaries for the
+        # one-chip-per-gameweek inequality.
+        _equal(solver, [columns.wc[step]], [1.0], 0.0)
+        _equal(solver, [columns.fh[step]], [1.0], 0.0)
+        for index in range(columns.count):
+            extra = int(columns.triple_extra[step][index])
+            bench = int(columns.bench_score[step][index])
+            _pair(solver, extra, int(columns.captain[step][index]))
+            _pair(solver, extra, columns.tc[step])
+            _pair(solver, bench, int(columns.squad[step][index]))
+            _at_most(solver, [bench, int(columns.xi[step][index])], 1)
+            _pair(solver, bench, columns.bb[step])
+        if rules is None or rules.one_chip_per_gameweek:
+            _at_most(
+                solver,
+                [
+                    columns.wc[step],
+                    columns.fh[step],
+                    columns.bb[step],
+                    columns.tc[step],
+                ],
+                1,
+            )
+    if rules is None or gameweeks is None:
+        for step in range(horizon):
+            _equal(solver, [columns.bb[step]], [1.0], 0.0)
+            _equal(solver, [columns.tc[step]], [1.0], 0.0)
+        return
+    _at_most(solver, columns.bb, float(inventory.remaining["bboost"]))
+    _at_most(solver, columns.tc, float(inventory.remaining["3xc"]))
+    for window in rules.windows:
+        steps = [
+            step
+            for step, gameweek in enumerate(gameweeks)
+            if window.start_event <= gameweek <= window.stop_event
+        ]
+        if not steps:
+            continue
+        _at_most(
+            solver,
+            [columns.bb[step] for step in steps],
+            float(_window_remaining(rules, inventory, "bboost", window)),
+        )
+        _at_most(
+            solver,
+            [columns.tc[step] for step in steps],
+            float(_window_remaining(rules, inventory, "3xc", window)),
+        )
+    for step, gameweek in enumerate(gameweeks):
+        if not _chip_playable(rules, inventory, "bboost", gameweek):
+            _equal(solver, [columns.bb[step]], [1.0], 0.0)
+        if not _chip_playable(rules, inventory, "3xc", gameweek):
+            _equal(solver, [columns.tc[step]], [1.0], 0.0)
+
+
+def _chip_gameweeks(
+    season: str | None,
+    gameweeks: list[int] | None,
+    horizon: int,
+) -> list[int] | None:
+    if (season is None) != (gameweeks is None):
+        raise ValueError("season and gameweeks must be provided together")
+    if gameweeks is None:
+        return None
+    if len(gameweeks) != horizon:
+        raise ValueError("gameweeks must have one entry per horizon step")
+    for gameweek in gameweeks:
+        if gameweek < 1 or gameweek > 38:
+            raise ValueError(f"gameweek must be in 1..38, got {gameweek}")
+    return gameweeks
+
+
+def _window_remaining(
+    rules: ChipRules,
+    inventory: ChipInventory,
+    chip: ChipName,
+    window: ChipWindow,
+) -> int:
+    granted = sum(
+        1 for grant in rules.grants if grant.name == chip and grant.window == window.id
+    )
+    played = sum(
+        1
+        for play in inventory.played
+        if play.name == chip and window.start_event <= play.gw <= window.stop_event
+    )
+    return max(0, granted - played)
+
+
+def _chip_playable(
+    rules: ChipRules,
+    inventory: ChipInventory,
+    chip: ChipName,
+    gameweek: int,
+) -> bool:
+    if inventory.remaining.get(chip, 0) <= 0:
+        return False
+    for window in rules.windows:
+        if not (window.start_event <= gameweek <= window.stop_event):
+            continue
+        if _window_remaining(rules, inventory, chip, window) > 0:
+            return True
+    return False
 
 
 def _transition(
@@ -655,6 +809,7 @@ def _read(
     rows: list[dict[str, object]] = []
     hits: list[float] = []
     available: list[int] = []
+    chips: list[str | None] = []
     total = 0.0
     free = state.free_transfers
     keys = pool["player_key"].to_list()
@@ -670,13 +825,26 @@ def _read(
             free = _next_free(free, moves, state.ft_bank_cap)
         playing = _on(values, columns.xi[step])
         armband = _on(values, columns.captain[step])
+        triple = _on(values, columns.triple_extra[step])
+        boosted = _on(values, columns.bench_score[step])
         weight = state.decay**step
         total += weight * float(expected[playing, step].sum())
         total += weight * float(expected[armband, step].sum())
+        total += weight * float(expected[triple, step].sum())
+        total += weight * float(expected[boosted, step].sum())
+        chips.append(_chip_played(values, columns, step))
         _append_step(rows, pool, expected, values, columns, keys, step)
     total -= sum(hits)
     picks = _frame(pl.DataFrame(rows), HorizonPickSchema)
-    return GameweekPlan(picks, tuple(hits), tuple(available), total)
+    return GameweekPlan(picks, tuple(hits), tuple(available), total, tuple(chips))
+
+
+def _chip_played(values: np.ndarray, columns: _Columns, step: int) -> str | None:
+    if values[columns.bb[step]] > 0.5:
+        return "bboost"
+    if values[columns.tc[step]] > 0.5:
+        return "3xc"
+    return None
 
 
 def _append_step(
