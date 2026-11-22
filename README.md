@@ -5,6 +5,7 @@ Fantasy Premier League points prediction and team selection.
 `fplt` predicts points per player per gameweek with composable, versioned models, benchmarks them against each other and external models (e.g. OpenFPL) on point-in-time walk-forward backtests, and turns predictions into squad, captaincy and transfer recommendations. Dagster runs the whole cycle automatically after each gameweek and before each deadline.
 
 - Architecture: [`docs/design.md`](docs/design.md)
+- Docs index (cadence, eval pipeline, archives, …): [`docs/README.md`](docs/README.md)
 - OpenFPL benchmark setup: [`docs/openfpl.md`](docs/openfpl.md)
 - Rules for coding agents and contributors: [`AGENTS.md`](AGENTS.md)
 
@@ -93,15 +94,18 @@ Run `fplt auth set` (or set `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` in `~/.config
 ## Repo layout
 
 ```
-configs/         model specs, per-season scoring rules, squad state overrides
-docs/            design document
-scripts/         standalone snapshot capture (runs on GitHub Actions)
+configs/         model specs, scoring, chips, ops, evals (+ README)
+docs/            design + focused companions (see docs/README.md)
+scripts/         standalone capture / bootstrap (GHA + make targets)
 src/fplt/        library: data, schemas, features, scoring, models, backtest, optimise, orchestration
 apps/            Streamlit leaderboard
 external/        isolated environments for external models (OpenFPL)
-deploy/          launchd service templates, docker-compose
+deploy/          launchd service templates, docker-compose (see deploy/README.md)
 tests/           unit, contracts (incl. leakage), integration, recorded fixtures
+data/            default $FPLT_DATA_DIR layout notes (contents gitignored)
 ```
+
+Most of those directories have a short README (or `docs/` index) aimed at humans and coding agents: purpose, entrypoints, invariants, and where not to wander. `apps/` is a single Streamlit entry (`make leaderboard`); `notebooks/` is empty.
 
 ## Data
 

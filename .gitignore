@@ -13,9 +13,10 @@ build/
 mlruns/
 output/
 
-# Ignore all data except the setup script
+# Ignore all data except tracked helpers / docs
 data/*
 !data/data_setup.py
+!data/README.md
 !data/.gitkeep
 
 # Legacy experiment tracking leftovers
