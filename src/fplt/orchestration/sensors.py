@@ -19,6 +19,7 @@ from fplt.automation.cycle import (
 from fplt.automation.notify import notify
 from fplt.data.snapshots import SnapshotFetchError, fetch_snapshots
 from fplt.data.store import DataStore
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.orchestration.assets import catch_up_job, pre_deadline_job, refresh_staged
 from fplt.settings import get_settings
 
@@ -52,7 +53,9 @@ def snapshots_sensor() -> dg.RunRequest | dg.SkipReason:
 def catchup_sensor() -> dg.RunRequest | dg.SkipReason:
     """Request a catch-up when a checked gameweek has not been planned."""
     data = get_settings().data_dir
-    waiting = pending_checked(DataStore(data), data, PRODUCTION_MODELS)
+    waiting = pending_checked(
+        DataStore(data), data, PRODUCTION_MODELS, horizon=DEFAULT_PLAN_HORIZON
+    )
     if not waiting:
         return dg.SkipReason("no checked gameweek is waiting")
     first = waiting[0]
@@ -68,7 +71,9 @@ def pre_deadline_sensor() -> dg.RunRequest | dg.SkipReason:
     """Request a refresh when a deadline is inside three hours and unplanned."""
     data = get_settings().data_dir
     key = due_gameweek(DataStore(data), datetime.now(UTC))
-    if key is None or plans_exist(data, PRODUCTION_MODELS, key):
+    if key is None or plans_exist(
+        data, PRODUCTION_MODELS, key, horizon=DEFAULT_PLAN_HORIZON
+    ):
         return dg.SkipReason("no deadline inside three hours")
     return dg.RunRequest(run_key=f"deadline-{key.season}-{key.gw}")
 

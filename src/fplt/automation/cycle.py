@@ -24,16 +24,19 @@ from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import resolve_squad_state, run_plan
-from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
 from fplt.types import GWKey
 
-PRODUCTION_MODELS = ["rolling_mean_v1"]
+PRODUCTION_MODELS = ["dc_layered_v2"]
 _WINDOW = timedelta(hours=3)
 logger = logging.getLogger(__name__)
 
 
 def pending_checked(
-    store: DataStore, root: Path, models: list[str], horizon: int = 1
+    store: DataStore,
+    root: Path,
+    models: list[str],
+    horizon: int = DEFAULT_PLAN_HORIZON,
 ) -> list[GWKey]:
     """Checked gameweeks that are still missing a plan, earliest first.
 
@@ -84,15 +87,15 @@ def due_gameweek(store: DataStore, now: datetime) -> GWKey | None:
 def catch_up(
     data_dir: Path,
     models: list[str] | None = None,
-    horizon: int = 1,
+    horizon: int = DEFAULT_PLAN_HORIZON,
 ) -> list[GWKey]:
     """Fit, score, and plan every checked gameweek that has no plan yet.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``ledger/`` and
             ``plans/``.
-        models: YAML spec names. Defaults to ``rolling_mean_v1``.
-        horizon: Weeks each plan looks ahead.
+        models: YAML spec names. Defaults to ``PRODUCTION_MODELS``.
+        horizon: Weeks each plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
 
     Returns:
         The gameweeks processed by this call, in play order.
@@ -116,15 +119,15 @@ def pre_deadline(
     data_dir: Path,
     now: datetime,
     models: list[str] | None = None,
-    horizon: int = 1,
+    horizon: int = DEFAULT_PLAN_HORIZON,
 ) -> GWKey | None:
     """Plan the deadline inside the next three hours, when it has no plan yet.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives the plan.
         now: Clock reading, timezone-aware.
-        models: YAML spec names. Defaults to ``rolling_mean_v1``.
-        horizon: Weeks the plan looks ahead.
+        models: YAML spec names. Defaults to ``PRODUCTION_MODELS``.
+        horizon: Weeks the plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
 
     Returns:
         The deadline that was planned, or ``None`` when nothing was due.
@@ -174,7 +177,12 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
             continue
 
 
-def plans_exist(root: Path, models: list[str], key: GWKey, horizon: int = 1) -> bool:
+def plans_exist(
+    root: Path,
+    models: list[str],
+    key: GWKey,
+    horizon: int = DEFAULT_PLAN_HORIZON,
+) -> bool:
     """Whether every model already has a plan for ``key`` at ``horizon``.
 
     Args:
@@ -182,6 +190,7 @@ def plans_exist(root: Path, models: list[str], key: GWKey, horizon: int = 1) -> 
         models: YAML spec names.
         key: Deadline to look up.
         horizon: Weeks the plan covers. Weeks past 38 are not part of the file.
+            Defaults to ``DEFAULT_PLAN_HORIZON``.
 
     Returns:
         True when each model's parquet is already on disk.
