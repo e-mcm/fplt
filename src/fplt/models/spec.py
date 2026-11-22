@@ -168,7 +168,68 @@ def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
         resolved = _resolve_extends(raw, raw_by_name, path.name)
         spec = ModelSpec.model_validate(resolved)
         loaded[spec.name] = spec
-    return loaded
+    return _expand_forecast_combine_members(loaded)
+
+
+def _expand_forecast_combine_members(
+    loaded: dict[str, ModelSpec],
+) -> dict[str, ModelSpec]:
+    """Fold ``params.members`` name lists into ``components`` for blends.
+
+    Ensemble YAMLs list member ModelSpec names under ``params.members``. After
+    every file is validated, those names are resolved into ``components`` so the
+    ensemble ``model_id`` includes the full member specs. Explicit ``components``
+    on a ``forecast_combine`` spec are left alone when ``members`` is absent.
+
+    Args:
+        loaded: Specs keyed by name.
+
+    Returns:
+        The same mapping with forecast_combine arms expanded.
+
+    Raises:
+        ValueError: Unknown member, self-reference, nested forecast_combine, or
+            empty ``members``.
+    """
+    expanded: dict[str, ModelSpec] = {}
+    for name, spec in loaded.items():
+        if spec.kind != "forecast_combine":
+            expanded[name] = spec
+            continue
+        members_raw = spec.params.get("members")
+        if members_raw is None:
+            if not spec.components:
+                raise ValueError(
+                    f"{name}: forecast_combine needs params.members or components"
+                )
+            expanded[name] = spec
+            continue
+        if not isinstance(members_raw, list) or not members_raw:
+            raise ValueError(f"{name}: params.members must be a non-empty list")
+        components: dict[str, ModelSpec] = {}
+        for member_obj in cast(list[object], members_raw):
+            if not isinstance(member_obj, str) or not member_obj:
+                raise ValueError(f"{name}: members entries must be non-empty strings")
+            member_name = member_obj
+            if member_name == name:
+                raise ValueError(f"{name}: cannot list itself in params.members")
+            try:
+                member = loaded[member_name]
+            except KeyError:
+                raise ValueError(
+                    f"{name}: params.members names unknown ModelSpec {member_name!r}"
+                ) from None
+            if member.kind == "forecast_combine":
+                raise ValueError(
+                    f"{name}: member {member_name!r} cannot be forecast_combine"
+                )
+            components[member_name] = member
+        # Drop members from params so identity is carried by components only.
+        params = {key: value for key, value in spec.params.items() if key != "members"}
+        expanded[name] = spec.model_copy(
+            update={"components": components, "params": params}
+        )
+    return expanded
 
 
 def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:

@@ -29,6 +29,7 @@ from pandera.errors import SchemaError
 import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from fplt.backtest.predict_live import resolve_as_of
 from fplt.backtest.walk_forward import allowed_seasons, horizon_for

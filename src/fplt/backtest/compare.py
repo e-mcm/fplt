@@ -28,6 +28,7 @@ import polars as pl
 import fplt.models.baselines  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
+import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from fplt.backtest.eval_set import (
     CORE_MODELS,

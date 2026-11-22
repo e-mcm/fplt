@@ -1738,6 +1738,7 @@ def _ensure_model_registry() -> None:
     import fplt.models.components.score.odds_poisson  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
