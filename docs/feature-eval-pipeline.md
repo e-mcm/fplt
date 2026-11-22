@@ -56,7 +56,7 @@ Code defaults, absent key included:
 | `use_defensive_contribution` | `true` | on |
 | `market_prior_strength` | `0` | off |
 
-`PRODUCTION_MODELS` in `fplt.automation.cycle` is the live-plan list (`rolling_mean_v1` today). It is not the arm check. The arm check reads the layered spec under test.
+`PRODUCTION_MODELS` in `fplt.automation.cycle` is the live-plan list (`dc_layered_v2` today, horizon `DEFAULT_PLAN_HORIZON` = 3). It is not the arm check. The arm check reads the layered spec under test.
 
 Other hard rules, unchanged:
 
@@ -219,7 +219,7 @@ These are the P1 targets. `gates.coverage` and `change.orientation` will not val
 
 ### 5.1 Odds — two different studies
 
-**Recorded arm (landed, do not treat as the next experiment).** `market_prior_strength` blends Dixon–Coles λ toward `odds_to_lambda` at predict time. Proportional devig. `MatchScoreModel` reads `PITView.latest("match_odds")` (`available_at <= deadline`). Football-data rows are `odds_kind=closing_proxy` with `available_at=kickoff`, so `test_odds_after_deadline_are_invisible` makes the prior match vanilla. `odds_poisson_v1` is a different read (`use_closing_proxy: true`). It is also the wrong stand-in for the book: on 2024-25 GW1–38 closing lines, raw proportional de-vig of 1X2 has RPS **0.196** and log-loss **0.967**; `dixon_coles_v2` is **0.334** / **1.235**; `odds_poisson_v1` is **0.363** / **1.286** (project-store `docs/dc-odds-prior-eval.md`). The Poisson map throws the bookie’s 1X2 calibration away. Strict-PIT join on the gameweek being predicted was **0/199**.
+**Recorded arm (landed, do not treat as the next experiment).** `market_prior_strength` blends Dixon–Coles λ toward `odds_to_lambda` at predict time. Proportional devig. `MatchScoreModel` reads `PITView.latest("match_odds")` (`available_at <= deadline`). Football-data rows are `odds_kind=closing_proxy` with `available_at=kickoff`, so `test_odds_after_deadline_are_invisible` makes the prior match vanilla. `odds_poisson_v1` is a different read (`use_closing_proxy: true`). It is also the wrong stand-in for the book: on 2024-25 GW1–38 closing lines, raw proportional de-vig of 1X2 has RPS **0.366** and log-loss **0.967**; `dixon_coles_v2` is **0.334** / **1.235**; `odds_poisson_v1` is **0.363** / **1.286** (project-store `docs/dc-odds-prior-eval.md`). The Poisson map throws the bookie’s 1X2 calibration away. Strict-PIT join on the gameweek being predicted was **0/199**.
 
 This spec still fails preflight on coverage until a model PR opts the score component into a labelled proxy. Do not lower `min_coverage`. Do not teach the runner a second cutoff.
 
@@ -782,7 +782,7 @@ BAKEOFF  ≥3 ModelSpecs, shared window; SPA/MCS + MAE rank. Not a keep.
 | Dose on one window is not a promotion | SPA and the model confidence set describe the set. `keep` is a fresh window. |
 | Scoreline reports include the book | Raw de-vig 1X2, plus HAC and a stationary bootstrap on gameweeks. `odds_poisson` is a model column. Not an auto-keep. |
 | `audit.json`, not MLflow | Git SHA, lockfile hash, data hashes, resolved spec, folds, wall-clock, peak RSS. `--allow-dirty` forces `inconclusive`. |
-| Next odds model is the history rating prior | W7: raw closing 1X2 RPS 0.196, DC 0.334, odds-Poisson 0.363. The landed λ blend only sees the fixtures passed to `predict`. |
+| Next odds model is the history rating prior | W7: raw closing 1X2 RPS 0.366, DC 0.334, odds-Poisson 0.363. The landed λ blend only sees the fixtures passed to `predict`. |
 | Equivalence is a second verdict | Identical predictions adopt a lockfile or a refactor. An interval entirely on the bad side pins the old one. Improvement levers do not use this `keep`. |
 | `extends`, one parent | The off-forks are full copies today. Deep-merge, then pydantic. Hash-check the migration. |
 | Paired seeds do not change `seed_for` | The production stream includes `model_id`. The eval stream does not. |
@@ -811,7 +811,7 @@ Taken:
 
 Left:
 
-- `odds_poisson_v1` as the market column. The book is raw de-vigged 1X2 (RPS 0.196 against 0.363 for odds-Poisson, 2024-25 GW1–38).
+- `odds_poisson_v1` as the market column. The book is raw de-vigged 1X2 (RPS 0.366 against 0.363 for odds-Poisson, 2024-25 GW1–38).
 - OmegaConf and `joblib.Memory`.
 - CRN, `statsmodels`, and `arch` inside the P1+P2 PR.
 - Replacing `seed_for`. Today it hashes `(model_id, season, gw, fixture_id)` and one generator serves every player in that fixture, in `player_key` order.
