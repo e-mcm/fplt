@@ -3,7 +3,11 @@
 Independence across teammates remains the default draw model. When
 ``soft_squad`` is on, expected starters per team-fixture are nudged toward
 ``target_starters`` before the PMF is built — a soft stand-in for a hard
-eleven-starter constraint.
+eleven-starter constraint. Optional ``use_injury_overlay`` applies staged
+``player_injuries``. Optional ``predicted_xi`` mixes P(start) toward staged
+``predicted_lineups`` near kickoff. Production ``dc_layered_v2`` keeps both
+off — enable via ``empirical_minutes_v2_injuries`` /
+``dc_layered_predicted_xi_v1``.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from fplt.models.components.minutes.common import (
     positions,
     shrunk,
 )
+from fplt.models.components.minutes.predicted_xi import apply_predicted_xi
 from fplt.models.distributions import MINUTE_BINS, MinutesDist
 from fplt.models.spec import ModelSpec, register_component
 from fplt.types import Position
@@ -47,6 +52,8 @@ class EmpiricalMinutesV2:
     (status / chance_of_playing) gates both rates after the logits.
     Optional ``use_injury_overlay`` also applies staged ``player_injuries``
     (default off — production stays FPL-tags-only until eval).
+    When ``predicted_xi`` is true, near-deadline predicted lineup roles
+    mix into P(start) before soft-squad projection.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -59,12 +66,17 @@ class EmpiricalMinutesV2:
         strength = spec.params.get("soft_squad_strength", 0.5)
         l2 = spec.params.get("l2", 1.0)
         overlay = spec.params.get("use_injury_overlay", False)
+        predicted_xi = spec.params.get("predicted_xi", False)
+        xi_window = spec.params.get("predicted_xi_window_hours", 72.0)
+        xi_strength = spec.params.get("predicted_xi_strength", 0.75)
         parsed = _parse_windows(windows)
         shrinkage_value = _as_float(shrinkage)
         doubtful_value = _as_float(doubtful)
         target_value = _as_float(target)
         strength_value = _as_float(strength)
         l2_value = _as_float(l2)
+        xi_window_value = _as_float(xi_window)
+        xi_strength_value = _as_float(xi_strength)
         if shrinkage_value < 0:
             raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
         if not 0.0 <= doubtful_value <= 1.0:
@@ -81,6 +93,16 @@ class EmpiricalMinutesV2:
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
         if not isinstance(overlay, bool):
             raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
+        if not isinstance(predicted_xi, bool):
+            raise ValueError(f"predicted_xi must be a bool, got {predicted_xi!r}")
+        if xi_window_value < 0:
+            raise ValueError(
+                f"predicted_xi_window_hours must be non-negative, got {xi_window_value}"
+            )
+        if not 0.0 <= xi_strength_value <= 1.0:
+            raise ValueError(
+                f"predicted_xi_strength must be in [0, 1], got {xi_strength_value}"
+            )
         self._windows = tuple(sorted(set(parsed)))
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
@@ -89,6 +111,9 @@ class EmpiricalMinutesV2:
         self._soft_strength = strength_value
         self._l2 = l2_value
         self._use_injury_overlay = overlay
+        self._predicted_xi = predicted_xi
+        self._xi_window_hours = xi_window_value
+        self._xi_strength = xi_strength_value
         self._fitted = False
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}
@@ -239,6 +264,15 @@ class EmpiricalMinutesV2:
                 self._position_sub.get(position),
                 SUB_FALLBACK,
                 self._shrinkage,
+            )
+        if self._predicted_xi:
+            p_start, p_sub = apply_predicted_xi(
+                view,
+                context,
+                p_start,
+                p_sub,
+                window_hours=self._xi_window_hours,
+                strength=self._xi_strength,
             )
         if self._soft_squad:
             p_start = _soft_project_starters(

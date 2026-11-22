@@ -39,6 +39,11 @@ from fplt.data.football_data import (
     ingest_football_data,
     load_team_names,
 )
+from fplt.data.overall_rank import season_label
+from fplt.data.predicted_lineups import (
+    capture_touchline_lineups,
+    ingest_predicted_lineups,
+)
 from fplt.data.raw import ingest_raw
 from fplt.data.store import DataStore
 from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
@@ -234,4 +239,33 @@ def match_odds_ingest() -> int:
 match_odds_ingest_job = dg.define_asset_job(
     name="match_odds_ingest",
     selection=dg.AssetSelection.assets(match_odds_ingest),
+)
+
+
+@dg.asset(name="predicted_lineups_ingest")
+def predicted_lineups_ingest() -> int:
+    """Stage predicted XI rows from write-once Touchline / API-Football raw.
+
+    Live Touchline fetch runs only when ``FPLT_TOUCHLINE_LINEUPS_ENABLED`` is
+    true (experimental third-party JSON; attribution + rate limit required).
+    Staging always consumes existing ``raw/touchline/...`` snapshots. Does not
+    change ``PRODUCTION_MODELS``.
+    """
+    settings = get_settings()
+    store = DataStore(settings.data_dir)
+    raw_root = settings.data_dir / "raw"
+    if settings.touchline_lineups_enabled:
+        season = season_label(datetime.now(tz=UTC))
+        capture_touchline_lineups(
+            raw_root,
+            season,
+            enabled=True,
+            min_interval_seconds=settings.touchline_lineups_min_interval_seconds,
+        )
+    return ingest_predicted_lineups(store, raw_root)
+
+
+predicted_lineups_ingest_job = dg.define_asset_job(
+    name="predicted_lineups_ingest",
+    selection=dg.AssetSelection.assets(predicted_lineups_ingest),
 )

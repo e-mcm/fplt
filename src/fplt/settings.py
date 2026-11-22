@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     fpl_api_token: str | None = None
     fpl_session: str | None = None
     api_football_key: str | None = None
+    # Experimental Touchline Wire predicted-XI fetch (off by default).
+    touchline_lineups_enabled: bool = False
+    touchline_lineups_min_interval_seconds: int = 300
     ntfy_url: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587

@@ -8,5 +8,9 @@ params:
   target_starters: 11.0
   soft_squad_strength: 0.5
   l2: 1.0
+  # Near-deadline predicted XI override (off here; on in dc_layered_predicted_xi_v1).
+  predicted_xi: false
+  predicted_xi_window_hours: 72.0
+  predicted_xi_strength: 0.75
 refit: every_gw
 seed: 0
