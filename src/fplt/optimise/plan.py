@@ -164,17 +164,26 @@ def plan_squad(
         raise ValueError("chip_windows requires season and gameweeks")
     rules = ChipRules.for_season(rules_season) if rules_season is not None else None
     pool = _frame(players.sort("player_key"), CandidateSchema)
-    scored = _frame(points, HorizonPointsSchema)
+    # HorizonPointsSchema is strict; optional p_60 is only for prune fillers.
+    scored = _frame(points.select("player_key", "step", "xpts"), HorizonPointsSchema)
     owned = _owned(state, initial)
     policy = DEFAULT_PRUNE_POLICY if prune_policy is None else prune_policy
     do_prune = policy.should_auto_apply(horizon) if prune is None else prune
     raw_n = pool.height
     if do_prune:
+        prune_points = scored
+        if "p_60" in points.columns:
+            prune_points = scored.join(
+                points.select("player_key", "step", "p_60"),
+                on=["player_key", "step"],
+                how="left",
+            )
         pool = prune_candidates(
             pool,
-            scored,
+            prune_points,
             owned_keys=[player.player_key for player in owned],
             policy=policy,
+            decay=state.decay,
         )
         _log.info(
             "candidate prune horizon=%s raw=%s kept=%s (%.0f%%)",
