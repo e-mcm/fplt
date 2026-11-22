@@ -14,6 +14,11 @@ from fplt.optimise.attainable import (
     summarise_attainable,
 )
 from fplt.optimise.engine import TransferPlan, horizon_points, optimize_transfers
+from fplt.optimise.lineup import (
+    LineupSelection,
+    select_lineup_expected,
+    select_lineup_scenarios,
+)
 from fplt.optimise.plan import GameweekPlan, plan_squad
 from fplt.optimise.season_optimiser import (
     FplOptimizationToolsAdapter,
@@ -38,6 +43,7 @@ __all__ = [
     "FplOptimizationToolsAdapter",
     "GameweekPlan",
     "IdentityReferenceOptimiser",
+    "LineupSelection",
     "OursSeasonOptimiser",
     "SquadSelection",
     "SquadState",
@@ -56,6 +62,8 @@ __all__ = [
     "plan_squad",
     "rebuild_squad_state",
     "run_hindsight_oracle",
+    "select_lineup_expected",
+    "select_lineup_scenarios",
     "select_squad",
     "simulate_hindsight_oracle",
     "summarise_attainable",
