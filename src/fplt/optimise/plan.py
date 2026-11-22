@@ -44,6 +44,7 @@ from fplt.optimise.highs_options import (
     HighsSolveOptions,
     log_solve_status,
 )
+from fplt.optimise.long_horizon import shift_horizon_picks
 from fplt.optimise.prices import fpl_selling_price
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
@@ -124,6 +125,8 @@ def plan_squad(
     prune: bool | None = None,
     prune_policy: CandidatePrunePolicy | None = None,
     highs_options: HighsSolveOptions | None = None,
+    warm_start: GameweekPlan | None = None,
+    warm_start_shift: int = 1,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -154,8 +157,13 @@ def plan_squad(
         prune_policy: Keep rules (top xPts, top value, cheapest per
             position). Defaults to ``DEFAULT_PRUNE_POLICY`` (~200 players).
         highs_options: HiGHS time limit / gap / parallel knobs. Defaults
-            to ``DEFAULT_HIGHS_OPTIONS`` (600s, accept time-limit
-            incumbents).
+            to ``DEFAULT_HIGHS_OPTIONS`` (600s, gap 1e-3, accept
+            time-limit incumbents).
+        warm_start: Optional prior ``GameweekPlan`` used as a HiGHS MIP
+            start. Pass last week's plan (default ``warm_start_shift=1``)
+            or an already-shifted plan with ``warm_start_shift=0``.
+        warm_start_shift: Leading steps to drop from ``warm_start`` before
+            seeding (1 maps prior step 1 → this step 0).
 
     Returns:
         Squad members and sales at every step.
@@ -234,6 +242,14 @@ def plan_squad(
         targets,
         chip_windows,
     )
+    if warm_start is not None:
+        _apply_warm_start(
+            solver,
+            columns,
+            keys,
+            warm_start,
+            shift=warm_start_shift,
+        )
     solver.setMaximize()
     started = time.perf_counter()
     solver.run()
@@ -1365,6 +1381,118 @@ def _expected(
             continue
         expected[index[key], step] += float(row["xpts"])
     return expected
+
+
+def shift_gameweek_plan(plan: GameweekPlan, *, steps: int = 1) -> GameweekPlan:
+    """Shift a prior ``GameweekPlan`` forward for use as a MIP warm start.
+
+    Args:
+        plan: Solved plan from the previous deadline (or an earlier solve).
+        steps: Leading steps to drop (1 maps last week's step 1 → this week's 0).
+
+    Returns:
+        A plan whose picks/hits/free_transfers/chips start at the new step 0.
+        ``points`` and solve metadata are cleared (not meaningful after shift).
+
+    Raises:
+        ValueError: ``steps`` is negative.
+    """
+    if steps < 0:
+        raise ValueError(f"steps must be >= 0, got {steps}")
+    picks = shift_horizon_picks(plan.picks, steps=steps)
+    hits = plan.hits[steps:] if steps < len(plan.hits) else ()
+    free = plan.free_transfers[steps:] if steps < len(plan.free_transfers) else ()
+    chips = plan.chips[steps:] if steps < len(plan.chips) else ()
+    return replace(
+        plan,
+        picks=picks,
+        hits=tuple(hits),
+        free_transfers=tuple(free),
+        chips=tuple(chips),
+        points=0.0,
+        solve_elapsed=None,
+        mip_status=None,
+        pool_size=None,
+    )
+
+
+def _apply_warm_start(
+    solver: highspy.Highs,
+    columns: _Columns,
+    keys: list[int],
+    prior: GameweekPlan,
+    *,
+    shift: int,
+) -> None:
+    """Seed HiGHS with lineup / transfer / chip vars from a prior plan."""
+    if shift < 0:
+        raise ValueError(f"warm_start_shift must be >= 0, got {shift}")
+    picks = shift_horizon_picks(prior.picks, steps=shift)
+    if picks.is_empty():
+        return
+    index = {int(key): pos for pos, key in enumerate(keys)}
+    chips = prior.chips[shift:] if shift < len(prior.chips) else ()
+    col_indices: list[int] = []
+    col_values: list[float] = []
+    for step in sorted(int(value) for value in picks["step"].unique().to_list()):
+        if step >= columns.horizon:
+            continue
+        step_rows = picks.filter(pl.col("step") == step)
+        for row in step_rows.iter_rows(named=True):
+            key = int(row["player_key"])
+            at = index.get(key)
+            if at is None:
+                continue
+            if bool(row["sold"]):
+                col_indices.append(int(columns.sell[step][at]))
+                col_values.append(1.0)
+                continue
+            col_indices.append(int(columns.squad[step][at]))
+            col_values.append(1.0)
+            if bool(row["in_xi"]):
+                col_indices.append(int(columns.xi[step][at]))
+                col_values.append(1.0)
+            if bool(row["captain"]):
+                col_indices.append(int(columns.captain[step][at]))
+                col_values.append(1.0)
+            if bool(row["vice"]):
+                col_indices.append(int(columns.vice[step][at]))
+                col_values.append(1.0)
+            if bool(row["bought"]):
+                col_indices.append(int(columns.buy[step][at]))
+                col_values.append(1.0)
+        if step < len(chips):
+            _append_chip_start(col_indices, col_values, columns, step, chips[step])
+    if not col_indices:
+        return
+    status = solver.setSolution(
+        len(col_indices),
+        np.asarray(col_indices, dtype=np.int32),
+        np.asarray(col_values, dtype=np.float64),
+    )
+    if status != highspy.HighsStatus.kOk:
+        _log.debug("warm start rejected by HiGHS: %s", status)
+
+
+def _append_chip_start(
+    indices: list[int],
+    values: list[float],
+    columns: _Columns,
+    step: int,
+    chip: str | None,
+) -> None:
+    if chip == "wildcard":
+        indices.append(columns.wc[step])
+        values.append(1.0)
+    elif chip == "freehit":
+        indices.append(columns.fh[step])
+        values.append(1.0)
+    elif chip == "bboost":
+        indices.append(columns.bb[step])
+        values.append(1.0)
+    elif chip == "3xc":
+        indices.append(columns.tc[step])
+        values.append(1.0)
 
 
 def _solver(cost: np.ndarray, options: HighsSolveOptions) -> highspy.Highs:
