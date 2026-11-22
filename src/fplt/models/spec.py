@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from fplt.types import GWKey
+
+_EXTENDS_KEYS = frozenset({"name", "extends", "overrides"})
 
 
 class TrainWindow(BaseModel):
@@ -125,6 +128,11 @@ def registered_components() -> list[str]:
 def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
     """Load every YAML model spec from ``directory``.
 
+    Files may set ``extends: <parent_name>`` with an ``overrides`` mapping.
+    The loader deep-merges the override dict onto a copy of the parent raw
+    YAML (one parent only; no chains), then validates with ``ModelSpec``.
+    ``extends`` / ``overrides`` are loader keys, not ``ModelSpec`` fields.
+
     Args:
         directory: Folder of ``*.yaml`` files. Defaults to ``configs/models``.
 
@@ -133,21 +141,122 @@ def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
 
     Raises:
         FileNotFoundError: ``directory`` does not exist.
-        ValueError: A file is empty, not a mapping, or repeats a name.
+        ValueError: A file is empty, not a mapping, repeats a name, has a
+            missing ``extends`` target, extends a fork (chain deeper than
+            one), or mixes ``extends`` with unexpected top-level keys.
     """
     folder = directory if directory is not None else _default_specs_dir()
     if not folder.is_dir():
         raise FileNotFoundError(folder)
-    loaded: dict[str, ModelSpec] = {}
+    raw_by_path: list[tuple[Path, dict[str, Any]]] = []
+    raw_by_name: dict[str, dict[str, Any]] = {}
     for path in sorted(folder.glob("*.yaml")):
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
+        loaded_raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded_raw, dict):
             raise ValueError(f"{path.name} must contain a mapping")
-        spec = ModelSpec.model_validate(raw)
-        if spec.name in loaded:
-            raise ValueError(f"duplicate model spec name {spec.name!r}")
+        raw = cast(dict[str, Any], loaded_raw)
+        name = raw.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{path.name} must set a non-empty string name")
+        if name in raw_by_name:
+            raise ValueError(f"duplicate model spec name {name!r}")
+        raw_by_name[name] = raw
+        raw_by_path.append((path, raw))
+
+    loaded: dict[str, ModelSpec] = {}
+    for path, raw in raw_by_path:
+        resolved = _resolve_extends(raw, raw_by_name, path.name)
+        spec = ModelSpec.model_validate(resolved)
         loaded[spec.name] = spec
     return loaded
+
+
+def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge ``overrides`` onto a copy of ``base``.
+
+    Nested dicts merge recursively. Non-dict values (including lists) in
+    ``overrides`` replace the base value. Used by the ModelSpec ``extends``
+    loader; not OmegaConf.
+
+    Args:
+        base: Parent mapping (not mutated).
+        overrides: Values to layer on top.
+
+    Returns:
+        A new merged dict.
+    """
+    return _deep_merge(copy.deepcopy(base), overrides)
+
+
+def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    for key, value in overrides.items():
+        existing = base.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _deep_merge(cast(dict[str, Any], existing), cast(dict[str, Any], value))
+        else:
+            base[key] = copy.deepcopy(value)
+    return base
+
+
+def _resolve_extends(
+    raw: dict[str, Any],
+    raw_by_name: dict[str, dict[str, Any]],
+    source: str,
+) -> dict[str, Any]:
+    """Resolve one-level ``extends`` / ``overrides`` into a ModelSpec dict.
+
+    Args:
+        raw: YAML mapping for one file.
+        raw_by_name: All raw specs in the directory, keyed by ``name``.
+        source: Filename used in error messages.
+
+    Returns:
+        A mapping suitable for ``ModelSpec.model_validate``.
+
+    Raises:
+        ValueError: Missing parent, chain deeper than one, ``overrides``
+            without ``extends``, or unexpected top-level keys on a fork.
+    """
+    if "extends" not in raw:
+        if "overrides" in raw:
+            raise ValueError(f"{source}: 'overrides' requires 'extends'")
+        return raw
+
+    extra = set(raw) - _EXTENDS_KEYS
+    if extra:
+        keys = ", ".join(sorted(repr(k) for k in extra))
+        raise ValueError(
+            f"{source}: extends forks may only set name/extends/overrides;"
+            f" unexpected keys: {keys}"
+        )
+
+    parent_name = raw["extends"]
+    if not isinstance(parent_name, str) or not parent_name:
+        raise ValueError(f"{source}: extends must be a non-empty parent name")
+    try:
+        parent = raw_by_name[parent_name]
+    except KeyError:
+        raise ValueError(
+            f"{source}: extends target {parent_name!r} not found"
+        ) from None
+    if "extends" in parent:
+        raise ValueError(
+            f"{source}: extends chain deeper than one"
+            f" ({raw['name']!r} -> {parent_name!r})"
+        )
+
+    overrides_raw = raw.get("overrides")
+    if overrides_raw is None:
+        overrides_raw = {}
+    if not isinstance(overrides_raw, dict):
+        raise ValueError(f"{source}: overrides must be a mapping")
+    overrides = cast(dict[str, Any], overrides_raw)
+
+    merged = deep_merge(parent, overrides)
+    merged.pop("extends", None)
+    merged.pop("overrides", None)
+    merged["name"] = raw["name"]
+    return merged
 
 
 def artifact_dir(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:

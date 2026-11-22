@@ -246,6 +246,7 @@ class ModelSpec(BaseModel):
 `TrainWindow.time_decay` is an optional calendar rate λ (inverse days). Trainers that honour it weight each training row by `exp(-λ × days_before_as_of)` relative to the PIT cutoff (`PITView.cutoff`). Default `null` keeps equal weights so bakeoffs stay unchanged until a sweep. **LightGBM (`lgbm_direct`) applies it as LightGBM sample weights.** Dixon–Coles keeps its own `xi` (days before latest finished kickoff in the fit) and **ignores** `TrainWindow.time_decay` — do not set both intending a single decay. Minutes / involvement / other layered fits still use equal weights within their last-N (or unweighted logistic) windows; wiring decay there is a follow-up. Override via YAML `train_window.time_decay` or `fplt backtest/compare --time-decay`.
 
 - Specs live in `configs/models/*.yaml` and are loaded into a registry at import time.
+- A fork may set `extends: <parent_name>` with an `overrides` mapping. The loader deep-merges the override dict onto a copy of the parent YAML (one parent only; no chains, no OmegaConf), then validates with `ModelSpec`. `extends` / `overrides` are loader keys, not `ModelSpec` fields. Resolved `model_id` must match an equivalent full-copy YAML.
 - Implementing classes register with `@register_model("kind")`.
 - Artifacts are written to `artifacts/<model_id>/as_of=<...>/` with `spec.json` and `git_sha.txt` alongside. Nothing is ever overwritten.
 

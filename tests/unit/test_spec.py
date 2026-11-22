@@ -5,15 +5,24 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from fplt.models.spec import (
     ModelSpec,
     artifact_dir,
+    deep_merge,
     git_sha,
     load_model_specs,
     save_spec,
 )
 from fplt.types import GWKey
+
+# Pre-extends full-copy model_ids (package 0.1.0). Migration must preserve these.
+_FORK_MODEL_IDS = {
+    "dc_layered_nopens_v1": "ffa027f04ec2cbe0",
+    "dc_layered_nodefcon_v1": "98820031825e5b43",
+    "dc_layered_odds_v1": "fa51cc43cbf44a96",
+}
 
 
 def test_loaded_spec_matches_the_object_and_includes_package_version(
@@ -99,3 +108,164 @@ def test_git_sha_is_unknown_when_output_is_blank(
 
     monkeypatch.setattr("fplt.models.spec.subprocess.run", _blank)
     assert git_sha() == "unknown"
+
+
+def test_deep_merge_nested_dicts_and_replaces_lists() -> None:
+    merged = deep_merge(
+        {"a": 1, "nested": {"x": 1, "y": 2}, "items": [1, 2]},
+        {"nested": {"y": 9, "z": 3}, "items": [3], "b": 2},
+    )
+    assert merged == {
+        "a": 1,
+        "nested": {"x": 1, "y": 9, "z": 3},
+        "items": [3],
+        "b": 2,
+    }
+    # Base is not mutated via shared nested refs from the override.
+    override = {"nested": {"y": 0}}
+    deep_merge({"nested": {"y": 1}}, override)
+    assert override == {"nested": {"y": 0}}
+
+
+def test_extends_forks_preserve_pre_migration_model_ids() -> None:
+    specs = load_model_specs()
+    for name, expected in _FORK_MODEL_IDS.items():
+        assert specs[name].model_id == expected, name
+
+
+def test_extends_forks_match_manual_full_merge() -> None:
+    specs = load_model_specs()
+    parent = specs["dc_layered_v2"].model_dump(mode="json")
+    expected = {
+        "dc_layered_nopens_v1": deep_merge(
+            parent,
+            {
+                "name": "dc_layered_nopens_v1",
+                "components": {
+                    "involvement": {
+                        "name": "involvement_xg_nopens_v1",
+                        "params": {"use_penalties_order": False},
+                    }
+                },
+            },
+        ),
+        "dc_layered_nodefcon_v1": deep_merge(
+            parent,
+            {
+                "name": "dc_layered_nodefcon_v1",
+                "components": {
+                    "other": {
+                        "name": "other_player_nodefcon_v1",
+                        "params": {"use_defensive_contribution": False},
+                    }
+                },
+            },
+        ),
+        "dc_layered_odds_v1": deep_merge(
+            parent,
+            {
+                "name": "dc_layered_odds_v1",
+                "components": {
+                    "score": {
+                        "name": "dixon_coles_odds_v1",
+                        "params": {"market_prior_strength": 1.0},
+                    }
+                },
+            },
+        ),
+    }
+    for name, raw in expected.items():
+        assert specs[name].model_dump(mode="json") == ModelSpec.model_validate(
+            raw
+        ).model_dump(mode="json")
+
+
+def test_load_resolves_extends_in_a_custom_directory(tmp_path: Path) -> None:
+    (tmp_path / "base.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "base",
+                "kind": "rolling_mean",
+                "params": {"window": 5, "extra": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "fork.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "fork",
+                "extends": "base",
+                "overrides": {"params": {"window": 7}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    specs = load_model_specs(tmp_path)
+    assert specs["fork"].params == {"window": 7, "extra": 1}
+    assert specs["fork"].kind == "rolling_mean"
+    assert specs["base"].params["window"] == 5
+
+
+def test_load_rejects_missing_extends_target(tmp_path: Path) -> None:
+    (tmp_path / "fork.yaml").write_text(
+        "name: fork\nextends: missing\noverrides: {}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="extends target"):
+        load_model_specs(tmp_path)
+
+
+def test_load_rejects_extends_chain(tmp_path: Path) -> None:
+    (tmp_path / "base.yaml").write_text(
+        "name: base\nkind: rolling_mean\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mid.yaml").write_text(
+        "name: mid\nextends: base\noverrides: {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "leaf.yaml").write_text(
+        "name: leaf\nextends: mid\noverrides: {}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="deeper than one"):
+        load_model_specs(tmp_path)
+
+
+def test_load_rejects_overrides_without_extends(tmp_path: Path) -> None:
+    (tmp_path / "bad.yaml").write_text(
+        "name: bad\nkind: rolling_mean\noverrides:\n  params:\n    window: 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="overrides.*extends"):
+        load_model_specs(tmp_path)
+
+
+def test_load_rejects_unexpected_keys_on_extends_fork(tmp_path: Path) -> None:
+    (tmp_path / "base.yaml").write_text(
+        "name: base\nkind: rolling_mean\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "fork.yaml").write_text(
+        "name: fork\nextends: base\nkind: rolling_mean\noverrides: {}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unexpected keys"):
+        load_model_specs(tmp_path)
+
+
+def test_load_rejects_empty_name(tmp_path: Path) -> None:
+    (tmp_path / "bad.yaml").write_text(
+        "name: ''\nkind: rolling_mean\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="non-empty string name"):
+        load_model_specs(tmp_path)
+
+
+def test_loader_does_not_import_omegaconf() -> None:
+    import fplt.models.spec as spec_mod
+
+    assert not hasattr(spec_mod, "OmegaConf")
+    assert "omegaconf" not in dir(spec_mod)
