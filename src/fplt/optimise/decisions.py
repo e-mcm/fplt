@@ -6,8 +6,8 @@ Predictions are whatever the ledger recorded at that deadline.
 
 Chip policy is selected per run: ``off`` (default, chips-off MILP),
 ``rule_based`` (forced BB/TC/FH/WC on double/blank landmarks), or
-``optimised`` (MILP chooses chips under ``ChipRules``). See
-``run_chip_decision_board``.
+``optimised`` (season-level ``schedule_chip_windows`` → short-horizon MILP
+under ``ChipRules``). See ``run_chip_decision_board``.
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ from fplt.data.fpl_client import CurrentTeam, load_current_team
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
+from fplt.optimise.chip_scheduler import schedule_chip_windows
 from fplt.optimise.chip_windows import (
     ChipArm,
     ChipUseWindows,
     chip_arm_model_id,
-    empty_chip_windows,
     is_counterfactual_rules,
     parse_chip_arm_model_id,
     rule_based_chip_windows,
@@ -211,8 +211,9 @@ def simulate_decisions(
         chip_rules_season: Season whose ``configs/chips`` file to load when
             chips are on. Defaults to ``season``.
         chip_windows: Optional precomputed windows; when omitted, rule-based
-            builds them from ``fixtures``.
-        fixtures: Staged fixtures for rule-based landmarks.
+            builds landmarks from ``fixtures`` and optimised rebuilds
+            ``schedule_chip_windows`` each deadline.
+        fixtures: Staged fixtures for rule-based / scheduled windows.
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -224,7 +225,7 @@ def simulate_decisions(
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     rules_season = chip_rules_season if chip_rules_season is not None else season
     rules = ChipRules.for_season(rules_season) if chip_arm != "off" else None
-    windows = _windows_for_arm(
+    static_windows = _static_windows_for_arm(
         chip_arm,
         fixtures=fixtures,
         season=season,
@@ -232,6 +233,9 @@ def simulate_decisions(
         predictions=predictions,
         gameweeks=gameweeks,
         chip_windows=chip_windows,
+    )
+    schedule_each_week = (
+        chip_arm == "optimised" and chip_windows is None and static_windows is None
     )
     current = _ensure_chip_inventory(state, rules) if rules is not None else state
     scored = _actuals(actuals)
@@ -243,6 +247,20 @@ def simulate_decisions(
         pool = candidates.filter(pl.col("gw") == gameweek).drop("gw")
         if pool.is_empty():
             raise ValueError(f"no candidates for gw {gameweek}")
+        active_windows = static_windows
+        if schedule_each_week:
+            assert rules is not None
+            active_windows = _scheduled_windows(
+                fixtures=fixtures,
+                season=season,
+                rules=rules,
+                as_of_gw=gameweek,
+                short_horizon=len(window),
+                predictions=predictions,
+                pool=pool,
+                state=current,
+                gameweeks=gameweeks,
+            )
         solved = plan_squad(
             pool,
             _window_points(predictions, gameweek, window),
@@ -251,7 +269,7 @@ def simulate_decisions(
             horizon=len(window),
             season=season if chip_arm != "off" else None,
             gameweeks=window if chip_arm != "off" else None,
-            chip_windows=windows if chip_arm != "off" else None,
+            chip_windows=active_windows if chip_arm != "off" else None,
             chip_rules_season=rules_season if chip_arm != "off" else None,
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
@@ -573,7 +591,7 @@ def run_decisions(
     actuals = _actual_rows(ledger, spec.model_id, season)
     fixtures = (
         store.read("fixtures").filter(pl.col("season") == season)
-        if chip_arm == "rule_based"
+        if chip_arm != "off"
         else None
     )
     # Chips-off keeps the historical model_id so existing boards stay stable.
@@ -1109,7 +1127,7 @@ def _ensure_chip_inventory(state: SquadState, rules: ChipRules) -> SquadState:
     )
 
 
-def _windows_for_arm(
+def _static_windows_for_arm(
     arm: ChipArm,
     *,
     fixtures: pl.DataFrame | None,
@@ -1119,12 +1137,15 @@ def _windows_for_arm(
     gameweeks: list[int],
     chip_windows: ChipUseWindows | None,
 ) -> ChipUseWindows | None:
+    """Return precomputed windows, or ``None`` when optimised schedules weekly."""
     if arm == "off":
         return None
     if chip_windows is not None:
         return chip_windows
     if arm == "optimised":
-        return empty_chip_windows()
+        # Rebuilt each deadline in ``simulate_decisions`` via
+        # ``schedule_chip_windows`` (option value + squad continuity).
+        return None
     if rules is None:
         raise ValueError("rule_based chip arm requires chip rules")
     if fixtures is None or fixtures.is_empty():
@@ -1137,6 +1158,39 @@ def _windows_for_arm(
         season=season,
         rules=rules,
         predictions=pred,
+        gameweeks=gameweeks,
+    )
+
+
+def _scheduled_windows(
+    *,
+    fixtures: pl.DataFrame | None,
+    season: str,
+    rules: ChipRules,
+    as_of_gw: int,
+    short_horizon: int,
+    predictions: pl.DataFrame,
+    pool: pl.DataFrame,
+    state: SquadState,
+    gameweeks: list[int],
+) -> ChipUseWindows:
+    """Build season-level windows for one deadline of the optimised arm."""
+    if fixtures is None or fixtures.is_empty():
+        raise ValueError("optimised chip arm requires fixtures for the scheduler")
+    pred = predictions
+    if "gw" not in pred.columns and "target_gw" in pred.columns:
+        pred = pred.rename({"target_gw": "gw"})
+    player_teams = pool.select("player_key", "team_key")
+    return schedule_chip_windows(
+        fixtures,
+        season=season,
+        rules=rules,
+        as_of_gw=as_of_gw,
+        short_horizon=short_horizon,
+        predictions=pred,
+        player_teams=player_teams,
+        owned_player_keys=[player.player_key for player in state.owned],
+        inventory=state.chips,
         gameweeks=gameweeks,
     )
 
