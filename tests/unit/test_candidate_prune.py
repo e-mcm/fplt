@@ -117,14 +117,14 @@ def _tight_policy(**overrides: object) -> CandidatePrunePolicy:
     return CandidatePrunePolicy.model_validate(base)
 
 
-def test_default_policy_knobs_target_about_200() -> None:
-    """Defaults are the ~200-player union including step / window tops."""
+def test_default_policy_knobs_target_about_130() -> None:
+    """Defaults are the ~130-player union including step / window tops."""
     assert DEFAULT_KEEP_CHEAPEST == 4
     assert DEFAULT_MIN_P_60 == 0.5
-    assert dict(DEFAULT_TOP_XPTS) == {"GK": 25, "DEF": 55, "MID": 70, "FWD": 35}
-    assert dict(DEFAULT_TOP_VALUE) == {"GK": 15, "DEF": 35, "MID": 45, "FWD": 20}
-    assert dict(DEFAULT_TOP_PER_STEP) == {"GK": 3, "DEF": 8, "MID": 10, "FWD": 5}
-    assert dict(DEFAULT_TOP_WINDOW) == {"GK": 3, "DEF": 8, "MID": 10, "FWD": 5}
+    assert dict(DEFAULT_TOP_XPTS) == {"GK": 16, "DEF": 36, "MID": 46, "FWD": 23}
+    assert dict(DEFAULT_TOP_VALUE) == {"GK": 10, "DEF": 23, "MID": 29, "FWD": 13}
+    assert dict(DEFAULT_TOP_PER_STEP) == {"GK": 2, "DEF": 5, "MID": 6, "FWD": 3}
+    assert dict(DEFAULT_TOP_WINDOW) == {"GK": 2, "DEF": 5, "MID": 6, "FWD": 3}
     assert DEFAULT_WINDOW_LENGTHS == (2, 3)
     assert DEFAULT_PRUNE_POLICY.top_xpts == dict(DEFAULT_TOP_XPTS)
     assert DEFAULT_PRUNE_POLICY.top_value == dict(DEFAULT_TOP_VALUE)

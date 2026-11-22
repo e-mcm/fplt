@@ -169,7 +169,7 @@ def plan_squad(
             auto-enables when ``horizon >= policy.auto_min_horizon``;
             ``True`` / ``False`` force on / off.
         prune_policy: Keep rules (top xPts, top value, cheapest per
-            position). Defaults to ``DEFAULT_PRUNE_POLICY`` (~200 players).
+            position). Defaults to ``DEFAULT_PRUNE_POLICY`` (~130 players).
         highs_options: HiGHS time limit / gap / parallel knobs. Defaults
             to ``DEFAULT_HIGHS_OPTIONS`` (600s, gap 1e-3, accept
             time-limit incumbents).

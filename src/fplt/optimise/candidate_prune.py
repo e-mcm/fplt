@@ -6,7 +6,7 @@ cuts, drop players who are exactly dominated on price and per-step xPts
 points-above-replacement per £ (vs the cheapest playable option), top raw
 xPts at each step, top raw Σ xPts over rolling 2–3-step windows, and the
 cheapest *playing* fillers — plus any currently owned players. Defaults
-are tuned so a full FPL pool (~700) shrinks to about 200 candidates.
+are tuned so a full FPL pool (~700) shrinks to about 130 candidates.
 """
 
 from __future__ import annotations
@@ -36,36 +36,39 @@ LEGACY_TOP_K: Mapping[str, int] = {
     "FWD": 30,
 }
 
-# Tuned for ~200 unique players on 2025-26 dc_layered_v2 (GW1/19/30 H=8).
+# Nominal target pool after heuristic union (FDB-159). Scaled from the
+# prior ~200 quotas via the pruning-loss harness (synthetic 640-player /
+# 24-scenario H=5 sweep). Dominance often leaves ~100–110 regardless;
+# these quotas still bind when the pre-filter is less aggressive.
+DEFAULT_TARGET_POOL = 130
 DEFAULT_TOP_XPTS: Mapping[str, int] = {
-    "GK": 25,
-    "DEF": 55,
-    "MID": 70,
-    "FWD": 35,
+    "GK": 16,
+    "DEF": 36,
+    "MID": 46,
+    "FWD": 23,
 }
 DEFAULT_TOP_VALUE: Mapping[str, int] = {
-    "GK": 15,
-    "DEF": 35,
-    "MID": 45,
-    "FWD": 20,
+    "GK": 10,
+    "DEF": 23,
+    "MID": 29,
+    "FWD": 13,
 }
 DEFAULT_KEEP_CHEAPEST = 4
 DEFAULT_MIN_P_60 = 0.5
 
 # Per-step / short-window tops catch one-week punts, DGW spikes, and Free
-# Hit targets that a horizon sum misses. Quotas stay modest so the ~200
-# target is not retuned here (harness / later PR).
+# Hit targets that a horizon sum misses.
 DEFAULT_TOP_PER_STEP: Mapping[str, int] = {
-    "GK": 3,
-    "DEF": 8,
-    "MID": 10,
-    "FWD": 5,
+    "GK": 2,
+    "DEF": 5,
+    "MID": 6,
+    "FWD": 3,
 }
 DEFAULT_TOP_WINDOW: Mapping[str, int] = {
-    "GK": 3,
-    "DEF": 8,
-    "MID": 10,
-    "FWD": 5,
+    "GK": 2,
+    "DEF": 5,
+    "MID": 6,
+    "FWD": 3,
 }
 DEFAULT_WINDOW_LENGTHS: tuple[int, ...] = (2, 3)
 
@@ -133,7 +136,7 @@ class CandidatePrunePolicy(BaseModel):
         default_factory=lambda: dict(DEFAULT_TOP_XPTS),
         description=(
             "Per-position keep counts by decayed Σ horizon xPts. None / "
-            "empty disables. Defaults target ~200 with ``top_value``."
+            "empty disables. Defaults target ~130 with ``top_value``."
         ),
     )
     top_value: dict[str, int] | None = Field(
@@ -255,7 +258,7 @@ class CandidatePrunePolicy(BaseModel):
         min_p_60: float = DEFAULT_MIN_P_60,
         auto_min_horizon: int = PRUNE_AUTO_MIN_HORIZON,
     ) -> CandidatePrunePolicy:
-        """Return the default ~200-player policy (tunable overrides)."""
+        """Return the default ~130-player policy (tunable overrides)."""
         return cls(
             top_xpts=dict(DEFAULT_TOP_XPTS if top_xpts is None else top_xpts),
             top_value=dict(DEFAULT_TOP_VALUE if top_value is None else top_value),
@@ -390,7 +393,7 @@ class CandidatePrunePolicy(BaseModel):
         return pruned
 
 
-# Default: ~200-player union of top xPts, PAR value, step/window, cheapest.
+# Default: ~130-player union of top xPts, PAR value, step/window, cheapest.
 DEFAULT_PRUNE_POLICY = CandidatePrunePolicy.target_pool()
 
 
