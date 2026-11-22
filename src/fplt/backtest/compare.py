@@ -6,8 +6,11 @@ Runs every selected model over the same test gameweeks in two modes:
 * ``fixed`` — fit once at ``fit_gw`` (start of test / end of train) and hold
   parameters for the whole test window (``refit=never``).
 
-Predictions land in the usual ledger. A JSON + parquet summary (MAE, RMSE,
-Spearman, top-10 precision, Brier) is written for Streamlit or ad-hoc review.
+Internally each arm × mode is produced via ``produce_ledger`` (P2.5 content-
+addressed parquet cache), then appended to the shared ledger. Predictions land
+in the usual ledger. A JSON + parquet summary (MAE, RMSE, Spearman, top-10
+precision, Brier) is written for Streamlit or ad-hoc review. The ``fplt
+compare`` CLI surface is unchanged.
 """
 
 from __future__ import annotations
@@ -34,12 +37,9 @@ from fplt.backtest.eval_set import (
 )
 from fplt.backtest.ledger import append_predictions, fill_actuals, read_predictions
 from fplt.backtest.metrics import overall_summary, summarise
-from fplt.backtest.walk_forward import walk_forward
-from fplt.data.pit import PITData
+from fplt.backtest.produce_ledger import produce_ledger
 from fplt.data.store import DataStore
-from fplt.models.contracts import PointsPredictor
-from fplt.models.spec import ModelSpec, get_model, load_model_specs
-from fplt.types import GWKey
+from fplt.models.spec import ModelSpec, load_model_specs
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ class CompareRun:
     model_name: str
     mode: CompareMode
     spec: ModelSpec
+    cache_hit: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ def compare_models(
     with_openfpl: bool = False,
     openfpl_model_dir: str | None = None,
     output_dir: Path | None = None,
+    use_cache: bool = True,
 ) -> CompareResult:
     """Backtest selected models under shared windows and both compare modes.
 
@@ -101,6 +103,9 @@ def compare_models(
     ``fit_gw`` and reuses that fit. When ``fit_gw`` is before ``test_from_gw``,
     the fit deadline is included only to train — its prediction rows are dropped
     from the ledger append for that mode.
+
+    Each arm × mode is produced via ``produce_ledger`` (content-addressed cache
+    under ``data_dir/ledger_cache/``), then appended to the shared ledger.
 
     Args:
         data_dir: Root with ``staged/``; receives ``ledger/`` and compare outputs.
@@ -119,6 +124,7 @@ def compare_models(
         openfpl_model_dir: Optional OpenFPL ``model_dir`` override.
         output_dir: Where to write summary JSON/parquet. Defaults under
             ``data_dir/compare/``.
+        use_cache: When true (default), reuse content-addressed ledgers.
 
     Returns:
         Runs performed plus overall and per-position summary frames.
@@ -126,6 +132,7 @@ def compare_models(
     Raises:
         ValueError: Invalid windows, empty models, or OpenFPL season floor.
         KeyError: A spec kind is not registered.
+        StaleLedgerCacheError: Cached key.json does not match the computed key.
     """
     chosen_modes = _resolve_modes(modes)
     fit_at = test_from_gw if fit_gw is None else fit_gw
@@ -154,7 +161,6 @@ def compare_models(
         raise ValueError(f"unknown model spec {missing[0]!r}")
 
     store = DataStore(data_dir)
-    pit = PITData(store)
     out = output_dir or _default_output_dir(data_dir, season, test_from_gw, test_to_gw)
     out.mkdir(parents=True, exist_ok=True)
     logger.info(
@@ -192,7 +198,6 @@ def compare_models(
                 spec.refit,
                 spec.model_id,
             )
-            model = get_model(spec.kind)(spec)
             logger.info(
                 "%s %s starting refit=%s seasons_back=%s",
                 mode,
@@ -201,26 +206,36 @@ def compare_models(
                 spec.train_window.seasons_back,
             )
             started = time.perf_counter()
-            frame = _predict_window(
-                model,
-                pit,
+            produced = produce_ledger(
+                data_dir,
+                spec,
                 season,
                 mode=mode,
-                fit_gw=fit_at,
                 test_from_gw=test_from_gw,
                 test_to_gw=test_to_gw,
+                fit_gw=fit_at,
                 steps=steps,
+                seasons_back=seasons_back,
+                use_cache=use_cache,
             )
-            logger.info("%s/%s wrote %s rows", name, mode, frame.height)
-            append_predictions(data_dir, frame)
+            logger.info("%s/%s wrote %s rows", name, mode, produced.frame.height)
+            append_predictions(data_dir, produced.frame)
             logger.info(
-                "%s %s wrote %s rows in %.1fs",
+                "%s %s wrote %s rows in %.1fs (cache_hit=%s)",
                 mode,
                 name,
-                frame.height,
+                produced.frame.height,
                 time.perf_counter() - started,
+                produced.cache_hit,
             )
-            runs.append(CompareRun(model_name=name, mode=mode, spec=spec))
+            runs.append(
+                CompareRun(
+                    model_name=name,
+                    mode=mode,
+                    spec=spec,
+                    cache_hit=produced.cache_hit,
+                )
+            )
 
     logger.info("filling actuals and writing summary under %s", out)
     fill_actuals(data_dir, store)
@@ -279,31 +294,6 @@ def format_summary_table(summary: pl.DataFrame) -> str:
         if c in summary.columns
     ]
     return str(summary.select(cols).sort("mode", "model_name", "horizon"))
-
-
-def _predict_window(
-    model: PointsPredictor,
-    pit: PITData,
-    season: str,
-    *,
-    mode: CompareMode,
-    fit_gw: int,
-    test_from_gw: int,
-    test_to_gw: int,
-    steps: int,
-) -> pl.DataFrame:
-    """Fit/predict one mode; keep only as-of rows inside the test window."""
-    if mode == "walk_forward":
-        as_ofs = [GWKey(season, gw) for gw in range(test_from_gw, test_to_gw + 1)]
-        return walk_forward(model, pit, as_ofs, steps=steps)
-    # Fixed: optionally fit at an earlier deadline, then score the test window.
-    as_ofs = [GWKey(season, gw) for gw in range(fit_gw, test_to_gw + 1)]
-    frame = walk_forward(model, pit, as_ofs, steps=steps)
-    if frame.is_empty() or fit_gw == test_from_gw:
-        return frame
-    return frame.filter(
-        (pl.col("as_of_gw") >= test_from_gw) & (pl.col("as_of_gw") <= test_to_gw)
-    )
 
 
 def _configured(
@@ -408,6 +398,7 @@ def _write_outputs(result: CompareResult) -> None:
                 "refit": run.spec.refit,
                 "seasons_back": run.spec.train_window.seasons_back,
                 "time_decay": run.spec.train_window.time_decay,
+                "cache_hit": run.cache_hit,
             }
             for run in result.runs
         ],

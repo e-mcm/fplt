@@ -4,10 +4,11 @@ Any lever — new staged data, feature version, hyperparam fork, layered
 component registry swap, or full predictor fork — is expressed as two YAML
 specs plus an ``EvalSpec``. P1 validates orientation, one lever, coverage, and
 leakage before fit. P2 runs ``compare_models`` on both arms and writes
-``recommendation.md``. Improvement verdicts are ``drop`` (coverage / leak) or
-``inconclusive`` until FDB-73. Paired intervals (HAC + stationary bootstrap)
-are descriptive for improvement levers; equivalence may ``drop`` when an
-interval lies entirely on the bad side (never a ``keep`` rule).
+``recommendation.md``. P2.5 produces each arm via the content-addressed ledger
+cache. Improvement verdicts are ``drop`` (coverage / leak) or ``inconclusive``
+until FDB-73. Paired intervals (HAC + stationary bootstrap) are descriptive for
+improvement levers; equivalence may ``drop`` when an interval lies entirely on
+the bad side (never a ``keep`` rule).
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ from fplt.backtest.intervals import (
     per_gw_wins_from_losses,
 )
 from fplt.backtest.ledger import read_predictions
+from fplt.backtest.produce_ledger import (
+    StaleLedgerCacheError,
+    repo_root,
+    uv_lock_sha256,
+)
 from fplt.data.store import DataStore
 from fplt.models.spec import (
     ModelSpec,
@@ -336,11 +342,6 @@ def default_evals_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "configs" / "evals"
 
 
-def repo_root() -> Path:
-    """Return the repository root (parent of ``configs/``)."""
-    return Path(__file__).resolve().parents[3]
-
-
 def load_eval_spec(name: str, directory: Path | None = None) -> EvalSpec:
     """Load one EvalSpec YAML by ``name``.
 
@@ -499,14 +500,6 @@ def git_is_dirty(*, cwd: Path | None = None) -> bool:
     except (OSError, subprocess.CalledProcessError):
         return False
     return bool(completed.stdout.strip())
-
-
-def uv_lock_sha256(*, root: Path | None = None) -> str:
-    """SHA-256 of ``uv.lock`` at the repo root."""
-    path = (root or repo_root()) / "uv.lock"
-    if not path.is_file():
-        return "missing"
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def effective_param(spec: ModelSpec, slot: str | None, key: str) -> Any:
@@ -847,9 +840,49 @@ def execute_promote_eval(
         if per_match is not None and not per_match.is_empty():
             per_match.write_parquet(out / "per_match.parquet")
     if run_prediction:
-        compare_result, wall_clock, peak_rss = _run_compare(
-            plan, data_dir=data_dir, output_dir=out / "compare"
-        )
+        try:
+            compare_result, wall_clock, peak_rss = _run_compare(
+                plan, data_dir=data_dir, output_dir=out / "compare"
+            )
+        except StaleLedgerCacheError as exc:
+            # Cached ledger whose stored key ≠ the key just computed (§8).
+            msg = f"stale ledger cache: {exc}"
+            stale_preflight = PreflightResult(
+                ok=False,
+                failures=[msg],
+                warnings=list(preflight.warnings),
+                coverage=preflight.coverage,
+                leak=preflight.leak,
+                force_inconclusive=preflight.force_inconclusive,
+                git_dirty=preflight.git_dirty,
+                git_sha=preflight.git_sha,
+                control_spec=preflight.control_spec,
+                treatment_spec=preflight.treatment_spec,
+                effective_flags=dict(preflight.effective_flags),
+                pit_caveat=preflight.pit_caveat,
+            )
+            recommendation = f"preflight failed: {msg}\n"
+            _write_audit(
+                out,
+                spec,
+                plan,
+                stale_preflight,
+                data_dir=data_dir,
+                argv=argv,
+                wall_clock={},
+                peak_rss={},
+                folds=[],
+                verdict="drop",
+            )
+            return PromoteEvalResult(
+                eval_name=spec.name,
+                verdict="drop",
+                exit_code=2,
+                output_dir=out,
+                plan=plan,
+                preflight=stale_preflight,
+                recommendation=recommendation,
+            )
         deltas = _prediction_deltas(
             compare_result,
             plan.control,

@@ -229,6 +229,26 @@ def test_compare_delegates_model_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: dict[str, Any] = {}
+    empty = pl.DataFrame(
+        schema={
+            "model_id": pl.Utf8(),
+            "run_kind": pl.Utf8(),
+            "as_of_season": pl.Utf8(),
+            "as_of_gw": pl.Int64(),
+            "target_season": pl.Utf8(),
+            "target_gw": pl.Int64(),
+            "horizon": pl.Int64(),
+            "player_key": pl.Int64(),
+            "position": pl.Utf8(),
+            "fixture_id": pl.Int64(),
+            "xpts": pl.Float64(),
+            "xpts_sd": pl.Float64(),
+            "p_haul": pl.Float64(),
+            "p_60": pl.Float64(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+        }
+    )
 
     def fake_resolve(
         season: str,
@@ -241,30 +261,41 @@ def test_compare_delegates_model_resolution(
         seen["models"] = models
         return ["rolling_mean_v1"]
 
+    def fake_produce(
+        data_dir: Path,
+        spec: ModelSpec,
+        season: str,
+        **kwargs: Any,
+    ) -> Any:
+        from fplt.backtest.produce_ledger import (
+            LedgerCacheKey,
+            ProduceLedgerResult,
+        )
+
+        key = LedgerCacheKey(
+            resolved_spec_sha256="abc",
+            uv_lock_sha256="lock",
+            data_hashes={},
+            season=season,
+            test_from_gw=1,
+            test_to_gw=1,
+            fit_gw=1,
+            mode="walk_forward",
+            steps=1,
+            seasons_back=None,
+            n_sims=None,
+            seed=0,
+        )
+        return ProduceLedgerResult(
+            frame=empty,
+            spec=spec,
+            key=key,
+            cache_dir=tmp_path / "ledger_cache" / "x",
+            cache_hit=False,
+        )
+
     monkeypatch.setattr("fplt.backtest.compare.resolve_eval_models", fake_resolve)
-    monkeypatch.setattr(
-        "fplt.backtest.compare.walk_forward",
-        lambda *a, **k: pl.DataFrame(
-            schema={
-                "model_id": pl.Utf8(),
-                "run_kind": pl.Utf8(),
-                "as_of_season": pl.Utf8(),
-                "as_of_gw": pl.Int64(),
-                "target_season": pl.Utf8(),
-                "target_gw": pl.Int64(),
-                "horizon": pl.Int64(),
-                "player_key": pl.Int64(),
-                "position": pl.Utf8(),
-                "fixture_id": pl.Int64(),
-                "xpts": pl.Float64(),
-                "xpts_sd": pl.Float64(),
-                "p_haul": pl.Float64(),
-                "p_60": pl.Float64(),
-                "actual_pts": pl.Int64(),
-                "actual_minutes": pl.Int64(),
-            }
-        ),
-    )
+    monkeypatch.setattr("fplt.backtest.compare.produce_ledger", fake_produce)
     monkeypatch.setattr(
         "fplt.backtest.compare.append_predictions",
         lambda *a, **k: None,
@@ -275,30 +306,7 @@ def test_compare_delegates_model_resolution(
     )
     monkeypatch.setattr(
         "fplt.backtest.compare.read_predictions",
-        lambda *_: pl.DataFrame(
-            schema={
-                "model_id": pl.Utf8(),
-                "run_kind": pl.Utf8(),
-                "as_of_season": pl.Utf8(),
-                "as_of_gw": pl.Int64(),
-                "target_season": pl.Utf8(),
-                "target_gw": pl.Int64(),
-                "horizon": pl.Int64(),
-                "player_key": pl.Int64(),
-                "position": pl.Utf8(),
-                "fixture_id": pl.Int64(),
-                "xpts": pl.Float64(),
-                "xpts_sd": pl.Float64(),
-                "p_haul": pl.Float64(),
-                "p_60": pl.Float64(),
-                "actual_pts": pl.Int64(),
-                "actual_minutes": pl.Int64(),
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        "fplt.backtest.compare.get_model",
-        lambda kind: lambda spec: _FakeModel(spec),
+        lambda *_: empty,
     )
     monkeypatch.setattr(
         "fplt.backtest.compare.load_model_specs",
@@ -321,11 +329,6 @@ def test_compare_delegates_model_resolution(
     assert seen["season"] == _TEST
     assert seen["models"] is None
     assert result.runs[0].model_name == "rolling_mean_v1"
-
-
-class _FakeModel:
-    def __init__(self, spec: ModelSpec) -> None:
-        self.spec = spec
 
 
 def _points(root: Path, model_id: str) -> dict[int, float]:

@@ -19,6 +19,7 @@ from fplt.backtest.component_eval import (
 )
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.predict_live import run_predict
+from fplt.backtest.produce_ledger import StaleLedgerCacheError
 from fplt.backtest.promote_eval import (
     execute_promote_eval,
     format_plan,
@@ -538,7 +539,7 @@ def _compare(args: argparse.Namespace) -> None:
             openfpl_model_dir=args.openfpl_model_dir,
             output_dir=args.output_dir,
         )
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, StaleLedgerCacheError) as exc:
         logger.error("compare failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc

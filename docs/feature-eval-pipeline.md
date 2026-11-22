@@ -2,7 +2,7 @@
 
 Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, a full predictor fork, a lockfile upgrade, or a no-behaviour refactor — uses one path: **control vs treatment → walk-forward suites → a written recommendation**. Improvement levers are two ModelSpecs. Equivalence levers share the spec and differ in the lockfile or the git ref. Decision bakeoffs stay opt-in.
 
-**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. P3 adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. Intervals are descriptive for improvement levers; equivalence may `drop` when an interval is entirely on the bad side (not a `keep` rule). Numeric keep/drop thresholds wait on FDB-73. Ledger cache and environment kinds are still later packages.
+**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. **P2.5** splits `produce_ledger` from compare and caches each arm as content-addressed parquet (not `joblib`). **P3** adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. Intervals are descriptive for improvement levers; equivalence may `drop` when an interval is entirely on the bad side (not a `keep` rule). Numeric keep/drop thresholds wait on FDB-73. Environment kinds are still later.
 
 **Related:** project-store `docs/odds-dc-implementation-plan.md` (W7–W9), `docs/model-compare-tooling.md`, `docs/model-hyperparameters-and-train-window.md` (S0–S5), `docs/defensive-contribution-eval-2025-26.md` (W9 numbers). Repo rules: `docs/design.md` §7.4 and §7.6, `AGENTS.md`.
 
@@ -602,8 +602,8 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 | **CRN** | Eval-only paired streams (§9). `seed_for` unchanged. Bit-identical ledgers when the resolved spec and the environment match. | Landing it inside the P1+P2 PR. |
 | **Stats** | Done: HAC and stationary-bootstrap columns on the per-gameweek series (`fplt.backtest.intervals`). SPA and MCS when several arms share a window. Descriptive for improvement levers; equivalence may `drop` on an entirely-bad interval. | Using an interval as a `keep`. |
 | **P1.5** | `extends` / `overrides` on the ModelSpec loader. Deep-merge a dict, then the existing pydantic model. One parent. Migrate `dc_layered_nopens_v1`, `dc_layered_nodefcon_v1`, and `dc_layered_odds_v1`. Resolved hash equals the old copy. No model run. | OmegaConf. Chains. |
-| **P2.5** | `produce_ledger` and the content-addressed parquet cache. `fplt compare` CLI unchanged. | `joblib`. |
-| **P3** | Components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
+| **P2.5** | Done: `produce_ledger` and the content-addressed parquet cache under `ledger_cache/<digest>/`. `fplt compare` CLI unchanged (produce twice, then summarise). | `joblib`. |
+| **P3** | Done: components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
 | **P4** | Decisions suite. Still opt-in. Data and config promos do not wait for it. | — |
 | **P7** | `kind: environment` and `kind: refactor`, including the §3.2 verdict. Worktree, `uv sync --frozen`, subprocess. | `nox`, until more than one such eval exists. An unlisted `uv lock --upgrade` as a single lever. |
 | **History prior** | `market_prior_source: history` as specified in §5.1. Then one EvalSpec. A dose on that window is descriptive. | Re-running the predict-time λ blend as that study. Optuna inside the runner. Blocking this PR on `match_odds_deadline`. |
