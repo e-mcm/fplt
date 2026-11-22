@@ -2,7 +2,7 @@
 
 Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, a full predictor fork, a lockfile upgrade, or a no-behaviour refactor — uses one path: **control vs treatment → walk-forward suites → a written recommendation**. Improvement levers are two ModelSpecs. Equivalence levers share the spec and differ in the lockfile or the git ref. Decision bakeoffs stay opt-in.
 
-**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. **P2.5** splits `produce_ledger` from compare and caches each arm as content-addressed parquet (not `joblib`). **P3** adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. **P7** adds `kind: environment` and `kind: refactor` (worktree + `uv sync --frozen` + subprocess produce) with the §3.2 identical / different-not-worse / worse verdict. Intervals are descriptive for improvement levers; equivalence may `keep` on identical predictions or `drop` when an interval is entirely on the bad side (not a `keep` rule for improvement). Numeric keep/drop thresholds for improvement wait on FDB-73.
+**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. **P2.5** splits `produce_ledger` from compare and caches each arm as content-addressed parquet (not `joblib`). **P3** adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. **P7** adds `kind: environment` and `kind: refactor` (worktree + `uv sync --frozen` + subprocess produce) with the §3.2 identical / different-not-worse / worse verdict. **Bakeoff** adds a thin multi-arm wrapper (`fplt bakeoff` / `BakeoffSpec`, plus optional EvalSpec `arms:`) that reuses compare + the ledger cache and writes SPA/MCS + a MAE rank table — descriptive, not a `keep`. Intervals are descriptive for improvement levers; equivalence may `keep` on identical predictions or `drop` when an interval is entirely on the bad side (not a `keep` rule for improvement). Numeric keep/drop thresholds for improvement wait on FDB-73.
 
 **Related:** project-store `docs/odds-dc-implementation-plan.md` (W7–W9), `docs/model-compare-tooling.md`, `docs/model-hyperparameters-and-train-window.md` (S0–S5), `docs/defensive-contribution-eval-2025-26.md` (W9 numbers). Repo rules: `docs/design.md` §7.4 and §7.6, `AGENTS.md`.
 
@@ -159,6 +159,7 @@ change:
 
 control: dc_layered_v2
 treatment: dc_layered_minutes_lgbm_v1
+# arms: [dc_layered_odds_strength_0_25, …]   # optional dose; SPA/MCS descriptive
 
 window:
   seasons: ["2024-25"]
@@ -606,6 +607,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 | **P3** | Done: components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
 | **P4** | Decisions suite. Still opt-in. Data and config promos do not wait for it. | — |
 | **P7** | Done: `kind: environment` and `kind: refactor`, including the §3.2 verdict. Worktree, `uv sync --frozen`, subprocess produce per arm; ledger identity via `assert_frame_equal` then intervals. | `nox`, until more than one such eval exists. An unlisted `uv lock --upgrade` as a single lever. |
+| **Bakeoff** | Done: thin multi-arm wrapper on compare / promote-eval. `fplt bakeoff` + `BakeoffSpec` (≥3 ModelSpecs, shared window, SPA/MCS + MAE rank → `ranking.md`). EvalSpec optional `arms:` for a dose on the promote-eval compare. Shared ledgers via the content-addressed cache. Optional `pairwise_evals:` compose N promote-eval runs. | Running the Deep/PPDA + odds championship itself (FDB-99). A second framework. Emitting `keep` from the ranking window. |
 | **History prior** | `market_prior_source: history` as specified in §5.1. Then one EvalSpec. A dose on that window is descriptive. | Re-running the predict-time λ blend as that study. Optuna inside the runner. Blocking this PR on `match_odds_deadline`. |
 | **Tuning** | After P1.5. Optuna on a dev window that does not overlap the eval window. It writes an `extends` fork. Confirmation is a fresh EvalSpec. | Searching over which component or feature exists. |
 | **Deadline odds** | A staging PR only after a book and a capture time exist. | A fetcher aimed at football-data closing files. |
@@ -732,6 +734,12 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
 5. Decisions only if the claim is the squad (kind: model, or an explicit opt-in).
 6. Production change is a later PR. keep on an opt-out means "leave it on".
    A dose on one window does not promote. Confirmation is a fresh window.
+7. Multi-arm championship / dose ranking:
+     fplt bakeoff --bakeoff <name> --execute
+       or: fplt bakeoff --models a b c --control a --season … --execute
+       or: EvalSpec arms: […] on promote-eval (same compare + SPA/MCS)
+     ranking.md is descriptive — not a keep
+     decision season totals stay on fplt decisions
 
 ODDS     recorded arm: control dc_layered_v2, treatment dc_layered_odds_v1
          gate: strict-PIT odds join >= 80%. Closing kickoff lines fail this.
@@ -742,6 +750,7 @@ PENS     control dc_layered_nopens_v1, treatment dc_layered_v2
 DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v2
          gate: 100% of target fixtures in a season whose rules award DC.
 ENV      same spec, two lockfiles. Verdict from prediction identity, then intervals.
+BAKEOFF  ≥3 ModelSpecs, shared window; SPA/MCS + MAE rank. Not a keep.
 ```
 
 ---

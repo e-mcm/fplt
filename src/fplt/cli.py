@@ -11,6 +11,16 @@ from typing import Literal
 
 from fplt.auth import clear_credentials, format_status, set_credentials
 from fplt.auth import status as auth_status
+from fplt.backtest.bakeoff import (
+    bakeoff_from_models,
+    execute_bakeoff,
+    format_bakeoff_plan,
+    load_bakeoff_spec,
+    plan_bakeoff,
+)
+from fplt.backtest.bakeoff import (
+    plan_to_json as bakeoff_plan_to_json,
+)
 from fplt.backtest.compare import CompareMode, compare_models, format_summary_table
 from fplt.backtest.component_eval import (
     DEFAULT_SIMS,
@@ -305,6 +315,75 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet here",
     )
+    bakeoff = sub.add_parser(
+        "bakeoff",
+        parents=[log_flags],
+        help=(
+            "Multi-arm prediction championship on promote-eval/compare "
+            "(shared ledger cache + SPA/MCS ranking; not a keep)"
+        ),
+    )
+    bakeoff.add_argument(
+        "--bakeoff",
+        help="BakeoffSpec name under configs/evals/<name>.yaml",
+    )
+    bakeoff.add_argument(
+        "--models",
+        nargs="+",
+        help="ModelSpec names (CLI mode; requires --control and --season)",
+    )
+    bakeoff.add_argument(
+        "--control",
+        help="SPA benchmark ModelSpec (required with --models)",
+    )
+    bakeoff.add_argument(
+        "--name",
+        default="cli_bakeoff",
+        help="Artifact name when using --models (default: cli_bakeoff)",
+    )
+    bakeoff.add_argument("--season", help="Season for CLI --models mode")
+    bakeoff.add_argument("--from-gw", type=int)
+    bakeoff.add_argument("--to-gw", type=int)
+    bakeoff.add_argument("--seasons-back", type=int, default=4)
+    bakeoff.add_argument(
+        "--modes",
+        nargs="+",
+        choices=_COMPARE_MODES,
+        help="Compare modes (default: walk_forward)",
+    )
+    bakeoff.add_argument("--steps", type=int, default=1)
+    bakeoff.add_argument(
+        "--pairwise-evals",
+        nargs="+",
+        help="Optional EvalSpec names to run after the multi-arm compare",
+    )
+    bakeoff.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Print the suite plan without fitting (default)",
+    )
+    bakeoff.add_argument(
+        "--execute",
+        action="store_true",
+        help="Run compare + write ranking.md (SPA/MCS)",
+    )
+    bakeoff.add_argument(
+        "--with-openfpl",
+        action="store_true",
+        help="Allow OpenFPL when listed in --models",
+    )
+    bakeoff.add_argument("--openfpl-model-dir")
+    bakeoff.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write plan/ranking/summary here",
+    )
+    bakeoff.add_argument(
+        "--json",
+        action="store_true",
+        help="Print plan JSON instead of the text table (dry-run)",
+    )
     promote_eval = sub.add_parser(
         "promote-eval",
         parents=[log_flags],
@@ -457,6 +536,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "promote-eval":
         _promote_eval(args)
+        return
+    if args.command == "bakeoff":
+        _bakeoff(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -711,6 +793,64 @@ def _promote_eval(args: argparse.Namespace) -> None:
             "preflight failed: " + "; ".join(result.preflight.failures),
             file=sys.stderr,
         )
+    if result.exit_code != 0:
+        raise SystemExit(result.exit_code)
+
+
+def _bakeoff(args: argparse.Namespace) -> None:
+    dry_run = not bool(args.execute)
+    try:
+        if args.bakeoff:
+            spec = load_bakeoff_spec(str(args.bakeoff))
+        elif args.models and args.control and args.season:
+            from_gw = int(args.from_gw) if args.from_gw is not None else 1
+            to_gw = int(args.to_gw) if args.to_gw is not None else 20
+            spec = bakeoff_from_models(
+                name=str(args.name),
+                control=str(args.control),
+                models=list(args.models),
+                seasons=[str(args.season)],
+                from_gw=from_gw,
+                to_gw=to_gw,
+                seasons_back=int(args.seasons_back),
+                modes=list(args.modes) if args.modes else None,
+                steps=int(args.steps),
+                pairwise_evals=list(args.pairwise_evals)
+                if args.pairwise_evals
+                else None,
+            )
+        else:
+            raise ValueError(
+                "pass --bakeoff <name> or --models … --control … --season …"
+            )
+        if dry_run:
+            plan = plan_bakeoff(
+                spec,
+                dry_run=True,
+                from_gw=args.from_gw,
+                to_gw=args.to_gw,
+            )
+            if args.json:
+                print(bakeoff_plan_to_json(plan), end="")
+            else:
+                print(format_bakeoff_plan(plan), end="")
+            return
+        result = execute_bakeoff(
+            spec,
+            data_dir=get_settings().data_dir,
+            dry_run=False,
+            from_gw=args.from_gw,
+            to_gw=args.to_gw,
+            output_dir=args.output_dir,
+            with_openfpl=bool(args.with_openfpl),
+            openfpl_model_dir=args.openfpl_model_dir,
+        )
+    except (FileNotFoundError, ValueError, KeyError, StaleLedgerCacheError) as exc:
+        logger.error("bakeoff failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(result.ranking, end="")
+    print(f"wrote {result.output_dir}", file=sys.stderr)
     if result.exit_code != 0:
         raise SystemExit(result.exit_code)
 
