@@ -253,6 +253,32 @@ class MatchOddsSchema(pa.DataFrameModel):
         coerce = True
 
 
+class PredictedLineupsSchema(pa.DataFrameModel):
+    """Near-deadline predicted XI / bench / out rows with PIT stamps.
+
+    Grain: one row per ``(season, team_key, fixture_id, player_key,
+    available_at)``. ``role`` is ``start``, ``bench``, or ``out``.
+    ``confidence`` is in ``[0, 1]`` when the source publishes a likelihood.
+    ``fixture_id`` may be null until joined to the team's next unfinished
+    FPL fixture(s). Sources: experimental ``touchline_wire`` (flagged) or
+    ``api_football`` lineups when a key is configured — never FFS/X scrapes.
+    """
+
+    season: str
+    team_key: int
+    fixture_id: int = pa.Field(nullable=True)
+    player_key: int = pa.Field(nullable=True)
+    element_id: int = pa.Field(nullable=True)
+    role: str
+    confidence: float = pa.Field(nullable=True, ge=0.0, le=1.0)
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "players": PlayersSchema,
     "teams": TeamsSchema,
@@ -264,6 +290,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "understat_team_matches": UnderstatTeamMatchSchema,
     "player_injuries": PlayerInjuriesSchema,
     "match_odds": MatchOddsSchema,
+    "predicted_lineups": PredictedLineupsSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -292,6 +319,13 @@ TABLE_KEYS: dict[str, list[str]] = {
         "team_a_key",
         "kickoff_time",
         "odds_kind",
+    ],
+    "predicted_lineups": [
+        "season",
+        "team_key",
+        "fixture_id",
+        "player_key",
+        "available_at",
     ],
 }
 
@@ -442,6 +476,17 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "over_25_odds": pl.Float64(),
         "under_25_odds": pl.Float64(),
         "odds_kind": pl.Utf8(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "predicted_lineups": {
+        "season": pl.Utf8(),
+        "team_key": pl.Int64(),
+        "fixture_id": pl.Int64(),
+        "player_key": pl.Int64(),
+        "element_id": pl.Int64(),
+        "role": pl.Utf8(),
+        "confidence": pl.Float64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

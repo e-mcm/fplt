@@ -612,6 +612,24 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Do not require OpenFPL rows (ep_next only; not for production)",
     )
+    ingest_lineups = sub.add_parser(
+        "ingest-lineups",
+        parents=[log_flags],
+        help=(
+            "Stage predicted_lineups from raw/touchline (and raw/api_football/"
+            "lineups). Optional live Touchline fetch when "
+            "FPLT_TOUCHLINE_LINEUPS_ENABLED=1"
+        ),
+    )
+    ingest_lineups.add_argument(
+        "--fetch",
+        action="store_true",
+        help="Fetch Touchline Wire now (requires FPLT_TOUCHLINE_LINEUPS_ENABLED)",
+    )
+    ingest_lineups.add_argument(
+        "--season",
+        help="Season label for a live fetch path (default: from clock)",
+    )
     ingest_review = sub.add_parser(
         "ingest-review",
         parents=[log_flags],
@@ -773,6 +791,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "archive-benchmarks":
         _archive_benchmarks(args)
         return
+    if args.command == "ingest-lineups":
+        _ingest_lineups(args)
+        return
     if args.command == "ingest-review":
         _ingest_review(args)
         return
@@ -780,6 +801,43 @@ def main(argv: list[str] | None = None) -> None:
         _archive_compare(args)
         return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _ingest_lineups(args: argparse.Namespace) -> None:
+    from datetime import UTC, datetime
+
+    from fplt.data.overall_rank import season_label
+    from fplt.data.predicted_lineups import (
+        PredictedLineupsDisabled,
+        PredictedLineupsRateLimit,
+        capture_touchline_lineups,
+        ingest_predicted_lineups,
+    )
+    from fplt.data.store import DataStore
+    from fplt.settings import get_settings
+
+    settings = get_settings()
+    raw_root = settings.data_dir / "raw"
+    store = DataStore(settings.data_dir)
+    if args.fetch:
+        season = args.season or season_label(datetime.now(tz=UTC))
+        try:
+            path, written = capture_touchline_lineups(
+                raw_root,
+                season,
+                enabled=settings.touchline_lineups_enabled,
+                min_interval_seconds=settings.touchline_lineups_min_interval_seconds,
+            )
+        except (PredictedLineupsDisabled, PredictedLineupsRateLimit) as exc:
+            logger.error("%s", exc)
+            raise SystemExit(2) from exc
+        logger.info(
+            "touchline raw %s (%s)",
+            path,
+            "wrote" if written else "exists",
+        )
+    count = ingest_predicted_lineups(store, raw_root)
+    logger.info("staged predicted_lineups from %s raw file(s)", count)
 
 
 def _ingest_review(args: argparse.Namespace) -> None:
