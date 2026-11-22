@@ -117,3 +117,19 @@ class DecisionSchema(pa.DataFrameModel):
         strict = True
         coerce = True
         unique = ["model_id", "season", "gw", "player_key"]
+
+
+class ChipWindowsSchema(pa.DataFrameModel):
+    """Per-deadline ``ChipUseWindows`` logged beside the decision ledger."""
+
+    model_id: str
+    season: str
+    gw: int = pa.Field(ge=1, le=38)
+    allowed: str
+    forced: str
+    no_chip: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["model_id", "season", "gw"]

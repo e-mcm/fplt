@@ -38,6 +38,34 @@ def test_option_value_holds_chip_when_better_double_is_later() -> None:
     assert 8 in windows.no_chip
 
 
+def test_first_half_week_allowed_despite_higher_second_half_scores() -> None:
+    """GW5 positive first-half score stays allowed when second-half scores dominate.
+
+    Regression: option-value must key ``deferred_best`` by (chip, window).
+    Merging halves emptied the first-half allow-list unless force-play packed
+    GW16–19.
+    """
+    fixtures = _fixtures_first_half_and_stronger_second_half()
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 0, "bboost": 1, "3xc": 0},
+        played=[],
+    )
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=5,
+        short_horizon=3,
+        inventory=inventory,
+        force_play=False,
+    )
+    assert windows.allows("bboost", 5)
+    assert 5 in windows.allowed.get("bboost", frozenset())
+    # Second-half double is still recorded, but must not empty the first-half list.
+    assert 25 in windows.allowed.get("bboost", frozenset())
+
+
 def test_force_best_chip_inside_short_horizon_when_it_beats_later() -> None:
     fixtures = _fixtures_best_now()
     rules = ChipRules.for_season("2025-26")
@@ -404,6 +432,26 @@ def _fixtures_best_now() -> pl.DataFrame:
     ]
     for gw in (11, 12, 13, 14, 15):
         rows.append({"season": "2024-25", "gw": gw, "team_h_key": 1, "team_a_key": 2})
+    return pl.DataFrame(rows)
+
+
+def _fixtures_first_half_and_stronger_second_half() -> pl.DataFrame:
+    """Modest GW5 double plus a much larger GW25 double (cross-half trap)."""
+    rows: list[dict[str, object]] = [
+        {"season": "2024-25", "gw": 5, "team_h_key": 1, "team_a_key": 2},
+        {"season": "2024-25", "gw": 5, "team_h_key": 1, "team_a_key": 3},
+    ]
+    for gw in list(range(6, 20)) + list(range(20, 25)) + list(range(26, 39)):
+        rows.append({"season": "2024-25", "gw": gw, "team_h_key": 1, "team_a_key": 2})
+    # GW25: four teams doubled — beats any first-half league_term if halves merge.
+    rows.extend(
+        [
+            {"season": "2024-25", "gw": 25, "team_h_key": 1, "team_a_key": 2},
+            {"season": "2024-25", "gw": 25, "team_h_key": 1, "team_a_key": 3},
+            {"season": "2024-25", "gw": 25, "team_h_key": 4, "team_a_key": 5},
+            {"season": "2024-25", "gw": 25, "team_h_key": 2, "team_a_key": 4},
+        ]
+    )
     return pl.DataFrame(rows)
 
 

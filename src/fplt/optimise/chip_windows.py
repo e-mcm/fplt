@@ -82,6 +82,44 @@ class ChipUseWindows(BaseModel):
         return gameweek in self.forced.get(chip, frozenset())
 
 
+def format_chip_use_windows(windows: ChipUseWindows) -> str:
+    """Render ``allowed`` / ``forced`` / ``no_chip`` for logs and explain dumps.
+
+    Args:
+        windows: Hooks produced by the season scheduler or rule-based baseline.
+
+    Returns:
+        A single-line summary suitable for decision-ledger logging.
+    """
+    allowed = _format_chip_weeks(windows.allowed)
+    forced = _format_chip_weeks(windows.forced)
+    no_chip = (
+        ",".join(str(gw) for gw in sorted(windows.no_chip)) if windows.no_chip else "-"
+    )
+    return f"allowed={allowed} forced={forced} no_chip={no_chip}"
+
+
+def chip_use_windows_payload(windows: ChipUseWindows) -> dict[str, object]:
+    """Serialize ``ChipUseWindows`` to a JSON-friendly dict.
+
+    Args:
+        windows: Hooks to persist beside decision-ledger rows.
+
+    Returns:
+        ``allowed`` / ``forced`` maps of chip → sorted gameweeks, plus
+        ``no_chip`` as a sorted list.
+    """
+    return {
+        "allowed": {
+            chip: sorted(weeks) for chip, weeks in sorted(windows.allowed.items())
+        },
+        "forced": {
+            chip: sorted(weeks) for chip, weeks in sorted(windows.forced.items())
+        },
+        "no_chip": sorted(windows.no_chip),
+    }
+
+
 def empty_chip_windows() -> ChipUseWindows:
     """Return unrestricted chip-use windows (ChipRules alone still apply)."""
     return ChipUseWindows()
@@ -296,6 +334,17 @@ def _ranked_blanks(landmarks: pl.DataFrame) -> list[int]:
     ]
     rows.sort()
     return [gw for _, gw in rows]
+
+
+def _format_chip_weeks(mapping: Mapping[ChipName, frozenset[int]]) -> str:
+    if not mapping:
+        return "-"
+    parts = [
+        f"{chip}:[{','.join(str(gw) for gw in sorted(weeks))}]"
+        for chip, weeks in sorted(mapping.items())
+        if weeks
+    ]
+    return " ".join(parts) if parts else "-"
 
 
 def _assign(
