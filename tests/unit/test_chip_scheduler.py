@@ -6,12 +6,14 @@ import polars as pl
 import pytest
 
 from fplt.optimise.chip_scheduler import (
+    ChipOpportunity,
     schedule_chip_windows,
     score_chip_opportunities,
+    windows_from_opportunities,
 )
 from fplt.optimise.plan import plan_squad
 from fplt.optimise.state import ChipInventory, SquadState
-from fplt.scoring.chips import ChipRules
+from fplt.scoring.chips import ChipGrant, ChipRules
 
 
 def test_option_value_holds_chip_when_better_double_is_later() -> None:
@@ -41,7 +43,7 @@ def test_option_value_holds_chip_when_better_double_is_later() -> None:
 def test_first_half_week_allowed_despite_higher_second_half_scores() -> None:
     """GW5 positive first-half score stays allowed when second-half scores dominate.
 
-    Regression: option-value must key ``deferred_best`` by (chip, window).
+    Regression: option-value must key ``deferred_best`` by ``ChipGrant``.
     Merging halves emptied the first-half allow-list unless force-play packed
     GW16–19.
     """
@@ -64,6 +66,31 @@ def test_first_half_week_allowed_despite_higher_second_half_scores() -> None:
     assert 5 in windows.allowed.get("bboost", frozenset())
     # Second-half double is still recorded, but must not empty the first-half list.
     assert 25 in windows.allowed.get("bboost", frozenset())
+
+
+def test_chip_opportunity_grant_is_typed_map_key() -> None:
+    """Opportunity maps must key by ChipGrant, not bare chip name."""
+    first = ChipOpportunity(chip="bboost", window="first", gameweek=5, score=1.0)
+    second = ChipOpportunity(chip="bboost", window="second", gameweek=25, score=9.0)
+    assert first.grant == ChipGrant(name="bboost", window="first")
+    assert second.grant == ChipGrant(name="bboost", window="second")
+    assert first.grant != second.grant
+    by_grant: dict[ChipGrant, list[ChipOpportunity]] = {}
+    by_grant.setdefault(first.grant, []).append(first)
+    by_grant.setdefault(second.grant, []).append(second)
+    assert set(by_grant) == {
+        ChipGrant(name="bboost", window="first"),
+        ChipGrant(name="bboost", window="second"),
+    }
+    # Cross-half scores stay separate when fed through windows_from_opportunities.
+    windows = windows_from_opportunities(
+        (first, second),
+        as_of_gw=5,
+        short_horizon=3,
+        force_play=False,
+    )
+    assert windows.allows("bboost", 5)
+    assert windows.allows("bboost", 25)
 
 
 def test_force_best_chip_inside_short_horizon_when_it_beats_later() -> None:
