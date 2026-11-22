@@ -37,10 +37,12 @@ from fplt.orchestration.factories import (
     predictions_assets,
 )
 from fplt.orchestration.sensors import (
+    api_football_sensor,
     catchup_sensor,
     notify_run_failure,
     pre_deadline_sensor,
     snapshots_sensor,
+    understat_sensor,
 )
 
 defs = dg.Definitions(
@@ -73,6 +75,8 @@ defs = dg.Definitions(
     ],
     sensors=[
         snapshots_sensor,
+        understat_sensor,
+        api_football_sensor,
         catchup_sensor,
         pre_deadline_sensor,
         notify_run_failure,

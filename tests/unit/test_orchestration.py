@@ -19,7 +19,11 @@ from fplt.orchestration.assets import (
     understat_ingest,
 )
 from fplt.orchestration.checks import schema_check_result
-from fplt.orchestration.sensors import snapshots_sensor
+from fplt.orchestration.sensors import (
+    api_football_sensor,
+    snapshots_sensor,
+    understat_sensor,
+)
 from fplt.settings import get_settings
 
 _BOOTSTRAP = {
@@ -142,6 +146,161 @@ def test_sensor_skips_when_the_branch_is_missing(
 
     monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests == []
+    assert evaluation.skip_message == "missing"
+    get_settings.cache_clear()
+
+
+def test_understat_sensor_requests_a_run_for_new_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    target = (
+        tmp_path
+        / "raw"
+        / "understat"
+        / "season=2024-25"
+        / "match_id=42"
+        / "match.json.gz"
+    )
+    other = tmp_path / "raw" / "fpl_api" / "bootstrap_static.json.gz"
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        return [other, target]
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    evaluation = understat_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests[0].run_key == target.as_posix()
+    names = {sensor.name for sensor in defs.sensors}
+    assert "understat_sensor" in names
+    get_settings.cache_clear()
+
+
+def test_understat_sensor_skips_when_prefix_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    fpl_only = tmp_path / "raw" / "fpl_api" / "bootstrap_static.json.gz"
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        return [fpl_only]
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    evaluation = understat_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests == []
+    assert evaluation.skip_message == "no new understat snapshots"
+    get_settings.cache_clear()
+
+
+def test_understat_sensor_uses_cursor_when_fetch_already_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    target = (
+        tmp_path
+        / "raw"
+        / "understat"
+        / "season=2024-25"
+        / "match_id=42"
+        / "match.json.gz"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"")
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        return []
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    first = understat_sensor.evaluate_tick(dg.build_sensor_context())
+    assert first.run_requests[0].run_key == target.as_posix()
+    again = understat_sensor.evaluate_tick(
+        dg.build_sensor_context(cursor=target.as_posix())
+    )
+    assert again.run_requests == []
+    assert again.skip_message == "no new understat snapshots"
+    get_settings.cache_clear()
+
+
+def test_api_football_sensor_requests_a_run_for_injury_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    injury = (
+        tmp_path
+        / "raw"
+        / "api_football"
+        / "season=2024-25"
+        / "injuries"
+        / "captured_at=2024-08-10T00-00-00Z"
+        / "injuries.json.gz"
+    )
+    lineup = (
+        tmp_path
+        / "raw"
+        / "api_football"
+        / "season=2024-25"
+        / "lineups"
+        / "captured_at=2024-08-10T00-00-00Z"
+        / "lineups.json.gz"
+    )
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        return [lineup, injury]
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests[0].run_key == injury.as_posix()
+    names = {sensor.name for sensor in defs.sensors}
+    assert "api_football_sensor" in names
+    get_settings.cache_clear()
+
+
+def test_api_football_sensor_skips_lineups_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+    lineup = (
+        tmp_path
+        / "raw"
+        / "api_football"
+        / "season=2024-25"
+        / "lineups"
+        / "captured_at=2024-08-10T00-00-00Z"
+        / "lineups.json.gz"
+    )
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        return [lineup]
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests == []
+    assert evaluation.skip_message == "no new api_football snapshots"
+    get_settings.cache_clear()
+
+
+def test_api_football_sensor_skips_when_the_branch_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+
+    def _fetch(
+        dest: Path, remote: str = "origin", branch: str = "snapshots"
+    ) -> list[Path]:
+        raise SnapshotFetchError("missing")
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "missing"
     get_settings.cache_clear()

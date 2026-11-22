@@ -520,6 +520,8 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 | Trigger | Type | Action |
 |---|---|---|
 | New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` |
+| New Understat raw under `raw/understat/` | sensor (every 10 min) | Materialise `understat_ingest` (fetch + prefix filter; cursor fallback if `snapshots_sensor` already copied) |
+| New API-Football injury raw under `raw/api_football/` (excludes `lineups/`) | sensor (every 10 min) | Materialise `api_football_ingest` |
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
 | Next deadline within 3 h and plan or `benchmark_projections` still missing | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
