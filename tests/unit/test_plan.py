@@ -11,6 +11,7 @@ from fplt.cli import main
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
+    DEFAULT_LIVE_CHIP_ARM,
     PlanExistsError,
     _actual_rows,
     _prediction_rows,
@@ -598,6 +599,64 @@ def test_decisions_cli_default_horizon_is_three(
     assert DEFAULT_PLAN_HORIZON == 3
 
 
+def test_live_chip_arm_default_is_optimised() -> None:
+    """Live plan / automation default matches the C6 board winner."""
+    assert DEFAULT_LIVE_CHIP_ARM == "optimised"
+    assert DEFAULT_PLAN_HORIZON == 3
+
+
+def test_run_plan_defaults_to_optimised_chip_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_plan`` without ``chip_arm`` schedules windows then enables chips."""
+    _stage(tmp_path)
+    _score(tmp_path)
+    seen: dict[str, object] = {}
+    real = plan_squad
+
+    def spy_plan(*args: object, **kwargs: object):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
+    solved, _path, _report = run_plan(
+        tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state()
+    )
+    assert seen["season"] == "2024-25"
+    assert seen["gameweeks"] == [1]
+    assert seen["chip_windows"] is not None
+    assert seen["chip_rules_season"] == "2024-25"
+    assert len(solved.chips) == 1
+
+
+def test_run_plan_chip_arm_off_skips_chip_wiring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``chip_arm='off'`` keeps the pre-C6 chips-off ``plan_squad`` call."""
+    _stage(tmp_path)
+    _score(tmp_path)
+    seen: dict[str, object] = {}
+    real = plan_squad
+
+    def spy_plan(*args: object, **kwargs: object):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
+    run_plan(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        1,
+        1,
+        squad=_state(),
+        chip_arm="off",
+    )
+    assert seen["season"] is None
+    assert seen["gameweeks"] is None
+    assert seen["chip_windows"] is None
+
+
 def test_run_plan_rejects_missing_or_blank_predictions(tmp_path: Path) -> None:
     _stage(tmp_path)
     with pytest.raises(ValueError, match="no predictions"):
@@ -838,5 +897,35 @@ def _stage(root: Path) -> None:
                 "available_at": [_WHEN, _WHEN],
                 "source": ["test", "test"],
             }
+        ),
+    )
+    # Optimised live plans need fixtures for ``schedule_chip_windows``.
+    pairs = [(1, 2), (3, 4), (5, 6)]
+    fixture_rows: list[dict[str, object]] = []
+    fixture_id = 1
+    for gw in (1, 2):
+        kickoff = datetime(2024, 8, 16 + 7 * (gw - 1), 14, tzinfo=UTC)
+        for home, away in pairs:
+            fixture_rows.append(
+                {
+                    "season": "2024-25",
+                    "fixture_id": fixture_id,
+                    "gw": gw,
+                    "team_h_key": home,
+                    "team_a_key": away,
+                    "kickoff_time": kickoff,
+                    "team_h_score": None,
+                    "team_a_score": None,
+                    "finished": False,
+                    "available_at": _WHEN,
+                    "source": "test",
+                }
+            )
+            fixture_id += 1
+    store.write(
+        "fixtures",
+        pl.DataFrame(fixture_rows).with_columns(
+            pl.col("team_h_score").cast(pl.Int64()),
+            pl.col("team_a_score").cast(pl.Int64()),
         ),
     )

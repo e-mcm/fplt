@@ -193,6 +193,8 @@ explain:
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10
 # Optional: MODEL=rolling_mean_v1 HORIZON=3 ARGS='--entry-json picks.json'
+# Default chip policy is optimised (scheduler → MILP). Override with
+# ARGS='--chip-arm off' (or rule_based). Horizon default stays 3.
 plan:
 	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
 		echo "Usage: make plan SEASON=2025-26 GW=10"; exit 1; fi

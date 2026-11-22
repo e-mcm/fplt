@@ -417,6 +417,31 @@ def test_chip_rules_season_can_differ_from_fixture_season() -> None:
     assert plan.chips == ("3xc",)
 
 
+def test_pre_2025_season_window_still_allows_bench_boost() -> None:
+    """Overlapping wildcard-only windows must not zero-cap season chips.
+
+    2024-25 grants BB on the ``season`` window while ``first_wildcard`` also
+    covers GW2–19. Capping BB by the wildcard window's 0 grants made BB/TC
+    unplayable and forced-chip schedules infeasible.
+    """
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        _state(chips=_inventory(bboost=1)),
+        initial=True,
+        horizon=1,
+        season="2024-25",
+        gameweeks=[5],
+        chip_windows=ChipUseWindows(
+            allowed={"bboost": frozenset({5})},
+            forced={"bboost": frozenset({5})},
+        ),
+    )
+    assert plan.chips == ("bboost",)
+
+
 def test_wildcard_remaining_inventory_is_respected() -> None:
     pool, owned, bank = _owned_squad()
     plan = plan_squad(
