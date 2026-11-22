@@ -13,6 +13,11 @@ import polars as pl
 
 from fplt.auth import clear_credentials, format_status, set_credentials
 from fplt.auth import status as auth_status
+from fplt.backtest.archive_compare import (
+    DEFAULT_SOURCES,
+    compare_to_archives,
+    format_archive_board,
+)
 from fplt.backtest.bakeoff import (
     bakeoff_from_models,
     execute_bakeoff,
@@ -500,6 +505,34 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Also copy the drop under data/raw/fpl_review/ (write-once)",
     )
+    archive_compare = sub.add_parser(
+        "archive-compare",
+        parents=[log_flags],
+        help=(
+            "Paired prospective board: join ledger forecasts to "
+            "benchmark_projections (RMSE headline; no FPL Review scrape)"
+        ),
+    )
+    archive_compare.add_argument("--season", required=True)
+    archive_compare.add_argument(
+        "--model",
+        required=True,
+        help="ModelSpec name or ledger model_id for the candidate arm",
+    )
+    archive_compare.add_argument("--from-gw", type=int, default=1)
+    archive_compare.add_argument("--to-gw", type=int, default=38)
+    archive_compare.add_argument(
+        "--sources",
+        nargs="+",
+        default=list(DEFAULT_SOURCES),
+        help="Archive sources to pair (default: ep_next openfpl)",
+    )
+    archive_compare.add_argument("--horizon", type=int, default=1)
+    archive_compare.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary JSON/parquet/markdown here",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -605,6 +638,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "ingest-review":
         _ingest_review(args)
+        return
+    if args.command == "archive-compare":
+        _archive_compare(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -1055,6 +1091,27 @@ def _archive_benchmarks(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(path)
+
+
+def _archive_compare(args: argparse.Namespace) -> None:
+    _configure_cli_logging()
+    try:
+        result = compare_to_archives(
+            get_settings().data_dir,
+            season=str(args.season),
+            model=str(args.model),
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            sources=list(args.sources),
+            horizon=int(args.horizon),
+            output_dir=args.output_dir,
+        )
+    except (KeyError, ValueError) as exc:
+        logger.error("archive-compare failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_archive_board(result))
+    print(result.output_dir)
 
 
 def _apply(args: argparse.Namespace) -> None:
