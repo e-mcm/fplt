@@ -13,15 +13,20 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from fplt.backtest.component_eval import ComponentEvalResult
 from fplt.backtest.promote_eval import (
     EvalSpec,
     execute_promote_eval,
     format_plan,
+    is_n_sims_lever,
+    is_scoreline_lever,
     load_eval_spec,
     plan_promote_eval,
     plan_to_json,
     preflight_promote_eval,
+    raw_de_vig_spec,
     render_recommendation,
+    slot_component_names,
 )
 from fplt.cli import main
 from fplt.data.store import DataStore
@@ -322,6 +327,11 @@ def test_load_and_plan_dry_run(tmp_path: Path) -> None:
     assert plan.lever == "component_swap"
     assert plan.to_gw == 10
     assert any("eval-components" in cmd for cmd in plan.commands)
+    component_cmds = [c for c in plan.commands if "eval-components" in c]
+    assert any("--skip-sims" in cmd for cmd in component_cmds)
+    assert any("omitted arm-specific model flags" in w for w in plan.warnings), (
+        plan.warnings
+    )
     assert any("compare" in cmd and "dc_layered_v2" in cmd for cmd in plan.commands)
     assert any(
         "ModelSpec 'dc_layered_minutes_lgbm_v1' not found" in w for w in plan.warnings
@@ -331,6 +341,180 @@ def test_load_and_plan_dry_run(tmp_path: Path) -> None:
     assert "dry-run" in text
     payload = plan_to_json(plan)
     assert '"eval_name": "demo_swap"' in payload
+
+
+def test_components_command_names_score_slot_specs() -> None:
+    spec = load_eval_spec("example_data_odds_prior")
+    plan = plan_promote_eval(spec, dry_run=True, to_gw=2)
+    components = [cmd for cmd in plan.commands if "eval-components" in cmd]
+    assert len(components) == 1
+    cmd = components[0]
+    assert "--score-models dixon_coles_v2 dixon_coles_odds_v1" in cmd
+    assert "--skip-sims" in cmd
+    assert "dixon_coles_v1" not in cmd
+    assert "odds_poisson_v1" not in cmd
+
+
+def test_components_command_names_involvement_slot_specs() -> None:
+    spec = load_eval_spec("pens_order_involvement_ab")
+    plan = plan_promote_eval(spec, dry_run=True, to_gw=1)
+    components = [cmd for cmd in plan.commands if "eval-components" in cmd]
+    assert len(components) == 1
+    cmd = components[0]
+    assert "--involvement-model involvement_xg_nopens_v1 involvement_xg_v1" in cmd
+    assert "--skip-sims" in cmd
+    assert "involvement_shares_v1" not in cmd
+
+
+def test_n_sims_lever_omits_skip_sims(tmp_path: Path) -> None:
+    payload = _base_payload(
+        name="n_sims_ab",
+        kind="config",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "score",
+            "control_kind": "dixon_coles",
+            "treatment_kind": "dixon_coles",
+            "diff": ["params.n_sims: 1000 → 10000"],
+            "allow_multi_lever": True,
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_odds_v1",
+        suites={"prediction": False, "components": True},
+    )
+    _write_eval(tmp_path, "n_sims_ab", payload)
+    spec = load_eval_spec("n_sims_ab", directory=tmp_path)
+    assert is_n_sims_lever(spec)
+    plan = plan_promote_eval(spec, dry_run=True)
+    components = [cmd for cmd in plan.commands if "eval-components" in cmd]
+    assert components
+    assert all("--skip-sims" not in cmd for cmd in components)
+
+
+def test_scoreline_helpers() -> None:
+    odds = load_eval_spec("example_data_odds_prior")
+    pens = load_eval_spec("pens_order_involvement_ab")
+    assert is_scoreline_lever(odds)
+    assert not is_scoreline_lever(pens)
+    from fplt.models.spec import load_model_specs
+
+    specs = load_model_specs()
+    names = slot_component_names(
+        specs["dc_layered_v2"], specs["dc_layered_odds_v1"], "score"
+    )
+    assert names == ("dixon_coles_v2", "dixon_coles_odds_v1")
+    market = raw_de_vig_spec(coverage_read="strict_pit")
+    assert market.name == "raw_de_vig_1x2"
+    assert market.kind == "odds_1x2"
+    assert market.params["use_closing_proxy"] is False
+    proxy = raw_de_vig_spec(coverage_read="closing_proxy_labelled")
+    assert proxy.params["use_closing_proxy"] is True
+
+
+def test_scoreline_execute_writes_per_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_odds_store(tmp_path, available_at=_KICKOFF_GW1)
+    # Finished result so scoreline metrics have a join target.
+    store = DataStore(tmp_path)
+    fixtures = store.read("fixtures").with_columns(
+        pl.lit(2).alias("team_h_score"),
+        pl.lit(1).alias("team_a_score"),
+        pl.lit(True).alias("finished"),
+    )
+    store.write("fixtures", fixtures)
+    payload = yaml.safe_load(
+        Path("configs/evals/example_data_odds_prior.yaml").read_text(encoding="utf-8")
+    )
+    payload["name"] = "odds_board"
+    payload["suites"] = {
+        "prediction": False,
+        "components": True,
+        "decisions": False,
+        "steps": 1,
+    }
+    payload["gates"]["allow_low_coverage"] = True
+    payload["window"]["to_gw"] = 1
+    _write_eval(tmp_path, "odds_board", payload)
+    spec = load_eval_spec("odds_board", directory=tmp_path)
+    out = tmp_path / "out"
+
+    per_match = pl.DataFrame(
+        {
+            "season": ["2024-25"] * 6,
+            "gw": [1] * 6,
+            "fixture_id": [10] * 6,
+            "arm": [
+                "dixon_coles_v2",
+                "dixon_coles_v2",
+                "dixon_coles_odds_v1",
+                "dixon_coles_odds_v1",
+                "raw_de_vig_1x2",
+                "raw_de_vig_1x2",
+            ],
+            "metric": ["rps", "logloss"] * 3,
+            "value": [0.3, 1.0, 0.29, 0.98, 0.2, 0.9],
+        }
+    )
+    summary = pl.DataFrame(
+        {
+            "component": ["score"] * 3,
+            "metric": ["rps"] * 3,
+            "model_name": [
+                "dixon_coles_v2",
+                "dixon_coles_odds_v1",
+                "raw_de_vig_1x2",
+            ],
+            "slice": ["overall"] * 3,
+            "value": [0.3, 0.29, 0.2],
+            "n": [1, 1, 1],
+        }
+    )
+    fake = ComponentEvalResult(
+        summary=summary,
+        sims=pl.DataFrame(),
+        output_dir=out / "components" / "2024-25",
+        per_match=per_match,
+    )
+
+    def _fake_run(*_args: object, **kwargs: object) -> ComponentEvalResult:
+        assert kwargs.get("sims") == []
+        assert kwargs.get("write_per_match") is True
+        score_models = kwargs.get("score_models")
+        assert score_models == ["dixon_coles_v2", "dixon_coles_odds_v1"]
+        extra = kwargs.get("extra_score_specs")
+        assert isinstance(extra, list) and len(extra) == 1
+        assert extra[0].name == "raw_de_vig_1x2"
+        assert extra[0].kind == "odds_1x2"
+        assert "odds_poisson" not in str(extra[0].kind)
+        return fake
+
+    with (
+        patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False),
+        patch("fplt.backtest.promote_eval.run_component_eval", side_effect=_fake_run),
+    ):
+        result = execute_promote_eval(
+            spec,
+            data_dir=tmp_path,
+            dry_run=False,
+            tier="S1",
+            to_gw=1,
+            allow_dirty=False,
+            output_dir=out,
+        )
+    assert result.exit_code == 0
+    assert result.verdict == "inconclusive"
+    assert (out / "per_match.parquet").is_file()
+    board = pl.read_parquet(out / "per_match.parquet")
+    assert set(board["arm"].unique().to_list()) == {
+        "dixon_coles_v2",
+        "dixon_coles_odds_v1",
+        "raw_de_vig_1x2",
+    }
+    assert "odds_poisson_v1" not in board["arm"].to_list()
+    assert "raw_de_vig_1x2" in result.recommendation
+    assert "not odds_poisson_v1" in result.recommendation
 
 
 def test_tier_disables_decisions(tmp_path: Path) -> None:

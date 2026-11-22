@@ -40,6 +40,21 @@ class SimsSweepSchema(pa.DataFrameModel):
         coerce = True
 
 
+class ComponentEvalPerMatchSchema(pa.DataFrameModel):
+    """One fixture × arm × metric row from a scoreline component board."""
+
+    season: str
+    gw: int = pa.Field(ge=1)
+    fixture_id: int
+    arm: str
+    metric: str
+    value: float = pa.Field(nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 COMPONENT_EVAL_COLUMNS: dict[str, pl.DataType] = {
     "component": pl.Utf8(),
     "metric": pl.Utf8(),
@@ -57,4 +72,13 @@ SIMS_SWEEP_COLUMNS: dict[str, pl.DataType] = {
     "mean_xpts_sd": pl.Float64(),
     "analytic_se": pl.Float64(),
     "n_players": pl.Int64(),
+}
+
+PER_MATCH_COLUMNS: dict[str, pl.DataType] = {
+    "season": pl.Utf8(),
+    "gw": pl.Int64(),
+    "fixture_id": pl.Int64(),
+    "arm": pl.Utf8(),
+    "metric": pl.Utf8(),
+    "value": pl.Float64(),
 }

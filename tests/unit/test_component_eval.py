@@ -70,6 +70,48 @@ def test_skip_sims_leaves_sweep_empty(tmp_path: Path) -> None:
     assert result.sims.is_empty()
 
 
+def test_write_per_match_scoreline_board(tmp_path: Path) -> None:
+    _league(DataStore(tmp_path))
+    out = tmp_path / "per-match"
+    result = run_component_eval(
+        tmp_path,
+        _SEASON,
+        from_gw=3,
+        to_gw=3,
+        score_models=["dixon_coles_v2", "odds_1x2_v1"],
+        minutes_model=[],
+        involvement_model=[],
+        sims=[],
+        output_dir=out,
+        write_per_match=True,
+    )
+    assert (out / "per_match.parquet").is_file()
+    assert not result.per_match.is_empty()
+    assert set(result.per_match["arm"].unique().to_list()) == {
+        "dixon_coles_v2",
+        "odds_1x2_v1",
+    }
+    assert "rps" in result.per_match["metric"].to_list()
+    assert "odds_poisson_v1" not in result.per_match["arm"].to_list()
+    assert result.summary.filter(pl.col("component") == "minutes").is_empty()
+
+
+def test_empty_score_models_skips_score_suite(tmp_path: Path) -> None:
+    _league(DataStore(tmp_path))
+    result = run_component_eval(
+        tmp_path,
+        _SEASON,
+        from_gw=3,
+        to_gw=3,
+        score_models=[],
+        minutes_model=["empirical_minutes_v1"],
+        involvement_model=[],
+        sims=[],
+        output_dir=tmp_path / "minutes-only",
+    )
+    assert set(result.summary["component"].unique().to_list()) == {"minutes"}
+
+
 def test_unknown_spec_raises(tmp_path: Path) -> None:
     _league(DataStore(tmp_path))
     with pytest.raises(ValueError, match="unknown model spec"):
