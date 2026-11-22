@@ -9,6 +9,7 @@ order) is the sample-average approximation for the single-GW problem.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import combinations, permutations, product
@@ -17,12 +18,14 @@ import numpy as np
 import polars as pl
 
 from fplt.optimise.scenarios import ScenarioBundle, mean_realised_lineup
+from fplt.optimise.squad_integrity import locked_fifteen_issue
 
 _XI_MIN = {"GK": 1, "DEF": 3, "MID": 2, "FWD": 1}
 _XI_MAX = {"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}
 _XI_SIZE = 11
 _POS = ("GK", "DEF", "MID", "FWD")
 _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -177,22 +180,9 @@ def select_lineup_expected(
 
 
 def _validate_squad(squad: pl.DataFrame) -> pl.DataFrame:
-    required = {"player_key", "position"}
-    missing = required - set(squad.columns)
-    if missing:
-        raise ValueError(f"squad missing columns: {sorted(missing)}")
-    if squad["player_key"].n_unique() != squad.height:
-        raise ValueError("player_key must be unique")
-    if squad.height != 15:
-        raise ValueError(f"squad must have 15 players, got {squad.height}")
-    counts = {position: 0 for position in _POS}
-    for position in squad["position"].to_list():
-        if position not in counts:
-            raise ValueError(f"unknown position {position!r}")
-        counts[str(position)] += 1
-    expected = {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}
-    if counts != expected:
-        raise ValueError(f"squad position counts must be {expected}, got {counts}")
+    issue = locked_fifteen_issue(squad)
+    if issue is not None:
+        raise ValueError(issue)
     return squad.sort("player_key")
 
 
@@ -394,11 +384,16 @@ def reoptimize_plan_lineups(
     haul_weight: float = DEFAULT_HAUL_WEIGHT,
     scenario_step: int = 0,
 ) -> pl.DataFrame:
-    """Replace XI / captain / vice on each step with sample-average (or EV) picks.
+    """Replace XI / captain / vice on each *locked* fifteen via SAA / EV.
 
-    Locked fifteens come from non-sold rows. When ``scenarios`` is set, step
-    ``scenario_step`` (default 0, the actionable week) uses the joint bundle;
-    other steps use EV + optional ``p_haul``. ``bench_slot`` is computed but
+    Locked fifteens come from non-sold rows that pass the formation check.
+    Steps that are not a legal fifteen (common for continuous far steps under
+    relax-and-fix after 0.5-thresholding) keep the MILP lineup and are
+    skipped — except ``scenario_step`` (default 0, the actionable week), which
+    must be a legal locked fifteen.
+
+    When ``scenarios`` is set, ``scenario_step`` uses the joint bundle; other
+    reopted steps use EV + optional ``p_haul``. ``bench_slot`` is computed but
     dropped so the frame still matches ``HorizonPickSchema``.
 
     Args:
@@ -406,13 +401,14 @@ def reoptimize_plan_lineups(
         scenarios: Optional shared scenarios for ``scenario_step``.
         p_haul: Optional ``player_key``, ``step``, ``p_haul`` for captaincy.
         haul_weight: Weight on ``p_haul`` for the EV path.
-        scenario_step: Horizon step that consumes ``scenarios``.
+        scenario_step: Horizon step that consumes ``scenarios`` and must be
+            a legal locked fifteen.
 
     Returns:
         A copy of ``picks`` with updated ``in_xi`` / ``captain`` / ``vice``.
 
     Raises:
-        ValueError: A step's kept squad is not a valid fifteen.
+        ValueError: ``scenario_step``'s kept squad is not a valid fifteen.
     """
     if picks.is_empty():
         return picks
@@ -434,7 +430,20 @@ def reoptimize_plan_lineups(
     for step in steps:
         part = picks.filter(pl.col("step") == step)
         kept = part.filter(~pl.col("sold")) if "sold" in part.columns else part
-        if kept.height != 15:
+        issue = locked_fifteen_issue(kept)
+        if issue is not None:
+            if step == scenario_step:
+                raise ValueError(
+                    f"lineup reopt requires a locked fifteen on scenario_step "
+                    f"{scenario_step}: {issue}"
+                )
+            # Far continuous steps under RAF often threshold to illegal counts;
+            # they are look-ahead only — keep the MILP XI and move on.
+            _log.warning(
+                "skipping lineup reopt on step %s (%s); keeping MILP lineup",
+                step,
+                issue,
+            )
             pieces.append(part)
             continue
         squad = kept.select(

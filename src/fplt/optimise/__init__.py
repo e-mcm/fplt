@@ -29,6 +29,13 @@ from fplt.optimise.season_optimiser import (
     freeze_reference_state,
 )
 from fplt.optimise.squad import SquadSelection, aggregate_gameweek, select_squad
+from fplt.optimise.squad_integrity import (
+    SQUAD_POSITION_QUOTA,
+    StepSquadIntegrity,
+    inspect_horizon_picks,
+    locked_fifteen_issue,
+    squad_position_counts,
+)
 from fplt.optimise.state import (
     ChipInventory,
     ChipPlay,
@@ -48,8 +55,10 @@ __all__ = [
     "IdentityReferenceOptimiser",
     "LineupSelection",
     "OursSeasonOptimiser",
+    "SQUAD_POSITION_QUOTA",
     "SquadSelection",
     "SquadState",
+    "StepSquadIntegrity",
     "TransferPlan",
     "aggregate_gameweek",
     "attainable_share",
@@ -60,7 +69,9 @@ __all__ = [
     "format_attainable_scoreboard",
     "freeze_reference_state",
     "horizon_points",
+    "inspect_horizon_picks",
     "load_squad_state",
+    "locked_fifteen_issue",
     "optimize_transfers",
     "plan_squad",
     "rebuild_squad_state",
@@ -70,5 +81,6 @@ __all__ = [
     "select_lineup_scenarios",
     "select_squad",
     "simulate_hindsight_oracle",
+    "squad_position_counts",
     "summarise_attainable",
 ]
