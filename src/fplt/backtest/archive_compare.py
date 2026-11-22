@@ -28,7 +28,7 @@ from fplt.backtest.intervals import (
     interval_to_dict,
     intervals_for_pair,
 )
-from fplt.backtest.ledger import read_predictions
+from fplt.backtest.ledger import align_ledger_columns, read_predictions
 from fplt.backtest.metrics import overall_summary, summarise
 from fplt.data.benchmark_projections import read_benchmark_archive
 from fplt.data.store import DataStore
@@ -274,24 +274,28 @@ def benchmarks_to_ledger(
     joined = frame.join(meta, on=list(_PAIR_KEYS), how="inner")
     if joined.is_empty():
         return pl.DataFrame(schema=LEDGER_COLUMNS)
-    out = joined.select(
-        pl.concat_str(pl.lit(ARCHIVE_MODEL_PREFIX), pl.col("source")).alias("model_id"),
-        "run_kind",
-        "as_of_season",
-        "as_of_gw",
-        "target_season",
-        "target_gw",
-        "horizon",
-        "player_key",
-        "position",
-        "fixture_id",
-        pl.col("xpts").cast(pl.Float64),
-        pl.lit(None).cast(pl.Float64).alias("xpts_sd"),
-        pl.lit(None).cast(pl.Float64).alias("p_haul"),
-        pl.lit(None).cast(pl.Float64).alias("p_60"),
-        "actual_pts",
-        "actual_minutes",
-    ).select(list(LEDGER_COLUMNS))
+    out = align_ledger_columns(
+        joined.select(
+            pl.concat_str(pl.lit(ARCHIVE_MODEL_PREFIX), pl.col("source")).alias(
+                "model_id"
+            ),
+            "run_kind",
+            "as_of_season",
+            "as_of_gw",
+            "target_season",
+            "target_gw",
+            "horizon",
+            "player_key",
+            "position",
+            "fixture_id",
+            pl.col("xpts").cast(pl.Float64),
+            pl.lit(None).cast(pl.Float64).alias("xpts_sd"),
+            pl.lit(None).cast(pl.Float64).alias("p_haul"),
+            pl.lit(None).cast(pl.Float64).alias("p_60"),
+            "actual_pts",
+            "actual_minutes",
+        )
+    )
     checked = LedgerSchema.validate(out)
     assert isinstance(checked, pl.DataFrame)
     return checked
@@ -420,7 +424,9 @@ def compare_to_archives(
         )
         for source in chosen
     }
-    ours_covered = ours.join(keys, on=list(_PAIR_KEYS), how="inner")
+    ours_covered = align_ledger_columns(
+        ours.join(keys, on=list(_PAIR_KEYS), how="inner")
+    )
     archive_covered = archive.join(keys, on=list(_PAIR_KEYS), how="inner")
     bench_ledger = benchmarks_to_ledger(archive_covered, ours_covered, sources=chosen)
     paired = pl.concat([ours_covered.select(list(LEDGER_COLUMNS)), bench_ledger])

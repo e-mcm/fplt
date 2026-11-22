@@ -46,8 +46,17 @@ def prediction_frame(
     xpts_sd: pl.Expr,
     p_haul: pl.Expr,
     p_60: pl.Expr,
+    *,
+    p_played: pl.Expr | None = None,
+    p_goal: pl.Expr | None = None,
+    p_assist: pl.Expr | None = None,
+    p_cs: pl.Expr | None = None,
 ) -> pl.DataFrame:
     """Attach prediction columns and validate them.
+
+    Event probabilities default to null when the caller omits them. Layered
+    Monte Carlo models fill them cheaply from the same sims that produce
+    ``p_haul`` / ``p_60``; point-estimate baselines leave them null.
 
     Args:
         spec: Model that produced the rows.
@@ -58,12 +67,17 @@ def prediction_frame(
         xpts_sd: Expression for the standard deviation, or null.
         p_haul: Expression for ``P(points >= 10)``, or null.
         p_60: Expression for ``P(minutes >= 60)``, or null.
+        p_played: Expression for ``P(minutes > 0)``, or null.
+        p_goal: Expression for ``P(goals >= 1)``, or null.
+        p_assist: Expression for ``P(assists >= 1)``, or null.
+        p_cs: Expression for ``P(clean sheet)``, or null.
 
     Returns:
         A frame matching ``PredictionSchema``.
     """
     if rows.is_empty():
         return empty_predictions()
+    null = pl.lit(None)
     frame = (
         rows.with_columns(
             pl.lit(spec.model_id).alias("model_id"),
@@ -73,14 +87,22 @@ def prediction_frame(
             pl.col("gw").alias("target_gw"),
             xpts.alias("xpts"),
             xpts_sd.alias("xpts_sd"),
-            p_haul.alias("p_haul"),
+            (p_played if p_played is not None else null).alias("p_played"),
             p_60.alias("p_60"),
+            (p_goal if p_goal is not None else null).alias("p_goal"),
+            (p_assist if p_assist is not None else null).alias("p_assist"),
+            (p_cs if p_cs is not None else null).alias("p_cs"),
+            p_haul.alias("p_haul"),
         )
         .with_columns(
             pl.col("xpts").cast(pl.Float64),
             pl.col("xpts_sd").cast(pl.Float64),
-            pl.col("p_haul").cast(pl.Float64),
+            pl.col("p_played").cast(pl.Float64),
             pl.col("p_60").cast(pl.Float64),
+            pl.col("p_goal").cast(pl.Float64),
+            pl.col("p_assist").cast(pl.Float64),
+            pl.col("p_cs").cast(pl.Float64),
+            pl.col("p_haul").cast(pl.Float64),
         )
         .select(list(PREDICTION_COLUMNS))
     )

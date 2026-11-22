@@ -947,6 +947,7 @@ def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
         modes = ("walk_forward",)
         time_decay = None
         skipped_openfpl = None
+        calibration = pl.DataFrame()
 
     with (
         patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False),

@@ -22,6 +22,7 @@ from fplt.backtest.archive_compare import (
     outcome_group,
     outcome_group_metrics,
 )
+from fplt.backtest.ledger import align_ledger_columns
 from fplt.data.benchmark_projections import write_benchmark_archive
 from fplt.schemas.benchmark_projections import (
     SOURCE_EP_NEXT,
@@ -247,7 +248,7 @@ def _ours_ledger() -> pl.DataFrame:
                     "actual_minutes": minutes,
                 }
             )
-    frame = pl.DataFrame(rows)
+    frame = align_ledger_columns(pl.DataFrame(rows))
     checked = LedgerSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
     return checked

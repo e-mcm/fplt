@@ -162,8 +162,13 @@ def test_fill_actuals_waits_until_the_gameweek_is_checked(tmp_path: Path) -> Non
     gw1 = filled.filter(pl.col("target_gw") == 1)
     gw2 = filled.filter(pl.col("target_gw") == 2)
     assert gw2["actual_pts"].null_count() == gw2.height
+    assert gw2["actual_goals"].null_count() == gw2.height
     player_200 = gw1.filter(pl.col("player_key") == 200)["actual_pts"].to_list()
     assert player_200 == [2]
+    assert "actual_goals" in filled.columns
+    assert "actual_assists" in filled.columns
+    assert "actual_cs" in filled.columns
+    assert gw1["actual_goals"].null_count() == 0
     fill_actuals(tmp_path / "missing", store)
 
 

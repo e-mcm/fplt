@@ -64,6 +64,7 @@ from fplt.backtest.intervals import (
     per_gw_wins_from_losses,
 )
 from fplt.backtest.ledger import read_predictions
+from fplt.backtest.metrics import format_calibration_markdown
 from fplt.backtest.produce_ledger import (
     StaleLedgerCacheError,
     repo_root,
@@ -1546,6 +1547,9 @@ def render_recommendation(
                 lines.append(
                     f"- {key}_delta ({label}; treatment better > 0): {deltas[key]}"
                 )
+        event_keys = [name for name in deltas if name.startswith(("brier_", "log_"))]
+        for key in sorted(event_keys):
+            lines.append(f"- {key}_delta (treatment better > 0): {deltas[key]}")
         if "per_gw_wins" in deltas:
             wins = deltas["per_gw_wins"]
             lines.append(
@@ -1601,6 +1605,25 @@ def render_recommendation(
                 "- odds_poisson_v1 is not the market row "
                 "(book = raw proportional de-vig 1X2)"
             )
+    lines.append("")
+    # 8b. Calibration
+    lines.append("## Calibration")
+    if (
+        prediction_ran
+        and compare is not None
+        and compare.calibration is not None
+        and not compare.calibration.is_empty()
+    ):
+        lines.append(
+            "Event reliability by xPts decile and position "
+            "(see also compare/calibration.parquet):"
+        )
+        lines.append("")
+        lines.append(format_calibration_markdown(compare.calibration))
+    elif prediction_ran:
+        lines.append("- no event probabilities available for calibration")
+    else:
+        lines.append("- prediction: not run")
     lines.append("")
     # 9. Components
     lines.append("## Components")
@@ -2628,6 +2651,7 @@ def _run_compare(
     # Multi-season: run remaining seasons and concat summaries.
     summaries = [result.summary]
     details = [result.detail]
+    calibrations = [_calibration_frame(result)]
     for season in plan.seasons[1:]:
         season_out = output_dir / season
         part = compare_models(
@@ -2643,6 +2667,7 @@ def _run_compare(
         )
         summaries.append(part.summary)
         details.append(part.detail)
+        calibrations.append(_calibration_frame(part))
     elapsed = time.perf_counter() - started
     after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     wall["both"] = elapsed
@@ -2659,10 +2684,17 @@ def _run_compare(
             summary=pl.concat(summaries, how="vertical_relaxed"),
             detail=pl.concat(details, how="vertical_relaxed"),
             output_dir=output_dir,
+            calibration=pl.concat(calibrations, how="vertical_relaxed"),
             time_decay=result.time_decay,
             skipped_openfpl=result.skipped_openfpl,
         )
     return result, wall, rss
+
+
+def _calibration_frame(compare: object) -> pl.DataFrame:
+    """Return compare.calibration or an empty frame for older fakes."""
+    frame = getattr(compare, "calibration", None)
+    return frame if isinstance(frame, pl.DataFrame) else pl.DataFrame()
 
 
 def _prediction_deltas(
@@ -2695,7 +2727,23 @@ def _prediction_deltas(
     deltas: dict[str, Any] = {}
     # Lower is better → control - treatment; higher is better → treatment - control.
     # RMSE first (headline); MAE kept for continuity with older A/Bs.
-    for key in ("rmse", "mae"):
+    lower_better = (
+        "rmse",
+        "mae",
+        "brier_played",
+        "brier_60",
+        "brier_goal",
+        "brier_assist",
+        "brier_cs",
+        "brier_haul",
+        "log_played",
+        "log_60",
+        "log_goal",
+        "log_assist",
+        "log_cs",
+        "log_haul",
+    )
+    for key in lower_better:
         if c.get(key) is not None and t.get(key) is not None:
             deltas[key] = float(c[key]) - float(t[key])
     for key in ("spearman", "top10_precision"):

@@ -156,6 +156,9 @@ def ledger_rows(
             pl.col("position").fill_null("UNK"),
             pl.lit(None).cast(pl.Int64).alias("actual_pts"),
             pl.lit(None).cast(pl.Int64).alias("actual_minutes"),
+            pl.lit(None).cast(pl.Int64).alias("actual_goals"),
+            pl.lit(None).cast(pl.Int64).alias("actual_assists"),
+            pl.lit(None).cast(pl.Int64).alias("actual_cs"),
         )
         .select(list(LEDGER_COLUMNS))
     )

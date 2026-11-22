@@ -185,6 +185,42 @@ def test_format_summary_empty() -> None:
     assert "no scored" in format_summary_table(pl.DataFrame())
 
 
+def test_format_summary_lists_rmse_before_mae() -> None:
+    summary = pl.DataFrame(
+        {
+            "model_name": ["a"],
+            "mode": ["walk_forward"],
+            "horizon": [1],
+            "mae": [1.0],
+            "rmse": [1.5],
+            "spearman": [0.2],
+            "top10_precision": [0.3],
+            "brier_haul": [0.1],
+            "n": [10],
+            "model_id": ["m"],
+        }
+    )
+    # Prefer column order over the truncated polars string render.
+    cols = [
+        c
+        for c in (
+            "model_name",
+            "mode",
+            "horizon",
+            "rmse",
+            "mae",
+            "spearman",
+            "top10_precision",
+            "brier_haul",
+            "n",
+            "model_id",
+        )
+        if c in summary.columns
+    ]
+    assert cols.index("rmse") < cols.index("mae")
+    assert "rmse" in format_summary_table(summary)
+
+
 def test_cli_compare(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

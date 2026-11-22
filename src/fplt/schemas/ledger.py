@@ -21,10 +21,17 @@ class LedgerSchema(pa.DataFrameModel):
     fixture_id: int
     xpts: float
     xpts_sd: float = pa.Field(ge=0, nullable=True)
-    p_haul: float = pa.Field(ge=0, le=1, nullable=True)
+    p_played: float = pa.Field(ge=0, le=1, nullable=True)
     p_60: float = pa.Field(ge=0, le=1, nullable=True)
+    p_goal: float = pa.Field(ge=0, le=1, nullable=True)
+    p_assist: float = pa.Field(ge=0, le=1, nullable=True)
+    p_cs: float = pa.Field(ge=0, le=1, nullable=True)
+    p_haul: float = pa.Field(ge=0, le=1, nullable=True)
     actual_pts: int = pa.Field(nullable=True)
     actual_minutes: int = pa.Field(nullable=True)
+    actual_goals: int = pa.Field(nullable=True, ge=0)
+    actual_assists: int = pa.Field(nullable=True, ge=0)
+    actual_cs: int = pa.Field(nullable=True, ge=0)
 
     class Config(pa.DataFrameModel.Config):
         strict = True
@@ -44,10 +51,17 @@ LEDGER_COLUMNS: dict[str, pl.DataType] = {
     "fixture_id": pl.Int64(),
     "xpts": pl.Float64(),
     "xpts_sd": pl.Float64(),
-    "p_haul": pl.Float64(),
+    "p_played": pl.Float64(),
     "p_60": pl.Float64(),
+    "p_goal": pl.Float64(),
+    "p_assist": pl.Float64(),
+    "p_cs": pl.Float64(),
+    "p_haul": pl.Float64(),
     "actual_pts": pl.Int64(),
     "actual_minutes": pl.Int64(),
+    "actual_goals": pl.Int64(),
+    "actual_assists": pl.Int64(),
+    "actual_cs": pl.Int64(),
 }
 
 

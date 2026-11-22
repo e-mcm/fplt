@@ -33,12 +33,18 @@ def append_predictions(root: Path, frame: pl.DataFrame) -> None:
     if frame.is_empty():
         logger.debug("append_predictions skipped empty frame")
         return
-    checked = LedgerSchema.validate(frame)
+    checked = LedgerSchema.validate(align_ledger_columns(frame))
     assert isinstance(checked, pl.DataFrame)
     path = ledger_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        checked = pl.concat([pl.read_parquet(path), checked], how="vertical_relaxed")
+        existing = align_ledger_columns(pl.read_parquet(path))
+        checked = align_ledger_columns(
+            pl.concat([existing, checked], how="vertical_relaxed")
+        )
+        validated = LedgerSchema.validate(checked)
+        assert isinstance(validated, pl.DataFrame)
+        checked = validated
     checked.write_parquet(path)
     logger.info("appended %s rows to %s (total=%s)", frame.height, path, checked.height)
 
@@ -48,7 +54,26 @@ def read_predictions(root: Path) -> pl.DataFrame:
     path = ledger_path(root)
     if not path.exists():
         return empty_ledger()
-    return pl.read_parquet(path)
+    return align_ledger_columns(pl.read_parquet(path))
+
+
+def align_ledger_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Pad missing event-prob / actual columns so older ledgers still load.
+
+    Args:
+        frame: Ledger-shaped rows that may omit newer nullable columns.
+
+    Returns:
+        Frame with every ``LEDGER_COLUMNS`` key present (null-filled when absent).
+    """
+    extras: list[pl.Expr] = []
+    for name, dtype in LEDGER_COLUMNS.items():
+        if name in frame.columns:
+            continue
+        extras.append(pl.lit(None).cast(dtype).alias(name))
+    if extras:
+        frame = frame.with_columns(extras)
+    return frame.select(list(LEDGER_COLUMNS))
 
 
 def fill_actuals(root: Path, store: DataStore) -> None:
@@ -65,7 +90,7 @@ def fill_actuals(root: Path, store: DataStore) -> None:
     if not path.exists():
         logger.debug("fill_actuals: no ledger at %s", path)
         return
-    ledger = pl.read_parquet(path)
+    ledger = align_ledger_columns(pl.read_parquet(path))
     logger.info("fill_actuals: scoring %s ledger rows", ledger.height)
     stats = (
         store.read("player_fixture_stats")
@@ -78,6 +103,9 @@ def fill_actuals(root: Path, store: DataStore) -> None:
             "fixture_id",
             pl.col("total_points").alias("scored_pts"),
             pl.col("minutes").alias("scored_minutes"),
+            pl.col("goals_scored").alias("scored_goals"),
+            pl.col("assists").alias("scored_assists"),
+            pl.col("clean_sheets").alias("scored_cs"),
         )
     )
     checked = (
@@ -90,8 +118,19 @@ def fill_actuals(root: Path, store: DataStore) -> None:
         .unique()
         .with_columns(pl.lit(True).alias("checked"))
     )
+    drop_actuals = [
+        col
+        for col in (
+            "actual_pts",
+            "actual_minutes",
+            "actual_goals",
+            "actual_assists",
+            "actual_cs",
+        )
+        if col in ledger.columns
+    ]
     filled = (
-        ledger.drop("actual_pts", "actual_minutes")
+        ledger.drop(*drop_actuals)
         .join(
             stats,
             on=["target_season", "target_gw", "player_key", "fixture_id"],
@@ -109,8 +148,30 @@ def fill_actuals(root: Path, store: DataStore) -> None:
             .otherwise(None)
             .cast(pl.Int64)
             .alias("actual_minutes"),
+            pl.when(pl.col("checked").fill_null(False))
+            .then(pl.col("scored_goals"))
+            .otherwise(None)
+            .cast(pl.Int64)
+            .alias("actual_goals"),
+            pl.when(pl.col("checked").fill_null(False))
+            .then(pl.col("scored_assists"))
+            .otherwise(None)
+            .cast(pl.Int64)
+            .alias("actual_assists"),
+            pl.when(pl.col("checked").fill_null(False))
+            .then(pl.col("scored_cs"))
+            .otherwise(None)
+            .cast(pl.Int64)
+            .alias("actual_cs"),
         )
-        .drop("checked", "scored_pts", "scored_minutes")
+        .drop(
+            "checked",
+            "scored_pts",
+            "scored_minutes",
+            "scored_goals",
+            "scored_assists",
+            "scored_cs",
+        )
         .select(list(LEDGER_COLUMNS))
     )
     validated = LedgerSchema.validate(filled)

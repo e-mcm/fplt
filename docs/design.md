@@ -181,8 +181,12 @@ class PredictionSchema(pa.DataFrameModel):
     fixture_id: int
     xpts: float = pa.Field(ge=-10, le=40)
     xpts_sd: float = pa.Field(ge=0, nullable=True)
+    p_played: float = pa.Field(ge=0, le=1, nullable=True)  # P(minutes > 0)
+    p_60: float = pa.Field(ge=0, le=1, nullable=True)      # P(minutes >= 60)
+    p_goal: float = pa.Field(ge=0, le=1, nullable=True)    # P(goals >= 1)
+    p_assist: float = pa.Field(ge=0, le=1, nullable=True)  # P(assists >= 1)
+    p_cs: float = pa.Field(ge=0, le=1, nullable=True)      # P(clean sheet)
     p_haul: float = pa.Field(ge=0, le=1, nullable=True)   # P(points >= 10)
-    p_60: float = pa.Field(ge=0, le=1, nullable=True)     # P(minutes >= 60)
 
     class Config:
         strict = True
@@ -337,7 +341,7 @@ From 2025-26 there are two of each chip: a first window through GW19 that does n
 6. **Other points**: add the `OtherPointsModel` expectation for the player's drawn minutes bucket. With `sample_other: true`, draw Poisson / signed-Poisson noise around that mean so `xpts_sd` and `p_haul` see residual variance.
 7. **Score**: apply `Rules` for the season to get points per player per sim.
 
-Output: `xpts` = mean, `xpts_sd`, `p_haul`, `p_60`, plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures. `dc_layered_v1` keeps the v1 defaults. `dc_layered_v2` composes `dixon_coles_v2`, `empirical_minutes_v2`, `involvement_xg_v1`, and `other_player_v1` with fidelity knobs on (`cs_red_void_prob`, `conceded_mode: played`, `sample_other`) and `n_sims: 10000`. `dc_layered_odds_v1` is the same stack with `dixon_coles_odds_v1` (`market_prior_strength: 1.0`); `dc_layered_history_v1` uses `dixon_coles_history_v1` (`market_prior_source: history`); `dc_layered_1x2_v1` uses `dixon_coles_1x2_v1` (`market_1x2_strength: 1.0`); `dc_layered_cs_v1` uses `dixon_coles_cs_v1` (`market_cs_strength: 0.5`; closing proxy left at the off default). None change the production default `dc_layered_v2`.
+Output: `xpts` = mean, `xpts_sd`, event probs (`p_played`, `p_60`, `p_goal`, `p_assist`, `p_cs`, `p_haul`), plus optional sample frame. RNG seed = hash(model_id, as_of, fixture_id). Vectorise across sims with numpy; target < 2 s per GW for all fixtures. `dc_layered_v1` keeps the v1 defaults. `dc_layered_v2` composes `dixon_coles_v2`, `empirical_minutes_v2`, `involvement_xg_v1`, and `other_player_v1` with fidelity knobs on (`cs_red_void_prob`, `conceded_mode: played`, `sample_other`) and `n_sims: 10000`. `dc_layered_odds_v1` is the same stack with `dixon_coles_odds_v1` (`market_prior_strength: 1.0`); `dc_layered_history_v1` uses `dixon_coles_history_v1` (`market_prior_source: history`); `dc_layered_1x2_v1` uses `dixon_coles_1x2_v1` (`market_1x2_strength: 1.0`); `dc_layered_cs_v1` uses `dixon_coles_cs_v1` (`market_cs_strength: 0.5`; closing proxy left at the off default). None change the production default `dc_layered_v2`.
 
 A unit test checks simulation against analytics: mean simulated team goals equals the `ScorelineDist` expectation, and simulated P(clean sheet) equals `p_clean_sheet` within Monte Carlo error.
 
@@ -373,7 +377,7 @@ Player-level: rolling minutes, starts share, rolling points, per-90 goal and ass
 
 For each `as_of` in the evaluation window: build `view = pit.view(as_of)`, `fit(view)` according to the spec's refit policy, `predict(view, horizon)` for horizons 1..H (default H = 5). Never shuffle. Training data for `as_of` is everything with `available_at <= cutoff(as_of)` within the spec's `train_window`. A holdout is `refit: never` from the first deadline of the test season, so that one fit is reused for every later gameweek. `train_window.seasons_back` chooses how many prior seasons that fit can see. Optional `train_window.time_decay` down-weights older rows inside that window for trainers that implement it (see §5.2); it does not expand or shrink the season set.
 
-Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes RMSE (headline) / MAE (secondary) / Spearman / mean per-GW top-10 / Brier summary JSON + parquet under `$FPLT_DATA_DIR/compare/`, scored on the decision-relevant player pool (see §7.3).
+Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same selected specs over a shared test window in two modes — walk-forward (`refit=every_gw`) and fixed parameters (`refit=never`, fit at `--fit-gw` which defaults to the start of the test window) — then writes RMSE (headline) / MAE (secondary) / Spearman / mean per-GW top-10 / event Brier+log summary JSON + parquet, plus calibration tables by xPts decile and position, under `$FPLT_DATA_DIR/compare/`, scored on the decision-relevant player pool (see §7.3).
 
 ### 7.2 Ledger
 
@@ -384,8 +388,9 @@ Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same 
 | `model_id`, `run_kind` (`backtest` / `live`) | |
 | `as_of_season`, `as_of_gw`, `target_season`, `target_gw`, `horizon` | |
 | `player_key`, `position`, `fixture_id` | |
-| `xpts`, `xpts_sd`, `p_haul`, `p_60` | |
-| `actual_pts`, `actual_minutes` | filled when the target GW is `data_checked` |
+| `xpts`, `xpts_sd` | |
+| `p_played`, `p_60`, `p_goal`, `p_assist`, `p_cs`, `p_haul` | nullable event probs; layered Monte Carlo fills them from the same sims; baselines leave null |
+| `actual_pts`, `actual_minutes`, `actual_goals`, `actual_assists`, `actual_cs` | filled when the target GW is `data_checked` |
 
 `ledger/components` — one row per model, deadline, and fixture. Scorelines store `p_home`, `p_draw`, `p_away`, `expected_home`, `expected_away`, and, once the target gameweek is `data_checked`, `actual_home`, `actual_away`, and ranked probability score over home/draw/away. Minutes rows join this table later.
 `ledger/decisions` — one row per model, gameweek, and player kept or sold that week: `position`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `actual_pts`, `actual_minutes`, `hit`, and `free_transfers` available at the deadline. A re-run replaces rows for the same model and gameweek.
@@ -396,7 +401,8 @@ Prediction level (by model × horizon × position × season), on the **decision-
 - **RMSE** is the headline point metric for mean-seeking / expected-points boards (what the optimiser consumes). **MAE** stays as a secondary continuity metric so older A/Bs remain readable; do not delete it. When MAE and RMSE disagree (W9-style), prefer the RMSE side for mean-seeking calls.
 - Spearman rank correlation within position per GW
 - Top-k precision: mean of per-gameweek top-10 precision (not a single pooled top-10 over the window)
-- Calibration of `p_haul` and `p_60` (reliability curves, Brier score)
+- Event Brier and log score on played, 60+, goal, assist, clean sheet, haul whenever the arm emits those probs
+- Calibration tables by xPts decile and by position (`calibration.parquet` / `summary.md` from `fplt compare`; promote-eval recommendation embeds a slice)
 
 Decision level — what actually matters:
 - Run the same optimiser over a season using each model's predictions, starting from an optimal GW1 squad, with simplified rules (free transfers, banking, -4 hits; chips off in v1). Selling price stays at purchase price (no FPL price-rise / 50% profit modelling). Realised scoring applies autosubs and vice-captain-on-blank, doubles the captain (or vice), and subtracts each gameweek's hit once. Actuals are loaded from the prediction ledger **deduplicated per fixture** before summing a gameweek (walk-forward `steps>1` re-states the same fixture under later `as_of` rows; summing those raw rows double-counts). `fplt decisions` / `make decisions-board` prints the multi-model season-total scoreboard from `ledger/decisions`, fails by default when mean pts/GW exceeds 90, and supports `fplt decisions --explain-gw` / `make decisions-explain` for per-GW XI arithmetic.
