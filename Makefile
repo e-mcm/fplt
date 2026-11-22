@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -17,6 +17,14 @@ fetch-understat:
 fetch-football-data:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-football-data SEASON=2024-25"; exit 1; fi
 	uv run python scripts/fetch_football_data.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
+
+# ── FPL overall-league points-at-rank (live percentile mapping) ───────────────
+# Usage: make fetch-overall-rank
+# Optional: SEASON=2026-27 ARGS='--rank 10000 --rank 100000'
+# Writes write-once gzipped JSON under $$FPLT_DATA_DIR/raw/fpl_api/.../overall_rank/
+fetch-overall-rank:
+	uv run python scripts/fetch_overall_rank.py --out "$${FPLT_DATA_DIR:-./data}/raw" \
+		$(if $(SEASON),--season $(SEASON),) $(ARGS)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:

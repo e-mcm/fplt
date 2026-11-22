@@ -91,6 +91,7 @@ data/
 │   │       ├── bootstrap_static.json.gz
 │   │       └── fixtures.json.gz
 │   │   └── event_live/gw=12/captured_at=.../event_live.json.gz
+│   │   └── overall_rank/captured_at=.../points_at_rank.json.gz  # Overall league points at key ranks (§7.8)
 │   ├── understat/season=2026-27/
 │   │   ├── dates/captured_at=.../dates.json.gz
 │   │   ├── teams/captured_at=.../teams.json.gz  # league teamsData (Deep/PPDA)
@@ -434,6 +435,10 @@ Prefer an existing library when it already does about 90% of the job. For promot
 ### 7.7 Leaderboard app
 
 `apps/leaderboard.py` (Streamlit), reading only the ledger: model leaderboard by metric, filters for season/horizon/position, calibration plots, per-GW decision-quality curves, and side-by-side player predictions for a chosen GW.
+
+### 7.8 Live percentile (overall-league points-at-rank)
+
+Season rank alone is a noisy live check (evaluation north star §3). Cache Overall classic-league (id ``314``) points totals at key ranks (at least 10k and 100k; defaults also sample 1, 1k, 500k, 1M) via ``fplt.data.overall_rank`` / ``make fetch-overall-rank``. Convert any season total to an equivalent rank and top-fraction percentile with ``fplt.backtest.live_percentile``; roll up with ``mean_percentile`` across seasons. **Single-season live rank is not a promote gate** — promote-eval stays on paired forecast/decision metrics; use multi-season percentile only as a consistency check. Luck bands from simulator variance belong with simulated-season evaluation, not this ladder.
 
 ---
 

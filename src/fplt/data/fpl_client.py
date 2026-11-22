@@ -226,6 +226,36 @@ class FPLClient:
         """Close on exit."""
         self.close()
 
+    def bootstrap_static(self) -> dict[str, Any]:
+        """Fetch public ``bootstrap-static`` (events, elements, total_players).
+
+        Returns:
+            Parsed JSON object.
+        """
+        return self._get_json("/bootstrap-static/")
+
+    def classic_league_standings(
+        self,
+        league_id: int,
+        *,
+        page_standings: int = 1,
+    ) -> dict[str, Any]:
+        """Fetch one page of a classic league's overall standings.
+
+        Each page has 50 rows. Rank ``R`` is on page ``ceil(R / 50)``.
+
+        Args:
+            league_id: Classic league id (Overall is ``314``).
+            page_standings: 1-based standings page.
+
+        Returns:
+            Parsed JSON with ``league`` and ``standings.results``.
+        """
+        return self._get_json(
+            f"/leagues-classic/{league_id}/standings/",
+            params={"page_standings": page_standings},
+        )
+
     def entry(self, entry_id: int) -> dict[str, Any]:
         """Fetch public entry summary including ``current_event``.
 
@@ -364,11 +394,16 @@ class FPLClient:
             "x-api-authorization header on fantasy.premierleague.com)"
         )
 
-    def _get_json(self, path: str) -> dict[str, Any]:
+    def _get_json(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
-        logger.debug("GET %s", url)
+        logger.debug("GET %s params=%s", url, params)
         try:
-            response = self._client.get(url)
+            response = self._client.get(url, params=params)
         except httpx.HTTPError as exc:
             logger.error("FPL API request failed for %s: %s", path, exc)
             raise FPLAPIError(f"request failed for {path}: {exc}") from exc
