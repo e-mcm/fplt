@@ -3,16 +3,20 @@
 import logging
 from pathlib import Path
 
+import numpy as np
+import polars as pl
 import pytest
 
 import fplt.models.composite  # noqa: F401 — registers the predictor
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.models.composite import CompositePredictor
+from fplt.models.composite import CompositePredictor, _sample_minutes_crn
+from fplt.models.distributions import MINUTE_BINS, MinutesDist
 from fplt.models.predictions import write_predictions
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.schemas.predictions import PredictionSchema
 from fplt.types import GWKey
+from fplt.utils.rng import paired_eval_seed, seed_for
 from tests.builders import build_league
 
 
@@ -120,6 +124,73 @@ def test_fidelity_params_are_accepted_on_the_layered_spec() -> None:
     assert model._cs_red_void_prob == pytest.approx(0.02)
     assert model._conceded_mode == "played"
     assert model._sample_other is True
+
+
+def test_paired_eval_predictions_are_bit_identical(tmp_path: Path) -> None:
+    spec = _spec(n_sims=120)
+    store = build_league(DataStore(tmp_path / "league"))
+    view = PITData(store).view(GWKey("2024-25", 1))
+    model = CompositePredictor(spec)
+    model.fit(view)
+    with paired_eval_seed(17):
+        first = model.predict(view, [GWKey("2024-25", 1)]).sort(
+            "player_key", "fixture_id"
+        )
+        second = model.predict(view, [GWKey("2024-25", 1)]).sort(
+            "player_key", "fixture_id"
+        )
+    assert first.select("xpts", "xpts_sd", "p_haul", "p_60").equals(
+        second.select("xpts", "xpts_sd", "p_haul", "p_60")
+    )
+
+
+def test_paired_eval_seed_pairs_across_model_ids(tmp_path: Path) -> None:
+    base = _spec(n_sims=120)
+    left_spec = base.model_copy(update={"name": "crn_left"})
+    right_spec = base.model_copy(update={"name": "crn_right"})
+    assert left_spec.model_id != right_spec.model_id
+    as_of = GWKey("2024-25", 1)
+    # Production streams diverge by model_id; CRN pairing must not.
+    assert list(seed_for(left_spec.model_id, as_of, 1).random(4)) != list(
+        seed_for(right_spec.model_id, as_of, 1).random(4)
+    )
+    store = build_league(DataStore(tmp_path / "league"))
+    view = PITData(store).view(as_of)
+    left = CompositePredictor(left_spec)
+    right = CompositePredictor(right_spec)
+    left.fit(view)
+    right.fit(view)
+    with paired_eval_seed(23):
+        paired_left = left.predict(view, [as_of]).sort("player_key", "fixture_id")
+        paired_right = right.predict(view, [as_of]).sort("player_key", "fixture_id")
+    assert paired_left.select("xpts", "xpts_sd", "p_haul", "p_60").equals(
+        paired_right.select("xpts", "xpts_sd", "p_haul", "p_60")
+    )
+
+
+def test_crn_minutes_ignore_an_extra_player() -> None:
+    as_of = GWKey("2024-25", 1)
+    fixture_id = 7
+    seed = 5
+    keys_small = pl.DataFrame({"player_key": [100, 200], "fixture_id": [7, 7]})
+    keys_extra = pl.DataFrame({"player_key": [100, 150, 200], "fixture_id": [7, 7, 7]})
+    pmf_small = np.array(
+        [[0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2], [0.2, 0.2, 0.2, 0.1, 0.1, 0.1, 0.1]],
+        dtype=np.float64,
+    )
+    pmf_extra = np.vstack(
+        [
+            pmf_small[0],
+            [0.05, 0.05, 0.1, 0.1, 0.2, 0.25, 0.25],
+            pmf_small[1],
+        ]
+    )
+    small = MinutesDist(keys_small, MINUTE_BINS, pmf_small)
+    extra = MinutesDist(keys_extra, MINUTE_BINS, pmf_extra)
+    drawn_small = _sample_minutes_crn(small, seed, as_of, fixture_id, 40)
+    drawn_extra = _sample_minutes_crn(extra, seed, as_of, fixture_id, 40)
+    assert np.array_equal(drawn_small[0], drawn_extra[0])
+    assert np.array_equal(drawn_small[1], drawn_extra[2])
 
 
 def _spec(**params: object) -> ModelSpec:

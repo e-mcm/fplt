@@ -18,13 +18,19 @@ from fplt.models.components.minutes.empirical_v2 import EmpiricalMinutesV2
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
+from fplt.models.distributions import MinutesDist
 from fplt.models.predictions import prediction_frame
 from fplt.models.simulation import ConcededMode, simulate_match
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
 from fplt.models.universe import player_fixtures
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
-from fplt.utils.rng import seed_for
+from fplt.utils.rng import (
+    active_eval_seed,
+    eval_seed_for,
+    player_seed_for,
+    seed_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +209,20 @@ def _fixture(
     fixture_id = int(fixture["fixture_id"])
     players = squad.filter(pl.col("fixture_id") == fixture_id).sort("player_key")
     asked = players.select("player_key", "fixture_id")
-    rng = seed_for(model.spec.model_id, view.as_of, fixture_id)
+    pair_seed = active_eval_seed()
+    if pair_seed is None:
+        rng = seed_for(model.spec.model_id, view.as_of, fixture_id)
+    else:
+        rng = eval_seed_for(pair_seed, view.as_of, fixture_id)
     drawn = model._score.predict(view, pl.DataFrame([fixture]))
     scorelines = drawn.sample(rng, model._n_sims)
-    minutes = model._minutes.predict(view, asked).sample(rng, model._n_sims)
+    minutes_dist = model._minutes.predict(view, asked)
+    if pair_seed is None:
+        minutes = minutes_dist.sample(rng, model._n_sims)
+    else:
+        minutes = _sample_minutes_crn(
+            minutes_dist, pair_seed, view.as_of, fixture_id, model._n_sims
+        )
     weights = model._involvement.predict(view, asked)
     other = model._other.predict(view, asked)
     rules = Rules.for_season(str(players["season"][0]))
@@ -229,6 +245,31 @@ def _fixture(
         pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
         pl.Series("p_60", (minutes >= 60).mean(axis=1)),
     )
+
+
+def _sample_minutes_crn(
+    minutes: MinutesDist,
+    seed: int,
+    as_of: GWKey,
+    fixture_id: int,
+    n_sims: int,
+) -> np.ndarray:
+    """Draw minutes from a per-player eval stream (CRN-safe)."""
+    rows = minutes.keys.height
+    if n_sims == 0 or rows == 0:
+        return np.zeros((rows, n_sims), dtype=np.int64)
+    drawn = np.empty((rows, n_sims), dtype=np.int64)
+    bins = np.asarray(minutes.bins, dtype=np.int64)
+    width = bins.shape[0]
+    for index, player_key in enumerate(minutes.keys["player_key"].to_list()):
+        rng = player_seed_for(seed, as_of, fixture_id, int(player_key))
+        cdf = np.cumsum(minutes.pmf[index])
+        cdf[-1] = 1.0
+        uniforms = rng.random(n_sims)
+        choice = np.sum(cdf[None, :] <= uniforms[:, None], axis=-1)
+        choice = np.minimum(choice, width - 1)
+        drawn[index] = bins[choice]
+    return drawn
 
 
 def _squad(view: PITView, rows: pl.DataFrame) -> pl.DataFrame:
