@@ -32,6 +32,16 @@ def test_dc_layered_odds_v1_wires_odds_score_component() -> None:
     assert "market_prior_strength" not in vanilla.components["score"].params
 
 
+def test_dc_layered_history_v1_wires_history_score_component() -> None:
+    spec = load_model_specs()["dc_layered_history_v1"]
+    assert spec.kind == "dc_layered"
+    assert spec.components["score"].name == "dixon_coles_history_v1"
+    assert spec.components["score"].params["market_prior_source"] == "history"
+    assert spec.components["score"].params["market_prior_strength"] == 1.0
+    vanilla = load_model_specs()["dc_layered_v2"]
+    assert "market_prior_source" not in vanilla.components["score"].params
+
+
 def test_dc_layered_v2_wires_improved_components() -> None:
     spec = load_model_specs()["dc_layered_v2"]
     assert spec.kind == "dc_layered"
