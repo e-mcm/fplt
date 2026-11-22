@@ -42,6 +42,11 @@ from fplt.optimise.plan import (
     render_report,
     write_plan,
 )
+from fplt.optimise.prices import (
+    apply_market_prices,
+    fpl_selling_price,
+    market_prices_from_candidates,
+)
 from fplt.optimise.realised import (
     assert_sane_mean_ppg,
     explain_gameweek,
@@ -254,6 +259,9 @@ def simulate_decisions(
         pool = candidates.filter(pl.col("gw") == gameweek).drop("gw")
         if pool.is_empty():
             raise ValueError(f"no candidates for gw {gameweek}")
+        # Refresh sell-on from as-of staged prices before planning (no
+        # within-horizon price forecasts — see fplt.optimise.prices).
+        current = apply_market_prices(current, market_prices_from_candidates(pool))
         active_windows = static_windows
         if schedule_each_week:
             assert rules is not None
@@ -280,7 +288,6 @@ def simulate_decisions(
             chip_rules_season=rules_season if chip_arm != "off" else None,
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
-        # Selling stays at purchase price (accepted bakeoff approx; no rises).
         current = _advance(current, solved, pool, gameweek=gameweek, rules=rules)
     if not rows:
         return _empty_decisions()
@@ -472,6 +479,7 @@ def run_plan(
         not state.owned,
     )
     _require_usable_points(points, candidates, window, model_name)
+    state = apply_market_prices(state, market_prices_from_candidates(candidates))
     solved = plan_squad(
         candidates,
         points,
@@ -1121,17 +1129,28 @@ def _advance(
             }
         )
 
-    previous = {player.player_key: player.selling_price for player in state.owned}
+    previous = {player.player_key: player for player in state.owned}
     kept: list[OwnedPlayer] = []
     bank = state.bank
     for row in step.iter_rows(named=True):
         key = int(row["player_key"])
-        if row["sold"]:
-            bank += previous[key]
-            continue
         price = int(row["price"])
-        selling = price if row["bought"] or key not in previous else previous[key]
-        kept.append(OwnedPlayer(player_key=key, selling_price=selling))
+        if row["sold"]:
+            prior = previous[key]
+            bank += fpl_selling_price(prior.purchase_price, price)
+            continue
+        if row["bought"] or key not in previous:
+            purchase = price
+        else:
+            purchase = previous[key].purchase_price
+        selling = fpl_selling_price(purchase, price)
+        kept.append(
+            OwnedPlayer(
+                player_key=key,
+                purchase_price=purchase,
+                selling_price=selling,
+            )
+        )
         if row["bought"]:
             bank -= price
     moves = step.filter(pl.col("bought")).height

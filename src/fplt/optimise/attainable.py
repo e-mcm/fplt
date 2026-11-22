@@ -3,9 +3,10 @@
 The oracle is **not** unbounded perfect foresight. It reuses the decision
 simulator (``simulate_decisions`` / ``plan_squad``) with realised points as
 the planner's ``xpts``, under the same free-transfer banking, hit cost,
-budget, squad composition, and frozen selling-price rules as the chips-off
-decision bakeoff. Chips stay off until Wave C; ``chip_timing_regret`` is a
-nullable hook.
+budget, squad composition, and FPL 50% sell-on selling prices (as-of staged
+``player_status`` prices; no within-horizon price forecasts) as the
+chips-off decision bakeoff. ``chip_timing_regret`` remains available when
+chips are off.
 
 Share of attainable points = realised season total ÷ oracle season total.
 """
@@ -660,10 +661,18 @@ def _pre_transfer_state(
         if key in bought_keys:
             continue
         price = int(row["price"]) if "price" in part.columns else 0
-        pre.append(OwnedPlayer(player_key=key, selling_price=price))
+        pre.append(
+            OwnedPlayer(player_key=key, selling_price=price, purchase_price=price)
+        )
     for row in sold.iter_rows(named=True):
         price = int(row["price"]) if "price" in part.columns else 0
-        pre.append(OwnedPlayer(player_key=int(row["player_key"]), selling_price=price))
+        pre.append(
+            OwnedPlayer(
+                player_key=int(row["player_key"]),
+                selling_price=price,
+                purchase_price=price,
+            )
+        )
     # Approximate bank: we do not store bank on the ledger; use 0 so the
     # hindsight plan can only buy with sale proceeds + zero cash (conservative).
     return pre, 0

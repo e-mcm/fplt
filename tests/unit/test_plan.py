@@ -177,6 +177,7 @@ def test_entry_picks_replace_the_squad_and_the_bank() -> None:
     )
     assert updated.bank == 12
     assert updated.owned[0].player_key == 100
+    assert updated.owned[0].purchase_price == 55
     assert updated.owned[0].selling_price == 55
     assert updated.free_transfers == state.free_transfers
     with pytest.raises(KeyError, match="element"):

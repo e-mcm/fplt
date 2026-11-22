@@ -14,12 +14,29 @@ _CONFIG = Path(__file__).resolve().parents[3] / "configs" / "squad_state.yaml"
 
 
 class OwnedPlayer(BaseModel):
-    """A player already in the squad, sold at ``selling_price``."""
+    """A player already in the squad, with purchase and selling prices.
+
+    ``purchase_price`` is sticky from the buy (or from ``my-team``). Selling
+    price follows FPL's 50% sell-on rule via ``fplt.optimise.prices``. When
+    YAML / payloads omit ``purchase_price``, it defaults to ``selling_price``
+    (no unrealised gain tracked until the next market refresh).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     player_key: int
     selling_price: int = Field(ge=0)
+    purchase_price: int = Field(ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_purchase_to_selling(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        payload = cast(dict[str, Any], data)
+        if payload.get("purchase_price") is None and "selling_price" in payload:
+            return {**payload, "purchase_price": payload["selling_price"]}
+        return payload
 
 
 class ChipPlay(BaseModel):
@@ -153,10 +170,14 @@ def apply_entry_picks(
         element = int(pick["element"])
         if element not in element_to_key:
             raise KeyError(f"element {element} has no player_key")
+        selling = int(pick["selling_price"])
+        raw_purchase = pick.get("purchase_price")
+        purchase = selling if raw_purchase is None else int(raw_purchase)
         owned.append(
             OwnedPlayer(
                 player_key=element_to_key[element],
-                selling_price=int(pick["selling_price"]),
+                selling_price=selling,
+                purchase_price=purchase,
             )
         )
     bank = int(cast(dict[str, Any], history)["bank"])

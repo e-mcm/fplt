@@ -83,6 +83,7 @@ def test_resolve_applies_my_team_fixture(tmp_path: Path) -> None:
     assert len(state.owned) == 15
     assert state.owned[0].player_key == elements[0]
     assert state.owned[0].selling_price == 46
+    assert state.owned[0].purchase_price == 46
     assert state.free_transfers == 1
 
 

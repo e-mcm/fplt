@@ -25,6 +25,7 @@ import numpy as np
 import polars as pl
 
 from fplt.optimise.chip_windows import ChipUseWindows
+from fplt.optimise.prices import fpl_selling_price
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
     _SQUAD,  # pyright: ignore[reportPrivateUsage]
@@ -137,12 +138,17 @@ def plan_squad(
         raise ValueError(f"owned players are not in the pool: {missing}")
     count = pool.height
     expected = _expected(scored, index, count, horizon)
-    sell_price = pool["price"].to_numpy().astype(np.float64)
+    list_price = pool["price"].to_numpy().astype(np.float64)
+    # As-of sell-on only: within-horizon steps keep these credits (no price
+    # forecasts). purchase_price is sticky; market comes from candidates.
+    sell_price = list_price.copy()
     owned_at = np.zeros(count, dtype=bool)
     for player in owned:
         at = index[player.player_key]
         owned_at[at] = True
-        sell_price[at] = float(player.selling_price)
+        sell_price[at] = float(
+            fpl_selling_price(player.purchase_price, int(list_price[at]))
+        )
     columns = _columns(expected, state, horizon, initial)
     solver = _solver(columns.costs)
     _constrain(
@@ -150,7 +156,7 @@ def plan_squad(
         pool,
         columns,
         owned_at,
-        pool["price"].to_numpy().astype(np.float64),
+        list_price,
         sell_price,
         state,
         initial,
