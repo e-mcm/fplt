@@ -274,6 +274,40 @@ def test_force_play_packs_multiple_chips_before_window_end() -> None:
     assert set(windows.forced) <= {"freehit", "bboost", "3xc"}
 
 
+def test_no_force_play_skips_half_window_packing() -> None:
+    """``force_play=False`` leaves remaining chips unforced at the half end."""
+    fixtures = _fixtures_ordinary_through(19)
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 1, "bboost": 1, "3xc": 1},
+        played=[],
+    )
+    packed = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=17,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=[17, 18, 19],
+        force_play=True,
+    )
+    free = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=17,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=[17, 18, 19],
+        force_play=False,
+    )
+    assert len(packed.forced) == 3
+    assert free.forced == {}
+    # Option-value still allows chips inside the short horizon.
+    assert any(free.allows(chip, 17) for chip in ("freehit", "bboost", "3xc"))
+
+
 def test_force_play_windows_respected_by_plan_squad() -> None:
     """plan_squad plays a chip forced on the half-window stop."""
     pool = _legal_pool()
