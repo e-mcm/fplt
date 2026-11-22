@@ -107,6 +107,7 @@ data/
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
+├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── ledger/                      # backtest ledger (§7.2)
 └── plans/<model_id>/as_of=.../  # optimiser outputs
 ```
@@ -418,6 +419,8 @@ Control is the off state and treatment is the on state. Production stays whichev
 
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
 
+**Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` + Dagster `benchmark_archive`) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. `fpl_review` is a schema stub only until terms allow a manual/licensed loader (FDB-118) — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md).
+
 External — **OpenFPL** (github.com/daniegr/OpenFPL, MIT):
 - Position-specific ensembles trained on FPL + Understat data for 2020-21 to 2023-24. **Only compare on 2024-25 onwards**; earlier seasons are in its training data.
 - Sample features matching OpenFPL's published `xscaler` schema (~228 columns) are built in `fplt.models.external.openfpl_samples` from PIT FPL + Understat tables (`understat_team_matches` supplies Deep/PPDA). See [`docs/openfpl.md`](openfpl.md).
@@ -456,6 +459,7 @@ Prefer an existing library when it already does about 90% of the job. For promot
 | `ledger_predictions` | season-gw | Appends predictions; joins actuals when available |
 | `squad_plan` | season-gw | Optimiser output for the chosen production model |
 | `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
+| `benchmark_archive` | no (due GW via `due_gameweek`) | Write-once `benchmark_projections` for `ep_next` + OpenFPL (§7.5) |
 
 Factories mean adding a YAML spec or a new feature version makes a new asset appear in the UI without new orchestration code. Asset `code_version` = feature version / `model_id`, so stale assets are flagged.
 
@@ -471,7 +475,7 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 |---|---|---|
 | New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` |
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
-| Next deadline within 3 h and no pre-deadline run yet | sensor (every 15 min) | Re-stage latest snapshot; re-predict (no refit); re-optimise; emit report |
+| Next deadline within 3 h and plan or `benchmark_projections` still missing | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
 
 The pre-deadline run can always be launched manually from the UI.

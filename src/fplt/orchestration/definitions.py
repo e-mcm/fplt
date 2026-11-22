@@ -9,6 +9,7 @@ from __future__ import annotations
 import dagster as dg
 
 from fplt.orchestration.assets import (
+    benchmark_archive,
     catch_up_job,
     match_odds_ingest,
     match_odds_ingest_job,
@@ -50,6 +51,7 @@ defs = dg.Definitions(
         *predictions_assets,
         recommendation_report,
         pre_deadline_plan,
+        benchmark_archive,
     ],
     asset_checks=[*staged_checks, *factory_checks],
     jobs=[

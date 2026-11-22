@@ -53,6 +53,11 @@ make fetch-understat SEASON=2024-25
 Keep OpenFPL out of the default compare/eval set until a real `model_dir`
 smoke looks sane.
 
+Deadline archives (`fplt archive-benchmarks` / Dagster `benchmark_archive`)
+write OpenFPL into the canonical `benchmark_projections` table. Without
+`understat_team_matches`, those rows are labelled `quality_flag=openfpl_degraded`.
+See [`docs/benchmark-archives.md`](benchmark-archives.md).
+
 ## Smoke
 
 ```bash

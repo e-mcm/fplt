@@ -20,6 +20,7 @@ from pathlib import Path
 import polars as pl
 
 from fplt.backtest.run import run_backtest
+from fplt.data.benchmark_projections import archive_if_missing
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -137,6 +138,8 @@ def pre_deadline(
     if key is None:
         logger.info("pre_deadline: nothing due within %s", _WINDOW)
         return None
+    # North-star N1: archive ep_next + OpenFPL before the deadline (write-once).
+    archive_if_missing(data_dir, key, now=now)
     if plans_exist(data_dir, chosen, key, horizon):
         logger.info("pre_deadline: plan already exists for %s", key)
         return None
