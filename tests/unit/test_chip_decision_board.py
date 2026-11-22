@@ -70,6 +70,38 @@ def test_three_arms_produce_distinct_ledger_ids_and_labels() -> None:
     assert "rule_based" in table
 
 
+def test_decision_rows_accept_chip_after_leading_nulls() -> None:
+    """Null chips early must not freeze the column before a later chip name."""
+    from fplt.optimise.decisions import _empty_decisions
+
+    schema = _empty_decisions().schema
+    rows: list[dict[str, object]] = []
+    for index in range(120):
+        rows.append(
+            {
+                "model_id": "m",
+                "season": "2025-26",
+                "gw": 1 + index // 15,
+                "player_key": index,
+                "position": "MID",
+                "in_xi": True,
+                "captain": False,
+                "vice": False,
+                "bought": False,
+                "sold": False,
+                "xpts": 1.0,
+                "actual_pts": 1,
+                "actual_minutes": 90,
+                "hit": 0.0,
+                "free_transfers": 1,
+                "chip": None,
+            }
+        )
+    rows.append({**rows[-1], "gw": 20, "player_key": 999, "chip": "bboost"})
+    frame = pl.DataFrame(rows, schema=schema)
+    assert frame.filter(pl.col("chip") == "bboost").height == 1
+
+
 def test_free_hit_advance_keeps_permanent_squad() -> None:
     candidates, predictions, actuals, _fixtures = _toy_season()
     # Force Free Hit in GW2 via windows; start owned after GW1 draft path.

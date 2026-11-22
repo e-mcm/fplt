@@ -170,6 +170,13 @@ def points_from_ledger(
     )
     if chosen.is_empty():
         return empty
+    # Re-running backtest appends the same fixture; sum only distinct fixtures
+    # so DGWs still accumulate while duplicate ledger rows do not inflate xpts.
+    if "fixture_id" in chosen.columns:
+        chosen = chosen.unique(
+            subset=["as_of_gw", "target_gw", "player_key", "fixture_id"],
+            keep="last",
+        )
     step_of = {gameweek: step for step, gameweek in enumerate(gameweeks)}
     return (
         chosen.group_by("player_key", "target_gw")
@@ -275,7 +282,11 @@ def simulate_decisions(
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
         # Selling stays at purchase price (accepted bakeoff approx; no rises).
         current = _advance(current, solved, pool, gameweek=gameweek, rules=rules)
-    return _decisions(pl.DataFrame(rows) if rows else _empty_decisions())
+    if not rows:
+        return _empty_decisions()
+    # Explicit schema: early null chips must not freeze the column as Null
+    # before a later GW writes e.g. "bboost" (polars infer_schema_length).
+    return _decisions(pl.DataFrame(rows, schema=_empty_decisions().schema))
 
 
 def read_decisions(root: Path) -> pl.DataFrame:
@@ -909,6 +920,13 @@ def _prediction_rows(ledger: pl.DataFrame, model_id: str, season: str) -> pl.Dat
     )
     if chosen.is_empty():
         return empty
+    # Same fixture may appear under every backtest append; keep one row per
+    # fixture before summing so DGWs add and re-runs do not double xpts.
+    if "fixture_id" in chosen.columns:
+        chosen = chosen.unique(
+            subset=["as_of_gw", "target_gw", "player_key", "fixture_id"],
+            keep="last",
+        )
     return chosen.group_by("as_of_gw", "target_gw", "player_key").agg(
         pl.col("xpts").sum()
     )

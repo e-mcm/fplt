@@ -13,6 +13,7 @@ from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
     PlanExistsError,
     _actual_rows,
+    _prediction_rows,
     _require_usable_points,
     points_from_ledger,
     run_decision_bakeoff,
@@ -366,6 +367,43 @@ def test_ledger_points_keep_the_deadline_that_issued_them() -> None:
     points = points_from_ledger(ledger, "m", "2024-25", 1, [1])
     assert points["xpts"].to_list() == [3.0]
     assert points_from_ledger(ledger.clear(), "m", "2024-25", 1, [1]).is_empty()
+
+
+def test_prediction_rows_do_not_double_count_appended_fixtures() -> None:
+    """Re-running backtest appends the same fixture; xpts must stay once."""
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["m"] * 4,
+            "as_of_season": ["2024-25"] * 4,
+            "as_of_gw": [1, 1, 1, 1],
+            "target_season": ["2024-25"] * 4,
+            "target_gw": [1, 1, 1, 1],
+            "player_key": [7, 7, 7, 7],
+            "fixture_id": [100, 100, 201, 201],
+            "xpts": [2.0, 2.1, 3.0, 3.2],
+        }
+    )
+    out = _prediction_rows(ledger, "m", "2024-25")
+    assert out.height == 1
+    # keep="last" per fixture, then sum distinct fixtures (DGW).
+    assert out["xpts"].to_list() == [pytest.approx(2.1 + 3.2)]
+
+
+def test_points_from_ledger_dedupes_fixture_before_sum() -> None:
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["m"] * 3,
+            "as_of_season": ["2024-25"] * 3,
+            "as_of_gw": [1, 1, 1],
+            "target_season": ["2024-25"] * 3,
+            "target_gw": [1, 1, 1],
+            "player_key": [7, 7, 7],
+            "fixture_id": [100, 100, 201],
+            "xpts": [1.0, 9.0, 2.0],
+        }
+    )
+    points = points_from_ledger(ledger, "m", "2024-25", 1, [1])
+    assert points["xpts"].to_list() == [pytest.approx(11.0)]
 
 
 def test_actual_rows_do_not_double_count_horizon_duplicates() -> None:
