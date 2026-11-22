@@ -33,13 +33,13 @@ def append_predictions(root: Path, frame: pl.DataFrame) -> None:
     if frame.is_empty():
         logger.debug("append_predictions skipped empty frame")
         return
-    checked = LedgerSchema.validate(_align_ledger_columns(frame))
+    checked = LedgerSchema.validate(align_ledger_columns(frame))
     assert isinstance(checked, pl.DataFrame)
     path = ledger_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        existing = _align_ledger_columns(pl.read_parquet(path))
-        checked = _align_ledger_columns(
+        existing = align_ledger_columns(pl.read_parquet(path))
+        checked = align_ledger_columns(
             pl.concat([existing, checked], how="vertical_relaxed")
         )
         validated = LedgerSchema.validate(checked)
@@ -54,11 +54,18 @@ def read_predictions(root: Path) -> pl.DataFrame:
     path = ledger_path(root)
     if not path.exists():
         return empty_ledger()
-    return _align_ledger_columns(pl.read_parquet(path))
+    return align_ledger_columns(pl.read_parquet(path))
 
 
-def _align_ledger_columns(frame: pl.DataFrame) -> pl.DataFrame:
-    """Pad missing event-prob / actual columns so older ledgers still load."""
+def align_ledger_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Pad missing event-prob / actual columns so older ledgers still load.
+
+    Args:
+        frame: Ledger-shaped rows that may omit newer nullable columns.
+
+    Returns:
+        Frame with every ``LEDGER_COLUMNS`` key present (null-filled when absent).
+    """
     extras: list[pl.Expr] = []
     for name, dtype in LEDGER_COLUMNS.items():
         if name in frame.columns:
@@ -83,7 +90,7 @@ def fill_actuals(root: Path, store: DataStore) -> None:
     if not path.exists():
         logger.debug("fill_actuals: no ledger at %s", path)
         return
-    ledger = _align_ledger_columns(pl.read_parquet(path))
+    ledger = align_ledger_columns(pl.read_parquet(path))
     logger.info("fill_actuals: scoring %s ledger rows", ledger.height)
     stats = (
         store.read("player_fixture_stats")
