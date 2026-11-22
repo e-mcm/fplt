@@ -184,13 +184,18 @@ class PlayerFixtureStatsSchema(pa.DataFrameModel):
 
 
 class MatchOddsSchema(pa.DataFrameModel):
-    """Closing bookmaker 1X2 (+ O/U 2.5) for one EPL match.
+    """Bookmaker 1X2 (+ O/U 2.5) for one EPL match.
 
-    Sourced from football-data.co.uk E0 CSVs. ``odds_kind`` is always
-    ``closing_proxy``: closing lines are pre-kickoff, **not** FPL deadline.
-    ``available_at`` is therefore kickoff (UTC). Do not treat these rows as
-    deadline-safe PIT. ``fixture_id`` is null until joined to staged FPL
-    fixtures on ``(season, team_h_key, team_a_key, kickoff date)``.
+    Sourced from football-data.co.uk E0 CSVs. ``odds_kind`` discriminates:
+
+    - ``closing_proxy``: closing lines with ``available_at = kickoff``. Pre-KO
+      proxy, **not** FPL deadline PIT.
+    - ``prematch_scheduled``: non-closing columns only, with ``available_at``
+      at the conservative football-data collection estimate (Fri/Tue 17:00
+      London). Use the deadline coverage gate before board use.
+
+    ``fixture_id`` is null until joined to staged FPL fixtures on
+    ``(season, team_h_key, team_a_key, kickoff date)``.
     """
 
     season: str
@@ -238,7 +243,13 @@ TABLE_KEYS: dict[str, list[str]] = {
         "available_at",
     ],
     "understat_team_matches": ["season", "match_id", "team_key", "available_at"],
-    "match_odds": ["season", "team_h_key", "team_a_key", "kickoff_time"],
+    "match_odds": [
+        "season",
+        "team_h_key",
+        "team_a_key",
+        "kickoff_time",
+        "odds_kind",
+    ],
 }
 
 POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {

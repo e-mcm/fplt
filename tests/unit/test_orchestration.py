@@ -197,8 +197,11 @@ def test_match_odds_ingest_stages_raw_csv(
     assert result.output_for_node("match_odds_ingest") == 1
     frame = DataStore(tmp_path).read("match_odds")
     assert schema_check_result("match_odds", frame).passed is True
-    assert frame.height == 3
-    assert set(frame["odds_kind"].unique()) == {"closing_proxy"}
+    assert frame.height == 6
+    assert set(frame["odds_kind"].unique()) == {
+        "closing_proxy",
+        "prematch_scheduled",
+    }
     graph = defs.get_repository_def().asset_graph
     names = {key.path[-1] for key in graph.get_all_asset_keys()}
     assert "match_odds_ingest" in names

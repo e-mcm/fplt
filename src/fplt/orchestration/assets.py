@@ -147,12 +147,14 @@ understat_ingest_job = dg.define_asset_job(
 
 @dg.asset(name="match_odds_ingest")
 def match_odds_ingest() -> int:
-    """Stage football-data E0 closing odds from write-once raw CSVs.
+    """Stage football-data E0 closing and prematch odds from raw CSVs.
 
     Reads ``$FPLT_DATA_DIR/raw/football_data/season=*/E0.csv`` and the repo
-    team map at ``configs/football_data/team_names.yaml``. Rows are labelled
-    ``odds_kind=closing_proxy`` with ``available_at=kickoff`` (close ≠
-    deadline). Does not touch FPL snapshot ingest.
+    team map at ``configs/football_data/team_names.yaml``. Writes
+    ``odds_kind=closing_proxy`` (``available_at=kickoff``) and
+    ``odds_kind=prematch_scheduled`` (conservative Fri/Tue 17:00 London
+    collection stamp). Closing ≠ deadline; prematch still needs the deadline
+    coverage gate. Does not touch FPL snapshot ingest.
     """
     settings = get_settings()
     team_keys = load_team_names(default_team_map_path())

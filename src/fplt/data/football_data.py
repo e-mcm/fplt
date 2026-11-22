@@ -1,14 +1,27 @@
-"""Stage football-data.co.uk E0 closing odds into ``match_odds``.
+"""Stage football-data.co.uk E0 odds into ``match_odds``.
 
-Closing averages (``AvgCH`` / ``AvgCD`` / ``AvgCA``, plus O/U when present)
-are labelled ``odds_kind=closing_proxy`` with ``available_at`` at kickoff.
-That is a pre-kickoff proxy, **not** an FPL deadline snapshot.
+Two ``odds_kind`` values are written from the same E0 CSV:
+
+- ``closing_proxy`` — closing averages (``AvgCH`` / ``AvgCD`` / ``AvgCA``, plus
+  O/U when present), falling back to opening averages when close is absent.
+  ``available_at`` is kickoff. Pre-kickoff proxy, **not** an FPL deadline
+  snapshot.
+- ``prematch_scheduled`` — non-closing columns only (``AvgH`` / ``AvgD`` /
+  ``AvgA``, ``B365H`` / ``B365D`` / ``B365A``, plus O/U ``Avg>2.5`` etc.).
+  ``available_at`` is a **conservative** football-data collection estimate
+  (see ``estimated_prematch_available_at``). Closing columns are never
+  relabelled as prematch.
+
+Deadline coverage: any fixture whose FPL deadline falls before the estimated
+collection time must drop out of prematch boards — use
+``check_prematch_deadline_coverage`` / ``require_prematch_deadline_coverage``.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -27,17 +40,49 @@ _TEAM_MAP = (
     / "team_names.yaml"
 )
 _LOG = logging.getLogger(__name__)
-_ODDS_KIND = "closing_proxy"
+_CLOSING_KIND = "closing_proxy"
+_PREMATCH_KIND = "prematch_scheduled"
 _SOURCE = "football_data"
 _DEFAULT_KICKOFF = time(15, 0)
+# Conservative "afternoon" stamp for football-data's published collection window.
+_PREMATCH_COLLECTION_LOCAL = time(17, 0)
 
 # Prefer closing market averages; fall back to Bet365 closing, then opening avg.
-_HOME_COLS = ("AvgCH", "B365CH", "AvgH", "B365H")
-_DRAW_COLS = ("AvgCD", "B365CD", "AvgD", "B365D")
-_AWAY_COLS = ("AvgCA", "B365CA", "AvgA", "B365A")
+_CLOSING_HOME_COLS = ("AvgCH", "B365CH", "AvgH", "B365H")
+_CLOSING_DRAW_COLS = ("AvgCD", "B365CD", "AvgD", "B365D")
+_CLOSING_AWAY_COLS = ("AvgCA", "B365CA", "AvgA", "B365A")
 # O/U stays closing-only so nullable absence means "no closing total", not open.
-_OVER_COLS = ("AvgC>2.5", "B365C>2.5")
-_UNDER_COLS = ("AvgC<2.5", "B365C<2.5")
+_CLOSING_OVER_COLS = ("AvgC>2.5", "B365C>2.5")
+_CLOSING_UNDER_COLS = ("AvgC<2.5", "B365C<2.5")
+
+# Non-closing columns only — never read AvgCH / B365CH into prematch.
+_PREMATCH_HOME_COLS = ("AvgH", "B365H")
+_PREMATCH_DRAW_COLS = ("AvgD", "B365D")
+_PREMATCH_AWAY_COLS = ("AvgA", "B365A")
+_PREMATCH_OVER_COLS = ("Avg>2.5", "B365>2.5")
+_PREMATCH_UNDER_COLS = ("Avg<2.5", "B365<2.5")
+
+
+class PrematchCoverageError(ValueError):
+    """Prematch deadline coverage failed for the requested board fixtures."""
+
+
+@dataclass(frozen=True)
+class PrematchCoverageResult:
+    """Deadline-legal coverage of ``prematch_scheduled`` odds over fixtures.
+
+    A fixture is covered only when a ``prematch_scheduled`` row joins and
+    ``available_at <= deadline_time``. Fixtures whose FPL deadline falls before
+    the estimated collection time are listed in ``dropped_fixture_ids``.
+    """
+
+    numerator: int
+    denominator: int
+    rate: float
+    min_coverage: float | None
+    passed: bool
+    dropped_fixture_ids: tuple[int, ...]
+    message: str
 
 
 def default_team_map_path() -> Path:
@@ -153,10 +198,48 @@ def parse_kickoff(date_text: str, time_text: str | None) -> datetime:
     return local.astimezone(UTC)
 
 
+def estimated_prematch_available_at(kickoff: datetime) -> datetime:
+    """Conservative football-data collection time for non-closing odds.
+
+    football-data states that pre-match odds for weekend games are collected
+    on Friday afternoons, and midweek games on Tuesday afternoons. This helper
+    stamps that window late so early FPL deadlines fail the coverage gate
+    rather than leaking post-deadline lines.
+
+    Rule (Europe/London kickoff calendar day):
+
+    - **Fri / Sat / Sun** → that week's **Friday 17:00** London.
+    - **Mon / Tue / Wed / Thu** → that week's **Tuesday 17:00** London
+      (Monday fixtures therefore stamp *after* kickoff and drop under the
+      deadline coverage gate).
+
+    Args:
+        kickoff: Aware match kickoff (any zone; converted to London).
+
+    Returns:
+        Aware UTC ``available_at`` for ``odds_kind=prematch_scheduled``.
+    """
+    local = kickoff.astimezone(_LONDON)
+    weekday = local.weekday()  # Mon=0 … Sun=6
+    if weekday >= 4:
+        # Friday of the same week (Fri=0 days back, Sat=1, Sun=2).
+        collection_date = local.date() - timedelta(days=weekday - 4)
+    else:
+        # Tuesday of the same week (Mon → +1 day, Tue → 0, Wed/Thu → back).
+        collection_date = local.date() - timedelta(days=weekday - 1)
+    stamped = datetime.combine(
+        collection_date, _PREMATCH_COLLECTION_LOCAL, tzinfo=_LONDON
+    )
+    return stamped.astimezone(UTC)
+
+
 def parse_e0_csv(path: Path, season: str, team_keys: dict[str, int]) -> pl.DataFrame:
     """Parse one E0 CSV into a ``MatchOddsSchema`` frame (no store write).
 
-    Rows without closing/opening 1X2 odds are skipped. Unknown team names raise.
+    Emits up to two rows per match: ``closing_proxy`` (closing columns with
+    opening fallback) and ``prematch_scheduled`` (non-closing columns only).
+    Rows without usable 1X2 odds for a kind are skipped for that kind. Unknown
+    team names raise.
 
     Args:
         path: Local E0 CSV.
@@ -182,33 +265,54 @@ def parse_e0_csv(path: Path, season: str, team_keys: dict[str, int]) -> pl.DataF
             raise KeyError(f"football-data team {home_name!r} has no team_key")
         if away_name not in team_keys:
             raise KeyError(f"football-data team {away_name!r} has no team_key")
-        home = _first_odds(row, _HOME_COLS)
-        draw = _first_odds(row, _DRAW_COLS)
-        away = _first_odds(row, _AWAY_COLS)
-        if home is None or draw is None or away is None:
-            _LOG.debug("skip %s vs %s: missing 1X2 odds", home_name, away_name)
-            continue
         date_text = str(row.get("Date") or "").strip()
         time_raw = row.get("Time")
         time_text = None if time_raw is None else str(time_raw)
         kickoff = parse_kickoff(date_text, time_text)
-        rows.append(
-            {
-                "season": season,
-                "fixture_id": None,
-                "team_h_key": team_keys[home_name],
-                "team_a_key": team_keys[away_name],
-                "kickoff_time": kickoff,
-                "home_odds": home,
-                "draw_odds": draw,
-                "away_odds": away,
-                "over_25_odds": _first_odds(row, _OVER_COLS),
-                "under_25_odds": _first_odds(row, _UNDER_COLS),
-                "odds_kind": _ODDS_KIND,
-                "available_at": kickoff,
-                "source": _SOURCE,
-            }
+        base = {
+            "season": season,
+            "fixture_id": None,
+            "team_h_key": team_keys[home_name],
+            "team_a_key": team_keys[away_name],
+            "kickoff_time": kickoff,
+            "source": _SOURCE,
+        }
+        closing = _odds_triple(
+            row, _CLOSING_HOME_COLS, _CLOSING_DRAW_COLS, _CLOSING_AWAY_COLS
         )
+        if closing is not None:
+            home, draw, away = closing
+            rows.append(
+                {
+                    **base,
+                    "home_odds": home,
+                    "draw_odds": draw,
+                    "away_odds": away,
+                    "over_25_odds": _first_odds(row, _CLOSING_OVER_COLS),
+                    "under_25_odds": _first_odds(row, _CLOSING_UNDER_COLS),
+                    "odds_kind": _CLOSING_KIND,
+                    "available_at": kickoff,
+                }
+            )
+        prematch = _odds_triple(
+            row, _PREMATCH_HOME_COLS, _PREMATCH_DRAW_COLS, _PREMATCH_AWAY_COLS
+        )
+        if prematch is not None:
+            home, draw, away = prematch
+            rows.append(
+                {
+                    **base,
+                    "home_odds": home,
+                    "draw_odds": draw,
+                    "away_odds": away,
+                    "over_25_odds": _first_odds(row, _PREMATCH_OVER_COLS),
+                    "under_25_odds": _first_odds(row, _PREMATCH_UNDER_COLS),
+                    "odds_kind": _PREMATCH_KIND,
+                    "available_at": estimated_prematch_available_at(kickoff),
+                }
+            )
+        if closing is None and prematch is None:
+            _LOG.debug("skip %s vs %s: missing 1X2 odds", home_name, away_name)
     if not rows:
         return pl.DataFrame(schema=POLARS_SCHEMAS["match_odds"])
     return pl.DataFrame(rows, schema=POLARS_SCHEMAS["match_odds"])
@@ -253,6 +357,150 @@ def attach_fixture_ids(odds: pl.DataFrame, fixtures: pl.DataFrame) -> pl.DataFra
         .select(list(POLARS_SCHEMAS["match_odds"]))
     )
     return joined
+
+
+def prematch_board_odds(odds: pl.DataFrame, fixtures: pl.DataFrame) -> pl.DataFrame:
+    """Deadline-legal ``prematch_scheduled`` rows for board fixtures.
+
+    Drops any joined fixture whose FPL ``deadline_time`` is strictly before the
+    row's ``available_at`` (estimated collection time). Fixtures need
+    ``deadline_time`` (join gameweeks first when staging boards).
+
+    Args:
+        odds: Staged ``match_odds`` (any kinds; non-prematch ignored).
+        fixtures: Board fixtures with ``season``, ``fixture_id``, and
+            ``deadline_time``.
+
+    Returns:
+        Prematch rows that survive the deadline coverage gate, typed as
+        ``MatchOddsSchema`` columns.
+    """
+    if odds.is_empty() or fixtures.is_empty():
+        return pl.DataFrame(schema=POLARS_SCHEMAS["match_odds"])
+    if "deadline_time" not in fixtures.columns:
+        raise ValueError(
+            "fixtures must include deadline_time for prematch board filtering"
+        )
+    prematch = odds.filter(pl.col("odds_kind") == _PREMATCH_KIND)
+    if prematch.is_empty():
+        return pl.DataFrame(schema=POLARS_SCHEMAS["match_odds"])
+    targets = fixtures.select(["season", "fixture_id", "deadline_time"]).unique(
+        subset=["season", "fixture_id"], keep="last"
+    )
+    joined = (
+        prematch.filter(pl.col("fixture_id").is_not_null())
+        .join(targets, on=["season", "fixture_id"], how="inner")
+        .filter(pl.col("available_at") <= pl.col("deadline_time"))
+        .drop("deadline_time")
+        .select(list(POLARS_SCHEMAS["match_odds"]))
+    )
+    return joined
+
+
+def check_prematch_deadline_coverage(
+    fixtures: pl.DataFrame,
+    odds: pl.DataFrame,
+    *,
+    min_coverage: float | None = 1.0,
+) -> PrematchCoverageResult:
+    """Measure deadline-legal ``prematch_scheduled`` coverage over fixtures.
+
+    A fixture is covered when a ``prematch_scheduled`` row joins on
+    ``(season, fixture_id)`` and ``available_at <= deadline_time``. Otherwise
+    it is listed in ``dropped_fixture_ids`` (missing odds or deadline before
+    estimated collection).
+
+    Args:
+        fixtures: Rows with ``season``, ``fixture_id``, ``deadline_time``.
+        odds: Staged ``match_odds``.
+        min_coverage: Required covered fraction; ``None`` skips the pass/fail
+            threshold (``passed`` stays true).
+
+    Returns:
+        ``PrematchCoverageResult`` with rate, dropped ids, and a clear message.
+
+    Raises:
+        ValueError: ``fixtures`` lacks ``deadline_time``.
+    """
+    if "deadline_time" not in fixtures.columns:
+        raise ValueError(
+            "fixtures must include deadline_time for prematch coverage checks"
+        )
+    targets = fixtures.select(["season", "fixture_id", "deadline_time"]).unique(
+        subset=["season", "fixture_id"], keep="last"
+    )
+    denom = targets.height
+    if denom == 0:
+        return PrematchCoverageResult(
+            numerator=0,
+            denominator=0,
+            rate=0.0,
+            min_coverage=min_coverage,
+            passed=min_coverage is None or min_coverage == 0.0,
+            dropped_fixture_ids=(),
+            message="no fixtures to cover for prematch_scheduled",
+        )
+    legal = prematch_board_odds(odds, targets)
+    covered_ids: set[int] = set()
+    if not legal.is_empty():
+        covered_ids = {int(fid) for fid in legal["fixture_id"].drop_nulls().to_list()}
+    all_ids = targets["fixture_id"].to_list()
+    dropped = tuple(
+        sorted(
+            int(fid)
+            for fid in all_ids
+            if fid is not None and int(fid) not in covered_ids
+        )
+    )
+    numerator = denom - len(dropped)
+    rate = numerator / denom
+    passed = True if min_coverage is None else rate + 1e-12 >= min_coverage
+    if passed:
+        message = (
+            f"prematch_scheduled deadline coverage {rate:.1%} "
+            f"({numerator}/{denom}); min_coverage={min_coverage}"
+        )
+    else:
+        message = (
+            "prematch_scheduled deadline coverage failed: "
+            f"{rate:.1%} ({numerator}/{denom}) < min_coverage={min_coverage}. "
+            "Fixtures whose FPL deadline falls before the estimated football-data "
+            f"collection time (or lack prematch odds) dropped: {list(dropped)}"
+        )
+    return PrematchCoverageResult(
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_coverage,
+        passed=passed,
+        dropped_fixture_ids=dropped,
+        message=message,
+    )
+
+
+def require_prematch_deadline_coverage(
+    fixtures: pl.DataFrame,
+    odds: pl.DataFrame,
+    *,
+    min_coverage: float = 1.0,
+) -> PrematchCoverageResult:
+    """Like ``check_prematch_deadline_coverage`` but raises on failure.
+
+    Args:
+        fixtures: Board fixtures with ``deadline_time``.
+        odds: Staged ``match_odds``.
+        min_coverage: Required covered fraction.
+
+    Returns:
+        Passing ``PrematchCoverageResult``.
+
+    Raises:
+        PrematchCoverageError: Coverage is below ``min_coverage``.
+    """
+    result = check_prematch_deadline_coverage(fixtures, odds, min_coverage=min_coverage)
+    if not result.passed:
+        raise PrematchCoverageError(result.message)
+    return result
 
 
 def stage_match_odds(
@@ -318,6 +566,20 @@ def _parse_date(date_text: str) -> date:
         except ValueError:
             continue
     raise ValueError(f"bad football-data Date {date_text!r}")
+
+
+def _odds_triple(
+    row: dict[str, Any],
+    home_cols: tuple[str, ...],
+    draw_cols: tuple[str, ...],
+    away_cols: tuple[str, ...],
+) -> tuple[float, float, float] | None:
+    home = _first_odds(row, home_cols)
+    draw = _first_odds(row, draw_cols)
+    away = _first_odds(row, away_cols)
+    if home is None or draw is None or away is None:
+        return None
+    return home, draw, away
 
 
 def _first_odds(row: dict[str, Any], columns: tuple[str, ...]) -> float | None:

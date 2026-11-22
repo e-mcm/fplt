@@ -11,7 +11,7 @@ fetch-understat:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-understat SEASON=2024-25"; exit 1; fi
 	uv run python scripts/fetch_understat.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
 
-# ── football-data.co.uk E0 closing odds ───────────────────────────────────────
+# ── football-data.co.uk E0 odds (closing + scheduled prematch) ────────────────
 # Usage: make fetch-football-data SEASON=2024-25
 # Writes write-once CSV under $$FPLT_DATA_DIR/raw/football_data/season=.../E0.csv
 fetch-football-data:
