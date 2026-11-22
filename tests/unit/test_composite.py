@@ -53,6 +53,8 @@ def test_dc_layered_v2_wires_improved_components() -> None:
     assert spec.params["cs_red_void_prob"] == pytest.approx(0.02)
     assert spec.params["conceded_mode"] == "played"
     assert spec.params["sample_other"] is True
+    assert spec.params["hard_starters"] is True
+    assert spec.params["target_starters"] == 11
     assert spec.components["score"].name == "dixon_coles_v2"
     assert spec.components["minutes"].kind == "empirical_minutes_v2"
     assert spec.components["involvement"].kind == "involvement_xg"
@@ -62,6 +64,8 @@ def test_dc_layered_v2_wires_improved_components() -> None:
     assert model._cs_red_void_prob == pytest.approx(0.02)
     assert model._conceded_mode == "played"
     assert model._sample_other is True
+    assert model._hard_starters is True
+    assert model._target_starters == 11
 
 
 def test_dc_layered_v2_scores_a_gameweek(tmp_path: Path) -> None:
@@ -112,6 +116,8 @@ def test_bad_layered_specs_are_rejected() -> None:
         CompositePredictor(_spec(conceded_mode="half"))
     with pytest.raises(ValueError, match="sample_other"):
         CompositePredictor(_spec(sample_other="yes"))
+    with pytest.raises(ValueError, match="hard_starters"):
+        CompositePredictor(_spec(hard_starters="yes"))
     with pytest.raises(ValueError, match="components"):
         CompositePredictor(ModelSpec(name="bare", kind="dc_layered"))
 

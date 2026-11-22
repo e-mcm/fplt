@@ -98,6 +98,7 @@ def points_predictor_specs(
 
 def ensure_features_loaded() -> list[Feature]:
     """Import feature modules so the registry is populated, then list them."""
+    import fplt.features.availability as availability_rows
     import fplt.features.form as form_features
     import fplt.features.understat as understat_rows
 
@@ -105,6 +106,8 @@ def ensure_features_loaded() -> list[Feature]:
         raise RuntimeError("context did not register")
     if understat_rows.understat_share.__name__ != "understat_share":
         raise RuntimeError("understat_share did not register")
+    if availability_rows.availability_v1.__name__ != "availability_v1":
+        raise RuntimeError("availability_v1 did not register")
     return registered_features()
 
 

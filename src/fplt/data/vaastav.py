@@ -374,8 +374,10 @@ def _status(
         return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
     return pl.DataFrame(rows).with_columns(
         pl.col("available_at").cast(pl.Datetime("us", "UTC")),
+        pl.col("news_added").cast(pl.Datetime("us", "UTC")),
         pl.col("ep_next").cast(pl.Float64),
         pl.col("chance_of_playing").cast(pl.Float64),
+        pl.col("chance_of_playing_this_round").cast(pl.Float64),
         pl.col("penalties_order").cast(pl.Int64),
     )
 
@@ -388,9 +390,11 @@ def _status_row(
         "player_key": player_key,
         "status": "a",
         "news": "",
+        "news_added": None,
         "price": price,
         "ep_next": None,
         "chance_of_playing": None,
+        "chance_of_playing_this_round": None,
         "penalties_order": None,
         "available_at": available_at,
         "source": "vaastav",

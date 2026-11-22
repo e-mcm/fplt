@@ -399,14 +399,28 @@ def _rank_of(table: dict[int, list[int]], team: int) -> int:
 
 
 def _availability(view: PITView) -> dict[int, float]:
+    """Map player_key → availability in [0, 1] using this/next chance + news."""
+    from datetime import datetime
+
+    from fplt.models.components.minutes.common import (
+        PlayerAvailability,
+        gate_for,
+    )
+
     status = view.latest("player_status", by=["season", "player_key"]).collect()
     out: dict[int, float] = {}
     for row in status.iter_rows(named=True):
-        chance = row["chance_of_playing"]
-        if chance is None:
-            out[int(row["player_key"])] = 1.0 if row["status"] == "a" else 0.0
-        else:
-            out[int(row["player_key"])] = float(chance) / 100.0
+        chance_next = row.get("chance_of_playing")
+        chance_this = row.get("chance_of_playing_this_round")
+        news_added = row.get("news_added")
+        tags = PlayerAvailability(
+            status=None if row.get("status") is None else str(row["status"]),
+            chance_next=None if chance_next is None else float(chance_next),
+            chance_this=None if chance_this is None else float(chance_this),
+            news=str(row.get("news") or ""),
+            news_added=news_added if isinstance(news_added, datetime) else None,
+        )
+        out[int(row["player_key"])] = gate_for(tags, doubtful=0.5)
     return out
 
 

@@ -22,6 +22,7 @@ from fplt.models.components.minutes.common import (
     availability,
     chance,
     counts,
+    gate_for,
     normalise,
     positions,
     shrunk,
@@ -198,8 +199,12 @@ class EmpiricalMinutesV2:
         for index, row in enumerate(context.iter_rows(named=True)):
             player = int(row["player_key"])
             position = self._position.get(player, "UNK")
-            status, playing = chance_map.get(player, (None, None))
-            gate = chance(status, playing, self._doubtful)
+            tags = chance_map.get(player)
+            gate = (
+                chance(None, None, self._doubtful)
+                if tags is None
+                else gate_for(tags, self._doubtful)
+            )
             features = self._player_features.get(player, _empty_player_features())
             start_x = _start_vector(features, row)
             long_x = _long_vector(features, row)

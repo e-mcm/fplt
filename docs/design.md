@@ -100,7 +100,7 @@ data/
 │       └── E0.csv                 # football-data.co.uk Premier League closing odds
 ├── staged/                      # typed parquet, one table per entity, derived from raw
 │   ├── players/  teams/  fixtures/  gameweeks/
-│   ├── player_status/           # status/news/price/ep_next/penalties_order per snapshot (time series)
+│   ├── player_status/           # status/news/news_added/price/ep_next/chance this+next/penalties_order per snapshot
 │   ├── player_fixture_stats/    # actuals from event_live (+ Opta expected_*)
 │   ├── understat_player_matches/
 │   ├── understat_team_matches/  # Deep / PPDA / team xG per match
@@ -124,7 +124,7 @@ football-data team names map to `team_key` via `configs/football_data/team_names
 
 Every staged table carries an `available_at` timestamp (UTC):
 
-- Snapshotted attributes (status, news, price, `ep_next`, `penalties_order`): `available_at = captured_at`.
+- Snapshotted attributes (status, news, `news_added`, price, `ep_next`, chance this/next, `penalties_order`): `available_at = captured_at`.
 - Match results and stats: `available_at` = time the GW was marked `data_checked` (or kickoff + 3h as a historical proxy).
 - Fixture schedule: `available_at` = earliest snapshot in which the fixture appears with that date.
 - Closing match odds (`match_odds`, `odds_kind=closing_proxy`): `available_at = kickoff`. Bookmaker close is pre-KO, not the FPL deadline.
@@ -157,11 +157,11 @@ Models receive a `PITView`, never a `DataStore`. The leakage test (§9.2) verifi
 
 Availability and news cannot be recovered after the fact, so capture runs independently of the local Dagster instance:
 
-- A standalone script `scripts/snapshot.py` (stdlib + `httpx` only) runs hourly on **GitHub Actions cron**. It snapshots `bootstrap-static` and `fixtures` if (a) the next deadline is within 6 hours, or (b) the last snapshot is more than 12 hours old. After a GW is `data_checked` it also captures `event/{gw}/live`.
+- A standalone script `scripts/snapshot.py` (stdlib + `httpx` only) runs every **15 minutes** on **GitHub Actions cron**, throttling writes: every 15 minutes in the last 3 hours before a deadline, every hour in the 3–6 hour window, otherwise when the last snapshot is more than 12 hours old. After a GW is `data_checked` it also captures `event/{gw}/live`.
 - Snapshots are committed to an orphan branch `snapshots` of this repo (path layout as `data/raw/fpl_api/...`).
 - Local Dagster has a sensor that fetches the `snapshots` branch and ingests new files into `data/raw`.
 
-Historical seasons (vaastav) lack per-deadline status/news/chance/`penalties_order` snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order` is null for vaastav rows.
+Historical seasons (vaastav) lack per-deadline status/news/`news_added`/chance/`penalties_order` snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons (`make minutes-brier` / `fplt eval-components --minutes-only`, read `slice=source=fpl_api`). Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order`, both chance fields, and `news_added` are null for vaastav rows.
 
 ### 4.6 Schemas
 
@@ -337,7 +337,7 @@ Optional `ChipUseWindows` (`allowed` / `forced` / `no_chip`, mirroring FPL-Optim
 `CompositePredictor.predict` runs, per target fixture, `n_sims` scenarios (default 5,000):
 
 1. **Scoreline**: draw (home_goals, away_goals) from `ScorelineDist`.
-2. **Minutes**: draw minutes for each player in both squads from `MinutesDist`. Draws are independent across players in v1. v2 may soft-project expected starters toward ~11 in the PMF; a hard eleven-starter draw constraint remains later.
+2. **Minutes**: draw minutes for each player in both squads from `MinutesDist`. Draws are independent across players in v1. v2 may soft-project expected starters toward ~11 in the PMF. When `hard_starters: true` (on `dc_layered_v2`), `enforce_hard_starters` adjusts each team-fixture sim toward exactly 11 starters (minutes ≥ 60), promoting/demoting by P(≥60) weight.
 3. **Goal allocation**: for each team goal, pick a scorer from players with minutes > 0 with probability ∝ `goal_weight × minutes/90`, plus an "unattributed" bucket for own goals (weight from history).
 4. **Assist allocation**: each goal is assisted with team-level probability `p_assist`; the assister is drawn ∝ `assist_weight × minutes/90`, excluding the scorer.
 5. **Clean sheet / conceded**: v1 approximation — clean sheet if the opponent scored 0 and the player played 60+; goals-conceded penalty applied scaled by minutes/90. Document the approximation in code. Optional fidelity params (defaults preserve v1): `cs_red_void_prob` voids a would-be clean sheet with that probability (red-card stand-in); `conceded_mode: played` applies the full goals-conceded band whenever minutes > 0 instead of scaling by minutes/90.
@@ -370,7 +370,7 @@ def rolling_points(view: PITView, window: int = 5) -> pl.LazyFrame:
 ### 6.2 Initial feature set
 
 Team-level: Dixon-Coles attack/defence ratings (as a feature for other models), rolling goals for/against, rest days, home/away.
-Player-level: rolling minutes, starts share, rolling points, per-90 goal and assist involvement, status/chance_of_playing at deadline, price, position, penalty-taker flag, opponent strength. `understat_share` v1 is each mapped player's xG and xA per 90, and their share of team xG and xA, from matches visible at the deadline.
+Player-level: rolling minutes, starts share, rolling points, per-90 goal and assist involvement, status/chance (this + next) at deadline, `availability@1` (news flags + gate), price, position, penalty-taker flag, opponent strength. `understat_share` v1 is each mapped player's xG and xA per 90, and their share of team xG and xA, from matches visible at the deadline.
 
 ---
 
@@ -643,4 +643,4 @@ These are settled. Change them here before changing the code.
 2. **Snapshot storage.** An orphan git branch named `snapshots`. Object storage (for example Cloudflare R2) is only worth revisiting if that branch grows unwieldy.
 3. **Leaderboard.** Streamlit (`apps/leaderboard.py`).
 4. **Experiment tracking.** No MLflow, Deepchecks, Giskard, Evidently, Feast, or TFX as the promote-eval runner. Reconsidered against a "use it at ~90%" bar: those APIs score one fitted model on one static frame. The walk-forward and the parquet ledger stay the implementation. Paired intervals use `statsmodels` and `arch`; they are not the runner (§7.6).
-5. **Minutes model.** v1 draws each player's minutes independently. v2 may soft-project expected starters toward ~11 in the distribution; enforcing a hard 11-starter draw constraint per team is a later version.
+5. **Minutes model.** v1 draws each player's minutes independently. v2 may soft-project expected starters toward ~11 in the distribution. `dc_layered_v2` also applies a hard 11-starter draw constraint per team-fixture via `enforce_hard_starters`.

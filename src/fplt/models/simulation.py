@@ -11,8 +11,8 @@ v1 defaults (``cs_red_void_prob=0``, ``conceded_mode="scaled"``,
 Fidelity options (enabled on ``dc_layered_v2``) can void clean sheets at a
 red-card rate, apply the full conceded penalty whenever the player appears, and
 sample other points around their expectation so ``xpts_sd`` / ``p_haul`` see
-that variance. Minutes are taken as drawn; this module does not force eleven
-starters.
+that variance. Minutes are taken as drawn; hard eleven-starter constraints are
+applied upstream via ``enforce_hard_starters`` before this module runs.
 """
 
 from __future__ import annotations

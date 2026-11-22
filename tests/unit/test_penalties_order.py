@@ -33,6 +33,8 @@ _BOOTSTRAP = {
             "now_cost": 100,
             "ep_next": "6.0",
             "chance_of_playing_next_round": 100,
+            "chance_of_playing_this_round": 75,
+            "news_added": "2024-08-09T12:00:00Z",
             "penalties_order": 1,
         },
         {
@@ -46,6 +48,8 @@ _BOOTSTRAP = {
             "now_cost": 95,
             "ep_next": "5.0",
             "chance_of_playing_next_round": None,
+            "chance_of_playing_this_round": None,
+            "news_added": None,
             "penalties_order": None,
         },
         {
@@ -59,6 +63,7 @@ _BOOTSTRAP = {
             "now_cost": 85,
             "ep_next": "4.0",
             "chance_of_playing_next_round": 100,
+            "chance_of_playing_this_round": None,
         },
     ],
     "events": [
@@ -92,6 +97,15 @@ def test_stage_bootstrap_reads_penalties_order() -> None:
     assert status["penalties_order"].to_list() == [1, None, None]
 
 
+def test_stage_bootstrap_reads_news_added_and_this_round_chance() -> None:
+    status = stage_bootstrap(_BOOTSTRAP, _FIXTURES, _CAPTURED, "2024-25")[
+        "player_status"
+    ].sort("player_key")
+    assert status["chance_of_playing_this_round"].to_list() == [75.0, None, None]
+    assert status["news_added"][0] is not None
+    assert status["news_added"][1] is None
+
+
 def test_player_status_schema_rejects_zero_order() -> None:
     when = datetime(2024, 8, 10, tzinfo=UTC)
     frame = pl.DataFrame(
@@ -103,6 +117,8 @@ def test_player_status_schema_rejects_zero_order() -> None:
             "price": [50],
             "ep_next": [None],
             "chance_of_playing": [None],
+            "chance_of_playing_this_round": [None],
+            "news_added": [None],
             "penalties_order": [0],
             "available_at": [when],
             "source": ["fpl_api"],

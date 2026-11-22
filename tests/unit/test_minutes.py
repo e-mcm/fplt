@@ -80,6 +80,20 @@ def test_doubtful_without_a_chance_uses_the_spec(tmp_path: Path) -> None:
     assert dist.pmf[0, ninety] == pytest.approx(0.5)
 
 
+def test_null_chance_with_news_is_not_treated_as_available(tmp_path: Path) -> None:
+    store = _store(tmp_path, [(1, "MID", 1, 90, 1)], {1: ("a", None)})
+    status = store.read("player_status").with_columns(
+        pl.lit("Knock - 50% chance of playing").alias("news"),
+        pl.lit(datetime(2024, 8, 10, tzinfo=UTC)).alias("news_added"),
+    )
+    store.path("player_status").unlink()
+    store.write("player_status", status)
+    dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    ninety = int(np.flatnonzero(MINUTE_BINS == 90)[0])
+    assert dist.pmf[0, 0] == pytest.approx(0.5)
+    assert dist.pmf[0, ninety] == pytest.approx(0.5)
+
+
 def test_a_substitute_snaps_positive_minutes_off_zero(tmp_path: Path) -> None:
     store = _store(tmp_path, [(1, "MID", 1, 1, 0)], {1: ("a", 100.0)})
     dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))

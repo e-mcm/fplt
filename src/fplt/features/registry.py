@@ -117,6 +117,7 @@ def build_feature_matrix(
     Returns:
         ``player_fixtures`` rows with each feature's value columns attached.
     """
+    import fplt.features.availability as availability_rows
     import fplt.features.form as form_features
     import fplt.features.understat as understat_rows
 
@@ -124,6 +125,8 @@ def build_feature_matrix(
         raise RuntimeError("context did not register")
     if understat_rows.understat_share.__name__ != "understat_share":
         raise RuntimeError("understat_share did not register")
+    if availability_rows.availability_v1.__name__ != "availability_v1":
+        raise RuntimeError("availability_v1 did not register")
     keys = list(horizon) if horizon is not None else [view.as_of]
     frame = player_fixtures(view, keys)
     for item in specs:
@@ -160,6 +163,7 @@ def materialise_feature(view: PITView, name: str, version: int, root: Path) -> P
         KeyError: The feature version is not registered.
         FileExistsError: This deadline was already materialised.
     """
+    import fplt.features.availability as availability_rows
     import fplt.features.form as form_features
     import fplt.features.understat as understat_rows
 
@@ -167,6 +171,8 @@ def materialise_feature(view: PITView, name: str, version: int, root: Path) -> P
         raise RuntimeError("context did not register")
     if understat_rows.understat_share.__name__ != "understat_share":
         raise RuntimeError("understat_share did not register")
+    if availability_rows.availability_v1.__name__ != "availability_v1":
+        raise RuntimeError("availability_v1 did not register")
     spec = get_feature(name, version)
     checked = spec.schema.validate(call_feature(spec, view))
     assert isinstance(checked, pl.DataFrame)

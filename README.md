@@ -66,6 +66,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Backtest models | `uv run fplt backtest --models dc_layered_v1 lgbm_direct_v1 --season 2025-26` |
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
 | Layered component metrics + `n_sims` sweep | `make eval-components SEASON=2024-25` or `uv run fplt eval-components --season 2024-25` |
+| Minutes v2 Brier (snapshot GWs) | `make minutes-brier SEASON=2024-25` or `uv run fplt eval-components --season 2024-25 --minutes-only` — read `slice=source=fpl_api` for P(played) / P(≥60) |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Prediction championship (multi-arm bakeoff) | `make bakeoff BAKEOFF=example_prediction_championship` or `uv run fplt bakeoff --models … --control … --season …` |
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |

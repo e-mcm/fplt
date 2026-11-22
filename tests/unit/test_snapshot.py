@@ -32,6 +32,17 @@ def test_should_snapshot_when_deadline_is_close() -> None:
     assert snapshot.should_snapshot(_NOW, deadline, last)
 
 
+def test_dense_window_snapshots_every_fifteen_minutes() -> None:
+    deadline = _NOW + timedelta(hours=2)
+    assert snapshot.should_snapshot(_NOW, deadline, _NOW - timedelta(minutes=15))
+    assert not snapshot.should_snapshot(_NOW, deadline, _NOW - timedelta(minutes=5))
+
+
+def test_near_window_skips_fresh_hourly_capture() -> None:
+    deadline = _NOW + timedelta(hours=5)
+    assert not snapshot.should_snapshot(_NOW, deadline, _NOW - timedelta(minutes=30))
+
+
 def test_should_snapshot_when_stale() -> None:
     deadline = _NOW + timedelta(days=3)
     last = _NOW - timedelta(hours=13)

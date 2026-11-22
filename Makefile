@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -70,6 +70,14 @@ compare-models:
 eval-components:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make eval-components SEASON=2024-25"; exit 1; fi
 	uv run fplt eval-components --season $(SEASON) $(ARGS)
+
+# ── Snapshot-backed minutes v2 Brier (P(played), P(≥60)) ───────────────────────
+# Usage: make minutes-brier SEASON=2024-25
+# Optional: ARGS='--from-gw 1 --to-gw 10 --minutes-model empirical_minutes_v2'
+# Summary rows are sliced by stats source; read slice source=fpl_api (not vaastav).
+minutes-brier:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make minutes-brier SEASON=2024-25"; exit 1; fi
+	uv run fplt eval-components --season $(SEASON) --minutes-only $(ARGS)
 
 # ── Forecast skill by lead time (MAE/RMSE for H=1…STEPS; wraps compare) ────────
 # Usage: make horizon-skill SEASON=2024-25

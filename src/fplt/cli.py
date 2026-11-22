@@ -392,6 +392,15 @@ def main(argv: list[str] | None = None) -> None:
         help="Skip the Monte Carlo n_sims sweep",
     )
     eval_components.add_argument(
+        "--minutes-only",
+        action="store_true",
+        help=(
+            "Score only minutes Brier (skip score/involvement/sims). "
+            "Defaults --minutes-model to empirical_minutes_v2 when omitted. "
+            "Read slice source=fpl_api for snapshot-backed gameweeks."
+        ),
+    )
+    eval_components.add_argument(
         "--output-dir",
         type=Path,
         help="Write summary JSON/parquet here",
@@ -952,12 +961,26 @@ def _plan(args: argparse.Namespace) -> None:
 
 def _eval_components(args: argparse.Namespace) -> None:
     sims: list[int] | tuple[int, ...] | None
-    if args.skip_sims:
+    minutes_only = bool(getattr(args, "minutes_only", False))
+    if minutes_only or args.skip_sims:
         sims = []
     elif args.sims is not None:
         sims = list(args.sims)
     else:
         sims = None
+    if minutes_only:
+        score_models: list[str] | None = []
+        involvement_model: list[str] | None = []
+        # argparse default is empirical_minutes_v1; swap to v2 for the board.
+        minutes_model = list(args.minutes_model) if args.minutes_model else []
+        if minutes_model == ["empirical_minutes_v1"]:
+            minutes_model = ["empirical_minutes_v2"]
+    else:
+        score_models = list(args.score_models) if args.score_models else None
+        involvement_model = (
+            list(args.involvement_model) if args.involvement_model else []
+        )
+        minutes_model = list(args.minutes_model) if args.minutes_model else []
     try:
         result = run_component_eval(
             get_settings().data_dir,
@@ -965,11 +988,9 @@ def _eval_components(args: argparse.Namespace) -> None:
             from_gw=int(args.from_gw),
             to_gw=int(args.to_gw),
             fit_gw=args.fit_gw,
-            score_models=list(args.score_models) if args.score_models else None,
-            minutes_model=list(args.minutes_model) if args.minutes_model else [],
-            involvement_model=(
-                list(args.involvement_model) if args.involvement_model else []
-            ),
+            score_models=score_models,
+            minutes_model=minutes_model,
+            involvement_model=involvement_model,
             layered_model=str(args.layered_model),
             sims=sims,
             output_dir=args.output_dir,

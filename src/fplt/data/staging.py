@@ -194,18 +194,28 @@ def _status(
 ) -> pl.DataFrame:
     rows: list[dict[str, Any]] = []
     for element in bootstrap.get("elements", []):
-        chance = element.get("chance_of_playing_next_round")
+        chance_next = element.get("chance_of_playing_next_round")
+        chance_this = element.get("chance_of_playing_this_round")
         ep = element.get("ep_next")
         order = element.get("penalties_order")
+        news_added = element.get("news_added")
         rows.append(
             {
                 "season": season,
                 "player_key": int(element["code"]),
                 "status": str(element.get("status", "a")),
                 "news": str(element.get("news") or ""),
+                "news_added": (
+                    _utc(str(news_added)) if news_added not in (None, "") else None
+                ),
                 "price": int(element.get("now_cost", 0)),
                 "ep_next": float(ep) if ep not in (None, "") else None,
-                "chance_of_playing": float(chance) if chance is not None else None,
+                "chance_of_playing": (
+                    float(chance_next) if chance_next is not None else None
+                ),
+                "chance_of_playing_this_round": (
+                    float(chance_this) if chance_this is not None else None
+                ),
                 "penalties_order": (int(order) if order not in (None, "") else None),
                 "available_at": moment,
                 "source": source,
@@ -217,6 +227,7 @@ def _status(
         return pl.DataFrame(schema=POLARS_SCHEMAS["player_status"])
     return pl.DataFrame(rows).with_columns(
         pl.col("available_at").cast(pl.Datetime("us", "UTC")),
+        pl.col("news_added").cast(pl.Datetime("us", "UTC")),
         pl.col("penalties_order").cast(pl.Int64),
     )
 
