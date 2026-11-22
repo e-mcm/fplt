@@ -1,9 +1,9 @@
 """Candidate-pool pruning policy for long-horizon MILPs.
 
 Binary count scales with priced players × horizon. Keep the union of, per
-position: top Σ xPts, top Σ xPts / price, and the cheapest fillers — plus
-any currently owned players. Defaults are tuned so a full FPL pool (~700)
-shrinks to about 200 candidates.
+position: top decayed Σ xPts, top decayed Σ xPts / price, and the cheapest
+*playing* fillers — plus any currently owned players. Defaults are tuned so
+a full FPL pool (~700) shrinks to about 200 candidates.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ DEFAULT_TOP_VALUE: Mapping[str, int] = {
     "FWD": 20,
 }
 DEFAULT_KEEP_CHEAPEST = 4
+DEFAULT_MIN_P_60 = 0.5
 
 # Auto-enable when the planner horizon reaches this unless the caller
 # forces prune on/off.
@@ -73,9 +74,11 @@ class CandidatePrunePolicy(BaseModel):
     Filter order in :meth:`apply`:
 
     1. Always keep ``owned_keys``.
-    2. Union top ``top_xpts`` by Σ xPts per position.
-    3. Union top ``top_value`` by Σ xPts / price per position.
-    4. Union the ``keep_cheapest`` lowest-priced players per position.
+    2. Union top ``top_xpts`` by decayed Σ xPts per position.
+    3. Union top ``top_value`` by decayed Σ xPts / price per position.
+    4. Union the ``keep_cheapest`` lowest-priced *playing* players per
+       position (``p_60 >= min_p_60``; fall back to plain cheapest when
+       too few pass).
     5. Top up any position that fell below squad minima.
     """
 
@@ -84,19 +87,31 @@ class CandidatePrunePolicy(BaseModel):
     top_xpts: dict[str, int] | None = Field(
         default_factory=lambda: dict(DEFAULT_TOP_XPTS),
         description=(
-            "Per-position keep counts by Σ horizon xPts. None / empty "
-            "disables. Defaults target ~200 with ``top_value``."
+            "Per-position keep counts by decayed Σ horizon xPts. None / "
+            "empty disables. Defaults target ~200 with ``top_value``."
         ),
     )
     top_value: dict[str, int] | None = Field(
         default_factory=lambda: dict(DEFAULT_TOP_VALUE),
-        description=("Per-position keep counts by Σ xPts / price. None disables."),
+        description=(
+            "Per-position keep counts by decayed Σ xPts / price. None disables."
+        ),
     )
     keep_cheapest: int = Field(
         default=DEFAULT_KEEP_CHEAPEST,
         ge=0,
         description=(
-            "Cheapest players to retain per position (budget / Free Hit fillers)."
+            "Cheapest playing fillers to retain per position "
+            "(budget / Free Hit fillers)."
+        ),
+    )
+    min_p_60: float = Field(
+        default=DEFAULT_MIN_P_60,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum mean ``p_60`` for a player to count as a playing "
+            "filler. When too few players pass, fall back to plain cheapest."
         ),
     )
     auto_min_horizon: int = Field(
@@ -137,6 +152,7 @@ class CandidatePrunePolicy(BaseModel):
         top_xpts: Mapping[str, int] | None = None,
         top_value: Mapping[str, int] | None = None,
         keep_cheapest: int = DEFAULT_KEEP_CHEAPEST,
+        min_p_60: float = DEFAULT_MIN_P_60,
         auto_min_horizon: int = PRUNE_AUTO_MIN_HORIZON,
     ) -> CandidatePrunePolicy:
         """Return the default ~200-player policy (tunable overrides)."""
@@ -144,6 +160,7 @@ class CandidatePrunePolicy(BaseModel):
             top_xpts=dict(DEFAULT_TOP_XPTS if top_xpts is None else top_xpts),
             top_value=dict(DEFAULT_TOP_VALUE if top_value is None else top_value),
             keep_cheapest=keep_cheapest,
+            min_p_60=min_p_60,
             auto_min_horizon=auto_min_horizon,
         )
 
@@ -153,6 +170,7 @@ class CandidatePrunePolicy(BaseModel):
         *,
         top_k: Mapping[str, int] | None = None,
         keep_cheapest: int = 8,
+        min_p_60: float = DEFAULT_MIN_P_60,
         auto_min_horizon: int = PRUNE_AUTO_MIN_HORIZON,
     ) -> CandidatePrunePolicy:
         """Return the #132 top-K + cheapest policy (no value cut)."""
@@ -160,6 +178,7 @@ class CandidatePrunePolicy(BaseModel):
             top_xpts=dict(LEGACY_TOP_K if top_k is None else top_k),
             top_value=None,
             keep_cheapest=keep_cheapest,
+            min_p_60=min_p_60,
             auto_min_horizon=auto_min_horizon,
         )
 
@@ -173,29 +192,35 @@ class CandidatePrunePolicy(BaseModel):
         points: pl.DataFrame,
         *,
         owned_keys: Sequence[int] = (),
+        decay: float = 1.0,
     ) -> pl.DataFrame:
         """Return a ``CandidateSchema`` subset of ``players``.
 
         Args:
             players: Candidates matching ``CandidateSchema``.
             points: Horizon rows with at least ``player_key``, ``step``,
-                ``xpts``.
+                ``xpts``. Optional ``p_60`` enables playing-filler filtering.
             owned_keys: Player keys that must remain selectable.
+            decay: Per-step discount matching the planner
+                (``SquadState.decay``). Rank scores use
+                ``Σ_t decay^t · xPts_t`` with 0-indexed ``t``.
 
         Returns:
             Pruned candidates sorted by ``player_key``.
 
         Raises:
-            ValueError: Owned keys are missing from ``players``, or the
-                pruned pool cannot form a legal fifteen.
+            ValueError: Owned keys are missing from ``players``, ``decay``
+                is invalid, or the pruned pool cannot form a legal fifteen.
         """
+        if not 0.0 < decay <= 1.0:
+            raise ValueError(f"decay must be in (0, 1], got {decay}")
         checked = CandidateSchema.validate(players.sort("player_key"))
         assert isinstance(checked, pl.DataFrame)
         pool = checked
         if pool.is_empty():
             return pool
 
-        ranked = _rank_players(pool, points)
+        ranked = _rank_players(pool, points, decay=decay)
         keep: set[int] = {int(key) for key in owned_keys}
         missing_owned = sorted(keep - set(ranked["player_key"].to_list()))
         if missing_owned:
@@ -215,15 +240,14 @@ class CandidatePrunePolicy(BaseModel):
 
         if self.keep_cheapest > 0:
             for position in MIN_POS_POOL:
-                part = ranked.filter(pl.col("position") == position)
-                if part.is_empty():
-                    continue
-                cheap = (
-                    part.sort(["price", "player_key"])
-                    .head(self.keep_cheapest)["player_key"]
-                    .to_list()
+                keep.update(
+                    _cheapest_keys(
+                        ranked,
+                        position,
+                        self.keep_cheapest,
+                        min_p_60=self.min_p_60,
+                    )
                 )
-                keep.update(int(key) for key in cheap)
 
         keep = _top_up_minima(ranked, keep)
         pruned = pool.filter(pl.col("player_key").is_in(sorted(keep))).sort(
@@ -250,18 +274,21 @@ def prune_candidates(
     policy: CandidatePrunePolicy | None = None,
     top_k: Mapping[str, int] | None = None,
     keep_cheapest: int | None = None,
+    decay: float = 1.0,
 ) -> pl.DataFrame:
     """Drop low-value candidates via ``CandidatePrunePolicy``.
 
     Args:
         players: Candidates matching ``CandidateSchema``.
-        points: Horizon points.
+        points: Horizon points. Optional ``p_60`` enables playing fillers.
         owned_keys: Player keys that must remain selectable.
         policy: Policy to apply. Defaults to ``DEFAULT_PRUNE_POLICY``.
             Passing ``top_k`` / ``keep_cheapest`` without ``policy`` builds
             a legacy top-K policy for backward compatibility.
         top_k: Legacy override — forces ``CandidatePrunePolicy.legacy_top_k``.
         keep_cheapest: Legacy override for cheapest-per-position count.
+        decay: Planner decay passed through to ranking
+            (``Σ decay^step · xPts``).
 
     Returns:
         A ``CandidateSchema`` subset of ``players``, sorted by ``player_key``.
@@ -279,24 +306,51 @@ def prune_candidates(
         active = DEFAULT_PRUNE_POLICY
     else:
         active = policy
-    return active.apply(players, points, owned_keys=owned_keys)
+    return active.apply(players, points, owned_keys=owned_keys, decay=decay)
 
 
-def _rank_players(pool: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
+def _rank_players(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+    *,
+    decay: float = 1.0,
+) -> pl.DataFrame:
+    """Attach decayed Σ xPts, value ratio, and mean ``p_60`` to ``pool``."""
     if points.is_empty():
         return pool.with_columns(
             pl.lit(0.0).alias("sum_xpts"),
             pl.lit(0.0).alias("xpts_per_price"),
+            pl.lit(None).cast(pl.Float64).alias("p_60"),
         )
     required = {"player_key", "xpts"}
     missing = required - set(points.columns)
     if missing:
         raise ValueError(f"points missing columns: {sorted(missing)}")
+    if decay != 1.0 and "step" not in points.columns:
+        raise ValueError("points missing column 'step' required for decayed ranking")
 
-    totals = points.group_by("player_key").agg(pl.col("xpts").sum().alias("sum_xpts"))
+    scored = points
+    if "step" in points.columns:
+        # Match plan_squad: weight = decay**step (step is 0-indexed).
+        scored = points.with_columns(
+            (
+                pl.col("xpts")
+                * (pl.lit(float(decay)) ** pl.col("step").cast(pl.Float64()))
+            ).alias("_decayed_xpts")
+        )
+        xpts_expr = pl.col("_decayed_xpts").sum()
+    else:
+        xpts_expr = pl.col("xpts").sum()
+
+    aggs: list[pl.Expr] = [xpts_expr.alias("sum_xpts")]
+    if "p_60" in points.columns:
+        aggs.append(pl.col("p_60").mean().alias("p_60"))
+    totals = scored.group_by("player_key").agg(aggs)
     ranked = pool.join(totals, on="player_key", how="left").with_columns(
         pl.col("sum_xpts").fill_null(0.0)
     )
+    if "p_60" not in ranked.columns:
+        ranked = ranked.with_columns(pl.lit(None).cast(pl.Float64).alias("p_60"))
     # price is in tenths of a million; ratio scale only ranks within a pool.
     return ranked.with_columns(
         (
@@ -304,6 +358,28 @@ def _rank_players(pool: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
             / pl.col("price").cast(pl.Float64()).clip(lower_bound=1.0)
         ).alias("xpts_per_price")
     )
+
+
+def _cheapest_keys(
+    ranked: pl.DataFrame,
+    position: str,
+    quota: int,
+    *,
+    min_p_60: float,
+) -> set[int]:
+    """Return the ``quota`` cheapest keys, preferring playing fillers.
+
+    Prefer players with mean ``p_60 >= min_p_60``. If fewer than ``quota``
+    pass (or ``p_60`` is absent), fall back to the plain cheapest at the
+    position.
+    """
+    part = ranked.filter(pl.col("position") == position)
+    if part.is_empty() or quota <= 0:
+        return set()
+    playing = part.filter(pl.col("p_60").is_not_null() & (pl.col("p_60") >= min_p_60))
+    source = playing if playing.height >= quota else part
+    keys = source.sort(["price", "player_key"]).head(quota)["player_key"].to_list()
+    return {int(key) for key in keys}
 
 
 def _top_keys(
