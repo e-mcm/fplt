@@ -185,6 +185,138 @@ def test_scheduler_skips_chip_already_played_in_window() -> None:
     assert not any(row.chip == "freehit" for row in opps)
 
 
+def test_mid_window_unused_chip_is_optional() -> None:
+    """Force-play does not fire mid-half when stop_event is beyond H."""
+    fixtures = _fixtures_ordinary_first_half()
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 0, "bboost": 1, "3xc": 0},
+        played=[],
+    )
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=8,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=list(range(8, 15)),
+    )
+    assert not windows.forced.get("bboost")
+    assert not windows.requires("bboost", 8)
+
+
+def test_final_gw_of_half_forces_unused_chip() -> None:
+    """Unused first-half chip is forced on GW19 (window stop)."""
+    fixtures = _fixtures_ordinary_through(19)
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 0, "bboost": 1, "3xc": 0},
+        played=[],
+    )
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=19,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=[19, 20, 21],
+    )
+    assert windows.forced.get("bboost") == frozenset({19})
+    assert windows.requires("bboost", 19)
+    assert windows.allows("bboost", 19)
+
+
+def test_final_gw_of_half_does_not_force_after_play() -> None:
+    """Spent first-half chip is not forced again on the window stop."""
+    from fplt.optimise.state import ChipPlay
+
+    fixtures = _fixtures_ordinary_through(19)
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 0, "bboost": 0, "3xc": 0},
+        played=[ChipPlay(name="bboost", gw=12)],
+    )
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=19,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=[19, 20, 21],
+    )
+    assert not windows.forced.get("bboost")
+    assert not windows.requires("bboost", 19)
+
+
+def test_force_play_packs_multiple_chips_before_window_end() -> None:
+    """Several unused half-grants pack onto the last eligible GWs (one per GW)."""
+    fixtures = _fixtures_ordinary_through(19)
+    rules = ChipRules.for_season("2025-26")
+    inventory = ChipInventory(
+        remaining={"wildcard": 0, "freehit": 1, "bboost": 1, "3xc": 1},
+        played=[],
+    )
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=rules,
+        as_of_gw=17,
+        short_horizon=3,
+        inventory=inventory,
+        gameweeks=[17, 18, 19],
+    )
+    forced_gws = sorted(gw for weeks in windows.forced.values() for gw in weeks)
+    assert forced_gws == [17, 18, 19]
+    assert len(windows.forced) == 3
+    assert set(windows.forced) <= {"freehit", "bboost", "3xc"}
+
+
+def test_force_play_windows_respected_by_plan_squad() -> None:
+    """plan_squad plays a chip forced on the half-window stop."""
+    pool = _legal_pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    fixtures = _fixtures_ordinary_through(19)
+    windows = schedule_chip_windows(
+        fixtures,
+        season="2024-25",
+        rules=ChipRules.for_season("2025-26"),
+        as_of_gw=19,
+        short_horizon=1,
+        inventory=ChipInventory(
+            remaining={"wildcard": 0, "freehit": 0, "bboost": 1, "3xc": 0},
+            played=[],
+        ),
+        gameweeks=[19],
+    )
+    assert windows.requires("bboost", 19)
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        SquadState(
+            bank=1000,
+            free_transfers=1,
+            ft_bank_cap=2,
+            hit_cost=4,
+            decay=1.0,
+            bench_weight=0.0,
+            owned=[],
+            chips=ChipInventory(
+                remaining={"wildcard": 0, "freehit": 0, "bboost": 1, "3xc": 0},
+                played=[],
+            ),
+        ),
+        initial=True,
+        horizon=1,
+        season="2025-26",
+        gameweeks=[19],
+        chip_windows=windows,
+    )
+    assert plan.chips == ("bboost",)
+
+
 def test_as_of_out_of_range_raises() -> None:
     with pytest.raises(ValueError, match="as_of_gw"):
         schedule_chip_windows(
@@ -238,6 +370,25 @@ def _fixtures_best_now() -> pl.DataFrame:
     ]
     for gw in (11, 12, 13, 14, 15):
         rows.append({"season": "2024-25", "gw": gw, "team_h_key": 1, "team_a_key": 2})
+    return pl.DataFrame(rows)
+
+
+def _fixtures_ordinary_first_half() -> pl.DataFrame:
+    """Ordinary single fixtures across early first-half weeks."""
+    return _fixtures_ordinary_through(14)
+
+
+def _fixtures_ordinary_through(last_gw: int) -> pl.DataFrame:
+    """One fixture per GW from 2..``last_gw`` (first-half force-play fixtures)."""
+    rows = [
+        {
+            "season": "2024-25",
+            "gw": gw,
+            "team_h_key": 1,
+            "team_a_key": 2,
+        }
+        for gw in range(2, last_gw + 1)
+    ]
     return pl.DataFrame(rows)
 
 

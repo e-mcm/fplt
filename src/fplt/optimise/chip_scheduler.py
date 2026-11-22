@@ -16,6 +16,14 @@ now only if the gain beats the best expected opportunity left in the half.
 Later near-best weeks stay allowed so the MILP can wait. The unique best
 week is forced when it falls inside the short horizon and clears ``V*``.
 Near-horizon weeks where every remaining chip is held join ``no_chip``.
+
+**Force-play at window end.** Remaining unused chips in a half-season
+``ChipRules`` window are packed onto the last eligible gameweeks of that
+window (one chip per GW, higher coarse score first) so grants cannot
+expire unused. Mid-window deadlines stay optional under the option-value
+cut; packing triggers when the window's ``stop_event`` falls inside the
+short horizon, or when remaining chips outnumber remaining gameweeks in
+the window. Chips already spent in the window are omitted.
 """
 
 from __future__ import annotations
@@ -62,6 +70,10 @@ def schedule_chip_windows(
 ) -> ChipUseWindows:
     """Build allowed / forced / no-chip windows for the rest of the half.
 
+    Applies the option-value cut and, when needed, force-packs remaining
+    unused chips onto the last eligible gameweeks of each ``ChipRules``
+    half-window so grants cannot expire.
+
     Args:
         fixtures: Staged fixtures (``season``, ``gw``, ``team_h_key``,
             ``team_a_key``).
@@ -104,6 +116,7 @@ def schedule_chip_windows(
         opportunities,
         as_of_gw=as_of_gw,
         short_horizon=short_horizon,
+        rules=rules,
     )
 
 
@@ -189,6 +202,7 @@ def windows_from_opportunities(
     *,
     as_of_gw: int,
     short_horizon: int = DEFAULT_PLAN_HORIZON,
+    rules: ChipRules | None = None,
 ) -> ChipUseWindows:
     """Apply the option-value cut and emit ``ChipUseWindows``.
 
@@ -196,6 +210,8 @@ def windows_from_opportunities(
         opportunities: Output of ``score_chip_opportunities``.
         as_of_gw: Current deadline.
         short_horizon: Planner look-ahead ``H``.
+        rules: Optional chip windows; when set, remaining chips are
+            force-packed onto the last eligible gameweeks of each half.
 
     Returns:
         Allowed / forced / no-chip hooks for the short-horizon MILP.
@@ -233,19 +249,104 @@ def windows_from_opportunities(
         ):
             forced_candidates[chip] = best_gws[0]
 
+    if rules is not None:
+        _apply_force_play_packing(
+            rules,
+            by_chip=by_chip,
+            allowed=allowed,
+            forced_candidates=forced_candidates,
+            as_of_gw=as_of_gw,
+            near_end=near_end,
+        )
+
     forced = _resolve_forced_collisions(forced_candidates, by_chip)
+    # Force-play packing may have dropped a colliding option-value force;
+    # keep every surviving forced week allowed.
+    for chip, gameweek in forced.items():
+        allowed.setdefault(chip, set()).add(gameweek)
+
     no_chip: set[int] = set()
     if allowed:
         for gameweek in range(as_of_gw, near_end + 1):
             if any(gameweek in weeks for weeks in allowed.values()):
                 continue
             no_chip.add(gameweek)
+    # Forced weeks must never land in no_chip.
+    for gameweek in forced.values():
+        no_chip.discard(gameweek)
 
     return ChipUseWindows(
         allowed={chip: frozenset(weeks) for chip, weeks in allowed.items() if weeks},
         forced={chip: frozenset({gw}) for chip, gw in forced.items()},
         no_chip=frozenset(no_chip),
     )
+
+
+def _apply_force_play_packing(
+    rules: ChipRules,
+    *,
+    by_chip: Mapping[ChipName, Sequence[ChipOpportunity]],
+    allowed: dict[ChipName, set[int]],
+    forced_candidates: dict[ChipName, int],
+    as_of_gw: int,
+    near_end: int,
+) -> None:
+    """Pack remaining chips onto the last eligible GWs of each half-window.
+
+    Triggers when ``stop_event`` is inside the short horizon, or when the
+    number of remaining chips is at least the number of remaining
+    gameweeks in the window (must play from now or a grant expires).
+    Assignments overwrite option-value forces for the same chip; per-GW
+    collisions are resolved later by ``_resolve_forced_collisions``.
+    """
+    score_at = {
+        (row.chip, row.gameweek): row.score for rows in by_chip.values() for row in rows
+    }
+    for window in rules.windows:
+        if as_of_gw > window.stop_event:
+            continue
+        chips_left: list[ChipName] = [
+            chip
+            for chip in _CHIP_ORDER
+            if any(
+                window.start_event <= row.gameweek <= window.stop_event
+                for row in by_chip.get(chip, ())
+            )
+        ]
+        if not chips_left:
+            continue
+        eligible = list(range(max(window.start_event, as_of_gw), window.stop_event + 1))
+        if not eligible:
+            continue
+        stop_in_horizon = window.stop_event <= near_end
+        scarce = len(eligible) <= len(chips_left)
+        if not stop_in_horizon and not scarce:
+            continue
+        n_pack = min(len(chips_left), len(eligible))
+        pack_gws = eligible[-n_pack:]
+        ranked: list[ChipName] = sorted(
+            chips_left,
+            key=lambda chip: (
+                max(
+                    (score_at.get((chip, gw), 0.0) for gw in pack_gws),
+                    default=0.0,
+                ),
+                -_CHIP_ORDER.index(chip),
+            ),
+            reverse=True,
+        )
+        available = set(pack_gws)
+        for chip in ranked[:n_pack]:
+            best_gw = max(
+                available,
+                key=lambda gw: (
+                    score_at.get((chip, gw), 0.0),
+                    gw,  # prefer later GW on ties → last eligible
+                ),
+            )
+            forced_candidates[chip] = best_gw
+            allowed.setdefault(chip, set()).add(best_gw)
+            available.remove(best_gw)
 
 
 def _resolve_forced_collisions(
