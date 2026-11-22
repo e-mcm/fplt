@@ -1,22 +1,31 @@
 """Candidate-pool pruning policy for long-horizon MILPs.
 
-Binary count scales with priced players × horizon. Keep the union of, per
-position: top decayed Σ xPts, top decayed Σ xPts / price, and the cheapest
-*playing* fillers — plus any currently owned players. Defaults are tuned so
-a full FPL pool (~700) shrinks to about 200 candidates.
+Binary count scales with priced players × horizon. Before heuristic top-k
+cuts, drop players who are exactly dominated on price and per-step xPts
+(§2.5). Then keep the union of, per position: top decayed Σ xPts, top
+decayed Σ xPts / price, and the cheapest *playing* fillers — plus any
+currently owned players. Defaults are tuned so a full FPL pool (~700)
+shrinks to about 200 candidates.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 
+import highspy
+import numpy as np
 import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fplt.schemas.plan import CandidateSchema
 
 # Minimum pool depth so a legal 15 can still be formed after pruning.
+# Also the squad quota *q* used by exact dominance.
 MIN_POS_POOL: Mapping[str, int] = {"GK": 2, "DEF": 5, "MID": 5, "FWD": 3}
+
+# FPL ≤3-per-club rule; dominance must leave a club-feasible set of size *q*.
+MAX_PER_CLUB = 3
 
 # Legacy top-K defaults from the first prune PR (#132).
 LEGACY_TOP_K: Mapping[str, int] = {
@@ -73,13 +82,14 @@ class CandidatePrunePolicy(BaseModel):
 
     Filter order in :meth:`apply`:
 
-    1. Always keep ``owned_keys``.
-    2. Union top ``top_xpts`` by decayed Σ xPts per position.
-    3. Union top ``top_value`` by decayed Σ xPts / price per position.
-    4. Union the ``keep_cheapest`` lowest-priced *playing* players per
+    1. Exact dominance pre-filter (never drops ``owned_keys``).
+    2. Always keep ``owned_keys``.
+    3. Union top ``top_xpts`` by decayed Σ xPts per position.
+    4. Union top ``top_value`` by decayed Σ xPts / price per position.
+    5. Union the ``keep_cheapest`` lowest-priced *playing* players per
        position (``p_60 >= min_p_60``; fall back to plain cheapest when
        too few pass).
-    5. Top up any position that fell below squad minima.
+    6. Top up any position that fell below squad minima.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -220,11 +230,14 @@ class CandidatePrunePolicy(BaseModel):
         if pool.is_empty():
             return pool
 
-        ranked = _rank_players(pool, points, decay=decay)
         keep: set[int] = {int(key) for key in owned_keys}
-        missing_owned = sorted(keep - set(ranked["player_key"].to_list()))
+        missing_owned = sorted(keep - set(pool["player_key"].to_list()))
         if missing_owned:
             raise ValueError(f"owned players are not in the pool: {missing_owned}")
+
+        # Exact dominance before heuristic top-k (§2.5).
+        pool = drop_dominated_players(pool, points, owned_keys=sorted(keep))
+        ranked = _rank_players(pool, points, decay=decay)
 
         if self.top_xpts is not None:
             for position, quota in self.top_xpts.items():
@@ -264,6 +277,49 @@ class CandidatePrunePolicy(BaseModel):
 
 # Default: ~200-player union of top xPts, top value, and cheapest.
 DEFAULT_PRUNE_POLICY = CandidatePrunePolicy.target_pool()
+
+
+def drop_dominated_players(
+    players: pl.DataFrame,
+    points: pl.DataFrame,
+    *,
+    owned_keys: Sequence[int] = (),
+) -> pl.DataFrame:
+    """Drop players exactly dominated on price and per-step xPts.
+
+    Player *i* is dropped when at least *q* same-position others each have
+    ``price ≤ price_i`` and ``xPts ≥ xPts_i`` at every horizon step, with
+    a strict improvement on price or at least one step (Pareto), and the
+    dominators admit a club-feasible selection of size *q* (≤
+    ``MAX_PER_CLUB`` from any club). *q* is the position squad quota in
+    ``MIN_POS_POOL``. Owned players are never dropped. Dominated keys that
+    are required for a club-feasible fifteen are restored afterwards
+    (cross-position club usage is not visible to the per-position test).
+
+    Args:
+        players: Candidates matching ``CandidateSchema``.
+        points: Horizon rows with ``player_key``, ``step``, ``xpts``.
+        owned_keys: Player keys that must survive.
+
+    Returns:
+        A ``CandidateSchema`` subset of ``players``, sorted by ``player_key``.
+    """
+    checked = CandidateSchema.validate(players.sort("player_key"))
+    assert isinstance(checked, pl.DataFrame)
+    if checked.is_empty():
+        return checked
+    protected = {int(key) for key in owned_keys}
+    dominated = _dominated_keys(checked, points, protected=protected)
+    if not dominated:
+        return checked
+    survivors = set(checked["player_key"].to_list()) - dominated
+    # Dominance is position-local; other positions also consume club slots.
+    # Restore dominated keys until a legal fifteen still exists under the
+    # club cap (keeps the cut lossless on thin / concentrated pools).
+    survivors = _restore_for_squad_feasibility(checked, survivors, dominated)
+    return checked.filter(pl.col("player_key").is_in(sorted(survivors))).sort(
+        "player_key"
+    )
 
 
 def prune_candidates(
@@ -415,3 +471,180 @@ def _top_up_minima(ranked: pl.DataFrame, keep: set[int]) -> set[int]:
         )
         filled.update(int(key) for key in extras)
     return filled
+
+
+def _dominated_keys(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+    *,
+    protected: set[int],
+) -> set[int]:
+    """Return keys that are exactly dominated under club-feasible quotas."""
+    xpts_by_key = _per_step_xpts(pool, points)
+    dropped: set[int] = set()
+    for position, quota in MIN_POS_POOL.items():
+        part = pool.filter(pl.col("position") == position)
+        if part.height <= quota:
+            continue
+        rows = list(part.iter_rows(named=True))
+        for candidate in rows:
+            key = int(candidate["player_key"])
+            if key in protected:
+                continue
+            price = int(candidate["price"])
+            vector = xpts_by_key[key]
+            dom_teams: list[int] = []
+            for other in rows:
+                other_key = int(other["player_key"])
+                if other_key == key:
+                    continue
+                if not _weakly_dominates(
+                    price_j=int(other["price"]),
+                    xpts_j=xpts_by_key[other_key],
+                    price_i=price,
+                    xpts_i=vector,
+                ):
+                    continue
+                dom_teams.append(int(other["team_key"]))
+            if _club_feasible_count(dom_teams, quota):
+                dropped.add(key)
+    return dropped
+
+
+def _per_step_xpts(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+) -> dict[int, tuple[float, ...]]:
+    """Map each pool player to a dense per-step xPts vector (missing → 0)."""
+    keys = [int(key) for key in pool["player_key"].to_list()]
+    if points.is_empty() or "step" not in points.columns:
+        return {key: () for key in keys}
+    required = {"player_key", "xpts"}
+    missing = required - set(points.columns)
+    if missing:
+        raise ValueError(f"points missing columns: {sorted(missing)}")
+    steps = sorted({int(step) for step in points["step"].to_list()})
+    if not steps:
+        return {key: () for key in keys}
+    index = {step: i for i, step in enumerate(steps)}
+    width = len(steps)
+    vectors: dict[int, list[float]] = {key: [0.0] * width for key in keys}
+    key_set = set(keys)
+    for row in points.select("player_key", "step", "xpts").iter_rows(named=True):
+        key = int(row["player_key"])
+        if key not in key_set:
+            continue
+        vectors[key][index[int(row["step"])]] = float(row["xpts"])
+    return {key: tuple(values) for key, values in vectors.items()}
+
+
+def _weakly_dominates(
+    *,
+    price_j: int,
+    xpts_j: tuple[float, ...],
+    price_i: int,
+    xpts_i: tuple[float, ...],
+) -> bool:
+    """True when *j* is ≤ price and ≥ xPts on every step, strict somewhere.
+
+    Equal clones do not dominate each other, so a pack of identicals cannot
+    wipe itself out under the quota rule.
+    """
+    if price_j > price_i:
+        return False
+    if len(xpts_j) != len(xpts_i):
+        raise ValueError("per-step xPts vectors must share the same steps")
+    strict = price_j < price_i
+    for left, right in zip(xpts_j, xpts_i, strict=True):
+        if left < right:
+            return False
+        if left > right:
+            strict = True
+    return strict
+
+
+def _club_feasible_count(team_keys: Sequence[int], quota: int) -> bool:
+    """True when ``team_keys`` can supply ``quota`` under ``MAX_PER_CLUB``."""
+    if quota <= 0:
+        return True
+    counts = Counter(int(team) for team in team_keys)
+    return sum(min(MAX_PER_CLUB, count) for count in counts.values()) >= quota
+
+
+def _restore_for_squad_feasibility(
+    pool: pl.DataFrame,
+    survivors: set[int],
+    dominated: set[int],
+) -> set[int]:
+    """Re-add dominated keys until position + club quotas admit a fifteen."""
+    kept = set(survivors)
+    if _pool_admits_squad(pool.filter(pl.col("player_key").is_in(sorted(kept)))):
+        return kept
+    # Prefer restoring underrepresented clubs so the club-cap bite clears.
+    team_of = {
+        int(row["player_key"]): int(row["team_key"])
+        for row in pool.select("player_key", "team_key").iter_rows(named=True)
+    }
+    pending = sorted(
+        dominated,
+        key=lambda key: (
+            sum(1 for other in kept if team_of[other] == team_of[key]),
+            key,
+        ),
+    )
+    for key in pending:
+        kept.add(key)
+        if _pool_admits_squad(pool.filter(pl.col("player_key").is_in(sorted(kept)))):
+            return kept
+    return kept
+
+
+def _pool_admits_squad(pool: pl.DataFrame) -> bool:
+    """True when ``pool`` can form a 15 under position quotas and club cap."""
+    for position, quota in MIN_POS_POOL.items():
+        if pool.filter(pl.col("position") == position).height < quota:
+            return False
+    count = pool.height
+    if count < 15:
+        return False
+    solver = highspy.Highs()
+    solver.setOptionValue("output_flag", False)
+    solver.setOptionValue("log_to_console", False)
+    for _ in range(count):
+        solver.addVar(0.0, 1.0)
+    kinds = np.full(count, int(highspy.HighsVarType.kInteger), dtype=np.uint8)
+    status = solver.changeColsIntegrality(
+        count, np.arange(count, dtype=np.int32), kinds
+    )
+    if status != highspy.HighsStatus.kOk:
+        raise RuntimeError(f"HiGHS rejected integrality: {status}")
+    picks = np.arange(count, dtype=np.int32)
+    _add_sum(solver, picks, 15, 15)
+    positions = pool["position"].to_list()
+    clubs = pool["team_key"].to_list()
+    for position, quota in MIN_POS_POOL.items():
+        members = [
+            int(picks[i]) for i, name in enumerate(positions) if name == position
+        ]
+        _add_sum(solver, members, quota, quota)
+    for club in sorted({int(c) for c in clubs}):
+        members = [int(picks[i]) for i, key in enumerate(clubs) if int(key) == club]
+        _add_sum(solver, members, 0, MAX_PER_CLUB)
+    solver.changeObjectiveSense(highspy.ObjSense.kMinimize)
+    run = solver.run()
+    if run != highspy.HighsStatus.kOk:
+        return False
+    return solver.getModelStatus() == highspy.HighsModelStatus.kOptimal
+
+
+def _add_sum(
+    solver: highspy.Highs,
+    columns: Sequence[int] | np.ndarray,
+    lower: float,
+    upper: float,
+) -> None:
+    cols = np.asarray(list(columns), dtype=np.int32)
+    weights = np.ones(cols.shape[0], dtype=np.float64)
+    status = solver.addRow(lower, upper, int(cols.shape[0]), cols, weights)
+    if status != highspy.HighsStatus.kOk:
+        raise RuntimeError(f"HiGHS rejected a constraint: {status}")
