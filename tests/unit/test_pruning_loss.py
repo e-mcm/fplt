@@ -68,12 +68,19 @@ def test_sample_synthetic_scenarios_covers_tags() -> None:
 
 
 def test_policy_for_target_pool_scales_quotas() -> None:
-    """Smaller N shrinks top_xpts / top_value; cheapest fillers stay fixed."""
+    """Smaller N shrinks keep quotas; cheapest fillers stay fixed."""
     tight = policy_for_target_pool(100, reference_n=DEFAULT_TARGET_POOL)
     assert tight.keep_cheapest == DEFAULT_PRUNE_POLICY.keep_cheapest
+    assert tight.window_lengths == DEFAULT_PRUNE_POLICY.window_lengths
     assert tight.top_xpts is not None and DEFAULT_PRUNE_POLICY.top_xpts is not None
     assert tight.top_xpts["MID"] < DEFAULT_PRUNE_POLICY.top_xpts["MID"]
     assert tight.top_xpts["GK"] >= MIN_POS_POOL["GK"]
+    assert (
+        tight.top_per_step is not None and DEFAULT_PRUNE_POLICY.top_per_step is not None
+    )
+    assert tight.top_per_step["MID"] < DEFAULT_PRUNE_POLICY.top_per_step["MID"]
+    assert tight.top_window is not None and DEFAULT_PRUNE_POLICY.top_window is not None
+    assert tight.top_window["MID"] < DEFAULT_PRUNE_POLICY.top_window["MID"]
     wide = policy_for_target_pool(300)
     assert wide.top_xpts is not None
     assert wide.top_xpts["MID"] > DEFAULT_PRUNE_POLICY.top_xpts["MID"]

@@ -3,7 +3,8 @@
 Binary count scales with priced players × horizon. Before heuristic top-k
 cuts, drop players who are exactly dominated on price and per-step xPts
 (§2.5). Then keep the union of, per position: top decayed Σ xPts, top
-decayed Σ xPts / price, and the cheapest *playing* fillers — plus any
+decayed Σ xPts / price, top raw xPts at each step, top raw Σ xPts over
+rolling 2–3-step windows, and the cheapest *playing* fillers — plus any
 currently owned players. Defaults are tuned so a full FPL pool (~700)
 shrinks to about 200 candidates.
 """
@@ -51,9 +52,36 @@ DEFAULT_TOP_VALUE: Mapping[str, int] = {
 DEFAULT_KEEP_CHEAPEST = 4
 DEFAULT_MIN_P_60 = 0.5
 
+# Per-step / short-window tops catch one-week punts, DGW spikes, and Free
+# Hit targets that a horizon sum misses. Quotas stay modest so the ~200
+# target is not retuned here (harness / later PR).
+DEFAULT_TOP_PER_STEP: Mapping[str, int] = {
+    "GK": 3,
+    "DEF": 8,
+    "MID": 10,
+    "FWD": 5,
+}
+DEFAULT_TOP_WINDOW: Mapping[str, int] = {
+    "GK": 3,
+    "DEF": 8,
+    "MID": 10,
+    "FWD": 5,
+}
+DEFAULT_WINDOW_LENGTHS: tuple[int, ...] = (2, 3)
+
 # Auto-enable when the planner horizon reaches this unless the caller
 # forces prune on/off.
 PRUNE_AUTO_MIN_HORIZON = 5
+
+
+def _validate_window_lengths(value: Sequence[int] | None) -> tuple[int, ...]:
+    if value is None:
+        return ()
+    out = tuple(int(length) for length in value)
+    for length in out:
+        if length < 2:
+            raise ValueError(f"window_lengths entries must be >= 2, got {length}")
+    return out
 
 
 def _validate_pos_counts(
@@ -86,10 +114,13 @@ class CandidatePrunePolicy(BaseModel):
     2. Always keep ``owned_keys``.
     3. Union top ``top_xpts`` by decayed Σ xPts per position.
     4. Union top ``top_value`` by decayed Σ xPts / price per position.
-    5. Union the ``keep_cheapest`` lowest-priced *playing* players per
+    5. Union top ``top_per_step`` by raw xPts at each horizon step.
+    6. Union top ``top_window`` by raw Σ xPts over each rolling window
+       whose length is in ``window_lengths`` (default 2 and 3).
+    7. Union the ``keep_cheapest`` lowest-priced *playing* players per
        position (``p_60 >= min_p_60``; fall back to plain cheapest when
        too few pass).
-    6. Top up any position that fell below squad minima.
+    8. Top up any position that fell below squad minima.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -105,6 +136,27 @@ class CandidatePrunePolicy(BaseModel):
         default_factory=lambda: dict(DEFAULT_TOP_VALUE),
         description=(
             "Per-position keep counts by decayed Σ xPts / price. None disables."
+        ),
+    )
+    top_per_step: dict[str, int] | None = Field(
+        default_factory=lambda: dict(DEFAULT_TOP_PER_STEP),
+        description=(
+            "Per-position keep counts by raw xPts at each step. Catches "
+            "one-week punts and Free Hit targets a horizon sum misses."
+        ),
+    )
+    top_window: dict[str, int] | None = Field(
+        default_factory=lambda: dict(DEFAULT_TOP_WINDOW),
+        description=(
+            "Per-position keep counts by raw Σ xPts over each rolling "
+            "window in ``window_lengths``. None disables."
+        ),
+    )
+    window_lengths: tuple[int, ...] = Field(
+        default=DEFAULT_WINDOW_LENGTHS,
+        description=(
+            "Rolling window lengths (steps) for ``top_window``. Empty "
+            "disables window tops even when ``top_window`` is set."
         ),
     )
     keep_cheapest: int = Field(
@@ -140,6 +192,21 @@ class CandidatePrunePolicy(BaseModel):
     def _top_value_ok(cls, value: Mapping[str, int] | None) -> dict[str, int] | None:
         return _validate_pos_counts(value, field_name="top_value")
 
+    @field_validator("top_per_step")
+    @classmethod
+    def _top_per_step_ok(cls, value: Mapping[str, int] | None) -> dict[str, int] | None:
+        return _validate_pos_counts(value, field_name="top_per_step")
+
+    @field_validator("top_window")
+    @classmethod
+    def _top_window_ok(cls, value: Mapping[str, int] | None) -> dict[str, int] | None:
+        return _validate_pos_counts(value, field_name="top_window")
+
+    @field_validator("window_lengths")
+    @classmethod
+    def _window_lengths_ok(cls, value: Sequence[int] | None) -> tuple[int, ...]:
+        return _validate_window_lengths(value)
+
     @model_validator(mode="after")
     def _some_keep_path(self) -> CandidatePrunePolicy:
         has_xpts = self.top_xpts is not None and any(
@@ -148,10 +215,25 @@ class CandidatePrunePolicy(BaseModel):
         has_value = self.top_value is not None and any(
             count > 0 for count in self.top_value.values()
         )
-        if not has_xpts and not has_value and self.keep_cheapest <= 0:
+        has_step = self.top_per_step is not None and any(
+            count > 0 for count in self.top_per_step.values()
+        )
+        has_window = (
+            self.top_window is not None
+            and any(count > 0 for count in self.top_window.values())
+            and bool(self.window_lengths)
+        )
+        if (
+            not has_xpts
+            and not has_value
+            and not has_step
+            and not has_window
+            and self.keep_cheapest <= 0
+        ):
             raise ValueError(
                 "CandidatePrunePolicy needs at least one active keep rule "
-                "(top_xpts, top_value, or keep_cheapest)"
+                "(top_xpts, top_value, top_per_step, top_window, or "
+                "keep_cheapest)"
             )
         return self
 
@@ -161,6 +243,9 @@ class CandidatePrunePolicy(BaseModel):
         *,
         top_xpts: Mapping[str, int] | None = None,
         top_value: Mapping[str, int] | None = None,
+        top_per_step: Mapping[str, int] | None = None,
+        top_window: Mapping[str, int] | None = None,
+        window_lengths: Sequence[int] | None = None,
         keep_cheapest: int = DEFAULT_KEEP_CHEAPEST,
         min_p_60: float = DEFAULT_MIN_P_60,
         auto_min_horizon: int = PRUNE_AUTO_MIN_HORIZON,
@@ -169,6 +254,15 @@ class CandidatePrunePolicy(BaseModel):
         return cls(
             top_xpts=dict(DEFAULT_TOP_XPTS if top_xpts is None else top_xpts),
             top_value=dict(DEFAULT_TOP_VALUE if top_value is None else top_value),
+            top_per_step=dict(
+                DEFAULT_TOP_PER_STEP if top_per_step is None else top_per_step
+            ),
+            top_window=dict(DEFAULT_TOP_WINDOW if top_window is None else top_window),
+            window_lengths=(
+                DEFAULT_WINDOW_LENGTHS
+                if window_lengths is None
+                else tuple(window_lengths)
+            ),
             keep_cheapest=keep_cheapest,
             min_p_60=min_p_60,
             auto_min_horizon=auto_min_horizon,
@@ -183,10 +277,13 @@ class CandidatePrunePolicy(BaseModel):
         min_p_60: float = DEFAULT_MIN_P_60,
         auto_min_horizon: int = PRUNE_AUTO_MIN_HORIZON,
     ) -> CandidatePrunePolicy:
-        """Return the #132 top-K + cheapest policy (no value cut)."""
+        """Return the #132 top-K + cheapest policy (no value / step cuts)."""
         return cls(
             top_xpts=dict(LEGACY_TOP_K if top_k is None else top_k),
             top_value=None,
+            top_per_step=None,
+            top_window=None,
+            window_lengths=(),
             keep_cheapest=keep_cheapest,
             min_p_60=min_p_60,
             auto_min_horizon=auto_min_horizon,
@@ -250,6 +347,19 @@ class CandidatePrunePolicy(BaseModel):
                 if quota <= 0:
                     continue
                 keep.update(_top_keys(ranked, position, quota, "xpts_per_price"))
+
+        if self.top_per_step is not None:
+            keep.update(_top_keys_at_each_step(pool, points, quotas=self.top_per_step))
+
+        if self.top_window is not None and self.window_lengths:
+            keep.update(
+                _top_keys_at_windows(
+                    pool,
+                    points,
+                    quotas=self.top_window,
+                    window_lengths=self.window_lengths,
+                )
+            )
 
         if self.keep_cheapest > 0:
             for position in MIN_POS_POOL:
@@ -453,6 +563,101 @@ def _top_keys(
         .to_list()
     )
     return {int(key) for key in keys}
+
+
+def _points_with_position(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+) -> pl.DataFrame | None:
+    """Join position onto horizon points; None when step tops cannot run."""
+    if points.is_empty() or "step" not in points.columns:
+        return None
+    required = {"player_key", "xpts"}
+    missing = required - set(points.columns)
+    if missing:
+        raise ValueError(f"points missing columns: {sorted(missing)}")
+    return points.join(
+        pool.select("player_key", "position"),
+        on="player_key",
+        how="inner",
+    )
+
+
+def _top_keys_at_each_step(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+    *,
+    quotas: Mapping[str, int],
+) -> set[int]:
+    """Keep top ``quotas[pos]`` by raw xPts at every horizon step.
+
+    Uses undecayed step xPts so a Free Hit / one-week punt ranks on that
+    week's forecast, not on a decayed horizon sum.
+    """
+    keyed = _points_with_position(pool, points)
+    if keyed is None:
+        return set()
+    keep: set[int] = set()
+    steps = sorted({int(step) for step in keyed["step"].to_list()})
+    for position, quota in quotas.items():
+        if quota <= 0:
+            continue
+        part = keyed.filter(pl.col("position") == position)
+        if part.is_empty():
+            continue
+        for step in steps:
+            keys = (
+                part.filter(pl.col("step") == step)
+                .sort(["xpts", "player_key"], descending=[True, False])
+                .head(quota)["player_key"]
+                .to_list()
+            )
+            keep.update(int(key) for key in keys)
+    return keep
+
+
+def _top_keys_at_windows(
+    pool: pl.DataFrame,
+    points: pl.DataFrame,
+    *,
+    quotas: Mapping[str, int],
+    window_lengths: Sequence[int],
+) -> set[int]:
+    """Keep top ``quotas[pos]`` by raw Σ xPts over each rolling window.
+
+    Window scores sum undecayed step xPts so a short Bench Boost / double
+    stretch ranks on those weeks' forecasts.
+    """
+    keyed = _points_with_position(pool, points)
+    if keyed is None:
+        return set()
+    steps = sorted({int(step) for step in keyed["step"].to_list()})
+    if not steps:
+        return set()
+    keep: set[int] = set()
+    for length in window_lengths:
+        if length < 2 or length > len(steps):
+            continue
+        for start in range(len(steps) - length + 1):
+            window = steps[start : start + length]
+            windowed = (
+                keyed.filter(pl.col("step").is_in(window))
+                .group_by(["player_key", "position"])
+                .agg(pl.col("xpts").sum().alias("window_xpts"))
+            )
+            for position, quota in quotas.items():
+                if quota <= 0:
+                    continue
+                part = windowed.filter(pl.col("position") == position)
+                if part.is_empty():
+                    continue
+                keys = (
+                    part.sort(["window_xpts", "player_key"], descending=[True, False])
+                    .head(quota)["player_key"]
+                    .to_list()
+                )
+                keep.update(int(key) for key in keys)
+    return keep
 
 
 def _top_up_minima(ranked: pl.DataFrame, keep: set[int]) -> set[int]:
