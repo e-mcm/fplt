@@ -99,7 +99,9 @@ def test_benchmark_forecasts_change_season_points() -> None:
         "benchmark|identity_milp",
     }
     for row in result.iter_rows(named=True):
-        assert row["captaincy_regret"] is None
+        assert row["captaincy_regret"] is not None
+        assert float(row["captaincy_regret"]) >= 0.0
+        assert row["chip_regret"] is None
         assert json.loads(row["per_gw_json"])
 
 

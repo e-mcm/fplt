@@ -29,7 +29,8 @@ class SeasonPointsSchema(pa.DataFrameModel):
     """Season totals for one forecast × optimiser arm.
 
     Suitable as the decisions-suite readout for promote-eval later. Component
-    regret columns stay nullable until the N5 attainable/regret work lands.
+    regret columns are filled by ``fplt.optimise.attainable.component_regret``
+    (N5); chip regret stays null while chips are off.
     """
 
     arm_id: str

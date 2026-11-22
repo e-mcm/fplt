@@ -166,6 +166,7 @@ def _season_points_row(
     gameweeks = int(row["gameweeks"])
     total = int(row["total_points"])
     nets = _per_gw_nets(row["per_gw"])
+    regret = _regret_totals(decisions)
     return {
         "arm_id": arm.arm_id,
         "forecast_source": arm.forecast_source,
@@ -175,10 +176,34 @@ def _season_points_row(
         "gameweeks": gameweeks,
         "mean_ppg": float(total) / float(gameweeks) if gameweeks else 0.0,
         "per_gw_json": json.dumps(nets),
-        "captaincy_regret": None,
-        "xi_regret": None,
-        "transfer_regret": None,
-        "chip_regret": None,
+        "captaincy_regret": regret["captaincy_regret"],
+        "xi_regret": regret["xi_regret"],
+        "transfer_regret": regret["transfer_regret"],
+        "chip_regret": regret["chip_regret"],
+    }
+
+
+def _regret_totals(decisions: pl.DataFrame) -> dict[str, float | None]:
+    """Season sums from ``component_regret`` (N5) for ``SeasonPointsSchema``."""
+    from fplt.optimise.attainable import component_regret
+
+    frame = component_regret(decisions)
+    if frame.is_empty():
+        return {
+            "captaincy_regret": None,
+            "xi_regret": None,
+            "transfer_regret": None,
+            "chip_regret": None,
+        }
+    return {
+        "captaincy_regret": float(frame["captaincy_regret"].sum()),
+        "xi_regret": float(frame["xi_bench_regret"].sum()),
+        "transfer_regret": float(frame["transfer_regret"].sum()),
+        "chip_regret": (
+            None
+            if frame["chip_timing_regret"].null_count() == frame.height
+            else float(frame["chip_timing_regret"].sum())
+        ),
     }
 
 

@@ -9,6 +9,8 @@ from getpass import getpass
 from pathlib import Path
 from typing import Literal
 
+import polars as pl
+
 from fplt.auth import clear_credentials, format_status, set_credentials
 from fplt.auth import status as auth_status
 from fplt.backtest.bakeoff import (
@@ -48,10 +50,16 @@ from fplt.data.fpl_client import FPLAPIError
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.optimise.apply import ApplyError, apply_plan, format_apply_preview
+from fplt.optimise.attainable import (
+    ORACLE_MODEL_ID,
+    enrich_decision_summary,
+    run_hindsight_oracle,
+)
 from fplt.optimise.decisions import (
     PlanExistsError,
     explain_decision_gameweek,
     format_decision_scoreboard,
+    read_decisions,
     resolve_squad_state,
     run_decision_bakeoff,
     run_decisions,
@@ -261,6 +269,14 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Fail when any model's mean pts/GW exceeds this "
             f"(default: {DEFAULT_MAX_MEAN_PPG:.0f}; 0 disables)"
+        ),
+    )
+    decisions.add_argument(
+        "--with-oracle",
+        action="store_true",
+        help=(
+            "Run the constrained hindsight oracle and append attainable "
+            "share columns to the scoreboard"
         ),
     )
     eval_components = sub.add_parser(
@@ -976,6 +992,25 @@ def _decisions(args: argparse.Namespace) -> None:
             simulate=not bool(args.summarise_only),
             max_mean_ppg=None if max_mean <= 0 else max_mean,
         )
+        if bool(args.with_oracle):
+            if not bool(args.summarise_only):
+                run_hindsight_oracle(
+                    data_dir,
+                    args.season,
+                    args.from_gw,
+                    args.to_gw,
+                    args.horizon,
+                    actuals_model=list(args.models)[0],
+                )
+            oracle = read_decisions(data_dir).filter(
+                (pl.col("model_id") == ORACLE_MODEL_ID)
+                & (pl.col("season") == args.season)
+            )
+            if args.from_gw > 1 or args.to_gw < 38:
+                oracle = oracle.filter(
+                    (pl.col("gw") >= args.from_gw) & (pl.col("gw") <= args.to_gw)
+                )
+            summary = enrich_decision_summary(summary, oracle)
     except (KeyError, ValueError) as exc:
         logger.error("decisions failed: %s", exc)
         print(str(exc), file=sys.stderr)
