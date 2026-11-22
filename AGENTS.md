@@ -37,11 +37,15 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Dagster code (`src/fplt/orchestration/`) is a thin wrapper. All logic lives in library modules and must be callable without Dagster.
 - New tables get a blocking pandera asset check via `pandera_check(...)`.
 - Prefer factories (assets generated from feature registry / model specs) over hand-written per-model assets.
+### Engineering habits
+- **Bug → regression test.** Every time a bug is found, write a unit test that would have exposed it. Ship that test with (or before) the fix — never a bare fix.
+- **Hard investigation → utility.** Every time an ad-hoc investigation is hard, reflect on why and add helpers, fixtures, scripts, or docs so the next time is easier. Do not only solve the one-off.
 ## 3. Testing rules
  
 **Everything is tested.** No code is merged without tests that exercise it.
  
 - Every function and class you add or change needs tests in the same PR. Write the tests alongside the code. Do not leave them for a later PR.
+- Bug fixes must include a unit test that would have failed before the fix (see Engineering habits above).
 - Aim for full line and branch coverage of each function and class. Cover the normal path, edge cases (empty frames, double/blank gameweeks, missing players, zero minutes) and error paths (invalid input raises the documented exception).
 - Coverage gates, enforced in CI:
   - **Diff coverage ≥ 95%** on changed lines, measured with `diff-cover` against `coverage.xml`.
