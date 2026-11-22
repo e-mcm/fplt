@@ -131,6 +131,35 @@ def test_summarise_ranks_models_and_formats_table() -> None:
     assert format_decision_scoreboard(summary.clear()) == "_No decision rows to score._"
 
 
+def test_triple_captain_adds_two_extras() -> None:
+    picks = _squad(
+        xi_pts=[2, 3, 4, 5, 1, 1, 1, 1, 1, 1, 6],
+        xi_mins=[90] * 11,
+        captain_index=10,
+        hit=0,
+    )
+    # XI 26 + TC extra 12 = 38
+    assert score_gameweek(picks, hit=0, chip="3xc") == 38
+    dump = explain_gameweek(picks, hit=0, chip="3xc", names={11: "Haul"})
+    assert "triple captain extra (+12)" in dump
+    assert "chip: 3xc" in dump
+
+
+def test_bench_boost_adds_bench_points() -> None:
+    picks = _squad(
+        xi_pts=[2, 3, 4, 5, 1, 1, 1, 1, 1, 1, 6],
+        xi_mins=[90] * 11,
+        captain_index=10,
+        bench_pts=[4, 3, 2],
+        bench_mins=[90, 90, 90],
+        reserve_gk_pts=1,
+        reserve_gk_mins=90,
+        hit=0,
+    )
+    # base 26 + captain 6 = 32; bench 4+3+2+1 = 10 → 42
+    assert score_gameweek(picks, hit=0, chip="bboost") == 42
+
+
 def test_score_gameweek_rejects_bad_input() -> None:
     with pytest.raises(ValueError, match="missing columns"):
         score_gameweek(pl.DataFrame({"player_key": [1]}))

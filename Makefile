@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions plan apply archive-benchmarks archive-compare dagster-dev clean bootstrap-vaastav fetch-understat fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -100,6 +100,23 @@ bakeoff:
 decisions-board:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make decisions-board SEASON=2024-25"; exit 1; fi
 	uv run fplt decisions --season $(SEASON) --horizon $(or $(HORIZON),3) $(ARGS)
+
+# Three-arm chip decision board (Wave C3): chips-off / rule-based / optimised.
+# Score season points under chip rules; label counterfactual when RULES_SEASON
+# differs (e.g. SEASON=2024-25 RULES_SEASON=2025-26).
+# Usage: make chip-decision-board SEASON=2025-26
+# Optional: RULES_SEASON=2025-26 MODELS='rolling_mean_v1' FROM_GW=1 TO_GW=10
+# Requires a prediction ledger with --steps matching HORIZON (default 3).
+# Does not run the full post-chips bakeoff (FDB-120 / Wave C6).
+chip-decision-board:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make chip-decision-board SEASON=2025-26"; exit 1; fi
+	uv run fplt decisions --chip-board --season $(SEASON) \
+		--horizon $(or $(HORIZON),3) \
+		$(if $(RULES_SEASON),--chip-rules-season $(RULES_SEASON),) \
+		$(if $(MODELS),--models $(MODELS),) \
+		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
+		$(if $(TO_GW),--to-gw $(TO_GW),) \
+		$(ARGS)
 
 # Multi-horizon decision bakeoff. Prediction ledger must already cover max H
 # (backtest --steps >= max HORIZONS). Archives each run because ledger/decisions

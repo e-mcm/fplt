@@ -111,6 +111,7 @@ class DecisionSchema(pa.DataFrameModel):
     actual_minutes: int = pa.Field(nullable=True, ge=0)
     hit: float = pa.Field(ge=0)
     free_transfers: int = pa.Field(ge=0)
+    chip: str = pa.Field(nullable=True)
 
     class Config(pa.DataFrameModel.Config):
         strict = True

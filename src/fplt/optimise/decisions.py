@@ -1,15 +1,20 @@
 """Season decisions from a plan, and the reads that feed ``fplt plan``.
 
-A decision backtest starts from an optimal GW1 draft. Chips stay off. Only
-the first step of each plan is played; later steps exist so a free transfer
-can be banked. Predictions are whatever the ledger recorded at that deadline.
+A decision backtest starts from an optimal GW1 draft. Only the first step of
+each plan is played; later steps exist so a free transfer can be banked.
+Predictions are whatever the ledger recorded at that deadline.
+
+Chip policy is selected per run: ``off`` (default, chips-off MILP),
+``rule_based`` (forced BB/TC/FH/WC on double/blank landmarks), or
+``optimised`` (MILP chooses chips under ``ChipRules``). See
+``run_chip_decision_board``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import polars as pl
@@ -19,6 +24,16 @@ from fplt.data.fpl_client import CurrentTeam, load_current_team
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
+from fplt.optimise.chip_windows import (
+    ChipArm,
+    ChipUseWindows,
+    chip_arm_model_id,
+    empty_chip_windows,
+    is_counterfactual_rules,
+    parse_chip_arm_model_id,
+    rule_based_chip_windows,
+    rules_label,
+)
 from fplt.optimise.plan import (
     GameweekPlan,
     next_free_transfers,
@@ -34,12 +49,15 @@ from fplt.optimise.realised import (
     summarise_decisions,
 )
 from fplt.optimise.state import (
+    ChipInventory,
+    ChipPlay,
     OwnedPlayer,
     SquadState,
     apply_entry_picks,
     load_squad_state,
 )
 from fplt.schemas.plan import CandidateSchema, DecisionSchema
+from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
 
@@ -49,20 +67,24 @@ logger = logging.getLogger(__name__)
 # A blank gameweek drops a couple of clubs. Below half the candidate pool,
 # the missing rows are being treated as zero and the plan is not usable.
 _MIN_COVERAGE = 0.5
+_CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
 
 __all__ = [
     "PlanExistsError",
     "assert_sane_mean_ppg",
     "candidates_as_of",
     "explain_decision_gameweek",
+    "format_chip_decision_scoreboard",
     "format_decision_scoreboard",
     "points_from_ledger",
     "read_decisions",
     "resolve_squad_state",
+    "run_chip_decision_board",
     "run_decision_bakeoff",
     "run_decisions",
     "run_plan",
     "simulate_decisions",
+    "summarise_chip_decisions",
     "summarise_decisions",
     "write_decisions",
 ]
@@ -167,6 +189,10 @@ def simulate_decisions(
     season: str,
     gameweeks: list[int],
     horizon: int,
+    chip_arm: ChipArm = "off",
+    chip_rules_season: str | None = None,
+    chip_windows: ChipUseWindows | None = None,
+    fixtures: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -180,6 +206,13 @@ def simulate_decisions(
         season: Season label.
         gameweeks: Deadlines to play, in order.
         horizon: How many weeks each plan looks ahead, capped at gameweek 38.
+        chip_arm: ``off`` (chips disabled), ``rule_based`` (forced landmark
+            chips), or ``optimised`` (MILP chooses under chip rules).
+        chip_rules_season: Season whose ``configs/chips`` file to load when
+            chips are on. Defaults to ``season``.
+        chip_windows: Optional precomputed windows; when omitted, rule-based
+            builds them from ``fixtures``.
+        fixtures: Staged fixtures for rule-based landmarks.
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -187,9 +220,22 @@ def simulate_decisions(
     Raises:
         ValueError: A week has no candidates, or the squad rules cannot be met.
     """
+    if chip_arm not in _CHIP_ARMS:
+        raise ValueError(f"unknown chip_arm {chip_arm!r}")
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    rules = ChipRules.for_season(rules_season) if chip_arm != "off" else None
+    windows = _windows_for_arm(
+        chip_arm,
+        fixtures=fixtures,
+        season=season,
+        rules=rules,
+        predictions=predictions,
+        gameweeks=gameweeks,
+        chip_windows=chip_windows,
+    )
+    current = _ensure_chip_inventory(state, rules) if rules is not None else state
     scored = _actuals(actuals)
     rows: list[dict[str, object]] = []
-    current = state
     for gameweek in gameweeks:
         window = [
             gameweek + offset for offset in range(horizon) if gameweek + offset <= 38
@@ -203,10 +249,14 @@ def simulate_decisions(
             current,
             initial=not current.owned,
             horizon=len(window),
+            season=season if chip_arm != "off" else None,
+            gameweeks=window if chip_arm != "off" else None,
+            chip_windows=windows if chip_arm != "off" else None,
+            chip_rules_season=rules_season if chip_arm != "off" else None,
         )
         rows.extend(_decision_rows(solved, scored, model_id, season, gameweek))
         # Selling stays at purchase price (accepted bakeoff approx; no rises).
-        current = _advance(current, solved, pool)
+        current = _advance(current, solved, pool, gameweek=gameweek, rules=rules)
     return _decisions(pl.DataFrame(rows) if rows else _empty_decisions())
 
 
@@ -472,6 +522,9 @@ def run_decisions(
     from_gw: int,
     to_gw: int,
     horizon: int,
+    *,
+    chip_arm: ChipArm = "off",
+    chip_rules_season: str | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -486,6 +539,8 @@ def run_decisions(
         from_gw: First gameweek. Gameweek 1 is a draft when the state is empty.
         to_gw: Last gameweek, inclusive.
         horizon: Weeks each plan looks ahead.
+        chip_arm: Chip policy for this run (default chips off).
+        chip_rules_season: Chip-rules season when chips are on.
 
     Returns:
         The decision parquet path.
@@ -494,8 +549,17 @@ def run_decisions(
         KeyError: The spec name or a gameweek deadline is unknown.
     """
     spec = load_model_specs()[model_name]
-    rules = load_squad_state()
-    draft = rules.model_copy(update={"owned": [], "bank": 1000, "free_transfers": 1})
+    squad_rules = load_squad_state()
+    draft = squad_rules.model_copy(
+        update={"owned": [], "bank": 1000, "free_transfers": 1}
+    )
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    if chip_arm != "off":
+        counts = empty_remaining()
+        counts.update(ChipRules.for_season(rules_season).remaining_counts())
+        draft = draft.model_copy(
+            update={"chips": ChipInventory(remaining=counts, played=[])}
+        )
     store = DataStore(data_dir)
     gameweeks = list(range(from_gw, to_gw + 1))
     pools = [
@@ -507,17 +571,209 @@ def run_decisions(
     ledger = read_predictions(data_dir)
     predictions = _prediction_rows(ledger, spec.model_id, season)
     actuals = _actual_rows(ledger, spec.model_id, season)
+    fixtures = (
+        store.read("fixtures").filter(pl.col("season") == season)
+        if chip_arm == "rule_based"
+        else None
+    )
+    # Chips-off keeps the historical model_id so existing boards stay stable.
+    ledger_id = (
+        spec.model_id
+        if chip_arm == "off"
+        else chip_arm_model_id(spec.model_id, chip_arm)
+    )
     frame = simulate_decisions(
         pl.concat(pools),
         predictions,
         actuals,
         draft,
-        model_id=spec.model_id,
+        model_id=ledger_id,
         season=season,
         gameweeks=gameweeks,
         horizon=horizon,
+        chip_arm=chip_arm,
+        chip_rules_season=chip_rules_season,
+        fixtures=fixtures,
     )
     return write_decisions(data_dir, frame)
+
+
+def run_chip_decision_board(
+    data_dir: Path,
+    models: list[str],
+    season: str,
+    from_gw: int,
+    to_gw: int,
+    horizon: int,
+    *,
+    arms: Sequence[ChipArm] = _CHIP_ARMS,
+    chip_rules_season: str | None = None,
+    simulate: bool = True,
+    max_mean_ppg: float | None = None,
+) -> pl.DataFrame:
+    """Run the three-arm chip decision board and return a season scoreboard.
+
+    Arms are chips-off, rule-based landmarks, and optimised MILP chips. Season
+    points use current chip scoring (TC ×3, BB bench). When
+    ``chip_rules_season`` differs from ``season``, rows are labelled as a
+    counterfactual (e.g. 2024-25 under 2025/26 rules).
+
+    Args:
+        data_dir: Root with ``staged/`` and ``ledger/``.
+        models: YAML spec names.
+        season: Fixture / prediction season.
+        from_gw: First gameweek.
+        to_gw: Last gameweek, inclusive.
+        horizon: Planner horizon.
+        arms: Chip arms to include (default all three).
+        chip_rules_season: Chip-rules year (default ``season``).
+        simulate: When true, simulate each model × arm first.
+        max_mean_ppg: Optional mean pts/GW sanity gate.
+
+    Returns:
+        Scoreboard from ``summarise_chip_decisions``.
+
+    Raises:
+        ValueError: ``models`` or ``arms`` is empty.
+    """
+    if not models:
+        raise ValueError("models must be non-empty")
+    if not arms:
+        raise ValueError("arms must be non-empty")
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    if simulate:
+        for name in models:
+            for arm in arms:
+                logger.info(
+                    "chip board simulate model=%s arm=%s season=%s rules=%s",
+                    name,
+                    arm,
+                    season,
+                    rules_season,
+                )
+                run_decisions(
+                    data_dir,
+                    name,
+                    season,
+                    from_gw,
+                    to_gw,
+                    horizon,
+                    chip_arm=arm,
+                    chip_rules_season=rules_season,
+                )
+    specs = load_model_specs()
+    wanted: set[str] = set()
+    for name in models:
+        base = specs[name].model_id
+        for arm in arms:
+            wanted.add(base if arm == "off" else chip_arm_model_id(base, arm))
+    frame = read_decisions(data_dir).filter(
+        (pl.col("season") == season) & pl.col("model_id").is_in(list(wanted))
+    )
+    if from_gw > 1 or to_gw < 38:
+        frame = frame.filter((pl.col("gw") >= from_gw) & (pl.col("gw") <= to_gw))
+    summary = summarise_chip_decisions(
+        frame, season=season, chip_rules_season=rules_season
+    )
+    if max_mean_ppg is not None:
+        assert_sane_mean_ppg(
+            summary.select(
+                "model_id",
+                "season",
+                "total_points",
+                "gameweeks",
+                "per_gw",
+            ),
+            max_mean=max_mean_ppg,
+        )
+    return summary
+
+
+def summarise_chip_decisions(
+    frame: pl.DataFrame,
+    *,
+    season: str,
+    chip_rules_season: str,
+) -> pl.DataFrame:
+    """Aggregate chip-arm decision rows with rules / counterfactual labels.
+
+    Args:
+        frame: Decision-ledger rows (possibly several ``::chip_*`` model ids).
+        season: Fixture season.
+        chip_rules_season: Chip-rules season used for the board.
+
+    Returns:
+        ``model_id``, ``base_model_id``, ``chip_arm``, ``season``,
+        ``rules_label``, ``counterfactual``, ``total_points``, ``gameweeks``,
+        ``per_gw``.
+    """
+    base = summarise_decisions(frame)
+    if base.is_empty():
+        return pl.DataFrame(
+            schema={
+                "model_id": pl.Utf8(),
+                "base_model_id": pl.Utf8(),
+                "chip_arm": pl.Utf8(),
+                "season": pl.Utf8(),
+                "rules_label": pl.Utf8(),
+                "counterfactual": pl.Boolean(),
+                "total_points": pl.Int64(),
+                "gameweeks": pl.Int64(),
+                "per_gw": pl.List(pl.Int64()),
+            }
+        )
+    label = rules_label(season, chip_rules_season)
+    counterfactual = is_counterfactual_rules(season, chip_rules_season)
+    rows: list[dict[str, object]] = []
+    for row in base.iter_rows(named=True):
+        model_id = str(row["model_id"])
+        base_id, arm = parse_chip_arm_model_id(model_id)
+        rows.append(
+            {
+                "model_id": model_id,
+                "base_model_id": base_id,
+                "chip_arm": arm if arm is not None else "off",
+                "season": str(row["season"]),
+                "rules_label": label,
+                "counterfactual": counterfactual,
+                "total_points": int(row["total_points"]),
+                "gameweeks": int(row["gameweeks"]),
+                "per_gw": row["per_gw"],
+            }
+        )
+    return pl.DataFrame(rows).sort("total_points", descending=True)
+
+
+def format_chip_decision_scoreboard(summary: pl.DataFrame) -> str:
+    """Render the three-arm chip board as a markdown table."""
+    if summary.is_empty():
+        return "_No chip-decision rows to score._"
+    lines = [
+        "| Rank | Model | Arm | Rules | Points | GWs | Mean/GW |",
+        "| ---: | --- | --- | --- | ---: | ---: | ---: |",
+    ]
+    for index, row in enumerate(summary.iter_rows(named=True), start=1):
+        gameweeks = int(row["gameweeks"])
+        mean = float(row["total_points"]) / gameweeks if gameweeks else 0.0
+        rules = str(row["rules_label"])
+        if bool(row["counterfactual"]):
+            rules = f"{rules} (counterfactual)"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(index),
+                    str(row["base_model_id"]),
+                    str(row["chip_arm"]),
+                    rules,
+                    str(row["total_points"]),
+                    str(gameweeks),
+                    f"{mean:.1f}",
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
 
 
 def run_decision_bakeoff(
@@ -726,6 +982,7 @@ def _decision_rows(
             int(key): (None if mins is None else int(mins))
             for key, mins in scored.select("player_key", "actual_minutes").iter_rows()
         }
+    chip = plan.chips[0] if plan.chips else None
     rows: list[dict[str, object]] = []
     for row in played.iter_rows(named=True):
         key = int(row["player_key"])
@@ -748,13 +1005,33 @@ def _decision_rows(
                 "actual_minutes": minutes,
                 "hit": float(plan.hits[0]),
                 "free_transfers": int(plan.free_transfers[0]),
+                "chip": chip,
             }
         )
     return rows
 
 
-def _advance(state: SquadState, plan: GameweekPlan, pool: pl.DataFrame) -> SquadState:
+def _advance(
+    state: SquadState,
+    plan: GameweekPlan,
+    pool: pl.DataFrame,
+    *,
+    gameweek: int,
+    rules: ChipRules | None = None,
+) -> SquadState:
+    del pool  # prices come from the plan pick rows
+    chip = plan.chips[0] if plan.chips else None
     step = plan.picks.filter(pl.col("step") == 0)
+    if chip == "freehit":
+        # Temporary squad for scoring only; permanent ownership and bank stay.
+        free = _next_free_after_chip(state, chip=chip, moves=0, rules=rules)
+        return state.model_copy(
+            update={
+                "free_transfers": free,
+                "chips": _consume_chip(state.chips, chip, gameweek),
+            }
+        )
+
     previous = {player.player_key: player.selling_price for player in state.owned}
     kept: list[OwnedPlayer] = []
     bank = state.bank
@@ -770,11 +1047,97 @@ def _advance(state: SquadState, plan: GameweekPlan, pool: pl.DataFrame) -> Squad
             bank -= price
     moves = step.filter(pl.col("bought")).height
     if state.owned:
-        free = next_free_transfers(state.free_transfers, moves, state.ft_bank_cap)
+        free = _next_free_after_chip(state, chip=chip, moves=moves, rules=rules)
     else:
         free = state.free_transfers
+    chips = (
+        _consume_chip(state.chips, chip, gameweek) if chip is not None else state.chips
+    )
     return state.model_copy(
-        update={"owned": kept, "bank": bank, "free_transfers": free}
+        update={
+            "owned": kept,
+            "bank": bank,
+            "free_transfers": free,
+            "chips": chips,
+        }
+    )
+
+
+def _next_free_after_chip(
+    state: SquadState,
+    *,
+    chip: str | None,
+    moves: int,
+    rules: ChipRules | None,
+) -> int:
+    if chip == "wildcard":
+        return 1
+    if chip == "freehit":
+        keep = True if rules is None else rules.free_hit_keeps_free_transfers
+        if keep:
+            return next_free_transfers(state.free_transfers, 0, state.ft_bank_cap)
+        return 1
+    return next_free_transfers(state.free_transfers, moves, state.ft_bank_cap)
+
+
+def _consume_chip(inventory: ChipInventory, chip: str, gameweek: int) -> ChipInventory:
+    name: ChipName
+    if chip not in {"wildcard", "freehit", "bboost", "3xc"}:
+        raise ValueError(f"unknown chip {chip!r}")
+    name = chip  # type: ignore[assignment]
+    remaining = dict(inventory.remaining)
+    if remaining.get(name, 0) <= 0:
+        raise ValueError(f"no remaining uses for chip {name!r}")
+    remaining[name] = remaining[name] - 1
+    played = list(inventory.played) + [ChipPlay(name=name, gw=gameweek)]
+    return ChipInventory(remaining=remaining, played=played)
+
+
+def _ensure_chip_inventory(state: SquadState, rules: ChipRules) -> SquadState:
+    """Fill chip remaining from ``rules`` when the squad still has an empty bag.
+
+    Preserves an explicit mid-season inventory (non-zero remaining or played
+    history) so tests and live state can start part-way through the season.
+    """
+    remaining = state.chips.remaining
+    if state.chips.played or any(count > 0 for count in remaining.values()):
+        return state
+    counts = empty_remaining()
+    counts.update(rules.remaining_counts())
+    return state.model_copy(
+        update={"chips": ChipInventory(remaining=counts, played=[])}
+    )
+
+
+def _windows_for_arm(
+    arm: ChipArm,
+    *,
+    fixtures: pl.DataFrame | None,
+    season: str,
+    rules: ChipRules | None,
+    predictions: pl.DataFrame,
+    gameweeks: list[int],
+    chip_windows: ChipUseWindows | None,
+) -> ChipUseWindows | None:
+    if arm == "off":
+        return None
+    if chip_windows is not None:
+        return chip_windows
+    if arm == "optimised":
+        return empty_chip_windows()
+    if rules is None:
+        raise ValueError("rule_based chip arm requires chip rules")
+    if fixtures is None or fixtures.is_empty():
+        raise ValueError("rule_based chip arm requires fixtures")
+    pred = predictions
+    if "gw" not in pred.columns and "target_gw" in pred.columns:
+        pred = pred.rename({"target_gw": "gw"})
+    return rule_based_chip_windows(
+        fixtures,
+        season=season,
+        rules=rules,
+        predictions=pred,
+        gameweeks=gameweeks,
     )
 
 
@@ -847,11 +1210,14 @@ def _empty_decisions() -> pl.DataFrame:
             "actual_minutes": pl.Int64(),
             "hit": pl.Float64(),
             "free_transfers": pl.Int64(),
+            "chip": pl.Utf8(),
         }
     )
 
 
 def _decisions(frame: pl.DataFrame) -> pl.DataFrame:
+    if "chip" not in frame.columns:
+        frame = frame.with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
     checked = DecisionSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
     return checked

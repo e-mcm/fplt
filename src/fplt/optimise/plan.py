@@ -10,7 +10,8 @@ Pass ``season`` and ``gameweeks`` to enable chips from ``ChipRules`` and
 ``SquadState.chips``: Bench Boost, Triple Captain, Wildcard (hit
 suppression; next free transfer resets to 1), and Free Hit (temporary
 squad; step ``t+1`` continues from ``t-1``; free-transfer banking passes
-through when ``free_hit_keeps_free_transfers``).
+through when ``free_hit_keeps_free_transfers``). Optional ``chip_windows``
+restricts or forces chips by gameweek (Wave C3 hooks for C5).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import highspy
 import numpy as np
 import polars as pl
 
+from fplt.optimise.chip_windows import ChipUseWindows
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
     _SQUAD,  # pyright: ignore[reportPrivateUsage]
@@ -85,6 +87,8 @@ def plan_squad(
     horizon: int,
     season: str | None = None,
     gameweeks: list[int] | None = None,
+    chip_windows: ChipUseWindows | None = None,
+    chip_rules_season: str | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -98,11 +102,17 @@ def plan_squad(
             inventory.
         initial: The owned list is empty and the first week is a draft.
         horizon: Number of gameweeks, including the one to act on.
-        season: Season label for ``ChipRules.for_season``. Required with
-            ``gameweeks`` to allow chips (Wildcard, Free Hit, Bench Boost,
-            Triple Captain).
+        season: Season label for ``ChipRules.for_season`` when
+            ``chip_rules_season`` is omitted. Required with ``gameweeks``
+            to allow chips (Wildcard, Free Hit, Bench Boost, Triple
+            Captain).
         gameweeks: Target gameweek for each horizon step, in order. Must
             match ``horizon`` when set.
+        chip_windows: Optional allowed / forced / no-chip hooks applied
+            on top of ``ChipRules`` (Wave C3 / C5).
+        chip_rules_season: Optional season whose ``configs/chips`` file
+            to load. Defaults to ``season``. Use to score an older fixture
+            season under current chip rules (counterfactual).
 
     Returns:
         Squad members and sales at every step.
@@ -113,7 +123,10 @@ def plan_squad(
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
     targets = _chip_gameweeks(season, gameweeks, horizon)
-    rules = ChipRules.for_season(season) if season is not None else None
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    if chip_windows is not None and targets is None:
+        raise ValueError("chip_windows requires season and gameweeks")
+    rules = ChipRules.for_season(rules_season) if rules_season is not None else None
     pool = _frame(players.sort("player_key"), CandidateSchema)
     scored = _frame(points, HorizonPointsSchema)
     owned = _owned(state, initial)
@@ -144,6 +157,7 @@ def plan_squad(
         horizon,
         rules,
         targets,
+        chip_windows,
     )
     solver.setMaximize()
     solver.run()
@@ -523,6 +537,7 @@ def _constrain(
     horizon: int,
     rules: ChipRules | None,
     gameweeks: list[int] | None,
+    chip_windows: ChipUseWindows | None,
 ) -> None:
     positions = pool["position"].to_list()
     clubs = pool["team_key"].to_list()
@@ -552,6 +567,7 @@ def _constrain(
         state.bank,
         positions,
         clubs,
+        chip_windows,
     )
 
 
@@ -600,6 +616,7 @@ def _chips(
     bank: int,
     positions: list[str],
     clubs: list[int],
+    chip_windows: ChipUseWindows | None,
 ) -> None:
     """Wire chip binaries, Free Hit temporary squad, and BB/TC scoring gates."""
     priced = set(_priced(horizon, initial))
@@ -667,6 +684,28 @@ def _chips(
                 continue
             if not _chip_playable(rules, inventory, chip, gameweek):
                 _equal(solver, [cols[step]], [1.0], 0.0)
+                continue
+            if chip_windows is not None and not chip_windows.allows(chip, gameweek):
+                _equal(solver, [cols[step]], [1.0], 0.0)
+    if chip_windows is None:
+        return
+    for step, gameweek in enumerate(gameweeks):
+        if gameweek in chip_windows.no_chip:
+            for _chip, cols in chip_cols:
+                _equal(solver, [cols[step]], [1.0], 0.0)
+            continue
+        for chip, cols in chip_cols:
+            if not chip_windows.requires(chip, gameweek):
+                continue
+            if chip in {"wildcard", "freehit"} and step not in priced:
+                raise ValueError(
+                    f"cannot force {chip} on unpriced step (gw {gameweek})"
+                )
+            if not _chip_playable(rules, inventory, chip, gameweek):
+                raise ValueError(
+                    f"cannot force {chip} in gw {gameweek}: not playable under rules"
+                )
+            _equal(solver, [cols[step]], [1.0], 1.0)
 
 
 def _gate_score(

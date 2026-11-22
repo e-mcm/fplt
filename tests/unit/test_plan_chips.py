@@ -5,6 +5,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from fplt.optimise.chip_windows import ChipUseWindows
 from fplt.optimise.plan import plan_squad
 from fplt.optimise.squad import select_squad
 from fplt.optimise.state import ChipInventory, ChipPlay, OwnedPlayer, SquadState
@@ -341,6 +342,79 @@ def test_one_chip_per_gameweek_includes_wildcard_and_free_hit() -> None:
         gameweeks=[5],
     )
     assert sum(1 for chip in plan.chips if chip is not None) == 1
+
+
+def test_no_chip_window_blocks_all_chips() -> None:
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        _state(chips=_inventory(bboost=1, triple=1)),
+        initial=True,
+        horizon=1,
+        season="2025-26",
+        gameweeks=[5],
+        chip_windows=ChipUseWindows(no_chip=frozenset({5})),
+    )
+    assert plan.chips == (None,)
+
+
+def test_allowed_chip_gws_restrict_playable_weeks() -> None:
+    pool = _pool()
+    rows: list[dict[str, object]] = []
+    keys = pool["player_key"].to_list()
+    scores = pool["xpts"].to_list()
+    for key, xpts in zip(keys, scores, strict=True):
+        for step in (0, 1):
+            rows.append({"player_key": key, "step": step, "xpts": float(xpts)})
+    plan = plan_squad(
+        pool.drop("xpts"),
+        pl.DataFrame(rows),
+        _state(chips=_inventory(triple=1)),
+        initial=True,
+        horizon=2,
+        season="2025-26",
+        gameweeks=[5, 6],
+        chip_windows=ChipUseWindows(allowed={"3xc": frozenset({6})}),
+    )
+    assert plan.chips == (None, "3xc")
+
+
+def test_forced_chip_gws_require_the_chip() -> None:
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        _state(chips=_inventory(bboost=1)),
+        initial=True,
+        horizon=1,
+        season="2025-26",
+        gameweeks=[5],
+        chip_windows=ChipUseWindows(
+            allowed={"bboost": frozenset({5})},
+            forced={"bboost": frozenset({5})},
+        ),
+    )
+    assert plan.chips == ("bboost",)
+
+
+def test_chip_rules_season_can_differ_from_fixture_season() -> None:
+    """Counterfactual: 2024-25 fixtures under 2025-26 two-set rules."""
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        _state(chips=_inventory(triple=1)),
+        initial=True,
+        horizon=1,
+        season="2024-25",
+        gameweeks=[5],
+        chip_rules_season="2025-26",
+    )
+    assert plan.chips == ("3xc",)
 
 
 def test_wildcard_remaining_inventory_is_respected() -> None:

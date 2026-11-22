@@ -69,6 +69,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Prediction championship (multi-arm bakeoff) | `make bakeoff BAKEOFF=example_prediction_championship` or `uv run fplt bakeoff --models … --control … --season …` |
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
+| Chip three-arm board (C3) | `make chip-decision-board SEASON=2025-26` (or `SEASON=2024-25 RULES_SEASON=2025-26` for a labelled counterfactual) |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
 | Verbose CLI logs | `uv run fplt -v plan …` / `uv run fplt backtest -v …` (DEBUG; default is INFO) |
@@ -146,6 +147,19 @@ make decisions-board SEASON=2024-25
 ```
 
 Re-score an existing `ledger/decisions` without re-simulating: `uv run fplt decisions --season 2024-25 --summarise-only`. Single-model path remains `fplt plan --decisions --model …`.
+
+### Chip three-arm decision board (Wave C3)
+
+Compare chips-off, rule-based landmarks (BB on the biggest double, TC on the best DGW captain, FH on the biggest blank, WC before a double), and optimised MILP chips. Scoreboard is **season points** under the chosen chip-rules year. Does not run the full post-chips bakeoff (FDB-120).
+
+```bash
+# Predictions must already cover the horizon (same as decisions-board).
+make chip-decision-board SEASON=2025-26 MODELS='rolling_mean_v1'
+# Counterfactual: 2024-25 fixtures under 2025/26 chip rules
+make chip-decision-board SEASON=2024-25 RULES_SEASON=2025-26 MODELS='rolling_mean_v1'
+# or: uv run fplt decisions --chip-board --season 2024-25 \
+#        --chip-rules-season 2025-26 --horizon 3 --models rolling_mean_v1
+```
 
 ## Running unattended
 
