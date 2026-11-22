@@ -15,7 +15,9 @@ from fplt.optimise.attainable import (
 )
 from fplt.optimise.engine import TransferPlan, horizon_points, optimize_transfers
 from fplt.optimise.lineup import (
+    DEFAULT_HAUL_WEIGHT,
     LineupSelection,
+    reoptimize_plan_lineups,
     select_lineup_expected,
     select_lineup_scenarios,
 )
@@ -40,6 +42,7 @@ __all__ = [
     "ChipInventory",
     "ChipPlay",
     "ChipTimingRegret",
+    "DEFAULT_HAUL_WEIGHT",
     "FplOptimizationToolsAdapter",
     "GameweekPlan",
     "IdentityReferenceOptimiser",
@@ -61,6 +64,7 @@ __all__ = [
     "optimize_transfers",
     "plan_squad",
     "rebuild_squad_state",
+    "reoptimize_plan_lineups",
     "run_hindsight_oracle",
     "select_lineup_expected",
     "select_lineup_scenarios",

@@ -44,12 +44,17 @@ from fplt.optimise.highs_options import (
     HighsSolveOptions,
     log_solve_status,
 )
+from fplt.optimise.lineup import (
+    DEFAULT_HAUL_WEIGHT,
+    reoptimize_plan_lineups,
+)
 from fplt.optimise.long_horizon import (
     DEFAULT_LONG_HORIZON_POLICY,
     LongHorizonPolicy,
     shift_horizon_picks,
 )
 from fplt.optimise.prices import fpl_selling_price
+from fplt.optimise.scenarios import ScenarioBundle
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
     _SQUAD,  # pyright: ignore[reportPrivateUsage]
@@ -132,6 +137,10 @@ def plan_squad(
     warm_start: GameweekPlan | None = None,
     warm_start_shift: int = 1,
     long_horizon_policy: LongHorizonPolicy | None = None,
+    lineup_reopt: bool = True,
+    scenarios: ScenarioBundle | None = None,
+    p_haul: pl.DataFrame | None = None,
+    haul_weight: float = DEFAULT_HAUL_WEIGHT,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -172,6 +181,13 @@ def plan_squad(
         long_horizon_policy: H≥6 MILP shrink knobs. Defaults to
             ``DEFAULT_LONG_HORIZON_POLICY`` (relax-and-fix on for
             ``horizon >= auto_min_horizon``).
+        lineup_reopt: After the transfer MILP, re-choose XI / captain /
+            vice on each locked fifteen via sample-average (or EV +
+            ``p_haul``) lineup selection. Default on (Wave D1); set
+            ``False`` to keep the MILP lineup only.
+        scenarios: Optional shared scenarios for step-0 lineup SAA.
+        p_haul: Optional ``player_key``, ``step``, ``p_haul`` for captaincy.
+        haul_weight: Weight on ``p_haul`` in the EV lineup path.
 
     Returns:
         Squad members and sales at every step.
@@ -285,6 +301,15 @@ def plan_squad(
         raise ValueError("no plan satisfies the budget, positions, and club limits")
     log_solve_status(status, options=options)
     plan = _read(solver, pool, expected, columns, state, initial, horizon, rules)
+    if lineup_reopt:
+        refreshed = reoptimize_plan_lineups(
+            plan.picks,
+            scenarios=scenarios,
+            p_haul=p_haul,
+            haul_weight=haul_weight,
+            scenario_step=0,
+        )
+        plan = replace(plan, picks=_frame(refreshed, HorizonPickSchema))
     return replace(
         plan,
         solve_elapsed=float(elapsed),

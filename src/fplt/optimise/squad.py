@@ -1,8 +1,10 @@
 """Single-gameweek squad, XI, captain, and vice via HiGHS.
 
 Player-fixture predictions are summed to a player-gameweek here. The
-objective doubles the captain. The vice is the best other starter by a
-tie-break small enough that it cannot change who plays or who captains.
+objective doubles the captain. Optional ``p_haul`` tilts captaincy (Wave D1
+M3) without changing who is in the fifteen. The vice is the best other
+starter by a tie-break small enough that it cannot change who plays or who
+captains.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ _XI_MAX = {"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}
 _XI_SIZE = 11
 _MAX_PER_CLUB = 3
 _VICE_WEIGHT = 1e-6
+_DEFAULT_HAUL_WEIGHT = 0.05
 _REQUIRED = {"player_key", "position", "team_key", "price", "xpts"}
 
 
@@ -65,15 +68,23 @@ def aggregate_gameweek(predictions: pl.DataFrame, season: str, gw: int) -> pl.Da
     return _checked(frame, GameweekPointsSchema)
 
 
-def select_squad(players: pl.DataFrame) -> SquadSelection:
+def select_squad(
+    players: pl.DataFrame,
+    *,
+    haul_weight: float = _DEFAULT_HAUL_WEIGHT,
+) -> SquadSelection:
     """Choose a squad, a starting XI, a captain, and a vice.
 
     Args:
-        players: One row per candidate. ``SquadPlayerSchema``. ``price`` is
-            in tenths of a million, so 100 is £1.0m.
+        players: One row per candidate. ``SquadPlayerSchema`` columns, plus
+            optional ``p_haul`` (0–1) used only for captaincy.
+        haul_weight: Weight on ``p_haul`` added to the captain objective so
+            near-ties prefer haul probability (M3). Ignored when ``p_haul``
+            is absent. ``price`` is in tenths of a million, so 100 is £1.0m.
 
     Returns:
-        The fifteen selected players and the XI total with the captain doubled.
+        The fifteen selected players and the XI total with the captain doubled
+        (raw ``xpts``, not haul-tilted).
 
     Raises:
         ValueError: The pool is missing a column, repeats a player, or cannot
@@ -86,16 +97,34 @@ def select_squad(players: pl.DataFrame) -> SquadSelection:
     if pool["player_key"].n_unique() != pool.height:
         raise ValueError("player_key must be unique")
     checked = _checked(pool, SquadPlayerSchema).sort("player_key")
-    chosen, total = _solve(checked)
+    haul = None
+    if "p_haul" in players.columns:
+        haul = (
+            players.select("player_key", "p_haul")
+            .unique(subset=["player_key"])
+            .sort("player_key")
+        )
+        haul = checked.join(haul, on="player_key", how="left")["p_haul"].to_numpy()
+        haul = np.nan_to_num(np.asarray(haul, dtype=np.float64), nan=0.0)
+        haul = np.clip(haul, 0.0, 1.0)
+    chosen, total = _solve(checked, haul=haul, haul_weight=haul_weight)
     return SquadSelection(players=chosen, total_xpts=total)
 
 
-def _solve(pool: pl.DataFrame) -> tuple[pl.DataFrame, float]:
+def _solve(
+    pool: pl.DataFrame,
+    *,
+    haul: np.ndarray | None = None,
+    haul_weight: float = _DEFAULT_HAUL_WEIGHT,
+) -> tuple[pl.DataFrame, float]:
     count = pool.height
     points = pool["xpts"].to_numpy().astype(np.float64)
+    captain_points = points
+    if haul is not None:
+        captain_points = points + float(haul_weight) * haul
     cost = np.zeros(4 * count, dtype=np.float64)
     cost[count : 2 * count] = points
-    cost[2 * count : 3 * count] = points
+    cost[2 * count : 3 * count] = captain_points
     cost[3 * count : 4 * count] = points * _VICE_WEIGHT
     solver = highspy.Highs()
     solver.setOptionValue("output_flag", False)

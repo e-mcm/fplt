@@ -520,6 +520,8 @@ def _solve(
         prune=policy is not None,
         prune_policy=policy,
         highs_options=options,
+        # Equivalence harness measures the transfer MILP, not D1 lineup re-opt.
+        lineup_reopt=False,
     )
 
 

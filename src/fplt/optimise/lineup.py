@@ -381,3 +381,99 @@ def verify_lineup_mean(
 ) -> float:
     """Recompute mean via :func:`mean_realised_lineup` (slow path check)."""
     return mean_realised_lineup(selection.players, bundle, chip=chip)
+
+
+DEFAULT_HAUL_WEIGHT = 0.05
+
+
+def reoptimize_plan_lineups(
+    picks: pl.DataFrame,
+    *,
+    scenarios: ScenarioBundle | None = None,
+    p_haul: pl.DataFrame | None = None,
+    haul_weight: float = DEFAULT_HAUL_WEIGHT,
+    scenario_step: int = 0,
+) -> pl.DataFrame:
+    """Replace XI / captain / vice on each step with sample-average (or EV) picks.
+
+    Locked fifteens come from non-sold rows. When ``scenarios`` is set, step
+    ``scenario_step`` (default 0, the actionable week) uses the joint bundle;
+    other steps use EV + optional ``p_haul``. ``bench_slot`` is computed but
+    dropped so the frame still matches ``HorizonPickSchema``.
+
+    Args:
+        picks: Horizon picks (``HorizonPickSchema`` columns).
+        scenarios: Optional shared scenarios for ``scenario_step``.
+        p_haul: Optional ``player_key``, ``step``, ``p_haul`` for captaincy.
+        haul_weight: Weight on ``p_haul`` for the EV path.
+        scenario_step: Horizon step that consumes ``scenarios``.
+
+    Returns:
+        A copy of ``picks`` with updated ``in_xi`` / ``captain`` / ``vice``.
+
+    Raises:
+        ValueError: A step's kept squad is not a valid fifteen.
+    """
+    if picks.is_empty():
+        return picks
+    steps = sorted(int(value) for value in picks["step"].unique().to_list())
+    haul_by_step: dict[int, dict[int, float]] = {}
+    if p_haul is not None and not p_haul.is_empty():
+        required = {"player_key", "step", "p_haul"}
+        missing = required - set(p_haul.columns)
+        if missing:
+            raise ValueError(f"p_haul missing columns: {sorted(missing)}")
+        for row in p_haul.iter_rows(named=True):
+            if row["p_haul"] is None:
+                continue
+            step = int(row["step"])
+            haul_by_step.setdefault(step, {})[int(row["player_key"])] = float(
+                row["p_haul"]
+            )
+    pieces: list[pl.DataFrame] = []
+    for step in steps:
+        part = picks.filter(pl.col("step") == step)
+        kept = part.filter(~pl.col("sold")) if "sold" in part.columns else part
+        if kept.height != 15:
+            pieces.append(part)
+            continue
+        squad = kept.select(
+            "player_key",
+            "position",
+            "xpts",
+            *(["team_key"] if "team_key" in kept.columns else []),
+            *(["price"] if "price" in kept.columns else []),
+        )
+        haul_map = haul_by_step.get(step, {})
+        if haul_map:
+            squad = squad.with_columns(
+                pl.col("player_key")
+                .replace_strict(haul_map, default=None)
+                .cast(pl.Float64)
+                .alias("p_haul")
+            )
+        if scenarios is not None and step == scenario_step:
+            selection = select_lineup_scenarios(
+                squad,
+                scenarios,
+                p_haul=haul_map or None,
+                haul_tiebreak=haul_weight,
+            )
+        else:
+            selection = select_lineup_expected(squad, haul_weight=haul_weight)
+        lined = selection.players.select("player_key", "in_xi", "captain", "vice")
+        refreshed = (
+            kept.drop(["in_xi", "captain", "vice"])
+            .join(lined, on="player_key", how="left")
+            .with_columns(
+                pl.col("in_xi").fill_null(False),
+                pl.col("captain").fill_null(False),
+                pl.col("vice").fill_null(False),
+            )
+        )
+        if "sold" in part.columns:
+            sold = part.filter(pl.col("sold"))
+            pieces.append(pl.concat([refreshed, sold], how="diagonal_relaxed"))
+        else:
+            pieces.append(refreshed)
+    return pl.concat(pieces, how="diagonal_relaxed").sort("step", "player_key")
