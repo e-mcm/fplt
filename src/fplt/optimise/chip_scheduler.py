@@ -67,12 +67,13 @@ def schedule_chip_windows(
     owned_player_keys: Sequence[int] | None = None,
     inventory: ChipInventory | None = None,
     gameweeks: Sequence[int] | None = None,
+    force_play: bool = True,
 ) -> ChipUseWindows:
     """Build allowed / forced / no-chip windows for the rest of the half.
 
-    Applies the option-value cut and, when needed, force-packs remaining
-    unused chips onto the last eligible gameweeks of each ``ChipRules``
-    half-window so grants cannot expire.
+    Applies the option-value cut and, when ``force_play`` is true, force-packs
+    remaining unused chips onto the last eligible gameweeks of each
+    ``ChipRules`` half-window so grants cannot expire.
 
     Args:
         fixtures: Staged fixtures (``season``, ``gw``, ``team_h_key``,
@@ -90,6 +91,9 @@ def schedule_chip_windows(
         inventory: Remaining chip uses. When omitted, every grant in ``rules``
             is treated as available.
         gameweeks: Optional filter; landmarks outside are ignored.
+        force_play: When true (default), pack remaining half-window chips onto
+            the last eligible gameweeks. When false, only the option-value cut
+            may force a unique near-horizon best.
 
     Returns:
         ``ChipUseWindows`` ready for ``plan_squad(..., chip_windows=...)``.
@@ -117,6 +121,7 @@ def schedule_chip_windows(
         as_of_gw=as_of_gw,
         short_horizon=short_horizon,
         rules=rules,
+        force_play=force_play,
     )
 
 
@@ -203,6 +208,7 @@ def windows_from_opportunities(
     as_of_gw: int,
     short_horizon: int = DEFAULT_PLAN_HORIZON,
     rules: ChipRules | None = None,
+    force_play: bool = True,
 ) -> ChipUseWindows:
     """Apply the option-value cut and emit ``ChipUseWindows``.
 
@@ -210,8 +216,11 @@ def windows_from_opportunities(
         opportunities: Output of ``score_chip_opportunities``.
         as_of_gw: Current deadline.
         short_horizon: Planner look-ahead ``H``.
-        rules: Optional chip windows; when set, remaining chips are
-            force-packed onto the last eligible gameweeks of each half.
+        rules: Optional chip windows; when set and ``force_play`` is true,
+            remaining chips are force-packed onto the last eligible
+            gameweeks of each half.
+        force_play: When false, skip half-window force-packing even if
+            ``rules`` is set. Option-value unique-best forces still apply.
 
     Returns:
         Allowed / forced / no-chip hooks for the short-horizon MILP.
@@ -249,7 +258,7 @@ def windows_from_opportunities(
         ):
             forced_candidates[chip] = best_gws[0]
 
-    if rules is not None:
+    if force_play and rules is not None:
         _apply_force_play_packing(
             rules,
             by_chip=by_chip,

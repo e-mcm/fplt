@@ -380,6 +380,14 @@ def main(argv: list[str] | None = None) -> None:
         default=["off", "rule_based", "optimised"],
         help="Chip arms for --chip-board (default: all three)",
     )
+    decisions.add_argument(
+        "--no-force-play",
+        action="store_true",
+        help=(
+            "Disable half-window force-packing of remaining chips in the "
+            "optimised chip scheduler (ablation; default keeps force-play on)"
+        ),
+    )
     sim_season = sub.add_parser(
         "sim-season",
         parents=[log_flags],
@@ -1623,6 +1631,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 chip_rules_season=args.chip_rules_season,
                 simulate=not bool(args.summarise_only),
                 max_mean_ppg=None if max_mean <= 0 else max_mean,
+                force_play=not bool(args.no_force_play),
             )
             print(format_chip_decision_scoreboard(summary))
         else:

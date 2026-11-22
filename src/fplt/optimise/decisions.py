@@ -218,6 +218,7 @@ def simulate_decisions(
     chip_rules_season: str | None = None,
     chip_windows: ChipUseWindows | None = None,
     fixtures: pl.DataFrame | None = None,
+    force_play: bool = True,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -239,6 +240,8 @@ def simulate_decisions(
             builds landmarks from ``fixtures`` and optimised rebuilds
             ``schedule_chip_windows`` each deadline.
         fixtures: Staged fixtures for rule-based / scheduled windows.
+        force_play: When true (default), the optimised arm force-packs
+            remaining half-window chips. Ignored for ``off`` / ``rule_based``.
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -289,6 +292,7 @@ def simulate_decisions(
                 pool=pool,
                 state=current,
                 gameweeks=gameweeks,
+                force_play=force_play,
             )
         started = time.perf_counter()
         solved = plan_squad(
@@ -697,6 +701,7 @@ def run_decisions(
     *,
     chip_arm: ChipArm = "off",
     chip_rules_season: str | None = None,
+    force_play: bool = True,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -713,6 +718,7 @@ def run_decisions(
         horizon: Weeks each plan looks ahead.
         chip_arm: Chip policy for this run (default chips off).
         chip_rules_season: Chip-rules season when chips are on.
+        force_play: Forwarded to the optimised chip scheduler (default true).
 
     Returns:
         The decision parquet path.
@@ -766,6 +772,7 @@ def run_decisions(
         chip_arm=chip_arm,
         chip_rules_season=chip_rules_season,
         fixtures=fixtures,
+        force_play=force_play,
     )
     return write_decisions(data_dir, frame)
 
@@ -782,6 +789,7 @@ def run_chip_decision_board(
     chip_rules_season: str | None = None,
     simulate: bool = True,
     max_mean_ppg: float | None = None,
+    force_play: bool = True,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
 
@@ -801,6 +809,8 @@ def run_chip_decision_board(
         chip_rules_season: Chip-rules year (default ``season``).
         simulate: When true, simulate each model × arm first.
         max_mean_ppg: Optional mean pts/GW sanity gate.
+        force_play: When true (default), optimised arms force-pack remaining
+            half-window chips. Pass false for a no-force-play ablation.
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
@@ -817,11 +827,13 @@ def run_chip_decision_board(
         for name in models:
             for arm in arms:
                 logger.info(
-                    "chip board simulate model=%s arm=%s season=%s rules=%s",
+                    "chip board simulate model=%s arm=%s season=%s rules=%s "
+                    "force_play=%s",
                     name,
                     arm,
                     season,
                     rules_season,
+                    force_play,
                 )
                 run_decisions(
                     data_dir,
@@ -832,6 +844,7 @@ def run_chip_decision_board(
                     horizon,
                     chip_arm=arm,
                     chip_rules_season=rules_season,
+                    force_play=force_play,
                 )
     specs = load_model_specs()
     wanted: set[str] = set()
@@ -1410,6 +1423,7 @@ def _scheduled_windows(
     pool: pl.DataFrame,
     state: SquadState,
     gameweeks: list[int],
+    force_play: bool = True,
 ) -> ChipUseWindows:
     """Build season-level windows for one deadline of the optimised arm."""
     if fixtures is None or fixtures.is_empty():
@@ -1429,6 +1443,7 @@ def _scheduled_windows(
         owned_player_keys=[player.player_key for player in state.owned],
         inventory=state.chips,
         gameweeks=gameweeks,
+        force_play=force_play,
     )
 
 
