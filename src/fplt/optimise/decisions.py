@@ -86,6 +86,7 @@ DEFAULT_LIVE_CHIP_ARM: ChipArm = "optimised"
 __all__ = [
     "DEFAULT_LIVE_CHIP_ARM",
     "PlanExistsError",
+    "advance_squad_from_plan",
     "assert_sane_mean_ppg",
     "candidates_as_of",
     "explain_decision_gameweek",
@@ -1222,6 +1223,33 @@ def _decision_rows(
             }
         )
     return rows
+
+
+def advance_squad_from_plan(
+    state: SquadState,
+    plan: GameweekPlan,
+    pool: pl.DataFrame,
+    *,
+    gameweek: int,
+    rules: ChipRules | None = None,
+) -> SquadState:
+    """Apply week-1 plan actions to ``state`` (transfers, bank, FTs, chips).
+
+    Shared by ``simulate_decisions`` and the ensemble-sensitivity board so
+    ownership advances identically when comparing forecast members on a
+    shared path.
+
+    Args:
+        state: Pre-deadline squad.
+        plan: Solved ``GameweekPlan`` (step 0 is acted on).
+        pool: Candidate pool for the deadline (unused; prices come from picks).
+        gameweek: Deadline gameweek for chip history.
+        rules: Chip rules when chips are on; ``None`` for chips-off.
+
+    Returns:
+        Post-deadline ``SquadState``.
+    """
+    return _advance(state, plan, pool, gameweek=gameweek, rules=rules)
 
 
 def _advance(
