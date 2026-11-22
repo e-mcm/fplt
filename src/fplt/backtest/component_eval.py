@@ -14,7 +14,7 @@ import json
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +34,9 @@ from fplt.models.spec import ModelSpec, get_component, get_model, load_model_spe
 from fplt.models.universe import player_fixtures
 from fplt.schemas.component_eval import (
     COMPONENT_EVAL_COLUMNS,
+    PER_MATCH_COLUMNS,
     SIMS_SWEEP_COLUMNS,
+    ComponentEvalPerMatchSchema,
     ComponentEvalSummarySchema,
     SimsSweepSchema,
 )
@@ -43,6 +45,9 @@ from fplt.types import GWKey
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIMS = (1000, 2000, 5000, 10_000, 20_000)
+_DEFAULT_SCORE = ("dixon_coles_v1", "poisson_score_v1", "odds_poisson_v1")
+_DEFAULT_MINUTES = ("empirical_minutes_v1",)
+_DEFAULT_INVOLVEMENT = ("involvement_shares_v1",)
 _EPS = 1e-12
 
 
@@ -53,6 +58,9 @@ class ComponentEvalResult:
     summary: pl.DataFrame
     sims: pl.DataFrame
     output_dir: Path
+    per_match: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema=PER_MATCH_COLUMNS)
+    )
 
 
 def run_component_eval(
@@ -63,11 +71,13 @@ def run_component_eval(
     to_gw: int = 10,
     fit_gw: int | None = None,
     score_models: list[str] | None = None,
-    minutes_model: str = "empirical_minutes_v1",
-    involvement_model: str = "involvement_shares_v1",
-    layered_model: str = "dc_layered_v1",
+    minutes_model: str | list[str] | None = "empirical_minutes_v1",
+    involvement_model: str | list[str] | None = "involvement_shares_v1",
+    layered_model: str | None = "dc_layered_v1",
     sims: tuple[int, ...] | list[int] | None = None,
     output_dir: Path | None = None,
+    write_per_match: bool = False,
+    extra_score_specs: list[ModelSpec] | None = None,
 ) -> ComponentEvalResult:
     """Evaluate layered components over ``from_gw``..``to_gw`` and sweep sims.
 
@@ -78,11 +88,20 @@ def run_component_eval(
         to_gw: Last as-of gameweek, inclusive.
         fit_gw: Deadline used for the sims sweep fit (default: ``from_gw``).
         score_models: YAML score specs; default DC, Poisson, and odds Poisson.
-        minutes_model: Minutes component YAML name.
-        involvement_model: Involvement component YAML name.
-        layered_model: Composite YAML used for the ``n_sims`` sweep.
-        sims: ``n_sims`` values to sweep; ``None`` skips the sweep.
+            Pass ``[]`` to skip the named score suite.
+        minutes_model: Minutes YAML name(s); default ``empirical_minutes_v1``.
+            Pass ``[]`` to skip.
+        involvement_model: Involvement YAML name(s); default
+            ``involvement_shares_v1``. Pass ``[]`` to skip.
+        layered_model: Composite YAML used for the ``n_sims`` sweep. Ignored
+            when ``sims`` is empty. Pass ``None`` with a non-empty sweep to
+            raise.
+        sims: ``n_sims`` values to sweep; ``None`` uses defaults; ``[]`` skips.
         output_dir: Where to write summary parquet/JSON.
+        write_per_match: When true, also write fixture × arm × metric rows for
+            scoreline models under ``per_match.parquet``.
+        extra_score_specs: Inline score ``ModelSpec`` objects scored alongside
+            ``score_models`` (e.g. a raw de-vig 1X2 market arm).
 
     Returns:
         Validated summary frames and the output path.
@@ -94,55 +113,99 @@ def run_component_eval(
     if from_gw > to_gw:
         raise ValueError(f"from_gw ({from_gw}) must be <= to_gw ({to_gw})")
     specs = load_model_specs()
-    score_names = score_models or [
-        "dixon_coles_v1",
-        "poisson_score_v1",
-        "odds_poisson_v1",
-    ]
-    for name in [*score_names, minutes_model, involvement_model, layered_model]:
+    score_names = list(_DEFAULT_SCORE) if score_models is None else list(score_models)
+    minutes_names = _as_name_list(minutes_model, default=_DEFAULT_MINUTES)
+    involvement_names = _as_name_list(involvement_model, default=_DEFAULT_INVOLVEMENT)
+    needed = [*score_names, *minutes_names, *involvement_names]
+    sweep_ns = tuple(sims) if sims is not None else DEFAULT_SIMS
+    if sweep_ns:
+        if layered_model is None:
+            raise ValueError("layered_model is required when running the sims sweep")
+        needed.append(layered_model)
+    for name in needed:
         if name not in specs:
             raise ValueError(f"unknown model spec {name!r}")
+    score_spec_list = [specs[name] for name in score_names]
+    if extra_score_specs:
+        score_spec_list.extend(extra_score_specs)
 
     store = DataStore(data_dir)
     pit = PITData(store)
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
     rows: list[dict[str, object]] = []
-    rows.extend(
-        _eval_scorelines(pit, as_ofs, [specs[name] for name in score_names], store)
-    )
-    rows.extend(_eval_minutes(pit, as_ofs, specs[minutes_model], store))
-    rows.extend(_eval_involvement(pit, as_ofs, specs[involvement_model], store))
+    per_match_rows: list[dict[str, object]] = []
+    if score_spec_list:
+        summary_rows, match_rows = _eval_scorelines(
+            pit,
+            as_ofs,
+            score_spec_list,
+            store,
+            collect_per_match=write_per_match,
+        )
+        rows.extend(summary_rows)
+        per_match_rows.extend(match_rows)
+    for name in minutes_names:
+        rows.extend(_eval_minutes(pit, as_ofs, specs[name], store))
+    for name in involvement_names:
+        rows.extend(_eval_involvement(pit, as_ofs, specs[name], store))
 
-    sweep_ns = tuple(sims) if sims is not None else DEFAULT_SIMS
-    sims_frame = _sweep_n_sims(
-        pit,
-        specs[layered_model],
-        season=season,
-        fit_gw=from_gw if fit_gw is None else fit_gw,
-        sims=sweep_ns,
-    )
+    if sweep_ns:
+        assert layered_model is not None
+        sims_frame = _sweep_n_sims(
+            pit,
+            specs[layered_model],
+            season=season,
+            fit_gw=from_gw if fit_gw is None else fit_gw,
+            sims=sweep_ns,
+        )
+    else:
+        sims_frame = pl.DataFrame(schema=SIMS_SWEEP_COLUMNS)
 
-    summary = _validated_summary(pl.DataFrame(rows, schema=COMPONENT_EVAL_COLUMNS))
+    summary = _validated_summary(
+        pl.DataFrame(rows, schema=COMPONENT_EVAL_COLUMNS)
+        if rows
+        else pl.DataFrame(schema=COMPONENT_EVAL_COLUMNS)
+    )
     sims_out = _validated_sims(sims_frame)
+    per_match = _validated_per_match(
+        pl.DataFrame(per_match_rows, schema=PER_MATCH_COLUMNS)
+        if per_match_rows
+        else pl.DataFrame(schema=PER_MATCH_COLUMNS)
+    )
     out = output_dir or (data_dir / "component_eval" / f"{season}_gw{from_gw}-{to_gw}")
     out.mkdir(parents=True, exist_ok=True)
     summary.write_parquet(out / "summary.parquet")
     sims_out.write_parquet(out / "sims_sweep.parquet")
+    if write_per_match:
+        per_match.write_parquet(out / "per_match.parquet")
     payload = {
         "season": season,
         "from_gw": from_gw,
         "to_gw": to_gw,
         "fit_gw": from_gw if fit_gw is None else fit_gw,
         "score_models": score_names,
-        "minutes_model": minutes_model,
-        "involvement_model": involvement_model,
+        "minutes_models": minutes_names,
+        "involvement_models": involvement_names,
         "layered_model": layered_model,
         "summary": summary.to_dicts(),
         "sims_sweep": sims_out.to_dicts(),
+        "per_match": per_match.to_dicts() if write_per_match else [],
     }
     (out / "summary.json").write_text(json.dumps(payload, indent=2) + "\n")
     logger.info("wrote component eval under %s", out)
-    return ComponentEvalResult(summary=summary, sims=sims_out, output_dir=out)
+    return ComponentEvalResult(
+        summary=summary, sims=sims_out, output_dir=out, per_match=per_match
+    )
+
+
+def _as_name_list(
+    value: str | list[str] | None, *, default: tuple[str, ...]
+) -> list[str]:
+    if value is None:
+        return list(default)
+    if isinstance(value, str):
+        return [value]
+    return list(value)
 
 
 def format_component_table(summary: pl.DataFrame) -> str:
@@ -161,8 +224,11 @@ def _eval_scorelines(
     as_ofs: list[GWKey],
     specs: list[ModelSpec],
     store: DataStore,
-) -> list[dict[str, object]]:
+    *,
+    collect_per_match: bool = False,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     rows: list[dict[str, object]] = []
+    per_match: list[dict[str, object]] = []
     for spec in specs:
         model = get_component(spec.kind)(spec)
         rps_vals: list[float] = []
@@ -192,22 +258,42 @@ def _eval_scorelines(
                 home,
                 away,
             )
-            rps_vals.extend(float(value) for value in rps)
-            logloss_vals.extend(
-                _outcome_logloss(
-                    joined["p_home"].to_numpy(),
-                    joined["p_draw"].to_numpy(),
-                    joined["p_away"].to_numpy(),
-                    home,
-                    away,
-                )
+            logloss = _outcome_logloss(
+                joined["p_home"].to_numpy(),
+                joined["p_draw"].to_numpy(),
+                joined["p_away"].to_numpy(),
+                home,
+                away,
             )
+            rps_vals.extend(float(value) for value in rps)
+            logloss_vals.extend(logloss)
             order = {int(fid): i for i, fid in enumerate(dist.fixture_ids.tolist())}
             idx = [order[int(fid)] for fid in joined["fixture_id"].to_list()]
             p_cs_home = dist.p_clean_sheet("home")[idx]
             p_cs_away = dist.p_clean_sheet("away")[idx]
-            cs_home_vals.extend(((p_cs_home - (away == 0.0)) ** 2).tolist())
-            cs_away_vals.extend(((p_cs_away - (home == 0.0)) ** 2).tolist())
+            cs_home = ((p_cs_home - (away == 0.0)) ** 2).tolist()
+            cs_away = ((p_cs_away - (home == 0.0)) ** 2).tolist()
+            cs_home_vals.extend(cs_home)
+            cs_away_vals.extend(cs_away)
+            if collect_per_match:
+                fixture_ids = joined["fixture_id"].to_list()
+                for i, fixture_id in enumerate(fixture_ids):
+                    for metric, value in (
+                        ("rps", float(rps[i])),
+                        ("logloss", float(logloss[i])),
+                        ("brier_cs_home", float(cs_home[i])),
+                        ("brier_cs_away", float(cs_away[i])),
+                    ):
+                        per_match.append(
+                            {
+                                "season": as_of.season,
+                                "gw": as_of.gw,
+                                "fixture_id": int(fixture_id),
+                                "arm": spec.name,
+                                "metric": metric,
+                                "value": value,
+                            }
+                        )
         rows.append(_metric("score", "rps", spec.name, "overall", rps_vals))
         rows.append(_metric("score", "logloss", spec.name, "overall", logloss_vals))
         rows.append(
@@ -216,7 +302,7 @@ def _eval_scorelines(
         rows.append(
             _metric("score", "brier_cs_away", spec.name, "overall", cs_away_vals)
         )
-    return rows
+    return rows, per_match
 
 
 def _eval_minutes(
@@ -496,6 +582,12 @@ def _validated_summary(frame: pl.DataFrame) -> pl.DataFrame:
 
 def _validated_sims(frame: pl.DataFrame) -> pl.DataFrame:
     checked = SimsSweepSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    return checked
+
+
+def _validated_per_match(frame: pl.DataFrame) -> pl.DataFrame:
+    checked = ComponentEvalPerMatchSchema.validate(frame)
     assert isinstance(checked, pl.DataFrame)
     return checked
 

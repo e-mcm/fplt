@@ -31,6 +31,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fplt.backtest.compare import CompareResult, compare_models
+from fplt.backtest.component_eval import ComponentEvalResult, run_component_eval
 from fplt.backtest.intervals import (
     equivalence_drop_from_intervals,
     interval_to_dict,
@@ -93,6 +94,12 @@ _FLOAT_DEFAULTS: dict[str, float] = {
 _ORIENTATION_PARAMS = frozenset({*_BOOL_DEFAULTS, *_FLOAT_DEFAULTS})
 
 _ODDS_COLS = ("home_odds", "draw_odds", "away_odds")
+_RAW_DE_VIG_ARM = "raw_de_vig_1x2"
+_SLOT_CLI_FLAGS = {
+    "score": "--score-models",
+    "minutes": "--minutes-model",
+    "involvement": "--involvement-model",
+}
 
 
 class ChangeSpec(BaseModel):
@@ -320,6 +327,8 @@ class PromoteEvalResult:
     recommendation: str
     compare: CompareResult | None = None
     summary: pl.DataFrame | None = None
+    components: ComponentEvalResult | None = None
+    per_match: pl.DataFrame | None = None
 
 
 def default_evals_dir() -> Path:
@@ -419,6 +428,8 @@ def plan_promote_eval(
         modes=list(window.modes),
         seasons_back=window.seasons_back,
         fit_gw=window.fit_gw,
+        models_dir=models_dir,
+        warnings=warnings,
     )
 
     return PromoteEvalPlan(
@@ -819,7 +830,22 @@ def execute_promote_eval(
     wall_clock: dict[str, float] = {}
     peak_rss: dict[str, int] = {}
     folds: list[dict[str, Any]] = []
+    components_result: ComponentEvalResult | None = None
+    per_match: pl.DataFrame | None = None
+    component_deltas: dict[str, Any] | None = None
     run_prediction = plan.suites.prediction and tier != "S0"
+    run_components = plan.suites.components and tier != "S0"
+    if run_components:
+        components_result, per_match, component_deltas = _run_components(
+            spec,
+            plan,
+            preflight,
+            data_dir=data_dir,
+            output_dir=out / "components",
+            models_dir=models_dir,
+        )
+        if per_match is not None and not per_match.is_empty():
+            per_match.write_parquet(out / "per_match.parquet")
     if run_prediction:
         compare_result, wall_clock, peak_rss = _run_compare(
             plan, data_dir=data_dir, output_dir=out / "compare"
@@ -841,6 +867,7 @@ def execute_promote_eval(
                     "verdict": "inconclusive",
                     "summary": summary.to_dicts(),
                     "deltas": deltas,
+                    "component_deltas": component_deltas,
                 },
                 indent=2,
                 default=str,
@@ -851,7 +878,13 @@ def execute_promote_eval(
     else:
         summary = None
         _write_summary_json(
-            out, spec, plan, preflight, verdict="inconclusive", deltas=None
+            out,
+            spec,
+            plan,
+            preflight,
+            verdict="inconclusive",
+            deltas=None,
+            component_deltas=component_deltas,
         )
 
     verdict = "inconclusive"
@@ -865,9 +898,11 @@ def execute_promote_eval(
         allow_dirty=allow_dirty,
         compare=compare_result,
         deltas=deltas,
-        components_ran=False,
+        components_ran=run_components,
+        component_deltas=component_deltas,
         decisions_ran=False,
         prediction_ran=run_prediction,
+        per_match=per_match,
     )
     _write_recommendation(out, recommendation)
     _write_audit(
@@ -893,6 +928,8 @@ def execute_promote_eval(
         recommendation=recommendation,
         compare=compare_result,
         summary=summary,
+        components=components_result,
+        per_match=per_match,
     )
 
 
@@ -906,8 +943,10 @@ def render_recommendation(
     compare: CompareResult | None,
     deltas: dict[str, Any] | None,
     components_ran: bool = False,
+    component_deltas: dict[str, Any] | None = None,
     decisions_ran: bool = False,
     prediction_ran: bool = False,
+    per_match: pl.DataFrame | None = None,
 ) -> str:
     """Build ``recommendation.md`` in the §9 section order.
 
@@ -920,8 +959,10 @@ def render_recommendation(
         compare: Optional compare result.
         deltas: Optional prediction deltas.
         components_ran: Whether the components suite ran.
+        component_deltas: Optional pooled component metric deltas.
         decisions_ran: Whether the decisions suite ran.
         prediction_ran: Whether prediction compare ran.
+        per_match: Optional scoreline fixture × arm × metric board.
 
     Returns:
         Markdown recommendation text.
@@ -1059,13 +1100,40 @@ def render_recommendation(
             "- intervals are descriptive for improvement levers "
             "(not a keep rule; equivalence may drop on entirely-bad intervals)"
         )
+        if (
+            is_scoreline_lever(spec)
+            and per_match is not None
+            and not per_match.is_empty()
+        ):
+            market = _pooled_arm_metric(per_match, _RAW_DE_VIG_ARM, "rps")
+            lines.append(
+                f"- raw de-vig 1X2 ({_RAW_DE_VIG_ARM}) mean rps: "
+                f"{market if market is not None else 'n/a'}"
+            )
+            lines.append(
+                "- odds_poisson_v1 is not the market row "
+                "(book = raw proportional de-vig 1X2)"
+            )
     lines.append("")
     # 9. Components
     lines.append("## Components")
-    if components_ran:
-        lines.append("- (see component suite output)")
+    if components_ran and component_deltas:
+        for key, value in sorted(component_deltas.items()):
+            lines.append(f"- {key}: {value}")
+        if is_scoreline_lever(spec):
+            lines.append(
+                f"- market arm: {_RAW_DE_VIG_ARM} "
+                "(same clock as coverage.read; not odds_poisson_v1)"
+            )
+            if per_match is not None and not per_match.is_empty():
+                lines.append(
+                    f"- per_match rows: {per_match.height} "
+                    "(fixture × arm × metric → per_match.parquet)"
+                )
+    elif components_ran:
+        lines.append("- components suite ran (no pooled deltas)")
     else:
-        lines.append("- components: not run (P3 names slot specs)")
+        lines.append("- components: not run")
     lines.append("")
     # 10. Decisions
     lines.append("## Decisions")
@@ -1159,6 +1227,7 @@ def _ensure_model_registry() -> None:
     import fplt.models.components.other.player  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.components.other.priors  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.components.score.dixon_coles  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import fplt.models.components.score.odds_1x2  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.components.score.odds_poisson  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
@@ -2142,6 +2211,7 @@ def _write_summary_json(
     *,
     verdict: Verdict,
     deltas: dict[str, Any] | None,
+    component_deltas: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "eval_name": spec.name,
@@ -2160,6 +2230,7 @@ def _write_summary_json(
             "extras": preflight.coverage.extras,
         },
         "deltas": deltas,
+        "component_deltas": component_deltas,
         "failures": preflight.failures,
         "warnings": preflight.warnings,
     }
@@ -2280,14 +2351,23 @@ def _commands_for(
     modes: list[CompareModeName],
     seasons_back: int,
     fit_gw: int | None,
+    models_dir: Path | None = None,
+    warnings: list[str] | None = None,
 ) -> list[str]:
     commands: list[str] = []
     arms = f"{spec.control} {spec.treatment}"
+    warn = warnings if warnings is not None else []
     for season in seasons:
         if suites.components:
             commands.append(
-                "uv run fplt eval-components "
-                f"--season {season} --from-gw {from_gw} --to-gw {to_gw}"
+                _components_command(
+                    spec,
+                    season=season,
+                    from_gw=from_gw,
+                    to_gw=to_gw,
+                    models_dir=models_dir,
+                    warnings=warn,
+                )
             )
         if suites.prediction:
             mode_flag = " ".join(modes)
@@ -2313,6 +2393,223 @@ def _commands_for(
     return commands
 
 
+def is_scoreline_lever(spec: EvalSpec) -> bool:
+    """Whether this eval should write the scoreline per-match board."""
+    return spec.change.slot == "score" or "match_odds" in spec.change.tables
+
+
+def is_n_sims_lever(spec: EvalSpec) -> bool:
+    """Whether ``n_sims`` is the declared lever (keep the sims sweep)."""
+    if any("n_sims" in item for item in spec.change.diff):
+        return True
+    notes = spec.change.notes.lower()
+    return "n_sims" in notes and "unchanged" not in notes
+
+
+def slot_component_names(
+    control: ModelSpec,
+    treatment: ModelSpec,
+    slot: str | None,
+) -> tuple[str, str] | None:
+    """Return ``(control_slot_name, treatment_slot_name)`` for ``slot``.
+
+    Args:
+        control: Control parent ModelSpec.
+        treatment: Treatment parent ModelSpec.
+        slot: Component slot such as ``score`` / ``minutes`` / ``involvement``.
+
+    Returns:
+        The nested ``components.<slot>.name`` values, or ``None`` when the slot
+        is missing on either arm.
+    """
+    if slot is None:
+        return None
+    if slot not in control.components or slot not in treatment.components:
+        return None
+    return control.components[slot].name, treatment.components[slot].name
+
+
+def raw_de_vig_spec(*, coverage_read: CoverageRead | None) -> ModelSpec:
+    """Build the raw proportional de-vig 1X2 market arm for scoreline boards.
+
+    Uses the same clock as ``coverage.read``: ``closing_proxy_labelled`` admits
+    kickoff-stamped closes; ``strict_pit`` (default) does not. This is not
+    ``odds_poisson_v1``.
+    """
+    use_proxy = coverage_read == "closing_proxy_labelled"
+    return ModelSpec(
+        name=_RAW_DE_VIG_ARM,
+        kind="odds_1x2",
+        params={
+            "use_closing_proxy": use_proxy,
+            "fallback_p_home": 1.0 / 3.0,
+            "fallback_p_draw": 1.0 / 3.0,
+            "fallback_p_away": 1.0 / 3.0,
+        },
+        refit="never",
+        seed=0,
+    )
+
+
+def _components_command(
+    spec: EvalSpec,
+    *,
+    season: str,
+    from_gw: int,
+    to_gw: int,
+    models_dir: Path | None,
+    warnings: list[str],
+) -> str:
+    base = (
+        "uv run fplt eval-components "
+        f"--season {season} --from-gw {from_gw} --to-gw {to_gw}"
+    )
+    parts = [base]
+    model_names = load_model_specs(models_dir)
+    control = model_names.get(spec.control)
+    treatment = model_names.get(spec.treatment)
+    slot = spec.change.slot
+    names = (
+        slot_component_names(control, treatment, slot)
+        if control is not None and treatment is not None
+        else None
+    )
+    if names is not None and slot in _SLOT_CLI_FLAGS:
+        flag = _SLOT_CLI_FLAGS[slot]
+        parts.append(f"{flag} {names[0]} {names[1]}")
+    elif suites_needs_slot_flags(spec):
+        warnings.append(
+            "eval-components omitted arm-specific model flags "
+            "(unresolved control/treatment slot names)"
+        )
+    if not is_n_sims_lever(spec):
+        parts.append("--skip-sims")
+    return " ".join(parts)
+
+
+def suites_needs_slot_flags(spec: EvalSpec) -> bool:
+    """Whether the components suite should name the two slot specs."""
+    return spec.suites.components and spec.change.slot in _SLOT_CLI_FLAGS
+
+
+def _run_components(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    preflight: PreflightResult,
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    models_dir: Path | None,
+) -> tuple[ComponentEvalResult | None, pl.DataFrame | None, dict[str, Any] | None]:
+    control = preflight.control_spec
+    treatment = preflight.treatment_spec
+    if control is None or treatment is None:
+        specs = load_model_specs(models_dir)
+        control = specs.get(plan.control)
+        treatment = specs.get(plan.treatment)
+    if control is None or treatment is None:
+        logger.warning("skipping components suite: unresolved arm ModelSpecs")
+        return None, None, None
+
+    slot = spec.change.slot
+    names = slot_component_names(control, treatment, slot)
+    score_models: list[str] = []
+    minutes_models: list[str] = []
+    involvement_models: list[str] = []
+    extra_score: list[ModelSpec] = []
+    scoreline = is_scoreline_lever(spec)
+    if names is not None and slot == "score":
+        score_models = [names[0], names[1]]
+    elif names is not None and slot == "minutes":
+        minutes_models = [names[0], names[1]]
+    elif names is not None and slot == "involvement":
+        involvement_models = [names[0], names[1]]
+    if scoreline:
+        extra_score.append(raw_de_vig_spec(coverage_read=spec.gates.coverage.read))
+
+    if (
+        not score_models
+        and not minutes_models
+        and not involvement_models
+        and not extra_score
+    ):
+        logger.warning("skipping components suite: no slot models resolved")
+        return None, None, None
+
+    sims: list[int] | None = None if is_n_sims_lever(spec) else []
+    results: list[ComponentEvalResult] = []
+    for season in plan.seasons:
+        result = run_component_eval(
+            data_dir,
+            season,
+            from_gw=plan.from_gw,
+            to_gw=plan.to_gw,
+            score_models=score_models,
+            minutes_model=minutes_models,
+            involvement_model=involvement_models,
+            layered_model=plan.treatment,
+            sims=sims,
+            output_dir=output_dir / season,
+            write_per_match=scoreline,
+            extra_score_specs=extra_score or None,
+        )
+        results.append(result)
+
+    summary = pl.concat([part.summary for part in results], how="vertical_relaxed")
+    per_match_parts = [
+        part.per_match for part in results if not part.per_match.is_empty()
+    ]
+    per_match = (
+        pl.concat(per_match_parts, how="vertical_relaxed") if per_match_parts else None
+    )
+    deltas = _component_deltas(summary, names) if names is not None else None
+    combined = ComponentEvalResult(
+        summary=summary,
+        sims=results[0].sims,
+        output_dir=output_dir,
+        per_match=per_match if per_match is not None else results[0].per_match,
+    )
+    return combined, per_match, deltas
+
+
+def _component_deltas(summary: pl.DataFrame, names: tuple[str, str]) -> dict[str, Any]:
+    if summary.is_empty():
+        return {}
+    control_name, treatment_name = names
+    deltas: dict[str, Any] = {}
+    metrics = summary["metric"].unique().to_list()
+    for metric in metrics:
+        c = summary.filter(
+            (pl.col("model_name") == control_name) & (pl.col("metric") == metric)
+        )
+        t = summary.filter(
+            (pl.col("model_name") == treatment_name) & (pl.col("metric") == metric)
+        )
+        if c.is_empty() or t.is_empty():
+            continue
+        c_val = c["value"][0]
+        t_val = t["value"][0]
+        if not isinstance(c_val, int | float) or not isinstance(t_val, int | float):
+            continue
+        if isinstance(c_val, bool) or isinstance(t_val, bool):
+            continue
+        # Lower is better for RPS / logloss / Brier / MAE.
+        deltas[f"{metric}_delta"] = float(c_val) - float(t_val)
+    return deltas
+
+
+def _pooled_arm_metric(per_match: pl.DataFrame, arm: str, metric: str) -> float | None:
+    part = per_match.filter((pl.col("arm") == arm) & (pl.col("metric") == metric))
+    if part.is_empty():
+        return None
+    value = part["value"].mean()
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
 __all__ = [
     "ChangeSpec",
     "CoverageResult",
@@ -2331,11 +2628,15 @@ __all__ = [
     "format_plan",
     "git_is_dirty",
     "is_effectively_on",
+    "is_n_sims_lever",
+    "is_scoreline_lever",
     "load_eval_spec",
     "plan_promote_eval",
     "plan_to_json",
     "preflight_promote_eval",
+    "raw_de_vig_spec",
     "render_recommendation",
     "repo_root",
+    "slot_component_names",
     "uv_lock_sha256",
 ]

@@ -2,7 +2,7 @@
 
 Standing design so **any model lever** — new staged data, a feature version, a hyperparam diff, a layered component swap, a full predictor fork, a lockfile upgrade, or a no-behaviour refactor — uses one path: **control vs treatment → walk-forward suites → a written recommendation**. Improvement levers are two ModelSpecs. Equivalence levers share the spec and differ in the lockfile or the git ref. Decision bakeoffs stay opt-in.
 
-**Status:** P1+P2 promote-eval execute is on main. The **Stats** package adds HAC OLS and stationary-bootstrap intervals on per-GW loss differentials (`statsmodels` / `arch`), plus SPA/MCS when several arms share a window. Intervals are descriptive for improvement levers; equivalence may `drop` when an interval is entirely on the bad side (not a `keep` rule). Numeric keep/drop thresholds for improvement levers wait on FDB-73.
+**Status:** P1+P2 promote-eval execute and the **Stats** package (HAC OLS + stationary-bootstrap intervals, SPA/MCS) are on main. P3 adds slot-named `eval-components` (with `--skip-sims`), scoreline `per_match.parquet`, and the raw de-vig 1X2 market row. Intervals are descriptive for improvement levers; equivalence may `drop` when an interval is entirely on the bad side (not a `keep` rule). Numeric keep/drop thresholds wait on FDB-73. Ledger cache and environment kinds are still later packages.
 
 **Related:** project-store `docs/odds-dc-implementation-plan.md` (W7–W9), `docs/model-compare-tooling.md`, `docs/model-hyperparameters-and-train-window.md` (S0–S5), `docs/defensive-contribution-eval-2025-26.md` (W9 numbers). Repo rules: `docs/design.md` §7.4 and §7.6, `AGENTS.md`.
 
@@ -485,7 +485,7 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | Tier S0–S2 with `suites.decisions: true` | Decisions are forced off (already implemented) |
 | Closing-proxy rows exist | Print the caveat and both rates. Existence alone is not a fail |
 | Team-key odds rate exceeds fixture_id rate by &gt; 5pp | Fix stays in the model |
-| Printed `eval-components` line has no arm-specific model flags | True until P3. The line is not an A/B |
+| Printed `eval-components` line has no arm-specific model flags | Unresolved arm YAML / missing `components.<slot>.name`; the line is not an A/B |
 | Vaastav `source` on a minutes slice | Report that slice separately; pens still fails if the non-null rate is ~0 |
 | Played rows with null `defensive_contribution` &gt; 20% inside an awarding season | Column is degraded. Season eligibility can still pass |
 | Optional shared table empty on both arms (Understat missing in W9) | Not a differential |

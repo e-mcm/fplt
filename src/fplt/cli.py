@@ -270,13 +270,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     eval_components.add_argument(
         "--minutes-model",
-        default="empirical_minutes_v1",
-        help="Minutes component YAML name",
+        nargs="+",
+        default=["empirical_minutes_v1"],
+        help="Minutes component YAML name(s) (default: empirical_minutes_v1)",
     )
     eval_components.add_argument(
         "--involvement-model",
-        default="involvement_shares_v1",
-        help="Involvement component YAML name",
+        nargs="+",
+        default=["involvement_shares_v1"],
+        help=("Involvement component YAML name(s) (default: involvement_shares_v1)"),
     )
     eval_components.add_argument(
         "--layered-model",
@@ -647,8 +649,10 @@ def _eval_components(args: argparse.Namespace) -> None:
             to_gw=int(args.to_gw),
             fit_gw=args.fit_gw,
             score_models=list(args.score_models) if args.score_models else None,
-            minutes_model=str(args.minutes_model),
-            involvement_model=str(args.involvement_model),
+            minutes_model=list(args.minutes_model) if args.minutes_model else [],
+            involvement_model=(
+                list(args.involvement_model) if args.involvement_model else []
+            ),
             layered_model=str(args.layered_model),
             sims=sims,
             output_dir=args.output_dir,
