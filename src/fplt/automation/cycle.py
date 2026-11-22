@@ -9,6 +9,10 @@ and does not walk earlier weeks.
 When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_API_TOKEN`` for the live squad),
 each plan starts from ``resolve_squad_state`` / ``load_current_team`` rather
 than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
+
+Plans use ``run_plan``'s live default chip policy
+(``DEFAULT_LIVE_CHIP_ARM`` = optimised: season chip scheduler → MILP).
+Horizon stays ``DEFAULT_PLAN_HORIZON`` (3).
 """
 
 from __future__ import annotations

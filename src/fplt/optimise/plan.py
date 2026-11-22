@@ -677,6 +677,16 @@ def _chips(
         if not steps:
             continue
         for chip, cols in chip_cols:
+            # Only windows that grant this chip may cap it. Pre-2025/26
+            # ``first_wildcard`` / ``season`` overlap in gameweeks; applying a
+            # 0-cap from the wildcard-only window wrongly forbids BB/TC/FH.
+            granted = sum(
+                1
+                for grant in rules.grants
+                if grant.name == chip and grant.window == window.id
+            )
+            if granted == 0:
+                continue
             _at_most(
                 solver,
                 [cols[step] for step in steps],

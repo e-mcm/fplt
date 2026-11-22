@@ -368,6 +368,8 @@ def test_components_command_names_involvement_slot_specs() -> None:
 
 def test_involvement_xg_vs_shares_eval_loads() -> None:
     spec = load_eval_spec("involvement_xg_vs_shares_ab")
+    assert spec.kind == "component"
+    assert spec.change.lever == "component_swap"
     assert spec.control == "dc_layered_shares_v2"
     assert spec.treatment == "dc_layered_v2"
     assert spec.change.slot == "involvement"

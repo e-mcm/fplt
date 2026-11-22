@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fplt.cli import main
+from fplt.optimise.decisions import DEFAULT_LIVE_CHIP_ARM
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.state import SquadState
 from fplt.settings import get_settings
@@ -215,6 +216,35 @@ def test_plan_without_entry_skips_resolve(
     squad = run.call_args.kwargs["squad"]
     assert squad.owned == []
     assert squad.bank == 1000
+    assert run.call_args.kwargs["chip_arm"] == DEFAULT_LIVE_CHIP_ARM
+    assert DEFAULT_LIVE_CHIP_ARM == "optimised"
+
+
+def test_plan_cli_passes_chip_arm_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
+    get_settings.cache_clear()
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    monkeypatch.setattr("fplt.cli.run_plan", run)
+    try:
+        main(
+            [
+                "plan",
+                "--model",
+                "rolling_mean_v1",
+                "--season",
+                "2024-25",
+                "--gw",
+                "1",
+                "--chip-arm",
+                "off",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+    assert run.call_args.kwargs["chip_arm"] == "off"
 
 
 def test_plan_rebuild_clears_owned_and_folds_selling_prices(

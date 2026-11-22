@@ -316,6 +316,35 @@ def _league(root: Path) -> DataStore:
             }
         ),
     )
+    pairs = [(1, 2), (3, 4), (5, 6)]
+    fixture_rows: list[dict[str, object]] = []
+    fixture_id = 1
+    for gw in (1, 2, 3):
+        kickoff = datetime(2024, 8, 16 + 7 * (gw - 1), 14, tzinfo=UTC)
+        for home, away in pairs:
+            fixture_rows.append(
+                {
+                    "season": "2024-25",
+                    "fixture_id": fixture_id,
+                    "gw": gw,
+                    "team_h_key": home,
+                    "team_a_key": away,
+                    "kickoff_time": kickoff,
+                    "team_h_score": None,
+                    "team_a_score": None,
+                    "finished": False,
+                    "available_at": _WHEN,
+                    "source": "test",
+                }
+            )
+            fixture_id += 1
+    store.write(
+        "fixtures",
+        pl.DataFrame(fixture_rows).with_columns(
+            pl.col("team_h_score").cast(pl.Int64()),
+            pl.col("team_a_score").cast(pl.Int64()),
+        ),
+    )
     _predictions(root, players)
     return store
 
