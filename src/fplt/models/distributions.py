@@ -128,8 +128,9 @@ class MinutesDist:
     """Binned minutes for each player-fixture.
 
     ``pmf[i, b]`` is the probability that row ``i`` plays ``bins[b]`` minutes.
-    Draws are independent across rows: nothing stops two teammates both
-    playing 90. A later version can enforce eleven starters.
+    Independent ``sample`` draws do not force eleven starters; callers that
+    need a hard XI constraint should pass the draws through
+    ``enforce_hard_starters``.
     """
 
     def __init__(self, keys: pl.DataFrame, bins: np.ndarray, pmf: np.ndarray) -> None:
@@ -192,3 +193,86 @@ class MinutesDist:
         index = np.sum(cdf[:, None, :] <= draws[..., None], axis=-1)
         index = np.minimum(index, width - 1)
         return np.asarray(self.bins, dtype=np.int64)[index]
+
+    def start_weights(self, starter_threshold: int = 60) -> np.ndarray:
+        """P(minutes ≥ ``starter_threshold``) per row, used to rank hard XI."""
+        bins = np.asarray(self.bins, dtype=np.int64)
+        mask = bins >= starter_threshold
+        rows = int(self.pmf.shape[0])
+        if not np.any(mask):
+            return np.zeros(rows, dtype=np.float64)
+        return np.asarray(self.pmf[:, mask].sum(axis=1), dtype=np.float64)
+
+
+def enforce_hard_starters(
+    minutes: np.ndarray,
+    team_keys: np.ndarray,
+    start_weight: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    target: int = 11,
+    starter_threshold: int = 60,
+    start_minutes: int = 90,
+    sub_minutes: int = 15,
+) -> np.ndarray:
+    """Force about ``target`` starters per team-fixture column.
+
+    A starter is a draw with minutes ≥ ``starter_threshold``. When a team has
+    more than ``target`` starters in a sim, the lowest-weight extras are
+    demoted to ``sub_minutes``. When fewer, the highest-weight non-starters
+    with positive ``start_weight`` are promoted to ``start_minutes``. Teams
+    with fewer than ``target`` eligible players keep ``min(target, eligible)``.
+
+    Args:
+        minutes: Drawn minutes, shape ``(P, n)``.
+        team_keys: Team id per player row, shape ``(P,)``.
+        start_weight: Ranking weight per player (e.g. P(≥60)), shape ``(P,)``.
+        rng: Generator for tie-breaking among equal weights.
+        target: Desired starter count per team (usually 11).
+        starter_threshold: Minutes that count as a start.
+        start_minutes: Minutes assigned when promoting a player.
+        sub_minutes: Minutes assigned when demoting a player.
+
+    Returns:
+        Adjusted minutes with the same shape as ``minutes``.
+
+    Raises:
+        ValueError: Shapes disagree or ``target`` is not positive.
+    """
+    drawn = np.asarray(minutes, dtype=np.int64)
+    teams = np.asarray(team_keys)
+    weights = np.asarray(start_weight, dtype=np.float64)
+    if drawn.ndim != 2:
+        raise ValueError(f"minutes must be 2-D, got {drawn.shape}")
+    if teams.shape != (drawn.shape[0],) or weights.shape != (drawn.shape[0],):
+        raise ValueError("team_keys and start_weight must match minutes rows")
+    if target < 1:
+        raise ValueError(f"target must be positive, got {target}")
+    if drawn.size == 0:
+        return drawn.copy()
+    out = drawn.copy()
+    noise = np.asarray(rng.random(int(drawn.shape[0])), dtype=np.float64)
+    # Stable rank: higher weight first; tiny noise breaks ties.
+    order_key = np.asarray(weights + 1e-9 * noise, dtype=np.float64)
+    for team in np.unique(teams):
+        indexes = np.flatnonzero(teams == team)
+        if indexes.size == 0:
+            continue
+        eligible = indexes[weights[indexes] > 0]
+        want = min(target, int(eligible.size), int(indexes.size))
+        for sim in range(out.shape[1]):
+            started = indexes[out[indexes, sim] >= starter_threshold]
+            if started.size > want:
+                # Demote lowest-weight starters first.
+                ranked = started[np.argsort(order_key[started])]
+                for index in ranked[: started.size - want]:
+                    out[int(index), sim] = sub_minutes
+            elif started.size < want:
+                pool = indexes[out[indexes, sim] < starter_threshold]
+                pool = pool[weights[pool] > 0]
+                if pool.size == 0:
+                    continue
+                ranked = pool[np.argsort(-order_key[pool])]
+                for index in ranked[: want - started.size]:
+                    out[int(index), sim] = start_minutes
+    return out

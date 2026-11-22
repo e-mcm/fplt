@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+
 import numpy as np
 
 from fplt.data.pit import PITView
@@ -13,6 +16,17 @@ START_FALLBACK = np.zeros(WIDTH, dtype=np.float64)
 START_FALLBACK[int(np.flatnonzero(MINUTE_BINS == 90)[0])] = 1.0
 SUB_FALLBACK = np.zeros(WIDTH, dtype=np.float64)
 SUB_FALLBACK[int(np.flatnonzero(MINUTE_BINS == 15)[0])] = 1.0
+
+
+@dataclass(frozen=True)
+class PlayerAvailability:
+    """Latest FPL availability tags for one player."""
+
+    status: str | None
+    chance_next: float | None
+    chance_this: float | None
+    news: str
+    news_added: datetime | None
 
 
 def snap(minutes: np.ndarray) -> np.ndarray:
@@ -55,37 +69,77 @@ def positions(view: PITView) -> dict[int, str]:
     }
 
 
-def availability(view: PITView) -> dict[int, tuple[str | None, float | None]]:
-    """Latest status and chance of playing per player."""
+def availability(view: PITView) -> dict[int, PlayerAvailability]:
+    """Latest status, chance, and news tags per player."""
     status = (
         view.latest("player_status", ["season", "player_key"])
         .collect()
         .sort("available_at")
         .unique(subset=["player_key"], keep="last")
     )
-    found: dict[int, tuple[str | None, float | None]] = {}
-    for row in status.select("player_key", "status", "chance_of_playing").iter_rows(
-        named=True
-    ):
-        chance = row["chance_of_playing"]
-        found[int(row["player_key"])] = (
-            None if row["status"] is None else str(row["status"]),
-            None if chance is None else float(chance),
+    columns = [
+        "player_key",
+        "status",
+        "chance_of_playing",
+        "chance_of_playing_this_round",
+        "news",
+        "news_added",
+    ]
+    present = [name for name in columns if name in status.columns]
+    found: dict[int, PlayerAvailability] = {}
+    for row in status.select(present).iter_rows(named=True):
+        chance_next = row.get("chance_of_playing")
+        chance_this = row.get("chance_of_playing_this_round")
+        news_added = row.get("news_added")
+        found[int(row["player_key"])] = PlayerAvailability(
+            status=None if row.get("status") is None else str(row["status"]),
+            chance_next=None if chance_next is None else float(chance_next),
+            chance_this=None if chance_this is None else float(chance_this),
+            news=str(row.get("news") or ""),
+            news_added=news_added if isinstance(news_added, datetime) else None,
         )
     return found
 
 
 def chance(
-    status: str | None, chance_of_playing: float | None, doubtful: float
+    status: str | None,
+    chance_of_playing: float | None,
+    doubtful: float,
+    *,
+    chance_this: float | None = None,
+    news: str = "",
+    news_added: datetime | None = None,
 ) -> float:
-    """Availability multiplier in ``[0, 1]``."""
-    if chance_of_playing is not None:
-        return chance_of_playing / 100.0
+    """Availability multiplier in ``[0, 1]``.
+
+    Prefers ``chance_this`` when set, else ``chance_of_playing`` (next-round).
+    A null chance is not treated as 100% when status is doubtful/unavailable or
+    when FPL has stamped non-empty news / ``news_added``.
+    """
+    playing = chance_this if chance_this is not None else chance_of_playing
+    if playing is not None:
+        return playing / 100.0
     if status in UNAVAILABLE:
         return 0.0
     if status == "d":
         return doubtful
+    if (news and news.strip()) or news_added is not None:
+        # Null chance with news is a known FPL between-GW trap — do not
+        # silently treat as fully available.
+        return doubtful
     return 1.0
+
+
+def gate_for(row: PlayerAvailability, doubtful: float) -> float:
+    """Availability multiplier from a ``PlayerAvailability`` row."""
+    return chance(
+        row.status,
+        row.chance_next,
+        doubtful,
+        chance_this=row.chance_this,
+        news=row.news,
+        news_added=row.news_added,
+    )
 
 
 def normalise(counts_arr: np.ndarray | None, fallback: np.ndarray) -> np.ndarray:

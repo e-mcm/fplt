@@ -112,6 +112,25 @@ def test_empty_score_models_skips_score_suite(tmp_path: Path) -> None:
     assert set(result.summary["component"].unique().to_list()) == {"minutes"}
 
 
+def test_minutes_v2_brier_slices_by_source(tmp_path: Path) -> None:
+    _league(DataStore(tmp_path))
+    result = run_component_eval(
+        tmp_path,
+        _SEASON,
+        from_gw=3,
+        to_gw=3,
+        score_models=[],
+        minutes_model=["empirical_minutes_v2"],
+        involvement_model=[],
+        sims=[],
+        output_dir=tmp_path / "minutes-v2",
+    )
+    minutes = result.summary.filter(pl.col("component") == "minutes")
+    assert {"brier_played", "brier_60"} <= set(minutes["metric"].to_list())
+    assert "source=fpl_api" in minutes["slice"].to_list()
+    assert "overall" in minutes["slice"].to_list()
+
+
 def test_unknown_spec_raises(tmp_path: Path) -> None:
     _league(DataStore(tmp_path))
     with pytest.raises(ValueError, match="unknown model spec"):

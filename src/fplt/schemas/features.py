@@ -59,3 +59,22 @@ class OpponentStrengthSchema(pa.DataFrameModel):
         strict = True
         coerce = True
         unique = ["player_key", "fixture_id"]
+
+
+class AvailabilityFeatureSchema(pa.DataFrameModel):
+    """First-party FPL availability tags at player-fixture grain."""
+
+    player_key: int
+    fixture_id: int
+    status_ord: float = pa.Field(nullable=True)
+    chance_next: float = pa.Field(nullable=True)
+    chance_this: float = pa.Field(nullable=True)
+    chance_gate: float = pa.Field(nullable=True)
+    has_news: float = pa.Field(nullable=True)
+    has_news_added: float = pa.Field(nullable=True)
+    news_pct: float = pa.Field(nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["player_key", "fixture_id"]

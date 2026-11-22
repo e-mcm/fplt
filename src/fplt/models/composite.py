@@ -18,7 +18,7 @@ from fplt.models.components.minutes.empirical_v2 import EmpiricalMinutesV2
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
-from fplt.models.distributions import MinutesDist
+from fplt.models.distributions import MinutesDist, enforce_hard_starters
 from fplt.models.predictions import prediction_frame
 from fplt.models.simulation import ConcededMode, simulate_match
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
@@ -54,9 +54,9 @@ class CompositePredictor:
 
     ``n_sims`` is the number of match scenarios. ``own_goal_weight`` and
     ``p_assist`` are passed to the simulator. Optional fidelity knobs
-    (``cs_red_void_prob``, ``conceded_mode``, ``sample_other``) default to the
-    v1 approximations. The four components live under ``components`` in the
-    spec.
+    (``cs_red_void_prob``, ``conceded_mode``, ``sample_other``,
+    ``hard_starters``) default to the v1 approximations. The four components
+    live under ``components`` in the spec.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -67,6 +67,8 @@ class CompositePredictor:
         void_prob = spec.params.get("cs_red_void_prob", 0.0)
         conceded = spec.params.get("conceded_mode", "scaled")
         sample_other = spec.params.get("sample_other", False)
+        hard = spec.params.get("hard_starters", False)
+        target = spec.params.get("target_starters", 11)
         if isinstance(sims, bool) or not isinstance(sims, int) or sims < 1:
             raise ValueError(f"n_sims must be a positive int, got {sims!r}")
         own_goal_value = float(own_goal)
@@ -90,6 +92,13 @@ class CompositePredictor:
             )
         if not isinstance(sample_other, bool):
             raise ValueError(f"sample_other must be a bool, got {sample_other!r}")
+        if not isinstance(hard, bool):
+            raise ValueError(f"hard_starters must be a bool, got {hard!r}")
+        if isinstance(target, bool) or not isinstance(target, int | float):
+            raise ValueError(f"target_starters must be numeric, got {target!r}")
+        target_value = int(target)
+        if target_value < 1:
+            raise ValueError(f"target_starters must be positive, got {target_value}")
         missing = [name for name in _PARTS if name not in spec.components]
         if missing:
             raise ValueError(f"dc_layered is missing components {missing}")
@@ -99,6 +108,8 @@ class CompositePredictor:
         self._cs_red_void_prob = void_value
         self._conceded_mode = conceded_mode
         self._sample_other = sample_other
+        self._hard_starters = hard
+        self._target_starters = target_value
         self._score = _build(spec, "score")
         self._minutes = _build(spec, "minutes")
         self._involvement = _build(spec, "involvement")
@@ -226,6 +237,14 @@ def _fixture(
     else:
         minutes = _sample_minutes_crn(
             minutes_dist, pair_seed, view.as_of, fixture_id, model._n_sims
+        )
+    if model._hard_starters and minutes.size:
+        minutes = enforce_hard_starters(
+            minutes,
+            np.asarray(players["team_key"].to_list(), dtype=np.int64),
+            minutes_dist.start_weights(),
+            rng,
+            target=model._target_starters,
         )
     weights = model._involvement.predict(view, asked)
     other = model._other.predict(view, asked)

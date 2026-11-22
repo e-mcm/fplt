@@ -14,9 +14,11 @@ from fplt.models.components.minutes.common import (
     START_FALLBACK,
     SUB_FALLBACK,
     WIDTH,
+    PlayerAvailability,
     availability,
     chance,
     counts,
+    gate_for,
     normalise,
     positions,
     shrunk,
@@ -129,8 +131,8 @@ class EmpiricalMinutes:
         chance_map = availability(view)
         pmf = np.zeros((keys.height, WIDTH), dtype=np.float64)
         for index, player in enumerate(keys["player_key"].to_list()):
-            status, playing = chance_map.get(int(player), (None, None))
-            pmf[index] = self._mix(int(player), status, playing)
+            tags = chance_map.get(int(player))
+            pmf[index] = self._mix(int(player), tags)
         return MinutesDist(keys, MINUTE_BINS, pmf)
 
     def _remember_player(self, player: int, recent: pl.DataFrame) -> None:
@@ -144,15 +146,16 @@ class EmpiricalMinutes:
         self._player_start[player] = counts(minutes[starts > 0])
         self._player_sub[player] = counts(minutes[(starts == 0) & (minutes > 0)])
 
-    def _mix(
-        self, player: int, status: str | None, chance_of_playing: float | None
-    ) -> np.ndarray:
+    def _mix(self, player: int, tags: PlayerAvailability | None) -> np.ndarray:
         position = self._position.get(player, "UNK")
         if player in self._player_rate:
             p_start, p_sub = self._player_rate[player]
         else:
             p_start, p_sub = self._position_rate.get(position, (0.0, 0.0))
-        gate = chance(status, chance_of_playing, self._doubtful)
+        if tags is None:
+            gate = chance(None, None, self._doubtful)
+        else:
+            gate = gate_for(tags, self._doubtful)
         p_start *= gate
         p_sub *= gate
         # 4/5 + 1/5 is not exactly 1 in float, which would make the zero bin negative.

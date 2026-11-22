@@ -10,6 +10,9 @@ params:
   cs_red_void_prob: 0.02
   conceded_mode: played
   sample_other: true
+  # Hard XI at draw time (soft_squad still nudges the minutes PMF).
+  hard_starters: true
+  target_starters: 11
 components:
   score:
     name: dixon_coles_v2

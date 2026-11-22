@@ -2,6 +2,12 @@
 
 This file imports only the standard library and httpx so it can run in a
 minimal GitHub Actions job. Raw responses are written once as gzipped JSON.
+
+Cadence (workflow cron every 15 minutes; this function throttles writes):
+
+- Within 3 hours of the next deadline: at most every 15 minutes.
+- Within 6 hours: at most every hour.
+- Otherwise: at most every 12 hours.
 """
 
 from __future__ import annotations
@@ -18,6 +24,9 @@ import httpx
 
 API_ROOT = "https://fantasy.premierleague.com/api"
 _DEADLINE_WINDOW = timedelta(hours=6)
+_DENSE_WINDOW = timedelta(hours=3)
+_DENSE_STALENESS = timedelta(minutes=15)
+_NEAR_STALENESS = timedelta(hours=1)
 _MAX_STALENESS = timedelta(hours=12)
 
 
@@ -46,9 +55,13 @@ def should_snapshot(
     deadline: datetime | None,
     last_snapshot: datetime | None,
 ) -> bool:
-    """True when a deadline is close or the last snapshot is stale."""
-    if deadline is not None and timedelta(0) <= deadline - now <= _DEADLINE_WINDOW:
-        return True
+    """True when the cadence says a new bootstrap/fixtures capture is due."""
+    if deadline is not None:
+        until = deadline - now
+        if timedelta(0) <= until <= _DENSE_WINDOW:
+            return last_snapshot is None or now - last_snapshot >= _DENSE_STALENESS
+        if timedelta(0) <= until <= _DEADLINE_WINDOW:
+            return last_snapshot is None or now - last_snapshot >= _NEAR_STALENESS
     if last_snapshot is None or now - last_snapshot > _MAX_STALENESS:
         return True
     return False

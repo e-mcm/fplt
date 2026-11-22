@@ -17,11 +17,12 @@ from fplt.models.spec import (
 )
 from fplt.types import GWKey
 
-# Pre-extends full-copy model_ids (package 0.1.0). Migration must preserve these.
+# Extends-fork model_ids for package 0.1.0 (parent dc_layered_v2 params).
+# Update when intentional parent param changes land (e.g. hard_starters).
 _FORK_MODEL_IDS = {
-    "dc_layered_nopens_v1": "ffa027f04ec2cbe0",
-    "dc_layered_nodefcon_v1": "98820031825e5b43",
-    "dc_layered_odds_v1": "fa51cc43cbf44a96",
+    "dc_layered_nopens_v1": "d4ae176f583fdc31",
+    "dc_layered_nodefcon_v1": "3a3bc5fc23e22b32",
+    "dc_layered_odds_v1": "8b2cafb56c04017f",
 }
 
 
