@@ -10,7 +10,10 @@ free_transfers: 1
 ft_bank_cap: 5
 hit_cost: 4
 decay: 0.9
-bench_weight: 0.0001
+# Retired as primary bench valuation (Wave D1): scenario / EV lineup re-opt
+# owns XI, bench order, and captain. Keep 0; values below 0.01 remain allowed
+# only as a tiny legacy tie-break in the transfer MILP.
+bench_weight: 0
 owned: []
 chips:
   remaining:
