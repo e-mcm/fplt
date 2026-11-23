@@ -207,6 +207,17 @@ jobs:
           WHEEL=${WHEEL:-$(ls dist/*.whl | head -1)}
           uv pip install --no-deps --reinstall "$WHEEL"
           uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
+      # Python-only PRs skip mc-build; still need the published wheel so
+      # dc_layered_v4_native (and other mc_backend=native specs) can construct
+      # in the contract / leaderboard suites.
+      - name: Install published fplt-mc wheel
+        if: needs.changes.outputs.mc != 'true'
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('mc/pyproject.toml','rb'))['project']['version'])")
+          uv pip install "fplt-mc==${VERSION}" \
+            --index-url "https://e-mcm.github.io/fplt/simple/" \
+            --extra-index-url "https://pypi.org/simple/"
+          uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
       - name: Pytest (fplt)
         run: uv run pytest -m "not slow" --cov=fplt --cov-report=xml
       - name: Pytest (fplt-mc smoke)

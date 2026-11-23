@@ -137,6 +137,7 @@ def _run_native(fx: dict, n: int) -> np.ndarray:
         cs_red_void_prob=fx["cs_red_void_prob"],
         conceded_mode="played",
         sample_other=fx["sample_other"],
+        return_samples=True,
     )
     return result.points
 

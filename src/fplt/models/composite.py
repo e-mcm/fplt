@@ -23,6 +23,7 @@ from fplt.models.distributions import MinutesDist, enforce_hard_starters
 from fplt.models.predictions import prediction_frame
 from fplt.models.simulation import ConcededMode, simulate_match
 from fplt.models.simulation_native import (
+    FixtureSummary,
     require_native_kernel,
     resolve_mc_backend,
     simulate_match_native,
@@ -298,8 +299,11 @@ def _fixture(
                 "(penalty-event allocation); use mc_backend=python"
             )
         # Python remains seed authority: draw kernel_seed after minutes/HS.
+        # Normal predict uses K5 summary arrays (return_samples=False).
+        # Sample planes stay available via simulate_match_native(..., True)
+        # for scenario / joint export — not needed on the predict hot path.
         kernel_seed = int(rng.integers(0, 2**63))
-        result = simulate_match_native(
+        summary = simulate_match_native(
             scorelines[0],
             sim_players,
             minutes,
@@ -312,25 +316,25 @@ def _fixture(
             conceded_mode=model._conceded_mode,
             sample_other=model._sample_other,
             match_other=match_other,
-            return_samples=True,
+            return_samples=False,
         )
-    else:
-        result = simulate_match(
-            scorelines[0],
-            sim_players,
-            minutes,
-            other_grid,
-            rules,
-            rng,
-            own_goal_weight=model._own_goal,
-            p_assist=model._p_assist,
-            cs_red_void_prob=model._cs_red_void_prob,
-            conceded_mode=model._conceded_mode,
-            sample_other=model._sample_other,
-            match_other=match_other,
-            p_penalty=model._p_penalty,
-            penalty_taker=penalty_taker,
-        )
+        return _prediction_columns(players, summary)
+    result = simulate_match(
+        scorelines[0],
+        sim_players,
+        minutes,
+        other_grid,
+        rules,
+        rng,
+        own_goal_weight=model._own_goal,
+        p_assist=model._p_assist,
+        cs_red_void_prob=model._cs_red_void_prob,
+        conceded_mode=model._conceded_mode,
+        sample_other=model._sample_other,
+        match_other=match_other,
+        p_penalty=model._p_penalty,
+        penalty_taker=penalty_taker,
+    )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),
         pl.Series("xpts_sd", result.points.std(axis=1)),
@@ -340,6 +344,20 @@ def _fixture(
         pl.Series("p_assist", (result.assists >= 1).mean(axis=1)),
         pl.Series("p_cs", result.clean_sheets.mean(axis=1)),
         pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
+    )
+
+
+def _prediction_columns(players: pl.DataFrame, summary: FixtureSummary) -> pl.DataFrame:
+    """Attach K5 summary columns to the fixture's player rows."""
+    return players.with_columns(
+        pl.Series("xpts", summary.xpts),
+        pl.Series("xpts_sd", summary.xpts_sd),
+        pl.Series("p_played", summary.p_played),
+        pl.Series("p_60", summary.p_60),
+        pl.Series("p_goal", summary.p_goal),
+        pl.Series("p_assist", summary.p_assist),
+        pl.Series("p_cs", summary.p_cs),
+        pl.Series("p_haul", summary.p_haul),
     )
 
 
