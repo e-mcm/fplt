@@ -3,12 +3,16 @@
 Independence across teammates remains the default draw model. When
 ``soft_squad`` is on, expected starters per team-fixture are nudged toward
 ``target_starters`` before the PMF is built — a soft stand-in for a hard
-eleven-starter constraint. FPL status/chance/news gating defaults on
-(``use_availability_gate``; eval-only off-fork ``dc_layered_noavail_v1``).
-Optional ``use_injury_overlay`` applies staged ``player_injuries``. Optional
-``predicted_xi`` mixes P(start) toward staged ``predicted_lineups`` near
-kickoff. Production ``dc_layered_v3`` keeps injury/XI overlays off — enable
-via ``dc_layered_injuries_v1`` / ``dc_layered_predicted_xi_v1``.
+eleven-starter constraint. Rolling shares and empirical rates exclude
+injury / suspension absences (PIT status at each GW deadline). Logistic
+features include ``games_since_return`` / ``absence_length``;
+``return_ramp_games`` dampens P(start) for the first games back. FPL
+status/chance/news gating defaults on (``use_availability_gate``; eval-only
+off-fork ``dc_layered_noavail_v1``). Optional ``use_injury_overlay`` applies
+staged ``player_injuries``. Optional ``predicted_xi`` mixes P(start) toward
+staged ``predicted_lineups`` near kickoff. Production ``dc_layered_v3`` keeps
+injury/XI overlays off — enable via ``dc_layered_injuries_v1`` /
+``dc_layered_predicted_xi_v1``.
 """
 
 from __future__ import annotations
@@ -20,6 +24,14 @@ import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.components.minutes.absence import (
+    annotate_absences,
+    available_rate,
+    available_rolling_shares,
+    return_metrics,
+    return_ramp_factor,
+    scale_return_feature,
+)
 from fplt.models.components.minutes.common import (
     START_FALLBACK,
     SUB_FALLBACK,
@@ -38,24 +50,28 @@ from fplt.models.spec import ModelSpec, register_component
 from fplt.types import Position
 
 _LONG = MINUTE_BINS >= 60
-_START_DIM = 10
+_START_DIM = 12
 _LONG_DIM = 5
 _DEFAULT_WINDOWS = (3, 5, 10)
+_DEFAULT_RETURN_RAMP_GAMES = 2.0
 
 
 class EmpiricalMinutesV2:
     """Logistic P(start) and P(≥60|start) with histogram residuals.
 
     Rolling start shares over ``windows``, minutes volatility, home/away,
-    rest days, DGW, price, and opponent strength feed two small logistics
-    fit on appearances visible at the deadline. Conditional minute shapes
-    still come from shrunk start/sub histograms. ``logistic_blend`` weights
-    the logistic P(start) against the multi-window empirical rate (default
-    0.5). Availability (status / chance_of_playing) gates both rates after
-    the logits. Optional ``use_injury_overlay`` also applies staged
-    ``player_injuries`` (default off — production stays FPL-tags-only until
-    eval). When ``predicted_xi`` is true, near-deadline predicted lineup
-    roles mix into P(start) before soft-squad projection.
+    rest days, DGW, price, opponent strength, and return-from-absence
+    features feed two small logistics fit on appearances visible at the
+    deadline. Injury / suspension zeros are excluded from rolling shares and
+    empirical rates (P4). Conditional minute shapes still come from shrunk
+    start/sub histograms. ``logistic_blend`` weights the logistic P(start)
+    against the multi-window empirical rate (default 0.5).
+    ``return_ramp_games`` dampens blended P(start) for the first games back
+    after an absence. Availability (status / chance_of_playing) gates both
+    rates after the logits. Optional ``use_injury_overlay`` also applies
+    staged ``player_injuries`` (default off — production stays FPL-tags-only
+    until eval). When ``predicted_xi`` is true, near-deadline predicted
+    lineup roles mix into P(start) before soft-squad projection.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -69,6 +85,7 @@ class EmpiricalMinutesV2:
         # Weight on logistic P(start) vs multi-window empirical rate.
         logistic_blend = spec.params.get("logistic_blend", 0.5)
         l2 = spec.params.get("l2", 1.0)
+        ramp = spec.params.get("return_ramp_games", _DEFAULT_RETURN_RAMP_GAMES)
         overlay = spec.params.get("use_injury_overlay", False)
         avail_gate = spec.params.get("use_availability_gate", True)
         predicted_xi = spec.params.get("predicted_xi", False)
@@ -81,6 +98,7 @@ class EmpiricalMinutesV2:
         strength_value = _as_float(strength)
         blend_value = _as_float(logistic_blend)
         l2_value = _as_float(l2)
+        ramp_value = _as_float(ramp)
         xi_window_value = _as_float(xi_window)
         xi_strength_value = _as_float(xi_strength)
         if shrinkage_value < 0:
@@ -97,6 +115,10 @@ class EmpiricalMinutesV2:
             raise ValueError(f"logistic_blend must be in [0, 1], got {blend_value}")
         if l2_value < 0:
             raise ValueError(f"l2 must be non-negative, got {l2_value}")
+        if ramp_value < 0:
+            raise ValueError(
+                f"return_ramp_games must be non-negative, got {ramp_value}"
+            )
         if not isinstance(soft, bool):
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
         if not isinstance(overlay, bool):
@@ -123,6 +145,7 @@ class EmpiricalMinutesV2:
         self._soft_strength = strength_value
         self._logistic_blend = blend_value
         self._l2 = l2_value
+        self._return_ramp_games = ramp_value
         self._use_injury_overlay = overlay
         self._use_availability_gate = avail_gate
         self._predicted_xi = predicted_xi
@@ -160,12 +183,13 @@ class EmpiricalMinutesV2:
         self._long_beta = np.zeros(_LONG_DIM, dtype=np.float64)
         if stats.is_empty():
             return
+        tagged = annotate_absences(view, stats)
         start_counts: dict[str, np.ndarray] = {}
         sub_counts: dict[str, np.ndarray] = {}
         seen: dict[str, int] = {}
         started: dict[str, int] = {}
         subbed: dict[str, int] = {}
-        for key, group in stats.group_by("player_key", maintain_order=True):
+        for key, group in tagged.group_by("player_key", maintain_order=True):
             player = int(key[0])
             position = self._position.get(player, "UNK")
             self._remember_player(player, group)
@@ -183,7 +207,7 @@ class EmpiricalMinutesV2:
             self._position_sub[position] = normalise(
                 sub_counts.get(position), SUB_FALLBACK
             )
-        training = _training_rows(view, stats, self._windows)
+        training = _training_rows(view, tagged, self._windows)
         if training.height > 0:
             start_x = np.column_stack(
                 [
@@ -266,7 +290,12 @@ class EmpiricalMinutesV2:
             # early-season fits do not ignore role stickiness.
             blend = self._logistic_blend
             blended = blend * raw_start + (1.0 - blend) * base_start
-            p_start[index] = blended * gate
+            ramp = return_ramp_factor(
+                features.get("games_since_return", 0.0),
+                features.get("absence_length", 0.0),
+                self._return_ramp_games,
+            )
+            p_start[index] = blended * ramp * gate
             p_sub[index] = base_sub * gate * (1.0 - blended)
             p_long[index] = raw_long
             start_hist[index] = shrunk(
@@ -310,28 +339,8 @@ class EmpiricalMinutesV2:
     def _remember_player(self, player: int, group: pl.DataFrame) -> None:
         minutes = group["minutes"].to_numpy()
         starts = group["starts"].to_numpy()
-        features: dict[str, float] = {}
-        for window in self._windows:
-            recent = group.tail(window)
-            n = recent.height
-            rate = float((recent["starts"] > 0).sum() / n) if n else 0.0
-            features[f"starts_share_{window}"] = rate
-            features[f"minutes_mean_{window}"] = (
-                _as_float(recent["minutes"].mean()) if n else 0.0
-            )
-        recent5 = group.tail(5)
-        if recent5.height >= 2:
-            features["minutes_std_5"] = _as_float(recent5["minutes"].std())
-        else:
-            features["minutes_std_5"] = 0.0
-        recent = group.tail(max(self._windows))
-        n = recent.height
-        start_arr = recent["starts"].to_numpy()
-        minute_arr = recent["minutes"].to_numpy()
-        self._player_rate[player] = (
-            float(np.sum(start_arr > 0) / n) if n else 0.0,
-            float(np.sum((start_arr == 0) & (minute_arr > 0)) / n) if n else 0.0,
-        )
+        features = available_rolling_shares(group, self._windows)
+        self._player_rate[player] = available_rate(group)
         self._player_features[player] = features
         self._player_start[player] = counts(minutes[starts > 0])
         self._player_sub[player] = counts(minutes[(starts == 0) & (minutes > 0)])
@@ -347,6 +356,8 @@ _START_FEATURE_COLS = [
     "is_dgw",
     "price",
     "opp_strength",
+    "games_since_return",
+    "absence_length",
 ]
 _LONG_FEATURE_COLS = [
     "minutes_mean_5",
@@ -363,6 +374,8 @@ def _empty_player_features() -> dict[str, float]:
         "starts_share_10": 0.0,
         "minutes_mean_5": 0.0,
         "minutes_std_5": 0.0,
+        "games_since_return": 0.0,
+        "absence_length": 0.0,
     }
 
 
@@ -383,15 +396,29 @@ def _accumulate_position(
         start_rows
     )
     sub_counts[position] = sub_counts.get(position, np.zeros(WIDTH)) + counts(sub_rows)
-    seen[position] = seen.get(position, 0) + len(group)
-    started[position] = started.get(position, 0) + int(len(start_rows))
-    subbed[position] = subbed.get(position, 0) + int(len(sub_rows))
+    # Rate denominator excludes injury / suspension absences (P4).
+    available = (
+        group.filter(~pl.col("is_absence")) if "is_absence" in group.columns else group
+    )
+    avail_minutes = available["minutes"].to_numpy()
+    avail_starts = available["starts"].to_numpy()
+    avail_start_rows = avail_minutes[avail_starts > 0]
+    avail_sub_rows = avail_minutes[(avail_starts == 0) & (avail_minutes > 0)]
+    seen[position] = seen.get(position, 0) + available.height
+    started[position] = started.get(position, 0) + int(len(avail_start_rows))
+    subbed[position] = subbed.get(position, 0) + int(len(avail_sub_rows))
 
 
 def _training_rows(
     view: PITView, stats: pl.DataFrame, windows: tuple[int, ...]
 ) -> pl.DataFrame:
-    """Shifted rolling features joined to fixture context for logistic fit."""
+    """Shifted rolling features joined to fixture context for logistic fit.
+
+    Rolling start / minutes windows skip absence rows (null them before the
+    rolling mean) so injury zeros do not dilute the share. Return features
+    are shifted so row *t* sees ``games_since_return`` / ``absence_length``
+    from appearances strictly before *t*.
+    """
     empty = pl.DataFrame(
         schema={
             "y_start": pl.Float64(),
@@ -403,14 +430,25 @@ def _training_rows(
     if stats.is_empty():
         return empty
     ordered = stats.sort(["player_key", "available_at"])
+    if "is_absence" not in ordered.columns:
+        ordered = ordered.with_columns(pl.lit(False).alias("is_absence"))
+    # Null starts/minutes on absences so rolling means ignore them.
+    masked = ordered.with_columns(
+        pl.when(pl.col("is_absence"))
+        .then(None)
+        .otherwise((pl.col("starts") > 0).cast(pl.Float64))
+        .alias("_start_flag"),
+        pl.when(pl.col("is_absence"))
+        .then(None)
+        .otherwise(pl.col("minutes").cast(pl.Float64))
+        .alias("_minutes_avail"),
+    )
     exprs: list[pl.Expr] = []
-    shifted_starts = pl.col("starts").shift(1)
-    shifted_minutes = pl.col("minutes").shift(1)
+    shifted_starts = pl.col("_start_flag").shift(1)
+    shifted_minutes = pl.col("_minutes_avail").shift(1)
     for window in (3, 5, 10):
         exprs.append(
-            (shifted_starts > 0)
-            .cast(pl.Float64)
-            .rolling_mean(window_size=window, min_samples=1)
+            shifted_starts.rolling_mean(window_size=window, min_samples=1)
             .over("player_key")
             .alias(f"starts_share_{window}")
         )
@@ -424,9 +462,11 @@ def _training_rows(
         .over("player_key")
         .alias("minutes_std_5")
     )
-    rolled = ordered.with_columns(exprs).drop_nulls(
-        subset=["starts_share_3", "starts_share_5", "starts_share_10"]
-    )
+    rolled = masked.with_columns(exprs)
+    return_rows = _shifted_return_features(ordered)
+    rolled = rolled.join(
+        return_rows, on=["player_key", "fixture_id"], how="left"
+    ).drop_nulls(subset=["starts_share_3", "starts_share_5", "starts_share_10"])
     if rolled.is_empty():
         return empty
     context = _fixture_context(view)
@@ -465,6 +505,12 @@ def _training_rows(
             (pl.col("price").cast(pl.Float64) / 100.0).fill_null(0.5).alias("price"),
             (pl.col("minutes_std_5").fill_null(0.0) / 90.0).alias("minutes_std_5"),
             (pl.col("minutes_mean_5").fill_null(0.0) / 90.0).alias("minutes_mean_5"),
+            (pl.col("games_since_return").fill_null(0.0).clip(0.0, 10.0) / 10.0).alias(
+                "games_since_return"
+            ),
+            (pl.col("absence_length").fill_null(0.0).clip(0.0, 10.0) / 10.0).alias(
+                "absence_length"
+            ),
         )
     )
     ratings = _opponent_ratings(view)
@@ -489,10 +535,41 @@ def _training_rows(
             "is_dgw",
             "price",
             "opp_strength",
+            "games_since_return",
+            "absence_length",
             "minutes_mean_5",
         )
         .drop_nulls()
     )
+
+
+def _shifted_return_features(ordered: pl.DataFrame) -> pl.DataFrame:
+    """Per-row return metrics from appearances strictly before that row."""
+    rows: list[dict[str, float | int]] = []
+    for key, group in ordered.group_by("player_key", maintain_order=True):
+        player = int(key[0])
+        flags = [bool(flag) for flag in group["is_absence"].to_list()]
+        fixtures = group["fixture_id"].to_list()
+        for index, fixture in enumerate(fixtures):
+            gsr, alen = return_metrics(flags[:index])
+            rows.append(
+                {
+                    "player_key": player,
+                    "fixture_id": int(fixture),
+                    "games_since_return": gsr,
+                    "absence_length": alen,
+                }
+            )
+    if not rows:
+        return pl.DataFrame(
+            schema={
+                "player_key": pl.Int64(),
+                "fixture_id": pl.Int64(),
+                "games_since_return": pl.Float64(),
+                "absence_length": pl.Float64(),
+            }
+        )
+    return pl.DataFrame(rows)
 
 
 def _fixture_context(view: PITView) -> pl.DataFrame:
@@ -706,6 +783,8 @@ def _start_vector(features: dict[str, float], row: dict[str, object]) -> np.ndar
             _as_float(row["is_dgw"]),
             _as_float(row["price"]),
             _as_float(row["opp_strength"]),
+            scale_return_feature(features.get("games_since_return", 0.0)),
+            scale_return_feature(features.get("absence_length", 0.0)),
         ],
         dtype=np.float64,
     )

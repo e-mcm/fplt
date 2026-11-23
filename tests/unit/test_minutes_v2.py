@@ -46,6 +46,7 @@ def _spec(**params: object) -> ModelSpec:
             "soft_squad_strength": 0.5,
             "logistic_blend": 0.5,
             "l2": 1.0,
+            "return_ramp_games": 2.0,
             **params,
         },
     )
@@ -57,6 +58,7 @@ def test_spec_registers_as_a_component() -> None:
     assert specs["empirical_minutes_v2"].params["windows"] == [3, 5, 10]
     assert specs["empirical_minutes_v2"].params["soft_squad"] is True
     assert specs["empirical_minutes_v2"].params["logistic_blend"] == 0.5
+    assert specs["empirical_minutes_v2"].params["return_ramp_games"] == 2.0
 
 
 def test_a_regular_starter_puts_mass_on_sixty_plus(tmp_path: Path) -> None:
@@ -203,6 +205,8 @@ def test_bad_params_are_refused() -> None:
         EmpiricalMinutesV2(_spec(logistic_blend=1.5))
     with pytest.raises(ValueError, match="l2"):
         EmpiricalMinutesV2(_spec(l2=-1))
+    with pytest.raises(ValueError, match="return_ramp_games"):
+        EmpiricalMinutesV2(_spec(return_ramp_games=-1))
     with pytest.raises(ValueError, match="shrinkage"):
         EmpiricalMinutesV2(_spec(shrinkage=-1))
     with pytest.raises(ValueError, match="doubtful"):
