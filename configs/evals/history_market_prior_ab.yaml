@@ -1,0 +1,58 @@
+# History rating prior (feature-eval-pipeline §5.1) vs vanilla dc_layered_v2.
+# Championship bakeoff was descriptive only — this EvalSpec is the promote path.
+# odds_history_join coverage is not implemented yet; run ungated and audit
+# past-close joins in the recommendation (or land the gate in a follow-up PR).
+name: history_market_prior_ab
+kind: config
+question: >
+  Does a Gaussian history rating prior from past PIT-visible closes
+  (market_prior_source=history) improve player RMSE vs dc_layered_v2?
+description: >
+  Deadline-safe history prior. Control keeps production dc_layered_v2
+  (all market strengths off). Treatment dc_layered_history_v1.
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: score
+  control_kind: dixon_coles
+  treatment_kind: dixon_coles
+  tables: [match_odds]
+  features: []
+  allow_multi_lever: true
+  diff:
+    - "components.score.params.market_prior_strength: 0 → 1.0"
+    - "components.score.params.market_prior_source: absent → history"
+  notes: >
+    Past closes are deadline-visible (available_at=kickoff of finished matches).
+    Not the predict-time λ blend (dc_layered_odds_v1) and not closing_proxy
+    on target fixtures. Coverage gate odds_history_join TBD — min_coverage
+    left null until that metric lands.
+
+control: dc_layered_v2
+treatment: dc_layered_history_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse, spearman]
+    components_any: [rps, logloss]
+  drop_if:
+    mean_ppg_gate_fail: true
+
+report:
+  title: "History rating prior vs dc_layered_v2"
+  store_doc: null
