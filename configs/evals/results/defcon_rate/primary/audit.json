@@ -1,0 +1,32 @@
+{
+  "config": {
+    "control": {
+      "model_id": "b12aad1575ff0d34",
+      "name": "dc_layered_v2"
+    },
+    "treatment": {
+      "model_id": "f1737b858fb59aa8",
+      "name": "dc_layered_defcon_rate_v1"
+    }
+  },
+  "data": {},
+  "eval_name": "defcon_rate_ab",
+  "git_dirty": false,
+  "git_sha": "193c0cd3bd416354f5fad485553637dd913845b7",
+  "n_sims": 10000,
+  "note": "Full audit.json was not archived; hashes reconstructed from recommendation.md",
+  "reconstructed_from": "internal/defcon-rate-promote/primary-recommendation.md",
+  "uv_lock_sha256": "e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73",
+  "verdict": "inconclusive",
+  "window": {
+    "from_gw": 1,
+    "modes": [
+      "walk_forward"
+    ],
+    "seasons": [
+      "2025-26"
+    ],
+    "seasons_back": 4,
+    "to_gw": 38
+  }
+}

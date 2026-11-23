@@ -19,8 +19,9 @@ change:
     - "components.minutes.params.predicted_xi: false → true"
   notes: >
     Control dc_layered_v2. Treatment dc_layered_predicted_xi_v1.
-    Needs staged predicted_lineups visible before deadline inside the KO
-    window. Preflight: score_predicted_starts before claiming keep.
+    Needs staged predicted_lineups visible before deadline. Empty tables fail
+    coverage preflight (predicted_lineups_pit). Preflight: score_predicted_starts
+    before claiming keep.
 
 control: dc_layered_v2
 treatment: dc_layered_predicted_xi_v1
@@ -31,6 +32,10 @@ window:
   to_gw: 10
   seasons_back: 4
   modes: [walk_forward]
+  note: >
+    GW1–10 is thin/S1 smoke only — never a keep or confirmation window.
+    Pre-deadline lineups are often missing here; expect coverage preflight
+    fail until finished GWs have archived predicted_lineups.
 
 suites:
   prediction: true
@@ -39,7 +44,11 @@ suites:
   steps: 1
 
 gates:
-  min_coverage: null
+  min_coverage: 0.01
+  allow_low_coverage: false
+  coverage:
+    metric: predicted_lineups_pit
+    read: strict_pit
   keep_if:
     prediction_any: [rmse, mae]
     components_any: [brier_played, brier_60]
