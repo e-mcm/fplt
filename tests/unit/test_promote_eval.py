@@ -1531,7 +1531,38 @@ def test_cs_only_eval_spec_loads_from_configs() -> None:
     assert spec.gates.coverage.read == "prematch_scheduled"
     assert spec.gates.min_coverage == 0.80
     assert spec.suites.components is True
+    assert spec.suites.prediction is False
     assert "brier_cs_home" in (spec.gates.keep_if.components_any or [])
+
+
+def test_cs_only_player_rmse_eval_spec_loads_from_configs() -> None:
+    """FDB-239: prediction+components CS-only revisit under protocol windows."""
+    spec = load_eval_spec("cs_only_player_rmse_ab")
+    assert spec.kind == "data"
+    assert spec.control == "dc_layered_v3"
+    assert spec.treatment == "dc_layered_cs_v1"
+    assert spec.change.orientation == "opt_in"
+    assert spec.change.allow_multi_lever is False
+    assert spec.claim == "forecasts"
+    assert spec.gates.coverage.read == "prematch_scheduled"
+    assert spec.gates.coverage.metric == "odds_join"
+    assert spec.gates.min_coverage == 0.80
+    assert spec.suites.prediction is True
+    assert spec.suites.components is True
+    assert spec.suites.decisions is False
+    assert spec.window.from_gw == 1
+    assert spec.window.to_gw == 20
+    assert "Development" in spec.window.note or "development" in spec.window.note
+    assert "rmse" in (spec.gates.keep_if.prediction_any or [])
+    assert "brier_cs_home" in (spec.gates.keep_if.components_any or [])
+    assert "brier_cs_away" in (spec.gates.keep_if.components_any or [])
+    from fplt.models.spec import load_model_specs
+
+    treatment = load_model_specs()[spec.treatment]
+    score = treatment.components["score"]
+    assert score.params["market_cs_strength"] == 0.5
+    assert score.params.get("use_closing_proxy", False) is False
+    assert "market_1x2_strength" not in score.params
 
 
 def test_prematch_1x2_eval_spec_loads_from_configs() -> None:
