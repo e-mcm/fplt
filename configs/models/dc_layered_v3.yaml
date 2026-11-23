@@ -40,6 +40,7 @@ components:
       soft_squad_strength: 0.5
       logistic_blend: 0.5
       l2: 1.0
+      return_ramp_games: 2.0
   involvement:
     name: involvement_xg_v1
     kind: involvement_xg
