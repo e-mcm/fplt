@@ -42,6 +42,35 @@ def test_a_benched_player_is_not_given_a_goal() -> None:
     assert result.unattributed_home[0] == 3
 
 
+def test_penalty_event_awards_taker_without_assist() -> None:
+    result = _play(
+        scorelines=np.array([[1, 0]]),
+        minutes=np.array([[90.0], [90.0]]),
+        weights=[(0.0, 1.0), (1.0, 1.0)],
+        own_goal_weight=0.0,
+        p_assist=1.0,
+        seed=11,
+        p_penalty=1.0,
+        penalty_taker=np.array([True, False]),
+    )
+    assert result.goals[:, 0].tolist() == [1, 0]
+    assert int(result.assists[:, 0].sum()) == 0
+
+
+def test_penalty_event_off_keeps_open_play() -> None:
+    with_pen = _play(
+        scorelines=np.array([[1, 0]]),
+        minutes=np.array([[90.0], [90.0]]),
+        weights=[(0.0, 0.0), (1.0, 0.0)],
+        own_goal_weight=0.0,
+        p_assist=0.0,
+        seed=12,
+        p_penalty=0.0,
+        penalty_taker=np.array([True, False]),
+    )
+    assert with_pen.goals[:, 0].tolist() == [0, 1]
+
+
 def test_an_assist_goes_to_someone_else() -> None:
     result = _play(
         scorelines=np.array([[1, 0]]),
@@ -345,6 +374,8 @@ def _play(
     cs_red_void_prob: float = 0.0,
     conceded_mode: str = "scaled",
     sample_other: bool = False,
+    p_penalty: float = 0.0,
+    penalty_taker: np.ndarray | None = None,
 ):
     players = _squad(weights, sides=sides, positions=positions)
     if other is None:
@@ -361,6 +392,8 @@ def _play(
         cs_red_void_prob=cs_red_void_prob,
         conceded_mode=conceded_mode,  # type: ignore[arg-type]
         sample_other=sample_other,
+        p_penalty=p_penalty,
+        penalty_taker=penalty_taker,
     )
 
 

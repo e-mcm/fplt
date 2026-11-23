@@ -522,6 +522,22 @@ def test_involvement_xg_vs_shares_eval_loads() -> None:
     assert "--involvement-model involvement_shares_v1 involvement_xg_v1" in cmd
 
 
+def test_xg_blend_and_set_piece_evals_load() -> None:
+    blend = load_eval_spec("xg_blend_ab")
+    assert blend.control == "dc_layered_v4"
+    assert blend.treatment == "dc_layered_xg_blend_1_v1"
+    assert blend.change.lever == "hyperparam"
+    assert blend.suites.components is True
+    set_piece = load_eval_spec("set_piece_involvement_ab")
+    assert set_piece.treatment == "dc_layered_setpieces_v1"
+    assert set_piece.gates.coverage.metric == "set_piece_order_non_null"
+    event = load_eval_spec("penalty_event_involvement_ab")
+    assert event.treatment == "dc_layered_penalty_event_v1"
+    assert event.change.diff[0].startswith(
+        "components.involvement.params.use_penalty_event"
+    )
+
+
 def test_n_sims_lever_omits_skip_sims(tmp_path: Path) -> None:
     payload = _base_payload(
         name="n_sims_ab",
