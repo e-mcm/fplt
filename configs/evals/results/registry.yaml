@@ -440,3 +440,48 @@ entries:
     dc_layered_v3; opt-out fork is dc_layered_nocs_v1. Arms below are the
     keep-audit control/treatment (v3 vs cs_v1). Confirmation must use a
     fresh data_dir — shared ledger contaminates summary/HAC.
+
+- id: dynamic_covariate_ratings
+  date: '2026-11-23'
+  task: FDB-289
+  path: modelspec
+  verdict: drop
+  provisional: false
+  eval_spec: dynamic_covariate_ratings_ab
+  control: dc_layered_v4
+  treatment: dc_layered_covariate_v1
+  store_doc: dynamic-covariate-ratings-promote.md
+  windows:
+  - role: development
+    seasons: [2024-25]
+    from_gw: 1
+    to_gw: 20
+    audit: results/dynamic_covariate_ratings/development/audit.json
+    git_sha: 4f81ccf3af0c7731d5b521d0a2b342a5f9abfacc
+    git_dirty: false
+    uv_lock_sha256: e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73
+    runner_verdict: inconclusive
+    data_sha256:
+      fixtures: cec03c69b9fa996fd44bff55fe6cdf53e0b9081b70dc3302539a3bb8913c43a9
+      gameweeks: 93855742846949797a49ecc3b68ad92d7893ca07a9dd9db35ebef39070262175
+      player_fixture_stats: 459e2f755b774fc4bdf5294a036f2d94b4aaaf3c3238a8b13e9db224ab526309
+      player_status: 3c9519eae2d285c666ada5cb38074c38ef2bac038b6834156d8082da23ae9fef
+    control_model_id: 1a1a9fd52db7250e
+    treatment_model_id: 65f462314f577b0a
+  - role: confirm
+    seasons: [2024-25]
+    from_gw: 21
+    to_gw: 38
+    audit: results/dynamic_covariate_ratings/confirm/audit.json
+    git_sha: 4f81ccf3af0c7731d5b521d0a2b342a5f9abfacc
+    git_dirty: false
+    uv_lock_sha256: e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73
+    runner_verdict: inconclusive
+    data_sha256:
+      fixtures: cec03c69b9fa996fd44bff55fe6cdf53e0b9081b70dc3302539a3bb8913c43a9
+      gameweeks: 93855742846949797a49ecc3b68ad92d7893ca07a9dd9db35ebef39070262175
+      player_fixture_stats: 459e2f755b774fc4bdf5294a036f2d94b4aaaf3c3238a8b13e9db224ab526309
+      player_status: 3c9519eae2d285c666ada5cb38074c38ef2bac038b6834156d8082da23ae9fef
+    control_model_id: 1a1a9fd52db7250e
+    treatment_model_id: 65f462314f577b0a
+  notes: Mid-season rest/congestion/form covariates worse on RPS/log-loss/RMSE both windows; no PRODUCTION flip.
