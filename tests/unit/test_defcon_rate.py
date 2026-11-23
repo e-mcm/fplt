@@ -29,12 +29,28 @@ def test_defcon_rate_specs_load() -> None:
     specs = load_model_specs()
     other = specs["other_player_defcon_rate_v1"]
     assert other.params["defcon_mode"] == "rate"
-    assert other.params["defcon_bucket_minutes"]["60+"] == 75
+    assert "defcon_bucket_minutes" not in other.params
     layered = specs["dc_layered_defcon_rate_v1"]
     assert layered.components["other"].name == "other_player_defcon_rate_v1"
     assert layered.components["other"].params["defcon_mode"] == "rate"
+    assert "defcon_bucket_minutes" not in layered.components["other"].params
     # Released v1 stays on the mean wire.
     assert "defcon_mode" not in specs["other_player_v1"].params
+
+
+def test_defcon_rate_ab_is_one_param_family() -> None:
+    from fplt.backtest.promote_eval import _check_one_lever, load_eval_spec
+
+    specs = load_model_specs()
+    spec = load_eval_spec("defcon_rate_ab")
+    assert spec.control == "dc_layered_v2"
+    assert spec.treatment == "dc_layered_defcon_rate_v1"
+    assert (
+        _check_one_lever(
+            spec, specs["dc_layered_v2"], specs["dc_layered_defcon_rate_v1"]
+        )
+        == []
+    )
 
 
 def test_parse_defcon_mode_rejects_unknown() -> None:

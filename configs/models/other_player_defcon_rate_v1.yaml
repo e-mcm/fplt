@@ -1,5 +1,7 @@
 # other_player with Poisson P(DC award | minutes, position, rate).
 # Eval / promote fork (FDB-211); does not change released other_player_v1.
+# Bucket midpoints stay at code defaults (0 / 45 / 75) so the layered A/B
+# is a single hyperparam family (defcon_mode).
 name: other_player_defcon_rate_v1
 kind: other_player
 params:
@@ -7,9 +9,5 @@ params:
   shrinkage: 5
   bps_bonus_weight: 0.5
   defcon_mode: rate
-  defcon_bucket_minutes:
-    "0": 0
-    "1-59": 45
-    "60+": 75
 refit: every_gw
 seed: 0
