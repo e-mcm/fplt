@@ -10,6 +10,7 @@ from fplt.optimise.attainable import (
     enrich_decision_summary,
     foresight_predictions,
     format_attainable_scoreboard,
+    is_oracle_model_id,
     oracle_ledger_model_id,
     run_hindsight_oracle,
     simulate_hindsight_oracle,
@@ -24,6 +25,12 @@ from fplt.optimise.lineup import (
     select_lineup_scenarios,
 )
 from fplt.optimise.plan import GameweekPlan, plan_squad
+from fplt.optimise.regret_board import (
+    RegretBoardResult,
+    format_regret_report,
+    run_regret_board,
+    write_regret_board,
+)
 from fplt.optimise.season_optimiser import (
     FplOptimizationToolsAdapter,
     IdentityReferenceOptimiser,
@@ -70,21 +77,26 @@ __all__ = [
     "enrich_decision_summary",
     "foresight_predictions",
     "format_attainable_scoreboard",
+    "format_regret_report",
     "freeze_reference_state",
     "horizon_points",
     "inspect_horizon_picks",
+    "is_oracle_model_id",
     "load_squad_state",
     "locked_fifteen_issue",
     "optimize_transfers",
     "oracle_ledger_model_id",
     "plan_squad",
     "rebuild_squad_state",
+    "RegretBoardResult",
     "reoptimize_plan_lineups",
     "run_hindsight_oracle",
+    "run_regret_board",
     "select_lineup_expected",
     "select_lineup_scenarios",
     "select_squad",
     "simulate_hindsight_oracle",
     "squad_position_counts",
     "summarise_attainable",
+    "write_regret_board",
 ]
