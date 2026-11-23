@@ -13,6 +13,7 @@ from fplt.optimise.attainable import (
     enrich_decision_summary,
     foresight_predictions,
     format_attainable_scoreboard,
+    oracle_ledger_model_id,
     simulate_hindsight_oracle,
     summarise_attainable,
 )
@@ -54,6 +55,12 @@ def test_foresight_predictions_expose_future_actuals() -> None:
     assert foresight_predictions(actuals.clear(), [1]).is_empty()
     with pytest.raises(ValueError, match="missing columns"):
         foresight_predictions(pl.DataFrame({"gw": [1]}), [1])
+
+
+def test_oracle_ledger_model_id_encodes_chip_arm() -> None:
+    assert oracle_ledger_model_id("off") == ORACLE_MODEL_ID
+    assert oracle_ledger_model_id("optimised") == f"{ORACLE_MODEL_ID}::chip_optimised"
+    assert oracle_ledger_model_id("rule_based") == f"{ORACLE_MODEL_ID}::chip_rule_based"
 
 
 def test_hindsight_oracle_beats_or_matches_blind_policy() -> None:
@@ -102,6 +109,37 @@ def test_hindsight_oracle_beats_or_matches_blind_policy() -> None:
     oracle_total = int(summarise_decisions(oracle)["total_points"][0])
     assert oracle_total >= policy_total
     assert 0.0 <= attainable_share(policy_total, oracle_total) <= 1.0
+
+
+def test_hindsight_oracle_optimised_chips_beats_chips_off() -> None:
+    """Optimised chips-on hindsight should not score below chips-off."""
+    candidates, actuals, fixtures = _chip_toy()
+    off = simulate_hindsight_oracle(
+        candidates,
+        actuals,
+        _state(),
+        season="2024-25",
+        gameweeks=[1, 2, 3],
+        horizon=2,
+        chip_arm="off",
+    )
+    on = simulate_hindsight_oracle(
+        candidates,
+        actuals,
+        _state(),
+        season="2024-25",
+        gameweeks=[1, 2, 3],
+        horizon=2,
+        chip_arm="optimised",
+        fixtures=fixtures,
+        force_play=False,
+    )
+    assert on["model_id"].unique().to_list() == [oracle_ledger_model_id("optimised")]
+    chips_played = [c for c in on["chip"].unique().to_list() if c is not None]
+    assert chips_played, "optimised hindsight should play at least one chip"
+    off_total = int(summarise_decisions(off)["total_points"][0])
+    on_total = int(summarise_decisions(on)["total_points"][0])
+    assert on_total >= off_total
 
 
 def test_captaincy_regret_counts_best_armband_in_xi() -> None:
@@ -186,6 +224,45 @@ def _pool() -> pl.DataFrame:
             )
             player += 1
     return pl.DataFrame(rows)
+
+
+def _chip_toy() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Three-GW toy season with a DGW so the chip scheduler has a landmark."""
+    cand_rows: list[dict[str, object]] = []
+    act_rows: list[dict[str, object]] = []
+    player = 1
+    for club in range(1, 7):
+        for position in ("GK", "DEF", "DEF", "MID", "FWD"):
+            for gw in (1, 2, 3):
+                # Haul in GW2 so TC/BB has something to amplify under foresight.
+                pts = 15 if gw == 2 and position == "FWD" and club == 6 else 2 + gw
+                cand_rows.append(
+                    {
+                        "gw": gw,
+                        "player_key": player,
+                        "position": position,
+                        "team_key": club,
+                        "price": 40 + club,
+                    }
+                )
+                act_rows.append(
+                    {
+                        "gw": gw,
+                        "player_key": player,
+                        "actual_pts": pts,
+                        "actual_minutes": 90,
+                    }
+                )
+            player += 1
+    fixtures = pl.DataFrame(
+        {
+            "season": ["2024-25", "2024-25", "2024-25", "2024-25"],
+            "gw": [2, 2, 3, 3],
+            "team_h_key": [1, 1, 2, 3],
+            "team_a_key": [2, 3, 4, 5],
+        }
+    )
+    return pl.DataFrame(cand_rows), pl.DataFrame(act_rows), fixtures
 
 
 def _decision_gw(
