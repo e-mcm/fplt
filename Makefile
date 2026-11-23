@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -89,6 +89,15 @@ eval-components:
 minutes-brier:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make minutes-brier SEASON=2024-25"; exit 1; fi
 	uv run fplt eval-components --season $(SEASON) --minutes-only $(ARGS)
+
+# ── Minutes measurement split + misses (snapshot GWs; FDB-246) ────────────────
+# Usage: make minutes-measure SEASON=2025-26
+# Optional: ARGS='--from-gw 1 --to-gw 19 --minutes-model empirical_minutes_v2'
+# Writes availability/rotation/early-sub Brier+log, xPts-weighted decision-pool
+# Brier, and weekly |ΔP(start)|×xPts misses under $$FPLT_DATA_DIR/minutes_measurement/.
+minutes-measure:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make minutes-measure SEASON=2025-26"; exit 1; fi
+	uv run fplt minutes-measure --season $(SEASON) $(ARGS)
 
 # ── Forecast skill by lead time (MAE/RMSE for H=1…STEPS; wraps compare) ────────
 # Usage: make horizon-skill SEASON=2024-25

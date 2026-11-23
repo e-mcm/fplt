@@ -445,10 +445,11 @@ Decision level — what actually matters:
 Component level (layered models):
 - Scorelines: ranked probability score and log-loss vs a no-skill Poisson baseline
 - Minutes: Brier score on P(played) and P(60+), reported by stats `source` (snapshot vs vaastav)
+- **Minutes measurement split (FDB-246):** on snapshot rows (`source=fpl_api`) only, Brier + log score for played / ≥60 / start sliced by error regime (`availability` / `rotation` / `early_sub`), FPL flag, position, and returning-from-absence; xPts-weighted Brier on the decision-relevant pool; weekly misses ranked by `|ΔP(start)| × xPts`. Library `fplt.backtest.minutes_measurement`; CLI `fplt minutes-measure` / `make minutes-measure`. Does not change minutes model params or start keep A/Bs.
 - Involvement: MAE of predicted team goal share vs realised share among players with minutes
 - Monte Carlo: `n_sims` stability sweep (mean/max \|Δxpts\| vs a high-`n` reference, wall time, analytic SE)
 - **Skill by horizon (Wave C4 / M9):** player xPts MAE/RMSE on the decision-relevant pool for lead times H=1…N (`DEFAULT_SKILL_STEPS` = 10). Reuses `compare_models` / `overall_summary`. CLI: `fplt eval-components --points-models … --steps 10` or `fplt horizon-skill` / `make horizon-skill`. Does **not** flip `DEFAULT_PLAN_HORIZON`; chips-on H retune is a season-points decision board (FDB-120).
-- CLI: `fplt eval-components` / `make eval-components` (P0 harness)
+- CLI: `fplt eval-components` / `make eval-components` (P0 harness); `fplt minutes-measure` / `make minutes-measure` (measurement split)
 
 ### 7.4 Promote-eval (control vs treatment)
 
