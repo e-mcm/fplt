@@ -398,6 +398,14 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     decisions.add_argument(
+        "--no-lineup-reopt",
+        action="store_true",
+        help=(
+            "Keep the raw MILP XI / captain / vice (ablation; default re-opts "
+            "lineups via EV after the transfer solve)"
+        ),
+    )
+    decisions.add_argument(
         "--price-forecast",
         choices=["flat", "mean_gw_delta"],
         default=None,
@@ -1663,6 +1671,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 simulate=not bool(args.summarise_only),
                 max_mean_ppg=None if max_mean <= 0 else max_mean,
                 force_play=not bool(args.no_force_play),
+                lineup_reopt=not bool(args.no_lineup_reopt),
                 price_forecast_method=args.price_forecast,
             )
             print(format_chip_decision_scoreboard(summary))

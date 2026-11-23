@@ -227,6 +227,7 @@ def simulate_decisions(
     chip_windows: ChipUseWindows | None = None,
     fixtures: pl.DataFrame | None = None,
     force_play: bool = True,
+    lineup_reopt: bool = True,
     chip_windows_log: dict[int, ChipUseWindows] | None = None,
     price_forecast_method: PriceForecastMethod | None = None,
     store: DataStore | None = None,
@@ -253,6 +254,9 @@ def simulate_decisions(
         fixtures: Staged fixtures for rule-based / scheduled windows.
         force_play: When true (default), the optimised arm force-packs
             remaining half-window chips. Ignored for ``off`` / ``rule_based``.
+        lineup_reopt: When true (default), re-choose XI / captain / vice after
+            the transfer MILP via EV (or SAA when scenarios are passed into
+            ``plan_squad``). Pass false for a raw-MILP lineup ablation.
         chip_windows_log: Optional mutable map filled with each deadline's
             ``ChipUseWindows`` (for ``ledger/chip_windows`` / explain dumps).
         price_forecast_method: Within-horizon list-price forecast. ``None``
@@ -343,6 +347,7 @@ def simulate_decisions(
             chip_windows=active_windows if chip_arm != "off" else None,
             chip_rules_season=rules_season if chip_arm != "off" else None,
             warm_start=prior_plan,
+            lineup_reopt=lineup_reopt,
             price_forecast=forecast,
         )
         logger.info(
@@ -812,6 +817,7 @@ def run_decisions(
     chip_arm: ChipArm = "off",
     chip_rules_season: str | None = None,
     force_play: bool = True,
+    lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
@@ -830,6 +836,8 @@ def run_decisions(
         chip_arm: Chip policy for this run (default chips off).
         chip_rules_season: Chip-rules season when chips are on.
         force_play: Forwarded to the optimised chip scheduler (default true).
+        lineup_reopt: Forwarded to ``plan_squad`` (default true; pass false
+            for a raw-MILP lineup ablation).
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
 
@@ -887,6 +895,7 @@ def run_decisions(
         chip_rules_season=chip_rules_season,
         fixtures=fixtures,
         force_play=force_play,
+        lineup_reopt=lineup_reopt,
         chip_windows_log=windows_log,
         price_forecast_method=price_forecast_method,
         store=store,
@@ -915,6 +924,7 @@ def run_chip_decision_board(
     simulate: bool = True,
     max_mean_ppg: float | None = None,
     force_play: bool = True,
+    lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
@@ -937,6 +947,8 @@ def run_chip_decision_board(
         max_mean_ppg: Optional mean pts/GW sanity gate.
         force_play: When true (default), optimised arms force-pack remaining
             half-window chips. Pass false for a no-force-play ablation.
+        lineup_reopt: When true (default), post-MILP EV/SAA lineup re-opt.
+            Pass false for a raw-MILP XI/captain ablation.
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
 
@@ -956,12 +968,13 @@ def run_chip_decision_board(
             for arm in arms:
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
-                    "force_play=%s price_forecast=%s",
+                    "force_play=%s lineup_reopt=%s price_forecast=%s",
                     name,
                     arm,
                     season,
                     rules_season,
                     force_play,
+                    lineup_reopt,
                     price_forecast_method,
                 )
                 run_decisions(
@@ -974,6 +987,7 @@ def run_chip_decision_board(
                     chip_arm=arm,
                     chip_rules_season=rules_season,
                     force_play=force_play,
+                    lineup_reopt=lineup_reopt,
                     price_forecast_method=price_forecast_method,
                 )
     specs = load_model_specs()
