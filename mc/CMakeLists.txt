@@ -32,10 +32,18 @@ set(FPLT_MC_GIT_SHA "unknown")
 execute_process(
   COMMAND git rev-parse --short HEAD
   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-  OUTPUT_VARIABLE FPLT_MC_GIT_SHA
+  OUTPUT_VARIABLE _git_sha
   OUTPUT_STRIP_TRAILING_WHITESPACE
   ERROR_QUIET
+  RESULT_VARIABLE _git_rc
 )
+if(_git_rc EQUAL 0 AND NOT _git_sha STREQUAL "")
+  set(FPLT_MC_GIT_SHA "${_git_sha}")
+endif()
+# scikit-build / PEP517 isolated builds often lack .git; allow override from CI.
+if(DEFINED ENV{GITHUB_SHA} AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
+  string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 FPLT_MC_GIT_SHA)
+endif()
 
 set(FPLT_MC_VERSION "${PROJECT_VERSION}")
 if(NOT FPLT_MC_VERSION OR FPLT_MC_VERSION STREQUAL "")

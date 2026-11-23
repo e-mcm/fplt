@@ -18,7 +18,8 @@ def test_build_info_keys() -> None:
     info = fplt_mc.build_info()
     for key in ("version", "git_sha", "kernel_api", "compiler", "flags", "rng"):
         assert key in info
-        assert info[key]
+        assert isinstance(info[key], str)
+        assert info[key]  # non-empty (git_sha may be "unknown" in isolated builds)
     assert info["kernel_api"] == str(fplt_mc.KERNEL_API)
     assert info["version"] == "0.1.0"
 
