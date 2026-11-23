@@ -13,12 +13,14 @@ from fplt.optimise.attainable import (
     enrich_decision_summary,
     foresight_predictions,
     format_attainable_scoreboard,
+    is_oracle_model_id,
     oracle_ledger_model_id,
     simulate_hindsight_oracle,
     summarise_attainable,
 )
 from fplt.optimise.decisions import simulate_decisions
 from fplt.optimise.realised import format_decision_scoreboard, summarise_decisions
+from fplt.optimise.regret_board import format_regret_report
 from fplt.optimise.state import SquadState
 
 
@@ -61,6 +63,55 @@ def test_oracle_ledger_model_id_encodes_chip_arm() -> None:
     assert oracle_ledger_model_id("off") == ORACLE_MODEL_ID
     assert oracle_ledger_model_id("optimised") == f"{ORACLE_MODEL_ID}::chip_optimised"
     assert oracle_ledger_model_id("rule_based") == f"{ORACLE_MODEL_ID}::chip_rule_based"
+    assert is_oracle_model_id(ORACLE_MODEL_ID)
+    assert is_oracle_model_id(oracle_ledger_model_id("optimised"))
+    assert not is_oracle_model_id("dc_layered_v2::chip_optimised")
+
+
+def test_chip_timing_regret_when_tc_beats_chosen_captain_chip() -> None:
+    """Bench Boost on a haul-heavy bench beats no scoring chip."""
+    picks = _decision_gw(
+        xi_pts=[2, 3, 4, 5, 1, 1, 1, 1, 1, 1, 2],
+        captain_index=1,
+        bench_mid_pts=9,
+    ).with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
+    # Mark season as chips-on by playing TC on a weak captain week elsewhere —
+    # use BB here so the local opt prefers Bench Boost.
+    picks = picks.with_columns(pl.lit("3xc").alias("chip"))
+    # Captain has only 3 pts; BB adds the 9-pt bench mid → better than TC (+6).
+    regret = component_regret(picks)
+    assert regret["chip_timing_regret"][0] is not None
+    assert int(regret["chip_timing_regret"][0]) >= 3
+
+
+def test_summarise_attainable_accepts_chips_on_oracle_id() -> None:
+    gw1 = _decision_gw(xi_pts=[2] * 11, captain_index=0)
+    decisions = gw1.with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
+    oracle = decisions.with_columns(
+        pl.lit(oracle_ledger_model_id("optimised")).alias("model_id"),
+        pl.when(pl.col("captain"))
+        .then(pl.lit(20))
+        .otherwise(pl.col("actual_pts"))
+        .alias("actual_pts"),
+    )
+    full = summarise_attainable(decisions, oracle)
+    assert full.height == 1
+    assert full["attainable_points"][0] > full["total_points"][0]
+
+
+def test_format_regret_report_lists_components() -> None:
+    gw1 = _decision_gw(xi_pts=[2] * 11, captain_index=0)
+    decisions = gw1.with_columns(pl.lit("bboost").alias("chip"))
+    oracle = decisions.with_columns(pl.lit(ORACLE_MODEL_ID).alias("model_id"))
+    summary = summarise_attainable(decisions, oracle)
+    per_gw = component_regret(decisions)
+    text = format_regret_report(
+        summary,
+        per_gw,
+        meta={"season": "2024-25", "policy_points": 10, "oracle_points": 20},
+    )
+    assert "Captaincy" in text
+    assert "Chip timing" in text
 
 
 def test_oracle_pin_rejects_bad_fields() -> None:

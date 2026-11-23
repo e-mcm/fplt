@@ -7,7 +7,10 @@ budget, squad composition, and FPL 50% sell-on selling prices (as-of staged
 ``player_status`` prices; within-horizon forecasts off by default) as the
 decision bakeoff. Default chip policy is ``off`` (N5 board / ``--with-oracle``);
 pass ``chip_arm="optimised"`` (and fixtures) for a chips-on attainable ceiling.
-``chip_timing_regret`` remains a placeholder while chips are off.
+
+Chip timing regret is computed when the decision frame played any chip
+(Bench Boost / Triple Captain local opt on the owned XV). While chips are
+off for the whole season the column stays null (``status="chips_off"``).
 
 Share of attainable points = realised season total ÷ oracle season total.
 
@@ -28,7 +31,11 @@ from fplt.backtest.ledger import read_predictions
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.chip_windows import ChipArm, chip_arm_model_id
+from fplt.optimise.chip_windows import (
+    ChipArm,
+    chip_arm_model_id,
+    parse_chip_arm_model_id,
+)
 from fplt.optimise.decisions import (
     candidates_as_of,
     simulate_decisions,
@@ -48,6 +55,7 @@ from fplt.scoring.chips import ChipRules, empty_remaining
 from fplt.types import GWKey
 
 ORACLE_MODEL_ID = "hindsight_oracle_v1"
+_SCORING_CHIPS = frozenset({"bboost", "3xc"})
 
 __all__ = [
     "ORACLE_MODEL_ID",
@@ -60,6 +68,7 @@ __all__ = [
     "enrich_decision_summary",
     "foresight_predictions",
     "format_attainable_scoreboard",
+    "is_oracle_model_id",
     "oracle_ledger_model_id",
     "resolve_oracle_pin",
     "run_hindsight_oracle",
@@ -70,15 +79,24 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ChipTimingRegret:
-    """Placeholder for Wave C chip-timing regret.
+    """Chip-timing regret hook.
 
     While chips are off in the decision sim, ``regret`` is ``None`` and
-    ``status`` is ``\"chips_off\"``. Callers still receive a stable hook.
+    ``status`` is ``\"chips_off\"``. When chips are on, ``status`` is
+    ``\"computed\"`` and ``regret`` is non-negative points left on the table
+    vs the best scoring chip (Bench Boost / Triple Captain / none) on the
+    owned XV that gameweek.
     """
 
     chip: str | None
     regret: int | None
     status: str
+
+
+def is_oracle_model_id(model_id: str) -> bool:
+    """Return whether ``model_id`` is the hindsight oracle (any chip arm)."""
+    base, _arm = parse_chip_arm_model_id(model_id)
+    return base == ORACLE_MODEL_ID
 
 
 @dataclass(frozen=True)
@@ -268,6 +286,7 @@ def simulate_hindsight_oracle(
     chip_rules_season: str | None = None,
     fixtures: pl.DataFrame | None = None,
     force_play: bool = True,
+    lineup_reopt: bool = True,
 ) -> pl.DataFrame:
     """Play a constrained hindsight season via ``simulate_decisions``.
 
@@ -284,6 +303,7 @@ def simulate_hindsight_oracle(
             chips are on. Defaults to ``season``.
         fixtures: Staged fixtures required for ``rule_based`` / ``optimised``.
         force_play: Forwarded to the optimised chip scheduler (default true).
+        lineup_reopt: Forwarded to ``plan_squad`` (default true).
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -307,6 +327,7 @@ def simulate_hindsight_oracle(
         chip_rules_season=chip_rules_season,
         fixtures=fixtures,
         force_play=force_play,
+        lineup_reopt=lineup_reopt,
     )
 
 
@@ -322,6 +343,7 @@ def run_hindsight_oracle(
     chip_rules_season: str | None = None,
     force_play: bool = True,
     prefer_staged_actuals: bool = False,
+    lineup_reopt: bool = True,
 ) -> Path:
     """Simulate the constrained oracle from staged data and append the ledger.
 
@@ -343,6 +365,7 @@ def run_hindsight_oracle(
         chip_rules_season: Chip-rules season when chips are on.
         force_play: Optimised-arm half-window packing (default true).
         prefer_staged_actuals: Prefer staged stats over the prediction ledger.
+        lineup_reopt: Post-MILP lineup re-opt (default true; match live stack).
 
     Returns:
         The decision parquet path.
@@ -395,6 +418,7 @@ def run_hindsight_oracle(
         chip_rules_season=chip_rules_season,
         fixtures=fixtures,
         force_play=force_play,
+        lineup_reopt=lineup_reopt,
     )
     return write_decisions(data_dir, frame)
 
@@ -415,9 +439,9 @@ def chip_timing_regret(
     """Return chip-timing regret, or a chips-off placeholder.
 
     Args:
-        chips_enabled: When false (decision-sim v1), returns ``status='chips_off'``.
-        chip: Optional chip name once Wave C wires inventory.
-        regret: Points left on the table vs hindsight chip timing.
+        chips_enabled: When false, returns ``status='chips_off'``.
+        chip: Active scoring chip name when computed (``bboost`` / ``3xc``).
+        regret: Points left on the table vs best scoring chip on the XV.
 
     Returns:
         A ``ChipTimingRegret`` value object.
@@ -427,7 +451,11 @@ def chip_timing_regret(
     return ChipTimingRegret(chip=chip, regret=regret, status="computed")
 
 
-def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
+def component_regret(
+    decisions: pl.DataFrame,
+    *,
+    market: pl.DataFrame | None = None,
+) -> pl.DataFrame:
     """Compute captaincy, XI/bench, transfer, and chip-timing regret per GW.
 
     Definitions (all in realised points after autosub / vice-on-blank):
@@ -439,11 +467,20 @@ def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
       captain — isolates lineup order from captaincy.
     - **Transfers**: hindsight-optimal single-GW action from the pre-transfer
       squad (H=1, actuals as ``xpts``, same FT/hit/bank) net of hits, minus
-      the policy's realised net. Clamped at zero.
-    - **Chip timing**: ``null`` while chips are off (``chip_timing_regret``).
+      the policy's realised net. Clamped at zero. Pass ``market`` (full GW
+      candidate pool with ``price`` / ``team_key`` / actuals) for a usable
+      transfer pool; ledger-only frames without market leave transfer regret
+      at 0.
+    - **Chip timing**: when any chip was played in the season, best of
+      {none, Bench Boost, Triple Captain} on the owned XV minus the scoring
+      chip that was active (wildcard / freehit count as none for multipliers).
+      Null while chips are off for the whole frame.
 
     Args:
         decisions: Rows matching ``DecisionSchema`` for one or more models.
+        market: Optional ``gw``, ``player_key``, ``position``, ``team_key``,
+            ``price``, and optional ``actual_pts`` / ``actual_minutes`` for
+            transfer hindsight.
 
     Returns:
         A frame matching ``ComponentRegretSchema``.
@@ -473,10 +510,7 @@ def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
     if decisions.is_empty():
         return _empty_regret()
 
-    # Transfer regret needs real candidate market fields; DecisionSchema omits
-    # them, so ledger-only frames leave transfer_regret at 0.
-    has_market = "price" in decisions.columns and "team_key" in decisions.columns
-    chip = chip_timing_regret()
+    chips_on = _frame_played_chips(decisions)
     rows: list[dict[str, object]] = []
     keys = (
         decisions.select("model_id", "season", "gw")
@@ -494,9 +528,15 @@ def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
         realised = score_gameweek(part, hit=hit)
         cap_regret = _captaincy_regret(part)
         xi_regret = _xi_bench_regret(part)
-        xfer_regret = (
-            _transfer_regret(part, hit=hit, free_transfers=free) if has_market else 0
+        market_gw = _market_for_gw(market, int(gameweek))
+        xfer_regret = _transfer_regret(
+            part, hit=hit, free_transfers=free, market=market_gw
         )
+        if chips_on:
+            chip_hook = _chip_timing_regret_gw(part)
+            chip_value: int | None = chip_hook.regret
+        else:
+            chip_value = None
         rows.append(
             {
                 "model_id": str(model_id),
@@ -506,7 +546,7 @@ def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
                 "captaincy_regret": cap_regret,
                 "xi_bench_regret": xi_regret,
                 "transfer_regret": xfer_regret,
-                "chip_timing_regret": chip.regret,
+                "chip_timing_regret": chip_value,
             }
         )
     return _regret_frame(pl.DataFrame(rows))
@@ -515,12 +555,17 @@ def component_regret(decisions: pl.DataFrame) -> pl.DataFrame:
 def summarise_attainable(
     decisions: pl.DataFrame,
     oracle: pl.DataFrame,
+    *,
+    market: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Join policy season totals to the oracle and attach component regret.
 
     Args:
-        decisions: Policy decision rows (exclude the oracle model id).
-        oracle: Constrained hindsight rows (``ORACLE_MODEL_ID``).
+        decisions: Policy decision rows (exclude oracle model ids).
+        oracle: Constrained hindsight rows (``ORACLE_MODEL_ID`` or chip-arm
+            suffix).
+        market: Optional full GW candidate pool forwarded to
+            ``component_regret`` for transfer hindsight.
 
     Returns:
         A frame matching ``AttainableShareSchema``.
@@ -528,7 +573,9 @@ def summarise_attainable(
     Raises:
         ValueError: Oracle has no rows for a policy season, or columns missing.
     """
-    policy = decisions.filter(pl.col("model_id") != ORACLE_MODEL_ID)
+    policy = decisions.filter(
+        ~pl.col("model_id").map_elements(is_oracle_model_id, return_dtype=pl.Boolean)
+    )
     summary = summarise_decisions(policy)
     if summary.is_empty():
         return _empty_share()
@@ -539,7 +586,7 @@ def summarise_attainable(
         str(row["season"]): int(row["total_points"])
         for row in oracle_summary.iter_rows(named=True)
     }
-    regret = component_regret(policy)
+    regret = component_regret(policy, market=market)
     regret_tot = (
         regret.group_by("model_id", "season").agg(
             pl.col("captaincy_regret").sum(),
@@ -766,37 +813,53 @@ def _transfer_regret(
     *,
     hit: float,
     free_transfers: int,
+    market: pl.DataFrame | None = None,
 ) -> int:
     """Hindsight H=1 action from the pre-transfer squad minus policy net."""
-    if "price" not in part.columns or "team_key" not in part.columns:
+    pool_src = market if market is not None and not market.is_empty() else part
+    if "price" not in pool_src.columns or "team_key" not in pool_src.columns:
         # Decision ledger lacks candidate fields — transfer regret needs them.
         return 0
+    # Selling prices for owned players still come from the decision rows when
+    # present; otherwise fall back to market prices.
+    if "price" not in part.columns or "team_key" not in part.columns:
+        part = _attach_market_fields(part, pool_src)
     policy_net = score_gameweek(part, hit=hit)
     pre_owned, bank = _pre_transfer_state(part)
     if not pre_owned:
         # GW1 draft: transfers are not the lever; skip.
         return 0
-    pool = part.select(
+    pool = pool_src.select(
         "player_key",
         "position",
         "team_key",
         "price",
     ).unique(subset=["player_key"])
-    # Candidate pool for a single GW must include everyone we might buy.
-    # When the ledger only has kept+sold rows, the pool is incomplete — then
-    # the hindsight action can only reshuffle within those players.
-    points = (
-        part.group_by("player_key")
-        .agg(pl.col("actual_pts").sum())
-        .with_columns(
-            pl.when(pl.col("actual_pts").is_null())
-            .then(0.0)
-            .otherwise(pl.col("actual_pts").cast(pl.Float64))
-            .alias("xpts"),
-            pl.lit(0).alias("step"),
-        )
-        .select("player_key", "step", "xpts")
+    actual_by, minutes_by = _actual_maps(part, pool_src)
+    points = pl.DataFrame(
+        {
+            "player_key": list(actual_by.keys()),
+            "xpts": [float(pts) for pts in actual_by.values()],
+            "step": [0] * len(actual_by),
+        }
     )
+    # Ensure every pool player has an xpts row (missing → 0).
+    missing_keys = [
+        int(key) for key in pool["player_key"].to_list() if int(key) not in actual_by
+    ]
+    if missing_keys:
+        points = pl.concat(
+            [
+                points,
+                pl.DataFrame(
+                    {
+                        "player_key": missing_keys,
+                        "xpts": [0.0] * len(missing_keys),
+                        "step": [0] * len(missing_keys),
+                    }
+                ),
+            ]
+        )
     state = SquadState(
         bank=max(bank, 0),
         free_transfers=max(free_transfers, 1),
@@ -810,14 +873,6 @@ def _transfer_regret(
         return 0
     # Build a decision-like frame for the oracle action and score it.
     step = plan.picks.filter(pl.col("step") == 0)
-    actual_by = {
-        int(key): (0 if pts is None else int(pts))
-        for key, pts in part.select("player_key", "actual_pts").iter_rows()
-    }
-    minutes_by = {
-        int(key): (0 if mins is None else int(mins))
-        for key, mins in part.select("player_key", "actual_minutes").iter_rows()
-    }
     rows: list[dict[str, object]] = []
     for row in step.iter_rows(named=True):
         key = int(row["player_key"])
@@ -835,6 +890,77 @@ def _transfer_regret(
         )
     best_net = score_gameweek(pl.DataFrame(rows), hit=float(plan.hits[0]))
     return max(0, best_net - policy_net)
+
+
+def _chip_timing_regret_gw(part: pl.DataFrame) -> ChipTimingRegret:
+    """Best scoring chip on the owned XV minus the chip that was active."""
+    kept = part.filter(~pl.col("sold")) if "sold" in part.columns else part
+    if kept.filter(pl.col("in_xi")).is_empty():
+        return chip_timing_regret(chips_enabled=True, chip=None, regret=0)
+    raw = None
+    if "chip" in part.columns and part.height:
+        value = part["chip"][0]
+        raw = None if value is None else str(value)
+    scoring = raw if raw in _SCORING_CHIPS else None
+    chosen = score_gameweek(kept, hit=0.0, chip=scoring)
+    best = chosen
+    best_chip = scoring
+    for trial in (None, "bboost", "3xc"):
+        trial_pts = score_gameweek(kept, hit=0.0, chip=trial)
+        if trial_pts > best:
+            best = trial_pts
+            best_chip = trial
+    regret = max(0, best - chosen)
+    return chip_timing_regret(
+        chips_enabled=True,
+        chip=best_chip if regret else scoring,
+        regret=regret,
+    )
+
+
+def _frame_played_chips(decisions: pl.DataFrame) -> bool:
+    if "chip" not in decisions.columns:
+        return False
+    return decisions.filter(pl.col("chip").is_not_null()).height > 0
+
+
+def _market_for_gw(market: pl.DataFrame | None, gameweek: int) -> pl.DataFrame | None:
+    if market is None or market.is_empty():
+        return None
+    if "gw" not in market.columns:
+        return market
+    part = market.filter(pl.col("gw") == gameweek)
+    return part if not part.is_empty() else None
+
+
+def _attach_market_fields(part: pl.DataFrame, market: pl.DataFrame) -> pl.DataFrame:
+    cols = ["player_key"]
+    for name in ("price", "team_key", "position"):
+        if name in market.columns and name not in part.columns:
+            cols.append(name)
+    if len(cols) == 1:
+        return part
+    return part.join(
+        market.select(cols).unique(subset=["player_key"]),
+        on="player_key",
+        how="left",
+    )
+
+
+def _actual_maps(
+    part: pl.DataFrame, market: pl.DataFrame
+) -> tuple[dict[int, int], dict[int, int]]:
+    actual_by: dict[int, int] = {}
+    minutes_by: dict[int, int] = {}
+    for frame in (market, part):
+        if "actual_pts" not in frame.columns:
+            continue
+        for key, pts in frame.select("player_key", "actual_pts").iter_rows():
+            actual_by[int(key)] = 0 if pts is None else int(pts)
+        if "actual_minutes" in frame.columns:
+            for key, mins in frame.select("player_key", "actual_minutes").iter_rows():
+                minutes_by[int(key)] = 0 if mins is None else int(mins)
+    return actual_by, minutes_by
 
 
 def _pre_transfer_state(

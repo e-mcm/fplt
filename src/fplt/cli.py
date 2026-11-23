@@ -68,6 +68,7 @@ from fplt.optimise.attainable import (
 )
 from fplt.optimise.decisions import (
     DEFAULT_LIVE_CHIP_ARM,
+    DEFAULT_LIVE_PRICE_FORECAST_METHOD,
     PlanExistsError,
     explain_decision_gameweek,
     format_chip_decision_scoreboard,
@@ -82,6 +83,7 @@ from fplt.optimise.decisions import (
 from fplt.optimise.explain import run_explain
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
+from fplt.optimise.regret_board import run_regret_board, write_regret_board
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
 from fplt.settings import get_settings
 from fplt.types import GWKey
@@ -414,6 +416,78 @@ def main(argv: list[str] | None = None) -> None:
             "(default: off / as-of flat). mean_gw_delta uses PIT deadline "
             "price history; flat matches omitting the flag"
         ),
+    )
+    regret_board = sub.add_parser(
+        "regret-board",
+        parents=[log_flags],
+        help=(
+            "Regret-by-component board: captain / XI-bench / transfers / "
+            "chip timing vs constrained attainable (north-star §2)"
+        ),
+    )
+    regret_board.add_argument("--season", required=True)
+    regret_board.add_argument("--from-gw", type=int, default=1)
+    regret_board.add_argument("--to-gw", type=int, default=38)
+    regret_board.add_argument("--horizon", type=int, default=DEFAULT_PLAN_HORIZON)
+    regret_board.add_argument(
+        "--model",
+        default="dc_layered_v2",
+        help="YAML policy model (default: dc_layered_v2)",
+    )
+    regret_board.add_argument(
+        "--chip-arm",
+        choices=["off", "rule_based", "optimised"],
+        default=DEFAULT_LIVE_CHIP_ARM,
+        help=f"Policy chip arm (default: {DEFAULT_LIVE_CHIP_ARM})",
+    )
+    regret_board.add_argument(
+        "--chip-rules-season",
+        help="Chip-rules year (default: --season)",
+    )
+    regret_board.add_argument(
+        "--no-force-play",
+        action="store_true",
+        help="Disable force-play on the policy (and oracle unless overridden)",
+    )
+    regret_board.add_argument(
+        "--no-lineup-reopt",
+        action="store_true",
+        help="Keep raw MILP XI / captain (ablation)",
+    )
+    regret_board.add_argument(
+        "--price-forecast",
+        choices=["flat", "mean_gw_delta"],
+        default=DEFAULT_LIVE_PRICE_FORECAST_METHOD,
+        help=(
+            "Policy within-horizon price forecast "
+            f"(default: {DEFAULT_LIVE_PRICE_FORECAST_METHOD})"
+        ),
+    )
+    regret_board.add_argument(
+        "--oracle-chip-arm",
+        choices=["off", "rule_based", "optimised"],
+        default=None,
+        help="Oracle chip arm (default: same as --chip-arm)",
+    )
+    regret_board.add_argument(
+        "--oracle-no-force-play",
+        action="store_true",
+        help="Oracle force-play off (hindsight ceiling ablation)",
+    )
+    regret_board.add_argument(
+        "--summarise-only",
+        action="store_true",
+        help="Reuse ledger policy + oracle rows; skip re-simulating",
+    )
+    regret_board.add_argument(
+        "--policy-parquet",
+        type=Path,
+        help="Load policy decisions from a parquet (skips policy simulate)",
+    )
+    regret_board.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write report.md / summary parquet / meta.json here",
     )
     sim_season = sub.add_parser(
         "sim-season",
@@ -1014,6 +1088,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "decisions":
         _decisions(args)
+        return
+    if args.command == "regret-board":
+        _regret_board(args)
         return
     if args.command == "sim-season":
         _sim_season(args)
@@ -1637,6 +1714,47 @@ def _sim_season(args: argparse.Namespace) -> None:
         logger.error("sim-season failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
+
+
+def _regret_board(args: argparse.Namespace) -> None:
+    data_dir = get_settings().data_dir
+    force_play = not bool(args.no_force_play)
+    oracle_force: bool | None
+    if bool(args.oracle_no_force_play):
+        oracle_force = False
+    else:
+        oracle_force = None
+    price = args.price_forecast
+    if price == "flat":
+        price = None
+    try:
+        result = run_regret_board(
+            data_dir,
+            season=str(args.season),
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            horizon=int(args.horizon),
+            model=str(args.model),
+            chip_arm=args.chip_arm,
+            chip_rules_season=args.chip_rules_season,
+            force_play=force_play,
+            lineup_reopt=not bool(args.no_lineup_reopt),
+            price_forecast_method=price,
+            oracle_chip_arm=args.oracle_chip_arm,
+            oracle_force_play=oracle_force,
+            simulate_policy=not bool(args.summarise_only)
+            and args.policy_parquet is None,
+            simulate_oracle=not bool(args.summarise_only),
+            policy_parquet=args.policy_parquet,
+        )
+    except (KeyError, ValueError) as exc:
+        logger.error("regret-board failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(result.report_md)
+    if args.output_dir is not None:
+        path = write_regret_board(result, Path(args.output_dir))
+        print(path)
 
 
 def _decisions(args: argparse.Namespace) -> None:
