@@ -1386,3 +1386,23 @@ def test_cs_only_eval_spec_loads_from_configs() -> None:
     assert spec.gates.min_coverage == 0.80
     assert spec.suites.components is True
     assert "brier_cs_home" in (spec.gates.keep_if.components_any or [])
+
+
+def test_prematch_1x2_eval_spec_loads_from_configs() -> None:
+    spec = load_eval_spec("prematch_1x2_prior_ab")
+    assert spec.control == "dc_layered_v2"
+    assert spec.treatment == "dc_layered_1x2_prematch_v1"
+    assert spec.change.orientation == "opt_in"
+    assert spec.change.allow_multi_lever is True
+    assert spec.gates.coverage.read == "prematch_scheduled"
+    assert spec.gates.min_coverage == 0.80
+    assert spec.suites.prediction is True
+    assert spec.suites.components is True
+    assert "rmse" in (spec.gates.keep_if.prediction_any or [])
+    assert "rps" in (spec.gates.keep_if.components_any or [])
+    from fplt.models.spec import load_model_specs
+
+    treatment = load_model_specs()[spec.treatment]
+    score = treatment.components["score"]
+    assert score.params["market_1x2_strength"] == 1.0
+    assert score.params["use_closing_proxy"] is False
