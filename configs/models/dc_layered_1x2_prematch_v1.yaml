@@ -1,0 +1,13 @@
+# Same composition as dc_layered_v2; score blends 1X2 toward de-vigged
+# prematch_scheduled books. Explicit use_closing_proxy: false overrides the
+# MatchScoreModel default (true when market_1x2_strength > 0). Do not promote
+# the closing-oracle fork dc_layered_1x2_v1.
+name: dc_layered_1x2_prematch_v1
+extends: dc_layered_v2
+overrides:
+  components:
+    score:
+      name: dixon_coles_1x2_prematch_v1
+      params:
+        market_1x2_strength: 1.0
+        use_closing_proxy: false

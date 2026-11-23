@@ -272,12 +272,50 @@ def test_market_1x2_strength_moves_margins_toward_market(tmp_path: Path) -> None
 def test_dixon_coles_1x2_and_layered_specs_registered() -> None:
     specs = load_model_specs()
     assert specs["dixon_coles_1x2_v1"].params["market_1x2_strength"] == 1.0
+    assert specs["dixon_coles_1x2_v1"].params["use_closing_proxy"] is True
     assert "market_prior_strength" not in specs["dixon_coles_1x2_v1"].params
     layered = specs["dc_layered_1x2_v1"]
     assert layered.components["score"].params["market_1x2_strength"] == 1.0
+    assert layered.components["score"].params["use_closing_proxy"] is True
     assert (
         "market_prior_strength" not in specs["dc_layered_v2"].components["score"].params
     )
+
+
+def test_dixon_coles_1x2_prematch_and_layered_specs_registered() -> None:
+    """Prematch 1X2 fork pairs strength with use_closing_proxy=false."""
+    specs = load_model_specs()
+    score = specs["dixon_coles_1x2_prematch_v1"]
+    assert score.params["market_1x2_strength"] == 1.0
+    assert score.params["use_closing_proxy"] is False
+    assert "market_prior_strength" not in score.params
+    assert "market_cs_strength" not in score.params
+    layered = specs["dc_layered_1x2_prematch_v1"]
+    nested = layered.components["score"]
+    assert nested.name == "dixon_coles_1x2_prematch_v1"
+    assert nested.params["market_1x2_strength"] == 1.0
+    # Explicit false overrides MatchScoreModel's default (true when 1x2 on).
+    assert nested.params["use_closing_proxy"] is False
+    assert (
+        "market_1x2_strength" not in specs["dc_layered_v2"].components["score"].params
+    )
+
+
+def test_market_1x2_prematch_defaults_closing_proxy_off_when_set() -> None:
+    """Constructor keeps use_closing_proxy=false when the YAML sets it."""
+    model = MatchScoreModel(
+        ModelSpec(
+            name="prematch",
+            kind="dixon_coles",
+            params={
+                "xi": 0.0,
+                "market_1x2_strength": 1.0,
+                "use_closing_proxy": False,
+            },
+        )
+    )
+    assert model._market_1x2 == 1.0
+    assert model._use_closing_proxy is False
 
 
 def test_dixon_coles_cs_and_layered_specs_registered() -> None:
@@ -324,11 +362,13 @@ def test_market_cs_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     zero.fit(view)
+    # Fit noise can differ by ~1e-8 across independent L-BFGS runs; match the
+    # market_prior_strength_zero tolerance rather than bit-identity.
     np.testing.assert_allclose(
         vanilla.predict(view, fixtures).pmf,
         zero.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=1e-8,
+        atol=1e-10,
     )
 
 

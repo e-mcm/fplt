@@ -1,0 +1,63 @@
+# FDB-216: deadline-PIT / prematch de-vig 1X2 region blend vs vanilla DC.
+# Closing-oracle dc_layered_1x2_v1 stays off this board (already drop).
+name: prematch_1x2_prior_ab
+kind: data
+question: >
+  Does blending DC's 1X2 margins toward de-vigged prematch_scheduled odds
+  at market_1x2_strength=1.0 improve player RMSE (and scoreline RPS/LL)
+  vs dc_layered_v2 under strict PIT?
+description: >
+  Prematch de-vig 1X2 prior (market_1x2_strength=1.0, use_closing_proxy=false).
+  Control keeps production dc_layered_v2. Gate on prematch_scheduled
+  deadline coverage. Confirmation: re-run with --seasons 2025-26.
+
+change:
+  lever: data_table
+  orientation: opt_in
+  slot: score
+  control_kind: dixon_coles
+  treatment_kind: dixon_coles
+  tables: [match_odds]
+  features: []
+  # Strength + PIT clock are one redesign: default when market_1x2_strength>0
+  # is use_closing_proxy=true, so the prematch fork must set it false.
+  allow_multi_lever: true
+  diff:
+    - "components.score.params.market_1x2_strength: 0 → 1.0"
+    - "components.score.params.use_closing_proxy: default(true@1x2) → false"
+  notes: >
+    prematch_scheduled under strict PIT; refuse closing proxy. Not the
+    closing-oracle dc_layered_1x2_v1 arm and not CS-only λ.
+
+control: dc_layered_v2
+treatment: dc_layered_1x2_prematch_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 38
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: 0.80
+  allow_low_coverage: false
+  coverage:
+    metric: odds_join
+    read: prematch_scheduled
+  keep_if:
+    prediction_any: [rmse, spearman]
+    components_any: [rps, logloss]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Prematch de-vig 1X2 prior vs dc_layered_v2 (strict PIT)"
+  store_doc: prematch-1x2-prior-promote.md
