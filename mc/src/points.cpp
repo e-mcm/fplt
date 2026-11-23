@@ -41,8 +41,7 @@ double match_delta(const MatchOtherTables& tables, std::uint8_t position,
   if (!(minutes > 0.0) || position >= kNPositions) {
     return 0.0;
   }
-  const std::size_t band =
-      team_goals <= 0 ? 0 : (team_goals == 1 ? 1 : 2);
+  const std::size_t band = team_goals <= 0 ? 0 : (team_goals == 1 ? 1 : 2);
   const std::size_t cs_i = clean_sheet ? 1 : 0;
   const std::size_t scored_i = player_goals >= 1 ? 1 : 0;
   return tables.delta_goals[position][band] + tables.delta_cs[position][cs_i] +

@@ -10,14 +10,14 @@ namespace fplt_mc {
 
 /// Per-player summary statistics (K5), matching ``composite._fixture`` columns.
 struct FixtureSummary {
-  double* xpts = nullptr;       // (P,)
-  double* xpts_sd = nullptr;    // (P,) population std (ddof=0)
-  double* p_played = nullptr;   // (P,)
-  double* p_60 = nullptr;       // (P,)
-  double* p_goal = nullptr;     // (P,)
-  double* p_assist = nullptr;   // (P,)
-  double* p_cs = nullptr;       // (P,)
-  double* p_haul = nullptr;     // (P,) points >= 10
+  double* xpts = nullptr;      // (P,)
+  double* xpts_sd = nullptr;   // (P,) population std (ddof=0)
+  double* p_played = nullptr;  // (P,)
+  double* p_60 = nullptr;      // (P,)
+  double* p_goal = nullptr;    // (P,)
+  double* p_assist = nullptr;  // (P,)
+  double* p_cs = nullptr;      // (P,)
+  double* p_haul = nullptr;    // (P,) points >= 10
 };
 
 /// Aggregate (P, n) sim arrays into ``FixtureSummary`` (one pass, K5).

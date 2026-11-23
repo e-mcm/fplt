@@ -24,8 +24,8 @@ void poisson_sequential(const double* rate, const double* uniforms, std::size_t 
 
 /// Additive match-conditioned other offset for one (player, sim).
 [[nodiscard]] double match_delta(const MatchOtherTables& tables, std::uint8_t position,
-                                 double minutes, std::int64_t team_goals, bool clean_sheet,
-                                 std::int64_t player_goals) noexcept;
+                                 double minutes, std::int64_t team_goals,
+                                 bool clean_sheet, std::int64_t player_goals) noexcept;
 
 /// Score appearance, involvement, CS, conceded, and other points.
 ///

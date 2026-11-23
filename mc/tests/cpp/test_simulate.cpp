@@ -106,8 +106,8 @@ TEST(SimulateMatch, ConservesGoalsWithInjectedUniforms) {
   samples.unattributed_home = uh.data();
   samples.unattributed_away = ua.data();
 
-  std::vector<double> xpts(players), sd(players), pp(players), p60(players), pg(players),
-      pa(players), pcs(players), ph(players);
+  std::vector<double> xpts(players), sd(players), pp(players), p60(players),
+      pg(players), pa(players), pcs(players), ph(players);
   FixtureSummary summary;
   summary.xpts = xpts.data();
   summary.xpts_sd = sd.data();

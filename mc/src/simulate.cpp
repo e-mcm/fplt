@@ -16,11 +16,10 @@ namespace {
 
 void aggregate_one_player(const double* minutes_row, const double* points_row,
                           const std::int64_t* goals_row,
-                          const std::int64_t* assists_row,
-                          const std::uint8_t* cs_row, std::size_t n, double* xpts,
-                          double* xpts_sd, double* p_played, double* p_60,
-                          double* p_goal, double* p_assist, double* p_cs,
-                          double* p_haul) noexcept {
+                          const std::int64_t* assists_row, const std::uint8_t* cs_row,
+                          std::size_t n, double* xpts, double* xpts_sd,
+                          double* p_played, double* p_60, double* p_goal,
+                          double* p_assist, double* p_cs, double* p_haul) noexcept {
   if (n == 0) {
     if (xpts != nullptr) {
       *xpts = 0.0;
@@ -123,14 +122,11 @@ void aggregate_fixture(const double* minutes, const double* points,
     const std::size_t row = i * n;
     aggregate_one_player(
         minutes + row, points + row, goals + row, assists + row, clean_sheet + row, n,
-        out->xpts ? out->xpts + i : nullptr,
-        out->xpts_sd ? out->xpts_sd + i : nullptr,
+        out->xpts ? out->xpts + i : nullptr, out->xpts_sd ? out->xpts_sd + i : nullptr,
         out->p_played ? out->p_played + i : nullptr,
-        out->p_60 ? out->p_60 + i : nullptr,
-        out->p_goal ? out->p_goal + i : nullptr,
+        out->p_60 ? out->p_60 + i : nullptr, out->p_goal ? out->p_goal + i : nullptr,
         out->p_assist ? out->p_assist + i : nullptr,
-        out->p_cs ? out->p_cs + i : nullptr,
-        out->p_haul ? out->p_haul + i : nullptr);
+        out->p_cs ? out->p_cs + i : nullptr, out->p_haul ? out->p_haul + i : nullptr);
   }
 }
 

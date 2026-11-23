@@ -223,7 +223,8 @@ nb::tuple points_with_uniforms(U8_1 position, U8_1 side, F64_2 minutes, I64_2 go
   }
 
   const bool has_match = !delta_goals_obj.is_none();
-  if (has_match != !delta_cs_obj.is_none() || has_match != !delta_scored_obj.is_none()) {
+  if (has_match != !delta_cs_obj.is_none() ||
+      has_match != !delta_scored_obj.is_none()) {
     throw std::invalid_argument(
         "delta_goals, delta_cs, and delta_scored must all be set or all None");
   }
@@ -275,12 +276,14 @@ auto aggregate_fixture_py(F64_2 minutes, F64_2 points, I64_2 goals, I64_2 assist
   summary.p_haul = p_haul.data();
   fplt_mc::aggregate_fixture(minutes.data(), points.data(), goals.data(),
                              assists.data(), clean_sheet.data(), players, n, &summary);
-  return nb::make_tuple(
-      owned_array(std::move(xpts), {players}), owned_array(std::move(xpts_sd), {players}),
-      owned_array(std::move(p_played), {players}),
-      owned_array(std::move(p_60), {players}), owned_array(std::move(p_goal), {players}),
-      owned_array(std::move(p_assist), {players}),
-      owned_array(std::move(p_cs), {players}), owned_array(std::move(p_haul), {players}));
+  return nb::make_tuple(owned_array(std::move(xpts), {players}),
+                        owned_array(std::move(xpts_sd), {players}),
+                        owned_array(std::move(p_played), {players}),
+                        owned_array(std::move(p_60), {players}),
+                        owned_array(std::move(p_goal), {players}),
+                        owned_array(std::move(p_assist), {players}),
+                        owned_array(std::move(p_cs), {players}),
+                        owned_array(std::move(p_haul), {players}));
 }
 
 nb::dict simulate_match_with_uniforms_py(
@@ -329,9 +332,9 @@ nb::dict simulate_match_with_uniforms_py(
       return;
     }
     if (grid.shape(0) < max_g || grid.shape(1) != n) {
-      throw std::invalid_argument(std::string(name) + " uniforms must have shape (>= " +
-                                  std::to_string(max_g) + ", " + std::to_string(n) +
-                                  ")");
+      throw std::invalid_argument(
+          std::string(name) + " uniforms must have shape (>= " + std::to_string(max_g) +
+          ", " + std::to_string(n) + ")");
     }
   };
   check_side(home_scorer_u, home_max, "home_scorer");
@@ -386,7 +389,8 @@ nb::dict simulate_match_with_uniforms_py(
   }
 
   const bool has_match = !delta_goals_obj.is_none();
-  if (has_match != !delta_cs_obj.is_none() || has_match != !delta_scored_obj.is_none()) {
+  if (has_match != !delta_cs_obj.is_none() ||
+      has_match != !delta_scored_obj.is_none()) {
     throw std::invalid_argument(
         "delta_goals, delta_cs, and delta_scored must all be set or all None");
   }
@@ -432,9 +436,9 @@ nb::dict simulate_match_with_uniforms_py(
   summary.p_haul = p_haul.data();
 
   fplt_mc::simulate_match_with_uniforms(
-      home_goals.data(), away_goals.data(), side.data(), position.data(), minutes.data(),
-      goal_weight.data(), assist_weight.data(), other_points.data(), rules, params,
-      uniforms, match_ptr, players, n, &samples, &summary);
+      home_goals.data(), away_goals.data(), side.data(), position.data(),
+      minutes.data(), goal_weight.data(), assist_weight.data(), other_points.data(),
+      rules, params, uniforms, match_ptr, players, n, &samples, &summary);
 
   nb::dict out;
   out["xpts"] = owned_array(std::move(xpts), {players});
@@ -504,8 +508,7 @@ NB_MODULE(_testing, m) {
         "(optional K4 match_other tables).");
 
   m.def("aggregate_fixture", &aggregate_fixture_py, nb::arg("minutes"),
-        nb::arg("points"), nb::arg("goals"), nb::arg("assists"),
-        nb::arg("clean_sheet"),
+        nb::arg("points"), nb::arg("goals"), nb::arg("assists"), nb::arg("clean_sheet"),
         "K5 one-pass summary matching composite._fixture aggregations.");
 
   m.def("simulate_match_with_uniforms", &simulate_match_with_uniforms_py,
