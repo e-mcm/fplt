@@ -42,15 +42,17 @@ follows the re-ranked sequence in the build spec.
 ABI: prefer `cp312-abi3` (nanobind stable ABI) when the build succeeds; else
 `cp313` matching the repo pin.
 
-## Private index (open)
+## Public wheel index (GitHub Pages)
 
-Preferred host: private S3-compatible bucket (Cloudflare R2 or S3) serving a
-static PEP 503 simple index. Until credentials/host are provisioned:
+Index URL: **https://e-mcm.github.io/fplt/simple/** (no credentials).
 
-1. CI uploads wheels as GitHub Actions artifacts (`wheel-<plat>`).
-2. `mc-release.yml` scaffolds the publish step but does not push to an index.
-3. Do **not** pin `fplt-mc` in the root `uv.lock` until a wheel is reachable
-   without compiling.
+`mc-release.yml` builds wheels on version bumps to `main` and publishes them
+to the `gh-pages` branch via a PEP 503 simple index (`scripts/mc_simple_index.py`).
+Wheel filenames are immutable.
 
-See the Project store doc `docs/native-mc-pr1.md` for arch confirmation and
-open blockers.
+1. Enable **Settings → Pages → Deploy from branch `gh-pages` / root** once.
+2. After the first publish, pin `fplt-mc` in the root `pyproject.toml` /
+   `uv.lock` with `no-build-package = ["fplt-mc"]` (see comment there).
+3. PR CI still uploads `wheel-<plat>` artifacts for the fresh build under test.
+
+See Project store `docs/native-mc-pr1.md`.

@@ -66,14 +66,13 @@ branch = true
 show_missing = true
 skip_empty = true
 
-# fplt-mc (native kernel under mc/): pin + private index land once R2/S3 is
-# provisioned. Until then CI uploads wheel artifacts; do not add fplt-mc as a
-# required dependency (that would force agents to compile). Intended shape:
+# fplt-mc (native kernel under mc/): public GitHub Pages simple index, no
+# credentials. Pin after the first mc-release publish to gh-pages:
 #
 #   dependencies = [..., "fplt-mc==X.Y.Z"]
 #   [[tool.uv.index]]
 #   name = "fplt-mc"
-#   url = "https://<private-index-host>/simple/"
+#   url = "https://e-mcm.github.io/fplt/simple/"
 #   explicit = true
 #   [tool.uv.sources]
 #   fplt-mc = { index = "fplt-mc" }
@@ -83,3 +82,7 @@ skip_empty = true
 #     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 #     "sys_platform == 'linux' and platform_machine == 'x86_64'",
 #   ]
+#
+# Until pinned, CI uploads wheel artifacts and mc-release publishes Pages.
+# Do not add fplt-mc as a required dependency before the index has a wheel
+# (agents must never compile).

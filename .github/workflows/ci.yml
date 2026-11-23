@@ -10,10 +10,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# dorny/paths-filter lists PR files via the API (needs pull-requests: read).
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   changes:
@@ -22,14 +20,31 @@ jobs:
       mc: ${{ steps.filter.outputs.mc }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            mc:
-              - 'mc/**'
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/mc-release.yml'
+          fetch-depth: 0
+      # Git-based filter (no GitHub API) — avoids "Resource not accessible by
+      # integration" on private repos with restricted GITHUB_TOKEN scopes.
+      - id: filter
+        name: Detect mc/ / workflow changes
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE="${{ github.sha }}^"
+            fi
+          fi
+          echo "Comparing ${BASE}...${{ github.sha }}"
+          if git diff --name-only "$BASE" "${{ github.sha }}" \
+            | grep -qE '^(mc/|\.github/workflows/ci\.yml|\.github/workflows/mc-release\.yml)'; then
+            echo "mc=true" >> "$GITHUB_OUTPUT"
+            echo "mc changes detected"
+          else
+            echo "mc=false" >> "$GITHUB_OUTPUT"
+            echo "no mc changes"
+          fi
 
   lint:
     runs-on: ubuntu-24.04
@@ -95,7 +110,6 @@ jobs:
             source /opt/rh/gcc-toolset-13/enable
             echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "${GITHUB_PATH}"
           fi
-          # manylinux CPython for the abi3 wheel build
           echo "/opt/python/cp313-cp313/bin" >> "${GITHUB_PATH}"
           /opt/python/cp313-cp313/bin/python -m pip install -U pip build scikit-build-core nanobind
           cmake --version
@@ -150,6 +164,7 @@ jobs:
         run: |
           cmake -S mc -B mc/build-san -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=g++ \
             -DFPLT_MC_BUILD_PYTHON=OFF \
             -DFPLT_MC_BUILD_TESTS=ON \
             -DFPLT_MC_SANITIZE=ON

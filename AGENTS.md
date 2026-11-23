@@ -66,7 +66,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
   - `make test` — full test suite with coverage (`coverage.xml` for Coverage Gutters) and the overall coverage gate.
   - `make dagster-dev` — local Dagster UI.
   - `make mc-dev` / `mc-test` / `mc-format` / `mc-bench` — native `fplt-mc` kernel under `mc/` (C++ editors only).
-- **`fplt-mc` / cloud agents:** `uv sync --frozen` must **never** compile the kernel. Once wheels are on the private index, root `pyproject.toml` sets `no-build-package = ["fplt-mc"]` so a missing wheel fails fast. Experiment VMs and cloud agents install the locked wheel only; do not run `make mc-dev` there. Prefer GHA for release wheels. See `mc/README.md`.
+- **`fplt-mc` / cloud agents:** `uv sync --frozen` must **never** compile the kernel. Wheels publish to the **public** GitHub Pages simple index (`https://e-mcm.github.io/fplt/simple/`; no `UV_INDEX` credentials). Once pinned, root `pyproject.toml` sets `no-build-package = ["fplt-mc"]` so a missing wheel fails fast. Experiment VMs and cloud agents install the locked wheel only; do not run `make mc-dev` there. Prefer GHA for release wheels. See `mc/README.md`.
 - Use `uv add` / `uv add --dev` to add dependencies; never edit `uv.lock` by hand. Justify any new dependency in the PR description.
 - One issue → one branch → one PR. Reference the issue (`Closes #N`).
 - One milestone finishes in its own PR, and so does each sub-milestone such as M2a. Open that PR and merge it before starting the next one. Do not stack later milestone work onto an unmerged branch.

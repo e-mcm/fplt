@@ -1,8 +1,8 @@
 name: mc-release
 
-# Build and (eventually) publish fplt-mc wheels when the package version changes
-# on main. Until the private R2/S3 simple index is provisioned, this workflow
-# only builds + uploads GitHub Actions artifacts and prints the publish TODO.
+# Build fplt-mc wheels and publish them to a public GitHub Pages PEP 503
+# simple index (https://e-mcm.github.io/fplt/simple/). No UV_INDEX credentials.
+# Wheels are immutable: never overwrite a published filename.
 
 on:
   push:
@@ -14,6 +14,9 @@ on:
 concurrency:
   group: mc-release-${{ github.ref }}
   cancel-in-progress: false
+
+permissions:
+  contents: write  # push gh-pages branch
 
 jobs:
   release-build:
@@ -64,26 +67,57 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
 
-  publish-stub:
+  publish-pages:
     needs: release-build
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: release-wheel-*
           merge-multiple: true
-      - name: List wheels (index publish deferred)
+      - name: Checkout existing gh-pages (if any)
         run: |
+          mkdir -p site
+          if git fetch origin gh-pages:gh-pages 2>/dev/null; then
+            git archive gh-pages | tar -x -C site
+          fi
           ls -la dist/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Merge wheels into public simple index
+        run: |
+          python scripts/mc_simple_index.py --wheels dist --out site
           VERSION=$(grep -E '^version = ' mc/pyproject.toml | head -1 | cut -d'"' -f2)
-          echo "fplt-mc==${VERSION} wheels built."
-          cat <<'EOF'
-          TODO: publish to private R2/S3 PEP 503 simple index once provisioned.
-            1. Upload wheels + regenerate simple/fplt-mc/index.html (sha256 fragments).
-            2. Open PR "Bump fplt-mc to X.Y.Z" updating root pin + uv lock.
-            3. Set UV_INDEX_FPLT_MC_USERNAME / UV_INDEX_FPLT_MC_PASSWORD as agent secrets.
-            4. Enable no-build-package = ["fplt-mc"] in root pyproject (already documented).
-          Never overwrite a published version.
+          echo "Prepared fplt-mc==${VERSION} for https://e-mcm.github.io/fplt/simple/fplt-mc/"
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: false
+          keep_files: false
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "Publish fplt-mc wheels to public simple index"
+      - name: Next steps (pin follow-up)
+        run: |
+          VERSION=$(grep -E '^version = ' mc/pyproject.toml | head -1 | cut -d'"' -f2)
+          cat <<EOF
+          Published to https://e-mcm.github.io/fplt/simple/
+          Follow-up PR: pin fplt-mc==${VERSION} in root pyproject + uv lock with:
+            [[tool.uv.index]]
+            name = "fplt-mc"
+            url = "https://e-mcm.github.io/fplt/simple/"
+            explicit = true
+            [tool.uv.sources]
+            fplt-mc = { index = "fplt-mc" }
+            [tool.uv]
+            no-build-package = ["fplt-mc"]
+          No UV_INDEX credentials (public Pages). Enable Pages → gh-pages if not already.
           EOF
