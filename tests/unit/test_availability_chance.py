@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 
 from fplt.models.components.minutes.common import (
     PlayerAvailability,
+    PlayerInjury,
+    availability_gate,
     chance,
     gate_for,
 )
@@ -41,3 +43,26 @@ def test_gate_for_uses_this_round() -> None:
         news_added=None,
     )
     assert gate_for(tags, 0.5) == 0.5
+
+
+def test_use_availability_gate_false_ignores_fpl_tags() -> None:
+    tags = PlayerAvailability(
+        status="i",
+        chance_next=0.0,
+        chance_this=0.0,
+        news="Injured",
+        news_added=None,
+    )
+    assert availability_gate(tags, 0.5, use_availability_gate=False) == 1.0
+    # Injury overlay can still lower the ungated baseline.
+    out = PlayerInjury(category="out", injury_type="Suspension", reason="")
+    assert (
+        availability_gate(
+            tags,
+            0.5,
+            injury=out,
+            use_injury_overlay=True,
+            use_availability_gate=False,
+        )
+        == 0.0
+    )

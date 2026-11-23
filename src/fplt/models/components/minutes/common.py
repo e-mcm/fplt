@@ -214,13 +214,18 @@ def availability_gate(
     *,
     injury: PlayerInjury | None = None,
     use_injury_overlay: bool = False,
+    use_availability_gate: bool = True,
 ) -> float:
     """FPL availability gate, optionally soft/hard-downgraded by injuries.
 
-    When ``use_injury_overlay`` is false or ``injury`` is missing, behaviour
+    When ``use_availability_gate`` is false, the FPL status/chance/news
+    multiplier is 1.0 (eval-only no-overlay control). When
+    ``use_injury_overlay`` is false or ``injury`` is missing, behaviour
     matches ``gate_for`` / ``chance``. Overlay never raises an FPL zero.
     """
-    if tags is None:
+    if not use_availability_gate:
+        fpl = 1.0
+    elif tags is None:
         fpl = chance(None, None, doubtful)
     else:
         fpl = gate_for(tags, doubtful)

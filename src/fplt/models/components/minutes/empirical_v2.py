@@ -3,11 +3,12 @@
 Independence across teammates remains the default draw model. When
 ``soft_squad`` is on, expected starters per team-fixture are nudged toward
 ``target_starters`` before the PMF is built — a soft stand-in for a hard
-eleven-starter constraint. Optional ``use_injury_overlay`` applies staged
-``player_injuries``. Optional ``predicted_xi`` mixes P(start) toward staged
-``predicted_lineups`` near kickoff. Production ``dc_layered_v2`` keeps both
-off — enable via ``empirical_minutes_v2_injuries`` /
-``dc_layered_predicted_xi_v1``.
+eleven-starter constraint. FPL status/chance/news gating defaults on
+(``use_availability_gate``; eval-only off-fork ``dc_layered_noavail_v1``).
+Optional ``use_injury_overlay`` applies staged ``player_injuries``. Optional
+``predicted_xi`` mixes P(start) toward staged ``predicted_lineups`` near
+kickoff. Production ``dc_layered_v2`` keeps injury/XI overlays off — enable
+via ``dc_layered_injuries_v1`` / ``dc_layered_predicted_xi_v1``.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ class EmpiricalMinutesV2:
         strength = spec.params.get("soft_squad_strength", 0.5)
         l2 = spec.params.get("l2", 1.0)
         overlay = spec.params.get("use_injury_overlay", False)
+        avail_gate = spec.params.get("use_availability_gate", True)
         predicted_xi = spec.params.get("predicted_xi", False)
         xi_window = spec.params.get("predicted_xi_window_hours", 72.0)
         xi_strength = spec.params.get("predicted_xi_strength", 0.75)
@@ -93,6 +95,10 @@ class EmpiricalMinutesV2:
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
         if not isinstance(overlay, bool):
             raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
+        if not isinstance(avail_gate, bool):
+            raise ValueError(
+                f"use_availability_gate must be a bool, got {avail_gate!r}"
+            )
         if not isinstance(predicted_xi, bool):
             raise ValueError(f"predicted_xi must be a bool, got {predicted_xi!r}")
         if xi_window_value < 0:
@@ -111,6 +117,7 @@ class EmpiricalMinutesV2:
         self._soft_strength = strength_value
         self._l2 = l2_value
         self._use_injury_overlay = overlay
+        self._use_availability_gate = avail_gate
         self._predicted_xi = predicted_xi
         self._xi_window_hours = xi_window_value
         self._xi_strength = xi_strength_value
@@ -237,6 +244,7 @@ class EmpiricalMinutesV2:
                 self._doubtful,
                 injury=injury_map.get(player),
                 use_injury_overlay=self._use_injury_overlay,
+                use_availability_gate=self._use_availability_gate,
             )
             features = self._player_features.get(player, _empty_player_features())
             start_x = _start_vector(features, row)
