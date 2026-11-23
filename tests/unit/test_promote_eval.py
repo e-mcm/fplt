@@ -510,7 +510,7 @@ def test_involvement_xg_vs_shares_eval_loads() -> None:
     assert spec.kind == "component"
     assert spec.change.lever == "component_swap"
     assert spec.control == "dc_layered_shares_v2"
-    assert spec.treatment == "dc_layered_v2"
+    assert spec.treatment == "dc_layered_v3"
     assert spec.change.slot == "involvement"
     assert spec.change.control_kind == "involvement_shares"
     assert spec.change.treatment_kind == "involvement_xg"
@@ -535,7 +535,7 @@ def test_n_sims_lever_omits_skip_sims(tmp_path: Path) -> None:
             "diff": ["params.n_sims: 1000 → 10000"],
             "allow_multi_lever": True,
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_odds_v1",
         suites={"prediction": False, "components": True},
     )
@@ -557,7 +557,7 @@ def test_scoreline_helpers() -> None:
 
     specs = load_model_specs()
     names = slot_component_names(
-        specs["dc_layered_v2"], specs["dc_layered_odds_v1"], "score"
+        specs["dc_layered_v3"], specs["dc_layered_odds_v1"], "score"
     )
     assert names == ("dixon_coles_v2", "dixon_coles_odds_v1")
     market = raw_de_vig_spec(coverage_read="strict_pit")
@@ -786,7 +786,7 @@ def test_preflight_odds_strict_pit_misses_kickoff_rows(tmp_path: Path) -> None:
             "tables": ["match_odds"],
             "diff": ["market_prior_strength: 0 → 1.0"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_odds_v1",
         window={
             "seasons": ["2024-25"],
@@ -868,7 +868,7 @@ def test_preflight_dc_season_eligible(tmp_path: Path) -> None:
             "diff": ["use_defensive_contribution: false → true"],
         },
         control="dc_layered_nodefcon_v1",
-        treatment="dc_layered_v2",
+        treatment="dc_layered_v3",
         window={
             "seasons": ["2024-25", "2025-26"],
             "from_gw": 1,
@@ -932,7 +932,7 @@ def test_preflight_arms_inverted(tmp_path: Path) -> None:
             "diff": ["use_penalties_order swapped"],
         },
         # Swapped relative to opt_out: control should be off-fork.
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_nopens_v1",
         window={
             "seasons": ["2025-26"],
@@ -1067,7 +1067,7 @@ def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
     class _FakeCompare:
         summary = pl.DataFrame(
             {
-                "model_name": ["dc_layered_nopens_v1", "dc_layered_v2"],
+                "model_name": ["dc_layered_nopens_v1", "dc_layered_v3"],
                 "mode": ["walk_forward", "walk_forward"],
                 "horizon": [1, 1],
                 "mae": [1.0, 0.9],
@@ -1078,7 +1078,7 @@ def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
         )
         detail = pl.DataFrame(
             {
-                "model_name": ["dc_layered_nopens_v1", "dc_layered_v2"],
+                "model_name": ["dc_layered_nopens_v1", "dc_layered_v3"],
                 "mode": ["walk_forward", "walk_forward"],
                 "horizon": [1, 1],
                 "target_gw": [1, 1],
@@ -1329,7 +1329,7 @@ def test_odds_join_passes_when_available_before_deadline(tmp_path: Path) -> None
             "tables": ["match_odds"],
             "diff": ["market_prior_strength: 0 → 1.0"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_odds_v1",
         window={
             "seasons": ["2024-25"],
@@ -1397,7 +1397,7 @@ def test_closing_proxy_read_requires_flag(tmp_path: Path) -> None:
             "tables": ["match_odds"],
             "diff": ["market_prior_strength"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_odds_v1",
         window={
             "seasons": ["2024-25"],
@@ -1444,7 +1444,7 @@ def test_prematch_coverage_passes_for_cs_only_arm(tmp_path: Path) -> None:
             "tables": ["match_odds"],
             "diff": ["market_cs_strength: 0 → 0.5"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_cs_v1",
         window={
             "seasons": ["2024-25"],
@@ -1490,7 +1490,7 @@ def test_prematch_read_rejects_closing_proxy_flag(tmp_path: Path) -> None:
             "tables": ["match_odds"],
             "diff": ["market_cs_strength"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_cs_v1",
         window={
             "seasons": ["2024-25"],
@@ -1525,7 +1525,7 @@ def test_prematch_read_rejects_closing_proxy_flag(tmp_path: Path) -> None:
 
 def test_cs_only_eval_spec_loads_from_configs() -> None:
     spec = load_eval_spec("cs_only_market_lambda_ab")
-    assert spec.control == "dc_layered_v2"
+    assert spec.control == "dc_layered_v3"
     assert spec.treatment == "dc_layered_cs_v1"
     assert spec.change.orientation == "opt_in"
     assert spec.gates.coverage.read == "prematch_scheduled"
@@ -1536,7 +1536,7 @@ def test_cs_only_eval_spec_loads_from_configs() -> None:
 
 def test_prematch_1x2_eval_spec_loads_from_configs() -> None:
     spec = load_eval_spec("prematch_1x2_prior_ab")
-    assert spec.control == "dc_layered_v2"
+    assert spec.control == "dc_layered_v3"
     assert spec.treatment == "dc_layered_1x2_prematch_v1"
     assert spec.change.orientation == "opt_in"
     assert spec.change.allow_multi_lever is True
@@ -1641,7 +1641,7 @@ def test_preflight_injury_overlay_fails_when_empty(tmp_path: Path) -> None:
             "tables": ["player_injuries"],
             "diff": ["use_injury_overlay: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_injuries_v1",
         window={
             "seasons": ["2025-26"],
@@ -1705,7 +1705,7 @@ def test_preflight_injury_overlay_passes_with_mapped_row(tmp_path: Path) -> None
             "tables": ["player_injuries"],
             "diff": ["use_injury_overlay: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_injuries_v1",
         window={
             "seasons": ["2025-26"],
@@ -1769,7 +1769,7 @@ def test_preflight_predicted_lineups_fails_without_pit_rows(tmp_path: Path) -> N
             "allow_multi_lever": True,
             "diff": ["predicted_xi: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_predicted_xi_v1",
         window={
             "seasons": ["2025-26"],
@@ -1812,7 +1812,7 @@ def test_preflight_fpl_api_status_fails_on_vaastav(tmp_path: Path) -> None:
             "diff": ["use_availability_gate: false → true"],
         },
         control="dc_layered_noavail_v1",
-        treatment="dc_layered_v2",
+        treatment="dc_layered_v3",
         window={
             "seasons": ["2025-26"],
             "from_gw": 1,
@@ -1851,7 +1851,7 @@ def test_preflight_forecast_combine_member_join_universe(tmp_path: Path) -> None
             "treatment_kind": "forecast_combine",
             "diff": ["kind: dc_layered → forecast_combine"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="forecast_combine_equal_v1",
         window={
             "seasons": ["2025-26"],
@@ -1881,7 +1881,7 @@ def test_preflight_forecast_combine_member_join_universe(tmp_path: Path) -> None
     assert result.coverage.metric == "forecast_combine_member_join"
     assert result.coverage.passed
     assert result.coverage.rate >= 0.80
-    assert "dc_layered_v2" in result.coverage.extras["members"]
+    assert "dc_layered_v3" in result.coverage.extras["members"]
     assert "lgbm_direct_v1" in result.coverage.extras["members"]
     assert result.coverage.extras["member_missing"] == []
 
@@ -1893,7 +1893,7 @@ def test_preflight_forecast_combine_fails_when_member_predictions_miss(
     from fplt.models.spec import load_model_specs
 
     specs = load_model_specs()
-    dc = specs["dc_layered_v2"]
+    dc = specs["dc_layered_v3"]
     lgbm = specs["lgbm_direct_v1"]
     # Archive DC predictions for the scored pool; LGBM archive exists but
     # covers none of the scored keys → member missing on the join.
@@ -1951,7 +1951,7 @@ def test_preflight_forecast_combine_fails_when_member_predictions_miss(
             "treatment_kind": "forecast_combine",
             "diff": ["kind: dc_layered → forecast_combine"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="forecast_combine_equal_v1",
         window={
             "seasons": ["2025-26"],

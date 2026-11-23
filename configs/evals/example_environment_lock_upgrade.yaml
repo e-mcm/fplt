@@ -19,8 +19,8 @@ change:
     Scaffold only. control_ref and treatment_ref must differ, and treatment
     must change a direct dependency listed in packages. Orientation does not apply.
 
-control: dc_layered_v2
-treatment: dc_layered_v2
+control: dc_layered_v3
+treatment: dc_layered_v3
 
 window:
   seasons: ["2024-25"]

@@ -54,7 +54,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 
 ### North-star score: points-at-rank (was “2400”)
 
-Full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v2` unless noted) — aim for the **points total that maps to the anchor overall rank** on that season's end-of-season ladder.
+Full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v3` unless noted) — aim for the **points total that maps to the anchor overall rank** on that season's end-of-season ladder.
 
 | | |
 |---|---|
@@ -83,6 +83,7 @@ Use the **per-season bar** when scoring a single season board (e.g. [stacked-pro
 - Multi-season consistency should roll up **rank / percentile** (N7 / `fplt.backtest.live_percentile.mean_percentile`) or mean of (points − season_bar), not (mean points − 2400).
 
 These bars are stretch targets for decision sims, not a claim we already hit them, and not a replacement for A/B promote calls or Tier A–C relative aims.
+
 
 **Metrics**
 

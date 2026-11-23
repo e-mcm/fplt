@@ -32,7 +32,7 @@ def test_dc_layered_odds_v1_wires_odds_score_component() -> None:
     assert spec.kind == "dc_layered"
     assert spec.components["score"].name == "dixon_coles_odds_v1"
     assert spec.components["score"].params["market_prior_strength"] == 1.0
-    vanilla = load_model_specs()["dc_layered_v2"]
+    vanilla = load_model_specs()["dc_layered_v3"]
     assert "market_prior_strength" not in vanilla.components["score"].params
 
 
@@ -42,12 +42,23 @@ def test_dc_layered_history_v1_wires_history_score_component() -> None:
     assert spec.components["score"].name == "dixon_coles_history_v1"
     assert spec.components["score"].params["market_prior_source"] == "history"
     assert spec.components["score"].params["market_prior_strength"] == 1.0
-    vanilla = load_model_specs()["dc_layered_v2"]
+    vanilla = load_model_specs()["dc_layered_v3"]
     assert "market_prior_source" not in vanilla.components["score"].params
 
 
-def test_dc_layered_v2_wires_improved_components() -> None:
+def test_dc_layered_v2_keeps_mean_wire_identity() -> None:
+    """Frozen pre-4d715b5 mean-wire compose (FDB-226)."""
     spec = load_model_specs()["dc_layered_v2"]
+    assert spec.kind == "dc_layered"
+    assert spec.params["n_sims"] == 10000
+    assert spec.params["hard_starters"] is True
+    assert spec.components["other"].name == "other_player_v1"
+    assert "defcon_mode" not in spec.components["other"].params
+    assert spec.model_id == "b12aad1575ff0d34"
+
+
+def test_dc_layered_v3_wires_improved_components() -> None:
+    spec = load_model_specs()["dc_layered_v3"]
     assert spec.kind == "dc_layered"
     assert spec.params["n_sims"] == 10000
     assert spec.params["cs_red_void_prob"] == pytest.approx(0.02)
@@ -70,9 +81,9 @@ def test_dc_layered_v2_wires_improved_components() -> None:
     assert model._target_starters == 11
 
 
-def test_dc_layered_v2_scores_a_gameweek(tmp_path: Path) -> None:
-    spec = load_model_specs()["dc_layered_v2"].model_copy(
-        update={"params": {**load_model_specs()["dc_layered_v2"].params, "n_sims": 80}}
+def test_dc_layered_v3_scores_a_gameweek(tmp_path: Path) -> None:
+    spec = load_model_specs()["dc_layered_v3"].model_copy(
+        update={"params": {**load_model_specs()["dc_layered_v3"].params, "n_sims": 80}}
     )
     store = build_league(DataStore(tmp_path / "league"))
     view = PITData(store).view(GWKey("2024-25", 1))

@@ -191,7 +191,7 @@ def test_rejects_bad_position_weights() -> None:
 def test_registered_production_yamls_expand() -> None:
     specs = load_model_specs()
     equal = specs["forecast_combine_equal_v1"]
-    assert set(equal.components) == {"dc_layered_v2", "lgbm_direct_v1"}
+    assert set(equal.components) == {"dc_layered_v3", "lgbm_direct_v1"}
     assert equal.params["mode"] == "equal"
     pos = specs["forecast_combine_pos_v1"]
     assert pos.params["mode"] == "position"

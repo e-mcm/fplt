@@ -1,7 +1,7 @@
-# dc_layered_v2 with involvement_shares instead of involvement_xg.
+# dc_layered_v3 with involvement_shares instead of involvement_xg.
 # Eval-only fork for FPL-native xG A/B (Wave A3); not a production default.
 name: dc_layered_shares_v2
-extends: dc_layered_v2
+extends: dc_layered_v3
 overrides:
   components:
     involvement:

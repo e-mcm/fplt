@@ -5,7 +5,7 @@ actions (transfers, XI, captain, vice), then advances ownership with the
 **control** plan. Disagreement is therefore forecast-driven, not an artifact
 of diverging independent decision sims.
 
-Default bakeoff pair: ``dc_layered_v2`` (control) vs ``lgbm_direct_v1``.
+Default bakeoff pair: ``dc_layered_v3`` (control) vs ``lgbm_direct_v1``.
 Does not change ``PRODUCTION_MODELS`` or the MILP. Chips stay off for this
 board (Wave D2 reporting only).
 """
@@ -46,7 +46,7 @@ from fplt.types import GWKey
 logger = logging.getLogger(__name__)
 
 # Current forecast bakeoff pair (Wave E1 / D2). Control = live layered default.
-DEFAULT_ENSEMBLE_CONTROL = "dc_layered_v2"
+DEFAULT_ENSEMBLE_CONTROL = "dc_layered_v3"
 DEFAULT_ENSEMBLE_CHALLENGERS: tuple[str, ...] = ("lgbm_direct_v1",)
 
 
@@ -272,7 +272,7 @@ def run_ensemble_sensitivity_from_data_dir(
         to_gw: Last gameweek, inclusive.
         horizon: Planner horizon (must match backtest ``--steps``).
         control: YAML ModelSpec name for the ownership path (default
-            ``dc_layered_v2``).
+            ``dc_layered_v3``).
         challengers: YAML ModelSpec names to compare (default
             ``lgbm_direct_v1``).
 

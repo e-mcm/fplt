@@ -62,6 +62,7 @@ from fplt.optimise.realised import (
     assert_sane_mean_ppg,
     explain_gameweek,
     format_decision_scoreboard,
+    model_board_label,
     summarise_decisions,
 )
 from fplt.optimise.state import (
@@ -105,6 +106,7 @@ __all__ = [
     "explain_decision_gameweek",
     "format_chip_decision_scoreboard",
     "format_decision_scoreboard",
+    "model_board_label",
     "points_from_ledger",
     "read_chip_windows",
     "read_decisions",
@@ -1035,6 +1037,7 @@ def run_chip_decision_board(
                     highs_options=board_highs,
                 )
     specs = load_model_specs()
+    id_to_name = {specs[name].model_id: name for name in models}
     wanted: set[str] = set()
     for name in models:
         base = specs[name].model_id
@@ -1048,6 +1051,12 @@ def run_chip_decision_board(
     summary = summarise_chip_decisions(
         frame, season=season, chip_rules_season=rules_season
     )
+    if not summary.is_empty():
+        summary = summary.with_columns(
+            pl.col("base_model_id")
+            .replace_strict(id_to_name, default=None)
+            .alias("model_name")
+        )
     if max_mean_ppg is not None:
         assert_sane_mean_ppg(
             summary.select(
@@ -1118,7 +1127,11 @@ def summarise_chip_decisions(
 
 
 def format_chip_decision_scoreboard(summary: pl.DataFrame) -> str:
-    """Render the three-arm chip board as a markdown table."""
+    """Render the three-arm chip board as a markdown table.
+
+    When ``model_name`` is present, the Model column shows
+    ``name (base_model_id)`` so boards survive in-place ModelSpec edits.
+    """
     if summary.is_empty():
         return "_No chip-decision rows to score._"
     lines = [
@@ -1131,12 +1144,17 @@ def format_chip_decision_scoreboard(summary: pl.DataFrame) -> str:
         rules = str(row["rules_label"])
         if bool(row["counterfactual"]):
             rules = f"{rules} (counterfactual)"
+        name = row.get("model_name")
+        label = model_board_label(
+            str(row["base_model_id"]),
+            model_name=str(name) if name is not None else None,
+        )
         lines.append(
             "| "
             + " | ".join(
                 [
                     str(index),
-                    str(row["base_model_id"]),
+                    label,
                     str(row["chip_arm"]),
                     rules,
                     str(row["total_points"]),
@@ -1193,13 +1211,19 @@ def run_decision_bakeoff(
             )
             run_decisions(data_dir, name, season, from_gw, to_gw, horizon)
     specs = load_model_specs()
-    model_ids = {specs[name].model_id for name in models}
+    id_to_name = {specs[name].model_id: name for name in models}
     frame = read_decisions(data_dir).filter(
-        (pl.col("season") == season) & pl.col("model_id").is_in(list(model_ids))
+        (pl.col("season") == season) & pl.col("model_id").is_in(list(id_to_name))
     )
     if from_gw > 1 or to_gw < 38:
         frame = frame.filter((pl.col("gw") >= from_gw) & (pl.col("gw") <= to_gw))
     summary = summarise_decisions(frame)
+    if not summary.is_empty():
+        summary = summary.with_columns(
+            pl.col("model_id")
+            .replace_strict(id_to_name, default=None)
+            .alias("model_name")
+        )
     if max_mean_ppg is not None:
         assert_sane_mean_ppg(summary, max_mean=max_mean_ppg)
     return summary

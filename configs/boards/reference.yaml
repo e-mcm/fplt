@@ -13,7 +13,7 @@ force_play: true
 lineup_reopt: true
 price_forecast: mean_gw_delta
 bench_weight: 0.0
-model: dc_layered_v2
+model: dc_layered_v3
 highs:
   # Deterministic board solves (FDB-228). Live plan may keep open_fpl_defaults.
   time_limit: null

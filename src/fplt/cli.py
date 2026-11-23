@@ -271,8 +271,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     explain.add_argument(
         "--model",
-        default="dc_layered_v2",
-        help="YAML spec name (default: dc_layered_v2)",
+        default="dc_layered_v3",
+        help="YAML spec name (default: dc_layered_v3)",
     )
     explain.add_argument("--season", required=True)
     explain.add_argument("--gw", type=int, required=True)
@@ -724,8 +724,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     ensemble_sensitivity.add_argument(
         "--control",
-        default="dc_layered_v2",
-        help="YAML ModelSpec for the ownership path (default: dc_layered_v2)",
+        default="dc_layered_v3",
+        help="YAML ModelSpec for the ownership path (default: dc_layered_v3)",
     )
     ensemble_sensitivity.add_argument(
         "--challengers",

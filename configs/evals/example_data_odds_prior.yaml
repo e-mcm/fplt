@@ -20,7 +20,7 @@ change:
     - "consume staged match_odds via market_prior_strength > 0"
   notes: "closing_proxy; available_at = kickoff — not deadline PIT"
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: dc_layered_odds_v1
 
 window:

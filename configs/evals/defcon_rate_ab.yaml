@@ -1,5 +1,5 @@
 # FDB-211: Poisson P(DC award) other_points vs shrunk 0/2 mean wire.
-# After keep, production dc_layered_v2 is the rate treatment; mean is opt-out.
+# After keep, production dc_layered_v3 is the rate treatment; mean is opt-out.
 name: defcon_rate_ab
 kind: config
 question: >
@@ -20,12 +20,12 @@ change:
     - "components.other.params.defcon_mode: mean → rate"
   notes: >
     Control dc_layered_defcon_mean_v1 (shrunk 0/2 wire). Treatment
-    dc_layered_v2 (other_player_defcon_rate_v1, production after FDB-211 keep).
+    dc_layered_v3 (other_player_defcon_rate_v1, production after FDB-211 keep).
     Primary window 2025-26 GW1–38; confirmation GW20–38. RMSE headline.
     Coverage requires every target fixture in a DC-awarding season.
 
 control: dc_layered_defcon_mean_v1
-treatment: dc_layered_v2
+treatment: dc_layered_v3
 
 window:
   seasons: ["2025-26"]

@@ -106,9 +106,9 @@ Archives are invisible before their `available_at` stamp.
 Once archives exist and the candidate model is on the prediction ledger:
 
 ```bash
-make archive-compare SEASON=2024-25 MODEL=dc_layered_v2
+make archive-compare SEASON=2024-25 MODEL=dc_layered_v3
 # or
-uv run fplt archive-compare --season 2024-25 --model dc_layered_v2 \
+uv run fplt archive-compare --season 2024-25 --model dc_layered_v3 \
   --from-gw 1 --to-gw 38 --sources ep_next openfpl
 ```
 

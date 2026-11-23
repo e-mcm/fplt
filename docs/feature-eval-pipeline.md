@@ -14,10 +14,10 @@ Each lever had been inventing its own eval. The shape that survived the hand run
 
 | Lever | Arms that are real on main | What the hand run taught |
 |---|---|---|
-| Odds prior (W7) | `dc_layered_v2` vs `dc_layered_odds_v1` | Production strength is **0**. Treatment is the on-fork. The landed prior blends λ at predict time and cannot see closing lines. The next study is a history rating prior against raw de-vigged 1X2 (§5.1). |
+| Odds prior (W7) | `dc_layered_v3` vs `dc_layered_odds_v1` | Production strength is **0**. Treatment is the on-fork. The landed prior blends λ at predict time and cannot see closing lines. The next study is a history rating prior against raw de-vigged 1X2 (§5.1). |
 | Lockfile, refactor | none yet | Same spec. Question is "did forecasts move, and did they get worse?" (§3.2). |
-| `penalties_order` (W8) | `dc_layered_nopens_v1` vs `dc_layered_v2` | Production default is **on**. Control is the off-fork. Vaastav writes the column null, so the arms tie. |
-| `defensive_contribution` (W9) | `dc_layered_nodefcon_v1` vs `dc_layered_v2` | Same opt-out shape. Only 2025-26+ rules award the points. MAE and RMSE disagreed; the call was `tune`. |
+| `penalties_order` (W8) | `dc_layered_nopens_v1` vs `dc_layered_v3` | Production default is **on**. Control is the off-fork. Vaastav writes the column null, so the arms tie. |
+| `defensive_contribution` (W9) | `dc_layered_nodefcon_v1` vs `dc_layered_v3` | Same opt-out shape. Only 2025-26+ rules award the points. MAE and RMSE disagreed; the call was `tune`. |
 | Minutes swap, direct-model fork, `xi` / `seasons_back` | still future | Same EvalSpec. One lever. |
 
 ---
@@ -46,17 +46,17 @@ on YAML  ───┘         │
                       └── recommendation.md
 ```
 
-**Control is the off state. Treatment is the on state.** Production is whichever of those two already matches the spec we ship. The fork is always the other one. Never edit the production YAML to manufacture the opposite arm.
+**Control is the off state. Treatment is the on state.** Production is whichever of those two already matches the spec we ship. The fork is always the other one. Never edit the production YAML to manufacture the opposite arm. A keep that changes compose bumps the versioned ModelSpec (`dc_layered_v3` …); do not edit released production YAML in place (FDB-226). Boards label `name (model_id)` — pre-4d715b5 boards under the name `dc_layered_v2` used a different hash than the in-place rate flip.
 
 Code defaults, absent key included:
 
-| Param | Absent means | Production `dc_layered_v2` today |
+| Param | Absent means | Production `dc_layered_v3` today |
 |---|---|---|
 | `use_penalties_order` | `true` | on |
 | `use_defensive_contribution` | `true` | on |
 | `market_prior_strength` | `0` | off |
 
-Live unattended planning reads `configs/ops/production.yaml` via `load_production_ops` (`dc_layered_v2` / horizon 3 by default; env `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` override). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML default for docs/imports. It is not the arm check. The arm check reads the layered spec under test.
+Live unattended planning reads `configs/ops/production.yaml` via `load_production_ops` (`dc_layered_v3` / horizon 3 by default; env `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` override). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML default for docs/imports. It is not the arm check. The arm check reads the layered spec under test.
 
 Other hard rules, unchanged:
 
@@ -80,8 +80,8 @@ Control = new YAML with the flag off. Treatment = production YAML.
 
 | Lever | Control | Treatment |
 |---|---|---|
-| `use_defensive_contribution` | `dc_layered_nodefcon_v1` (`false`) | `dc_layered_v2` |
-| `use_penalties_order` | `dc_layered_nopens_v1` (`false`) | `dc_layered_v2` |
+| `use_defensive_contribution` | `dc_layered_nodefcon_v1` (`false`) | `dc_layered_v3` |
+| `use_penalties_order` | `dc_layered_nopens_v1` (`false`) | `dc_layered_v3` |
 | `market_prior_strength` | a fork with `0`, **only after** production sets it > 0 | that production spec |
 
 `configs/evals/pens_order_involvement_ab.yaml` already has the pens orientation. It still needs the coverage block in §6.
@@ -101,7 +101,7 @@ W9 is the specimen. With-defcon MAE 0.991 vs without 0.983, RMSE 1.983 vs 1.994,
 
 Control = production (off). Treatment = fork (on).
 
-Odds today: control `dc_layered_v2` (`market_prior_strength` absent → 0), treatment `dc_layered_odds_v1` (`1.0`). Calling this opt-out would put the off state on both arms.
+Odds today: control `dc_layered_v3` (`market_prior_strength` absent → 0), treatment `dc_layered_odds_v1` (`1.0`). Calling this opt-out would put the off state on both arms.
 
 | Call | Opt-in (treatment is the fork) |
 |---|---|
@@ -158,7 +158,7 @@ change:
     - "components.minutes.kind: empirical_minutes_v2 → lgbm_minutes"
   notes: "same window; n_sims unchanged"
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: dc_layered_minutes_lgbm_v1
 # arms: [dc_layered_odds_strength_0_25, …]   # optional dose; SPA/MCS descriptive
 
@@ -253,7 +253,7 @@ This spec still fails preflight on coverage until a model PR opts the score comp
 
 `market_prior_source: history` is the same switch as `odds_history: pre_kickoff`. One param. The target-fixture blend stays the recorded arm above.
 
-Coverage for this model is `odds_history_join` (§6), not the target-fixture `odds_join` gate. The EvalSpec is `kind: config`, `opt_in`, control `dc_layered_v2`, treatment the history fork (built with `extends`, §11). A dose such as 0.25 / 1 / 4 on one window is descriptive. Report Hansen's SPA and the model confidence set (§9). `keep` is a later EvalSpec on a window that did not rank the values. The benchmark row is **raw de-vigged 1X2** on the same clock as `coverage.read`. `odds_poisson_v1` may be printed as a model column. It is not the book.
+Coverage for this model is `odds_history_join` (§6), not the target-fixture `odds_join` gate. The EvalSpec is `kind: config`, `opt_in`, control `dc_layered_v3`, treatment the history fork (built with `extends`, §11). A dose such as 0.25 / 1 / 4 on one window is descriptive. Report Hansen's SPA and the model confidence set (§9). `keep` is a later EvalSpec on a window that did not rank the values. The benchmark row is **raw de-vigged 1X2** on the same clock as `coverage.read`. `odds_poisson_v1` may be printed as a model column. It is not the book.
 
 Optuna, if used, tunes on a dev window that does not overlap the eval window and writes an `extends` fork. It does not run inside promote-eval.
 
@@ -276,11 +276,11 @@ change:
   diff:
     - "components.score.params.market_prior_strength: 0 → 1.0"
   notes: >
-    Control dc_layered_v2 (key absent, default 0). Treatment
+    Control dc_layered_v3 (key absent, default 0). Treatment
     dc_layered_odds_v1 at 1.0. Read is strict PIT. Closing-proxy
     kickoff rows are a labelled side rate, not the gate.
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: dc_layered_odds_v1
 
 window:
@@ -336,12 +336,12 @@ change:
   diff:
     - "components.involvement.params.use_penalties_order: false → true"
   notes: >
-    Control dc_layered_nopens_v1. Treatment dc_layered_v2 (default true).
+    Control dc_layered_nopens_v1. Treatment dc_layered_v3 (default true).
     Window must be snapshot-backed. Vaastav non-null rate is 0 and the
     arms tie via the penalties_missed fallback.
 
 control: dc_layered_nopens_v1
-treatment: dc_layered_v2
+treatment: dc_layered_v3
 
 window:
   seasons: ["2025-26"]    # replace with the season that actually has fpl_api snapshots
@@ -396,12 +396,12 @@ change:
   diff:
     - "components.other.params.use_defensive_contribution: false → true"
   notes: >
-    Control dc_layered_nodefcon_v1. Treatment dc_layered_v2 (default true).
+    Control dc_layered_nodefcon_v1. Treatment dc_layered_v3 (default true).
     seasons_back 4 is fine: pre-2025 training rows contribute 0 DC by rules.
     The gate is the test window, not the train window.
 
 control: dc_layered_nodefcon_v1
-treatment: dc_layered_v2
+treatment: dc_layered_v3
 
 window:
   seasons: ["2025-26"]
@@ -489,7 +489,7 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | Spec name missing, or `control == treatment` | No A/B |
 | `control_kind` / `treatment_kind` disagree with the loaded YAML (top-level, or `components[slot]`) | The diff is a story |
 | `orientation` disagrees with effective params, or both arms share the effective value | Inverted or empty contrast. Absent bool → `true`; absent `market_prior_strength` → `0` |
-| Another slot’s `kind` or params differ, and `allow_multi_lever` is false | CACE. W8 and W9 must stay separate even though both treatments are `dc_layered_v2` |
+| Another slot’s `kind` or params differ, and `allow_multi_lever` is false | CACE. W8 and W9 must stay separate even though both treatments are `dc_layered_v3` |
 | Listed table missing, or no `available_at` | The consumer cannot be PIT-safe |
 | `kind` not in `registered_kinds()` / `registered_components()` | Contract suite never saw it |
 | Coverage &lt; `min_coverage` and `allow_low_coverage` is false | The lever did not run. Odds-on-closing-lines fails here on purpose |
@@ -525,7 +525,7 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | Several EvalSpecs, same control, same lever, one window | Print the selection caveat. `keep` needs a fresh window (§9) |
 | Learner swap with non-deterministic threading (`deterministic: false` and similar) | Report the seed-to-seed spread |
 
-Scaffold files `example_config_dc_v1_vs_v2.yaml` and `example_component_minutes_v1_vs_v2.yaml` compare `dc_layered_v1` with `dc_layered_v2` (several slots). They exist so the loader has something to resolve. P1 sets `allow_multi_lever: true` on those two names. A real minutes swap copies `dc_layered_v2` and changes one slot.
+Scaffold files `example_config_dc_v1_vs_v2.yaml` and `example_component_minutes_v1_vs_v2.yaml` compare `dc_layered_v1` with `dc_layered_v2` (several slots). They exist so the loader has something to resolve. P1 sets `allow_multi_lever: true` on those two names. A real minutes swap copies `dc_layered_v3` and changes one slot.
 
 ---
 
@@ -662,13 +662,13 @@ P1 and P2 ship together: a compare run that skips the vacuous-A/B check will hap
 
 - **The landed λ blend is a no-op on ingested closing lines.** `view.latest` hides kickoff timestamps. A labelled `use_closing_proxy` flag is a model change. The runner must not call the escape hatch on the model's behalf.
 - **The landed odds prior is the wrong next experiment.** Predict-time λ blend does not test "does the book help?". The next model is `market_prior_source: history` (§5.1). Raw de-vig 1X2 is the bar. `odds_poisson_v1` is not.
-- **Fork YAMLs are full copies.** `dc_layered_nodefcon_v1` repeats `dc_layered_v2` to flip one flag. `extends` (P1.5) is how new forks are written. Migrating the three existing copies is a hash check, not a model run.
+- **Fork YAMLs are full copies.** `dc_layered_nodefcon_v1` extends `dc_layered_v3` to flip one flag. `extends` (P1.5) is how new forks are written. Migrating the three existing copies is a hash check, not a model run.
 - **`seed_for` includes `model_id` and is shared across players in a fixture.** A pen or defcon delta mixes the lever with a different Monte Carlo stream, and one extra player shifts later draws. Pairing is the CRN PR (§9). Do not change `seed_for` to get there.
 - **`_align_odds` can attach another fixture’s line** when `fixture_id` is missing, because the fallback key drops the date. Coverage reports both rates and warns. The repair belongs in the model.
 - **`eval-components` in the dry-run is not the A/B.** Defaults are `dixon_coles_v1`, `poisson_score_v1`, `odds_poisson_v1`, `empirical_minutes_v1`, `involvement_shares_v1`.
 - **`example_data_odds_prior.yaml` is the wrong `kind`.** W7 is `config`.
 - **v1-vs-v2 examples are multi-lever.** They are loader fixtures.
-- **Pens and defcon both treat `dc_layered_v2` as treatment.** One EvalSpec cannot move both flags.
+- **Pens and defcon both treat `dc_layered_v3` as treatment.** One EvalSpec cannot move both flags.
 - **Pooled top-10 and a single MAE hide a `tune`.** W9: without-defcon won MAE on 34 of 38 gameweeks; with-defcon won Spearman on 22; bias improved.
 - **`n_sims: 10000` is part of the spec.** P2 runs it. Override only with two specs that share the new value.
 
@@ -784,13 +784,13 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
      ranking.md is descriptive — not a keep
      decision season totals stay on fplt decisions
 
-ODDS     recorded arm: control dc_layered_v2, treatment dc_layered_odds_v1
+ODDS     recorded arm: control dc_layered_v3, treatment dc_layered_odds_v1
          gate: strict-PIT odds join >= 80%. Closing kickoff lines fail this.
          benchmark row: raw de-vig 1X2. odds_poisson is only a model column.
          next model: market_prior_source history. Gate is odds_history_join.
-PENS     control dc_layered_nopens_v1, treatment dc_layered_v2
+PENS     control dc_layered_nopens_v1, treatment dc_layered_v3
          gate: penalties_order non-null rate >= 1% (zero-detector, not 80%).
-DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v2
+DEFCON   control dc_layered_nodefcon_v1, treatment dc_layered_v3
          gate: 100% of target fixtures in a season whose rules award DC.
 ENV      same spec, two lockfiles. Verdict from prediction identity, then intervals.
 BAKEOFF  ≥3 ModelSpecs, shared window; SPA/MCS + RMSE rank (MAE secondary). Not a keep.
