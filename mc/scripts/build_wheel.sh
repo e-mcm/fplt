@@ -33,13 +33,23 @@ echo "Built wheel(s) for ${plat}:"
 ls -la "${DIST}"/*.whl
 
 # Linux: auditwheel repair into manylinux tag when auditwheel is available.
-if [[ "$(uname -s)" == "Linux" ]] && command -v auditwheel >/dev/null 2>&1; then
-  for whl in "${DIST}"/fplt_mc-*.whl; do
-    if [[ "${whl}" == *manylinux* ]]; then
-      continue
-    fi
-    auditwheel repair "${whl}" -w "${DIST}" || echo "auditwheel repair skipped for ${whl}"
-  done
+# Drop the unrepaired linux_*.whl so dist/ has a single fplt-mc wheel.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  if ! command -v auditwheel >/dev/null 2>&1; then
+    "${PY}" -m pip install -q auditwheel 2>/dev/null || true
+  fi
+  if command -v auditwheel >/dev/null 2>&1; then
+    for whl in "${DIST}"/fplt_mc-*.whl; do
+      if [[ "${whl}" == *manylinux* ]]; then
+        continue
+      fi
+      if auditwheel repair "${whl}" -w "${DIST}"; then
+        rm -f "${whl}"
+      else
+        echo "auditwheel repair skipped for ${whl}"
+      fi
+    done
+  fi
 fi
 
 # macOS: delocate when available.

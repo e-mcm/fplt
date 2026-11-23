@@ -201,7 +201,11 @@ jobs:
       - name: Reinstall artifact wheel
         if: needs.changes.outputs.mc == 'true'
         run: |
-          uv pip install --no-deps --reinstall dist/*.whl
+          ls -la dist/
+          # Prefer manylinux tag; build may leave only one wheel after auditwheel.
+          WHEEL=$(ls dist/*manylinux*.whl 2>/dev/null | head -1)
+          WHEEL=${WHEEL:-$(ls dist/*.whl | head -1)}
+          uv pip install --no-deps --reinstall "$WHEEL"
           uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
       - name: Pytest (fplt)
         run: uv run pytest -m "not slow" --cov=fplt --cov-report=xml
@@ -228,7 +232,9 @@ jobs:
           path: dist
       - name: Reinstall artifact wheel
         run: |
-          uv pip install --no-deps --reinstall dist/*.whl
+          ls -la dist/
+          WHEEL=$(ls dist/*macosx*.whl dist/*.whl 2>/dev/null | head -1)
+          uv pip install --no-deps --reinstall "$WHEEL"
           uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
       # Full fplt suite needs libomp for lightgbm on macOS runners; PR1 only
       # requires the freshly built fplt-mc wheel to import and pass L0 smoke.
