@@ -275,7 +275,7 @@ def sample_synthetic_scenarios(
     Args:
         n: Number of scenarios (typically 20–30).
         seed: RNG seed for owned picks and xPts jitter.
-        horizon: Plan horizon (prune auto-applies at H≥5).
+        horizon: Plan horizon (prune auto-applies at H≥3).
         pool_counts: Optional per-position pool sizes. Defaults to a ~200
             player universe (use ~640 for quota-sensitive N sweeps).
 
