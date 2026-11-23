@@ -204,7 +204,7 @@ def run_regret_board(
     store = DataStore(data_dir)
     market = _market_frame(store, season, from_gw, to_gw)
     per_gw = component_regret(policy, market=market)
-    summary = summarise_attainable(policy, oracle)
+    summary = summarise_attainable(policy, oracle, market=market)
     meta: dict[str, Any] = {
         "season": season,
         "from_gw": from_gw,

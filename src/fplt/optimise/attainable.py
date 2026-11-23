@@ -473,6 +473,8 @@ def component_regret(
 def summarise_attainable(
     decisions: pl.DataFrame,
     oracle: pl.DataFrame,
+    *,
+    market: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Join policy season totals to the oracle and attach component regret.
 
@@ -480,6 +482,8 @@ def summarise_attainable(
         decisions: Policy decision rows (exclude oracle model ids).
         oracle: Constrained hindsight rows (``ORACLE_MODEL_ID`` or chip-arm
             suffix).
+        market: Optional full GW candidate pool forwarded to
+            ``component_regret`` for transfer hindsight.
 
     Returns:
         A frame matching ``AttainableShareSchema``.
@@ -500,7 +504,7 @@ def summarise_attainable(
         str(row["season"]): int(row["total_points"])
         for row in oracle_summary.iter_rows(named=True)
     }
-    regret = component_regret(policy)
+    regret = component_regret(policy, market=market)
     regret_tot = (
         regret.group_by("model_id", "season").agg(
             pl.col("captaincy_regret").sum(),
