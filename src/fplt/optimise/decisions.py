@@ -986,8 +986,9 @@ def run_chip_decision_board(
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
         highs_options: HiGHS knobs for board solves. Defaults to
-            ``HighsSolveOptions.board_deterministic()`` (no time limit, one
-            thread, fixed seed) so identical tip + data → identical totals.
+            ``HighsSolveOptions.board_deterministic()`` (no time limit,
+            ``threads=1``, fixed seed) so identical tip + data → identical
+            totals.
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
