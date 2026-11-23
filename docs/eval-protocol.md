@@ -136,7 +136,7 @@ Live `fplt plan` keeps `HighsSolveOptions.open_fpl_defaults()` (600s, gap `1e-3`
 
 - RMSE headline for mean-seeking boards; MAE secondary ([`evaluation-north-star.md`](evaluation-north-star.md), [`w9-mae-rmse-reading.md`](w9-mae-rmse-reading.md)).
 - `lgbm_direct_v1` trains with LightGBM `objective: regression` (L2); `metric: mae` is monitoring only — do not describe it as an MAE-objective median model.
-- Absolute decision-sim bar: **2400** season points under reference-board rules.
+- Decision-sim bars are **points-at-rank** under reference-board rules (anchor **2400** ≈ OR ~573k in 2024-25; **2235** in 2025-26). See [`evaluation-north-star.md`](evaluation-north-star.md) §2.
 
 ---
 

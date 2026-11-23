@@ -10,10 +10,15 @@ pass ``chip_arm="optimised"`` (and fixtures) for a chips-on attainable ceiling.
 ``chip_timing_regret`` remains a placeholder while chips are off.
 
 Share of attainable points = realised season total ÷ oracle season total.
+
+When several policy arms report share of attainable on the same path (N6),
+freeze the oracle knobs with :class:`OraclePin` so horizon, decay, and chip
+arm are identical across arms — see ``resolve_oracle_pin``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +52,7 @@ ORACLE_MODEL_ID = "hindsight_oracle_v1"
 __all__ = [
     "ORACLE_MODEL_ID",
     "ChipTimingRegret",
+    "OraclePin",
     "actuals_from_staged",
     "attainable_share",
     "chip_timing_regret",
@@ -55,6 +61,7 @@ __all__ = [
     "foresight_predictions",
     "format_attainable_scoreboard",
     "oracle_ledger_model_id",
+    "resolve_oracle_pin",
     "run_hindsight_oracle",
     "simulate_hindsight_oracle",
     "summarise_attainable",
@@ -72,6 +79,81 @@ class ChipTimingRegret:
     chip: str | None
     regret: int | None
     status: str
+
+
+@dataclass(frozen=True)
+class OraclePin:
+    """Frozen planner knobs for the attainable-share denominator.
+
+    Every policy arm that reports ``share_of_attainable`` on a shared path
+    must use this pin so diffs isolate the policy, not the oracle
+    definition. Horizon, decay, and chip arm are identical across arms.
+    """
+
+    horizon: int
+    decay: float
+    chip_arm: ChipArm = "off"
+    force_play: bool = True
+
+    def __post_init__(self) -> None:
+        if self.horizon < 1:
+            raise ValueError(f"horizon must be >= 1, got {self.horizon}")
+        if not 0.0 < self.decay <= 1.0:
+            raise ValueError(f"decay must be in (0, 1], got {self.decay}")
+
+
+def resolve_oracle_pin(
+    *,
+    horizon: int,
+    state: SquadState,
+    policy_horizons: Sequence[int | None] = (),
+    pin: OraclePin | None = None,
+    chip_arm: ChipArm = "off",
+    force_play: bool = True,
+) -> OraclePin:
+    """Resolve the attainable oracle pin for a multi-arm board.
+
+    When ``pin`` is supplied it is returned unchanged (after validation via
+    the dataclass). Otherwise build a pin from ``horizon``, ``state.decay``,
+    and the chip defaults. If ``policy_horizons`` contains more than one
+    distinct effective horizon (``None`` means the eval ``horizon``), raise
+    so callers must pin explicitly.
+
+    Args:
+        horizon: Eval-level planner look-ahead (used when a policy leaves
+            its horizon unset).
+        state: Shared squad rules; ``decay`` is copied into the pin.
+        policy_horizons: Optional per-policy horizon overrides (``None`` =
+            eval horizon). Used only to detect divergence.
+        pin: Explicit pin; wins when provided.
+        chip_arm: Default oracle chip arm when building a pin (N5: ``off``).
+        force_play: Default oracle ``force_play`` when building a pin.
+
+    Returns:
+        An :class:`OraclePin` shared by every arm's share denominator.
+
+    Raises:
+        ValueError: Divergent policy horizons without an explicit pin, or
+            invalid pin fields.
+    """
+    if pin is not None:
+        return pin
+    effective = {
+        horizon if override is None else int(override) for override in policy_horizons
+    }
+    if not effective:
+        effective = {horizon}
+    if len(effective) > 1:
+        raise ValueError(
+            "policies use divergent horizons; pass an explicit OraclePin "
+            "so share_of_attainable uses one H/decay/chip_arm across arms"
+        )
+    return OraclePin(
+        horizon=horizon,
+        decay=float(state.decay),
+        chip_arm=chip_arm,
+        force_play=force_play,
+    )
 
 
 def foresight_predictions(

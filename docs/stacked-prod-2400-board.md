@@ -1,7 +1,7 @@
-# Stacked production season-points vs 2400
+# Stacked production season-points vs points-at-rank bars
 
-**Call: measurement only — no PRODUCTION flip.** Absolute score vs the [2400 north star](./evaluation-north-star.md) on the live decision stack.  
-**Task:** FDB-224 · **Date:** 2026-11-23  
+**Call: measurement only — no PRODUCTION flip.** Absolute score vs the [points-at-rank north star](./evaluation-north-star.md) on the live decision stack.  
+**Task:** FDB-224 (board) · FDB-231 (bar conversion) · **Date:** 2026-11-23  
 **Tip:** `35b9ac5` (`main`) · model_id `12152f0e53162d2f` (`dc_layered_v2`)  
 **Artifacts:** [`internal/stacked-prod-2400/`](../internal/stacked-prod-2400/)
 
@@ -17,14 +17,18 @@
 
 ---
 
-## Season totals vs 2400
+## Season totals vs per-season bars
 
-| Season | Points | Δ vs 2400 | Mean PPG | Wall |
-|---|---:|---:|---:|---:|
-| **2025-26** (primary) | **2055** | **−345** | 54.1 | 136s |
-| **2024-25** (confirm) | **2239** | **−161** | 58.9 | 99s |
+Anchor: **2400 @ 2024-25** ≡ OR **≈573k** (top ~5%). Per-season bar = points at that rank.
 
-Mean-PPG sanity ≤ 90: **pass** both. Neither season hits **2400**.
+| Season | Points | Season bar | Δ vs bar | Δ vs old 2400 | Mean PPG | Wall |
+|---|---:|---:|---:|---:|---:|---:|
+| **2025-26** (primary) | **2055** | **2235** | **−180** | −345 | 54.1 | 136s |
+| **2024-25** (confirm) | **2239** | **2400** | **−161** | −161 | 58.9 | 99s |
+
+Mean-PPG sanity ≤ 90: **pass** both. Neither season hits its **per-season** bar.
+
+**Mean bar** (dashboard only) = mean(2400, 2235) = **2318**. Do **not** score either season against 2318 or against a fixed 2400 — see [evaluation-north-star.md](./evaluation-north-star.md) §2.
 
 ### Chip timelines
 
@@ -46,7 +50,7 @@ Mean-PPG sanity ≤ 90: **pass** both. Neither season hits **2400**.
 
 ## Call
 
-**Gap to 2400 remains.** Primary live-rules year is **2055 (−345)**; confirmation **2239 (−161)**. Stack already matches live defaults (force-play, lineup_reopt, `mean_gw_delta`, sell-on, optimised chips, `dc_layered_v2`). Forecast-combine equal stays **dropped** ([forecast-combine-promote.md](./forecast-combine-promote.md)). **Do not** flip `PRODUCTION_MODELS` or planner defaults from this board.
+**Gap to the per-season bars remains.** Primary live-rules year is **2055 (−180 vs 2235)**; confirmation **2239 (−161 vs 2400)**. Under the old fixed-2400 read the 2025-26 gap looked −345; points-at-rank shrinks that gap because 2025-26 was a lower-scoring season at the same overall rank. Stack already matches live defaults (force-play, lineup_reopt, `mean_gw_delta`, sell-on, optimised chips, `dc_layered_v2`). Forecast-combine equal stays **dropped** ([forecast-combine-promote.md](./forecast-combine-promote.md)). **Do not** flip `PRODUCTION_MODELS` or planner defaults from this board.
 
 ---
 
