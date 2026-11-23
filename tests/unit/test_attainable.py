@@ -63,6 +63,35 @@ def test_oracle_ledger_model_id_encodes_chip_arm() -> None:
     assert oracle_ledger_model_id("rule_based") == f"{ORACLE_MODEL_ID}::chip_rule_based"
 
 
+def test_oracle_pin_rejects_bad_fields() -> None:
+    from fplt.optimise.attainable import OraclePin
+
+    with pytest.raises(ValueError, match="horizon"):
+        OraclePin(horizon=0, decay=1.0)
+    with pytest.raises(ValueError, match="decay"):
+        OraclePin(horizon=1, decay=0.0)
+
+
+def test_resolve_oracle_pin_defaults_and_requires_explicit_on_divergence() -> None:
+    from fplt.optimise.attainable import OraclePin, resolve_oracle_pin
+
+    state = _state(decay=0.9)
+    pin = resolve_oracle_pin(horizon=3, state=state, policy_horizons=[None, None])
+    assert pin == OraclePin(horizon=3, decay=0.9, chip_arm="off", force_play=True)
+    explicit = OraclePin(horizon=8, decay=1.0, chip_arm="optimised", force_play=False)
+    assert (
+        resolve_oracle_pin(
+            horizon=3,
+            state=state,
+            policy_horizons=[3, 8],
+            pin=explicit,
+        )
+        is explicit
+    )
+    with pytest.raises(ValueError, match="divergent horizons"):
+        resolve_oracle_pin(horizon=3, state=state, policy_horizons=[3, 8])
+
+
 def test_hindsight_oracle_beats_or_matches_blind_policy() -> None:
     pool = _pool()
     candidates = pl.concat([pool.with_columns(pl.lit(gw).alias("gw")) for gw in (1, 2)])
