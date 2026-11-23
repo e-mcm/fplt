@@ -75,4 +75,27 @@ void simulate_match_with_uniforms(
     const MatchOtherTables* match_other, std::size_t players, std::size_t n,
     MatchSamples* samples, FixtureSummary* summary) noexcept;
 
+/// Philox stream ids for ``simulate_fixture`` (stable across releases).
+inline constexpr std::uint32_t kStreamHomeScorer = 1;
+inline constexpr std::uint32_t kStreamHomeAssistFlag = 2;
+inline constexpr std::uint32_t kStreamHomeAssister = 3;
+inline constexpr std::uint32_t kStreamAwayScorer = 4;
+inline constexpr std::uint32_t kStreamAwayAssistFlag = 5;
+inline constexpr std::uint32_t kStreamAwayAssister = 6;
+inline constexpr std::uint32_t kStreamCsVoid = 7;
+inline constexpr std::uint32_t kStreamOther = 8;
+
+/// Production path: draw Philox uniforms from ``kernel_seed``, then fuse.
+///
+/// Python draws ``kernel_seed`` from the fixture RNG after minutes / hard
+/// starters so CRN pairing survives. Hard starters stay in Python (K1 deferred).
+void simulate_fixture(const std::int64_t* home_goals, const std::int64_t* away_goals,
+                      const std::uint8_t* side, const std::uint8_t* position,
+                      const double* minutes, const double* goal_weight,
+                      const double* assist_weight, const double* other_points,
+                      const RulesPOD& rules, const SimParams& params,
+                      const MatchOtherTables* match_other, std::uint64_t kernel_seed,
+                      std::size_t players, std::size_t n, MatchSamples* samples,
+                      FixtureSummary* summary) noexcept;
+
 }  // namespace fplt_mc

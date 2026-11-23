@@ -1,10 +1,12 @@
 #include "fplt_mc/simulate.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
 
 #include "fplt_mc/allocate.hpp"
+#include "fplt_mc/rng.hpp"
 
 namespace fplt_mc {
 namespace {
@@ -236,6 +238,100 @@ void simulate_match_with_uniforms(
     aggregate_fixture(minutes, points_buf.data(), goals_buf.data(), assists_buf.data(),
                       cs_buf.data(), players, n, summary);
   }
+}
+
+namespace {
+
+void fill_side_uniforms(std::uint64_t kernel_seed, std::uint32_t stream_scorer,
+                        std::uint32_t stream_flag, std::uint32_t stream_assister,
+                        std::size_t max_goals, std::size_t n, double* scorer,
+                        double* flag, double* assister) noexcept {
+  for (std::size_t g = 0; g < max_goals; ++g) {
+    for (std::size_t j = 0; j < n; ++j) {
+      const std::size_t k = g * n + j;
+      const auto sim = static_cast<std::uint32_t>(j);
+      const auto slot = static_cast<std::uint32_t>(g);
+      scorer[k] = philox_u01(kernel_seed, stream_scorer, sim, slot);
+      flag[k] = philox_u01(kernel_seed, stream_flag, sim, slot);
+      assister[k] = philox_u01(kernel_seed, stream_assister, sim, slot);
+    }
+  }
+}
+
+[[nodiscard]] std::size_t max_goals_of(const std::int64_t* goals,
+                                       std::size_t n) noexcept {
+  std::int64_t m = 0;
+  for (std::size_t j = 0; j < n; ++j) {
+    m = std::max(m, goals[j]);
+  }
+  return m > 0 ? static_cast<std::size_t>(m) : 0;
+}
+
+}  // namespace
+
+void simulate_fixture(const std::int64_t* home_goals, const std::int64_t* away_goals,
+                      const std::uint8_t* side, const std::uint8_t* position,
+                      const double* minutes, const double* goal_weight,
+                      const double* assist_weight, const double* other_points,
+                      const RulesPOD& rules, const SimParams& params,
+                      const MatchOtherTables* match_other, std::uint64_t kernel_seed,
+                      std::size_t players, std::size_t n, MatchSamples* samples,
+                      FixtureSummary* summary) noexcept {
+  const std::size_t home_max = max_goals_of(home_goals, n);
+  const std::size_t away_max = max_goals_of(away_goals, n);
+  const std::size_t pn = players * n;
+
+  std::vector<double> home_scorer(home_max * n);
+  std::vector<double> home_flag(home_max * n);
+  std::vector<double> home_ast(home_max * n);
+  std::vector<double> away_scorer(away_max * n);
+  std::vector<double> away_flag(away_max * n);
+  std::vector<double> away_ast(away_max * n);
+  fill_side_uniforms(kernel_seed, kStreamHomeScorer, kStreamHomeAssistFlag,
+                     kStreamHomeAssister, home_max, n, home_scorer.data(),
+                     home_flag.data(), home_ast.data());
+  fill_side_uniforms(kernel_seed, kStreamAwayScorer, kStreamAwayAssistFlag,
+                     kStreamAwayAssister, away_max, n, away_scorer.data(),
+                     away_flag.data(), away_ast.data());
+
+  std::vector<double> cs_void;
+  std::vector<double> other_u;
+  if (params.cs_red_void_prob > 0.0) {
+    cs_void.resize(pn);
+    for (std::size_t i = 0; i < players; ++i) {
+      for (std::size_t j = 0; j < n; ++j) {
+        cs_void[i * n + j] =
+            philox_u01(kernel_seed, kStreamCsVoid, static_cast<std::uint32_t>(j),
+                       static_cast<std::uint32_t>(i));
+      }
+    }
+  }
+  if (params.sample_other) {
+    other_u.resize(pn);
+    for (std::size_t i = 0; i < players; ++i) {
+      for (std::size_t j = 0; j < n; ++j) {
+        other_u[i * n + j] =
+            philox_u01(kernel_seed, kStreamOther, static_cast<std::uint32_t>(j),
+                       static_cast<std::uint32_t>(i));
+      }
+    }
+  }
+
+  MatchUniforms uniforms;
+  uniforms.home_scorer = home_scorer.data();
+  uniforms.home_assist_flag = home_flag.data();
+  uniforms.home_assister = home_ast.data();
+  uniforms.home_max_goals = home_max;
+  uniforms.away_scorer = away_scorer.data();
+  uniforms.away_assist_flag = away_flag.data();
+  uniforms.away_assister = away_ast.data();
+  uniforms.away_max_goals = away_max;
+  uniforms.cs_void = cs_void.empty() ? nullptr : cs_void.data();
+  uniforms.other = other_u.empty() ? nullptr : other_u.data();
+
+  simulate_match_with_uniforms(home_goals, away_goals, side, position, minutes,
+                               goal_weight, assist_weight, other_points, rules, params,
+                               uniforms, match_other, players, n, samples, summary);
 }
 
 }  // namespace fplt_mc

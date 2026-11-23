@@ -22,6 +22,11 @@ from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.distributions import MinutesDist, enforce_hard_starters
 from fplt.models.predictions import prediction_frame
 from fplt.models.simulation import ConcededMode, simulate_match
+from fplt.models.simulation_native import (
+    require_native_kernel,
+    resolve_mc_backend,
+    simulate_match_native,
+)
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
 from fplt.models.universe import player_fixtures
 from fplt.scoring.rules import Rules
@@ -72,8 +77,12 @@ class CompositePredictor:
         sample_other = spec.params.get("sample_other", False)
         hard = spec.params.get("hard_starters", False)
         target = spec.params.get("target_starters", 11)
+        backend_raw = spec.params.get("mc_backend")
         if isinstance(sims, bool) or not isinstance(sims, int) or sims < 1:
             raise ValueError(f"n_sims must be a positive int, got {sims!r}")
+        backend = resolve_mc_backend(None if backend_raw is None else str(backend_raw))
+        if backend == "native":
+            require_native_kernel()
         own_goal_value = float(own_goal)
         assist_value = float(assist)
         void_value = float(void_prob)
@@ -115,6 +124,7 @@ class CompositePredictor:
         self._sample_other = sample_other
         self._hard_starters = hard
         self._target_starters = target_value
+        self._mc_backend = backend
         self._score = _build(spec, "score")
         self._minutes = _build(spec, "minutes")
         self._involvement = _build(spec, "involvement")
@@ -275,25 +285,52 @@ def _fixture(
         model._other if getattr(model._other, "match_conditioned", False) else None
     )
     player_keys = players["player_key"].to_list()
-    result = simulate_match(
-        scorelines[0],
-        _sim_players(players, weights),
-        minutes,
-        _other_grid(other, player_keys),
-        rules,
-        rng,
-        own_goal_weight=model._own_goal,
-        p_assist=model._p_assist,
-        cs_red_void_prob=model._cs_red_void_prob,
-        conceded_mode=model._conceded_mode,
-        sample_other=model._sample_other,
-        match_other=match_other,
-        p_penalty=model._p_penalty,
-        penalty_taker=np.asarray(
-            [int(key) in model._penalty_taker_keys for key in player_keys],
-            dtype=bool,
-        ),
+    sim_players = _sim_players(players, weights)
+    other_grid = _other_grid(other, player_keys)
+    penalty_taker = np.asarray(
+        [int(key) in model._penalty_taker_keys for key in player_keys],
+        dtype=bool,
     )
+    if model._mc_backend == "native":
+        if model._p_penalty > 0.0:
+            raise NotImplementedError(
+                "mc_backend=native does not yet support p_penalty > 0 "
+                "(penalty-event allocation); use mc_backend=python"
+            )
+        # Python remains seed authority: draw kernel_seed after minutes/HS.
+        kernel_seed = int(rng.integers(0, 2**63))
+        result = simulate_match_native(
+            scorelines[0],
+            sim_players,
+            minutes,
+            other_grid,
+            rules,
+            kernel_seed=kernel_seed,
+            own_goal_weight=model._own_goal,
+            p_assist=model._p_assist,
+            cs_red_void_prob=model._cs_red_void_prob,
+            conceded_mode=model._conceded_mode,
+            sample_other=model._sample_other,
+            match_other=match_other,
+            return_samples=True,
+        )
+    else:
+        result = simulate_match(
+            scorelines[0],
+            sim_players,
+            minutes,
+            other_grid,
+            rules,
+            rng,
+            own_goal_weight=model._own_goal,
+            p_assist=model._p_assist,
+            cs_red_void_prob=model._cs_red_void_prob,
+            conceded_mode=model._conceded_mode,
+            sample_other=model._sample_other,
+            match_other=match_other,
+            p_penalty=model._p_penalty,
+            penalty_taker=penalty_taker,
+        )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),
         pl.Series("xpts_sd", result.points.std(axis=1)),
