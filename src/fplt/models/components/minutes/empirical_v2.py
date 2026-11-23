@@ -33,6 +33,12 @@ from fplt.models.components.minutes.absence import (
     return_ramp_factor,
     scale_return_feature,
 )
+from fplt.models.components.minutes.calibrate import (
+    ChanceCalibration,
+    calibrated_long_factor,
+    effective_chance_pct,
+    fit_chance_calibration,
+)
 from fplt.models.components.minutes.common import (
     DEFAULT_AVAILABILITY_RECOVERY_GAMES,
     START_FALLBACK,
@@ -63,6 +69,7 @@ _START_DIM = 13
 _LONG_DIM = 5
 _DEFAULT_WINDOWS = (3, 5, 10)
 _DEFAULT_RETURN_RAMP_GAMES = 2.0
+_DEFAULT_CHANCE_CAL_MIN_COUNT = 20
 
 
 class EmpiricalMinutesV2:
@@ -79,12 +86,14 @@ class EmpiricalMinutesV2:
     first games back after an absence. Availability (status /
     chance_of_playing) gates both rates after the logits, with
     ``availability_recovery_games`` recovering the gate toward 1.0 for
-    horizon steps after the next-round FPL anchor (P3). Optional
-    ``use_injury_overlay`` also applies staged ``player_injuries`` (default
-    off — production stays FPL-tags-only until eval); player-level injury
-    tags use the same recovery curve. When ``predicted_xi`` is true,
-    near-deadline predicted lineup roles mix into
-    P(start) before soft-squad projection.
+    horizon steps after the next-round FPL anchor (P3). When
+    ``calibrate_chance_flags`` is on (default), snapshot ``player_status``
+    replaces face-value chance with fitted play rates (P1) and scales
+    P(≥60|start) for flagged players (P2). Optional ``use_injury_overlay``
+    also applies staged ``player_injuries`` (default off — production stays
+    FPL-tags-only until eval); player-level injury tags use the same
+    recovery curve. When ``predicted_xi`` is true, near-deadline predicted
+    lineup roles mix into P(start) before soft-squad projection.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -104,6 +113,8 @@ class EmpiricalMinutesV2:
         )
         overlay = spec.params.get("use_injury_overlay", False)
         avail_gate = spec.params.get("use_availability_gate", True)
+        calibrate_flags = spec.params.get("calibrate_chance_flags", True)
+        cal_min = spec.params.get("chance_cal_min_count", _DEFAULT_CHANCE_CAL_MIN_COUNT)
         predicted_xi = spec.params.get("predicted_xi", False)
         xi_window = spec.params.get("predicted_xi_window_hours", 72.0)
         xi_strength = spec.params.get("predicted_xi_strength", 0.75)
@@ -116,6 +127,7 @@ class EmpiricalMinutesV2:
         l2_value = _as_float(l2)
         ramp_value = _as_float(ramp)
         recovery_value = _as_float(recovery)
+        cal_min_value = _as_float(cal_min)
         xi_window_value = _as_float(xi_window)
         xi_strength_value = _as_float(xi_strength)
         if shrinkage_value < 0:
@@ -141,6 +153,8 @@ class EmpiricalMinutesV2:
                 "availability_recovery_games must be non-negative, "
                 f"got {recovery_value}"
             )
+        if cal_min_value < 1:
+            raise ValueError(f"chance_cal_min_count must be >= 1, got {cal_min_value}")
         if not isinstance(soft, bool):
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
         if not isinstance(overlay, bool):
@@ -148,6 +162,10 @@ class EmpiricalMinutesV2:
         if not isinstance(avail_gate, bool):
             raise ValueError(
                 f"use_availability_gate must be a bool, got {avail_gate!r}"
+            )
+        if not isinstance(calibrate_flags, bool):
+            raise ValueError(
+                f"calibrate_chance_flags must be a bool, got {calibrate_flags!r}"
             )
         if not isinstance(predicted_xi, bool):
             raise ValueError(f"predicted_xi must be a bool, got {predicted_xi!r}")
@@ -171,10 +189,13 @@ class EmpiricalMinutesV2:
         self._availability_recovery_games = recovery_value
         self._use_injury_overlay = overlay
         self._use_availability_gate = avail_gate
+        self._calibrate_chance_flags = calibrate_flags
+        self._chance_cal_min_count = int(cal_min_value)
         self._predicted_xi = predicted_xi
         self._xi_window_hours = xi_window_value
         self._xi_strength = xi_strength_value
         self._fitted = False
+        self._calibration = ChanceCalibration.identity()
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}
         self._player_features: dict[int, dict[str, float]] = {}
@@ -204,8 +225,13 @@ class EmpiricalMinutesV2:
         self._position_sub = {}
         self._start_beta = np.zeros(_START_DIM, dtype=np.float64)
         self._long_beta = np.zeros(_LONG_DIM, dtype=np.float64)
+        self._calibration = ChanceCalibration.identity()
         if stats.is_empty():
             return
+        if self._calibrate_chance_flags:
+            self._calibration = fit_chance_calibration(
+                view, stats, min_count=self._chance_cal_min_count
+            )
         tagged = annotate_absences(view, stats)
         start_counts: dict[str, np.ndarray] = {}
         sub_counts: dict[str, np.ndarray] = {}
@@ -306,6 +332,11 @@ class EmpiricalMinutesV2:
                 if target_gw is not None
                 else 0
             )
+            cal = (
+                self._calibration
+                if self._calibrate_chance_flags and self._use_availability_gate
+                else None
+            )
             gate = availability_gate(
                 tags,
                 self._doubtful,
@@ -314,6 +345,7 @@ class EmpiricalMinutesV2:
                 use_availability_gate=self._use_availability_gate,
                 step=step,
                 recovery_games=self._availability_recovery_games,
+                calibration=cal,
             )
             features = self._player_features.get(player, _empty_player_features())
             start_x = _start_vector(features, row)
@@ -336,7 +368,16 @@ class EmpiricalMinutesV2:
             )
             p_start[index] = blended * ramp * gate
             p_sub[index] = base_sub * gate * (1.0 - blended)
-            p_long[index] = raw_long
+            # P2: scale P(≥60|start) for flagged players using snapshot maps.
+            if cal is None or tags is None:
+                p_long[index] = raw_long
+            else:
+                pct = effective_chance_pct(
+                    tags.status,
+                    tags.chance_next,
+                    chance_this=tags.chance_this,
+                )
+                p_long[index] = raw_long * calibrated_long_factor(pct, cal)
             start_hist[index] = shrunk(
                 self._player_start.get(player),
                 self._position_start.get(position),

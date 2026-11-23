@@ -123,6 +123,7 @@ def test_injury_zeros_do_not_kill_start_share(tmp_path: Path) -> None:
                 "logistic_blend": 0.0,
                 "l2": 1.0,
                 "return_ramp_games": 0.0,
+                "calibrate_chance_flags": False,
             },
         )
     )
@@ -197,6 +198,7 @@ def _predict_ramp(store: DataStore, ask: pl.DataFrame, *, ramp: float):
                 "logistic_blend": 0.0,
                 "l2": 1.0,
                 "return_ramp_games": ramp,
+                "calibrate_chance_flags": False,
             },
         )
     )

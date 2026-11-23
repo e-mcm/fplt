@@ -15,6 +15,9 @@ params:
   # Extra GWs after next-round chance before the availability gate reaches 1
   # (P3 horizon recovery). Step 0 uses this-round chance; step 1 uses next.
   availability_recovery_games: 3.0
+  # Snapshot-calibrated chance flags (P1 play gate / P2 ≥60|start factor).
+  calibrate_chance_flags: true
+  chance_cal_min_count: 20
   # FPL status/chance/news gate (on here; off only in dc_layered_noavail_v1).
   use_availability_gate: true
   # API-Football overlay (off here; on in empirical_minutes_v2_injuries /

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.models.distributions import MINUTE_BINS
+
+if TYPE_CHECKING:
+    from fplt.models.components.minutes.calibrate import ChanceCalibration
 
 UNAVAILABLE = frozenset({"i", "s", "u", "n"})
 _INJURY_RANK = {"out": 2, "doubtful": 1}
@@ -128,32 +132,55 @@ def chance(
     chance_this: float | None = None,
     news: str = "",
     news_added: datetime | None = None,
+    calibration: ChanceCalibration | None = None,
 ) -> float:
     """Availability multiplier in ``[0, 1]``.
 
     Prefers ``chance_this`` when set, else ``chance_of_playing`` (next-round).
     A null chance is not treated as 100% when status is doubtful/unavailable or
-    when FPL has stamped non-empty news / ``news_added``.
+    when FPL has stamped non-empty news / ``news_added``. When ``calibration``
+    is set, discrete chance flags use the fitted play gate (P1) instead of
+    face-value ``pct / 100``.
     """
+    # Lazy import: calibrate.py depends on UNAVAILABLE from this module.
+    from fplt.models.components.minutes.calibrate import (  # noqa: PLC0415
+        calibrated_play_gate,
+        effective_chance_pct,
+    )
+
     playing = chance_this if chance_this is not None else chance_of_playing
     if playing is not None:
-        return playing / 100.0
+        face = playing / 100.0
+        if calibration is None:
+            return face
+        return calibrated_play_gate(playing, face, calibration)
     if status in UNAVAILABLE:
-        return 0.0
-    if status == "d":
-        return doubtful
-    if (news and news.strip()) or news_added is not None:
+        face = 0.0
+    elif status == "d":
+        face = doubtful
+    elif (news and news.strip()) or news_added is not None:
         # Null chance with news is a known FPL between-GW trap — do not
         # silently treat as fully available.
-        return doubtful
-    return 1.0
+        face = doubtful
+    else:
+        face = 1.0
+    if calibration is None:
+        return face
+    pct = effective_chance_pct(status, chance_of_playing, chance_this=chance_this)
+    return calibrated_play_gate(pct, face, calibration)
 
 
-def gate_for(row: PlayerAvailability, doubtful: float) -> float:
+def gate_for(
+    row: PlayerAvailability,
+    doubtful: float,
+    *,
+    calibration: ChanceCalibration | None = None,
+) -> float:
     """Availability multiplier from a ``PlayerAvailability`` row.
 
     Horizon step 0 (as-of GW) semantics: prefer ``chance_this`` over next.
     For multi-step plans use ``gate_at_step`` / ``availability_gate(..., step=)``.
+    ``calibration`` replaces face-value chance flags when provided (P1).
     """
     return chance(
         row.status,
@@ -162,6 +189,7 @@ def gate_for(row: PlayerAvailability, doubtful: float) -> float:
         chance_this=row.chance_this,
         news=row.news,
         news_added=row.news_added,
+        calibration=calibration,
     )
 
 
@@ -210,6 +238,7 @@ def chance_at_step(
     news_added: datetime | None = None,
     step: int = 0,
     recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+    calibration: ChanceCalibration | None = None,
 ) -> float:
     """Horizon-aware availability multiplier in ``[0, 1]``.
 
@@ -217,6 +246,7 @@ def chance_at_step(
     (same as ``chance``). Step ≥1 anchors on next-round chance only (ignores
     ``chance_this``), then recovers toward 1.0 over ``recovery_games`` further
     steps so a this-round injury or suspension does not zero the whole plan.
+    ``calibration`` replaces face-value chance flags when provided (P1).
     """
     this_gate = chance(
         status,
@@ -225,6 +255,7 @@ def chance_at_step(
         chance_this=chance_this,
         news=news,
         news_added=news_added,
+        calibration=calibration,
     )
     if step <= 0:
         return this_gate
@@ -235,6 +266,7 @@ def chance_at_step(
         chance_this=None,
         news=news,
         news_added=news_added,
+        calibration=calibration,
     )
     return recover_toward_one(next_gate, step, recovery_games, from_step=1)
 
@@ -244,6 +276,8 @@ def gate_at_step(
     doubtful: float,
     step: int,
     recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+    *,
+    calibration: ChanceCalibration | None = None,
 ) -> float:
     """Horizon-aware gate from a ``PlayerAvailability`` row."""
     return chance_at_step(
@@ -255,6 +289,7 @@ def gate_at_step(
         news_added=row.news_added,
         step=step,
         recovery_games=recovery_games,
+        calibration=calibration,
     )
 
 
@@ -393,6 +428,7 @@ def availability_gate(
     use_availability_gate: bool = True,
     step: int = 0,
     recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+    calibration: ChanceCalibration | None = None,
 ) -> float:
     """FPL availability gate, optionally soft/hard-downgraded by injuries.
 
@@ -401,16 +437,28 @@ def availability_gate(
     ``use_injury_overlay`` is false or ``injury`` is missing, behaviour
     matches ``gate_at_step`` / ``chance_at_step``. Overlay never raises an
     FPL zero. ``step`` is the horizon lead time (0 = as-of GW); recovery
-    after the next-round anchor uses ``recovery_games``.
+    after the next-round anchor uses ``recovery_games``. ``calibration``
+    replaces face-value chance flags when provided (P1).
     """
     if not use_availability_gate:
         fpl = 1.0
     elif tags is None:
         fpl = chance_at_step(
-            None, None, doubtful, step=step, recovery_games=recovery_games
+            None,
+            None,
+            doubtful,
+            step=step,
+            recovery_games=recovery_games,
+            calibration=calibration,
         )
     else:
-        fpl = gate_at_step(tags, doubtful, step, recovery_games)
+        fpl = gate_at_step(
+            tags,
+            doubtful,
+            step,
+            recovery_games,
+            calibration=calibration,
+        )
     if not use_injury_overlay or injury is None:
         return fpl
     return combine_gates(

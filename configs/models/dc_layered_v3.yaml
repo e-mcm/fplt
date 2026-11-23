@@ -41,6 +41,9 @@ components:
       logistic_blend: 0.5
       l2: 1.0
       return_ramp_games: 2.0
+      availability_recovery_games: 3.0
+      calibrate_chance_flags: true
+      chance_cal_min_count: 20
   involvement:
     name: involvement_xg_v1
     kind: involvement_xg
