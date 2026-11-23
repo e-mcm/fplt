@@ -496,7 +496,8 @@ def test_availability_overlay_forks_load() -> None:
     parent = specs["dc_layered_v2"]
     noavail = specs["dc_layered_noavail_v1"]
     injuries = specs["dc_layered_injuries_v1"]
-    assert parent.components["minutes"].params.get("use_availability_gate", True) is True
+    parent_gate = parent.components["minutes"].params.get("use_availability_gate", True)
+    assert parent_gate is True
     assert noavail.components["minutes"].name == "empirical_minutes_v2_noavail"
     assert noavail.components["minutes"].params["use_availability_gate"] is False
     assert parent.components["minutes"].params.get("use_injury_overlay", False) is False

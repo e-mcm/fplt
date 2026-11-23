@@ -59,7 +59,9 @@ class EmpiricalMinutes:
         if not isinstance(overlay, bool):
             raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
         if not isinstance(avail_gate, bool):
-            raise ValueError(f"use_availability_gate must be a bool, got {avail_gate!r}")
+            raise ValueError(
+                f"use_availability_gate must be a bool, got {avail_gate!r}"
+            )
         self._window = window
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
