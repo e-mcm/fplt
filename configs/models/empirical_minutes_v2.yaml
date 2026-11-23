@@ -7,6 +7,8 @@ params:
   soft_squad: true
   target_starters: 11.0
   soft_squad_strength: 0.5
+  # Weight on logistic P(start); (1 - logistic_blend) on empirical rate.
+  logistic_blend: 0.5
   l2: 1.0
   # FPL status/chance/news gate (on here; off only in dc_layered_noavail_v1).
   use_availability_gate: true

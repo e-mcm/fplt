@@ -157,6 +157,7 @@ def _spec(**params: object) -> ModelSpec:
             "soft_squad": False,
             "target_starters": 11.0,
             "soft_squad_strength": 0.5,
+            "logistic_blend": 0.5,
             "l2": 1.0,
             "predicted_xi": False,
             "predicted_xi_window_hours": 72.0,
