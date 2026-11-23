@@ -28,9 +28,9 @@ make mc-bench    # §1.1 per-step timing harness (stub until kernels land)
 ## Port priority (after PR0)
 
 PR0 vectorised NumPy hard starters: **~205 ms → ~5.6 ms**. Native K1 is
-lower priority; **K2 allocate + K3 points** dominate remaining cost. Skeleton
-headers for K1–K5 still live under `include/fplt_mc/`; implementation order
-follows the re-ranked sequence in the build spec.
+lower priority. **K2 `allocate_side` + `_pick`** landed in 0.2.0 via
+`fplt_mc._testing.allocate_side_with_uniforms` (L2 inject surface). Next:
+K3 points. Skeleton headers for K1/K3–K5 remain under `include/fplt_mc/`.
 
 ## Wheel targets (CI)
 
