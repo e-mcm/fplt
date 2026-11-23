@@ -1,7 +1,7 @@
 # Promote result: within-horizon list-price forecast (`mean_gw_delta`)
 
-**Call: keep (provisional)** — treatment ≥ control on both seasons.  
-**Status:** **Provisional keep** until FDB-73 / the eval protocol sets an interim keep rule and independent confirmation windows.  
+**Call: keep** — treatment ≥ control on both seasons.  
+**Status:** **Confirmed** under eval protocol §2.3 (FDB-256 — [price-forecast-confirm.md](./price-forecast-confirm.md)).  
 **Plan:** [promote-plans/price-within-horizon.md](./promote-plans/price-within-horizon.md) · **Design:** [price-within-horizon-design.md](./price-within-horizon-design.md)  
 **Artifacts:** Project store `internal/price-within-horizon/` (see [promote-archives.md](./promote-archives.md)) · tip `ee9c980` (+ `#163` board flag)  
 **FDB-205:** canceled (as-of sell-on = bug fix #124, not a gate).
@@ -44,7 +44,7 @@ Forecast changes chip packing and transfer timing; both seasons still clear the 
 
 ## Call
 
-**Keep (provisional).** Treatment never loses and wins +29 / +9. Flip live `run_plan` (and design §7/§10) to build `mean_gw_delta` forecasts by default; leave board ablation via omitting `--price-forecast` / `flat`. Flip PR: [#165](https://github.com/e-mcm/fplt/pull/165) merged at `35b9ac5`. Formal keep rule still waits on FDB-73.
+**Keep (confirmed FDB-256).** Treatment never loses and wins +29 / +9. Flip live `run_plan` (and design §7/§10) to build `mean_gw_delta` forecasts by default; leave board ablation via omitting `--price-forecast` / `flat`. Flip PR: [#165](https://github.com/e-mcm/fplt/pull/165) merged at `35b9ac5`. Protocol confirmation: [price-forecast-confirm.md](./price-forecast-confirm.md).
 
 **Out of scope / not claimed:** transfer-volume threshold model; mid-horizon buy→sell sell-on for non-owned; N6 sim-SE (not needed — deltas not tiny).
 

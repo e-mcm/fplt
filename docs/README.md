@@ -45,7 +45,8 @@ Written promote calls, plans, and decision inventory. Board parquet/logs stay in
 | [`lineup-reopt-promote.md`](lineup-reopt-promote.md) | `lineup_reopt` — **keep** (already default) |
 | [`prematch-1x2-prior-promote.md`](prematch-1x2-prior-promote.md) | Prematch 1X2 prior (FDB-216 / FDB-219) |
 | [`price-dynamics-sell-on-promote.md`](price-dynamics-sell-on-promote.md) | As-of 50% sell-on — aborted (bug fix, not promote) |
-| [`price-within-horizon-promote.md`](price-within-horizon-promote.md) | `mean_gw_delta` — **keep (provisional)** pending FDB-73 |
+| [`price-within-horizon-promote.md`](price-within-horizon-promote.md) | `mean_gw_delta` — **keep** (confirmed FDB-256) |
+| [`price-forecast-confirm.md`](price-forecast-confirm.md) | Protocol confirmation of `mean_gw_delta` keep (FDB-256) |
 | [`prune-n-equivalence-promote.md`](prune-n-equivalence-promote.md) | Prune-N equivalence — **keep** (already live) |
 
 Plans that drove those boards: [`promote-plans/`](promote-plans/).
