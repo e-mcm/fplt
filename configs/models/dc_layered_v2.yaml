@@ -1,5 +1,5 @@
 # Frozen mean-wire layered stack (pre-defcon-rate / pre-4d715b5 identity).
-# Production moved to dc_layered_v3 after FDB-211 keep (FDB-226).
+# Production moved to dc_layered_v4 (via v3) after FDB-211 keep (FDB-226).
 # Do not edit in place — bump a new version for production changes.
 name: dc_layered_v2
 kind: dc_layered

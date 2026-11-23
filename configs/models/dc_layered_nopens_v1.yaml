@@ -1,7 +1,7 @@
-# dc_layered_v3 with involvement pens_order forced off (miss-only).
+# dc_layered_v4 with involvement pens_order forced off (miss-only).
 # Eval-only fork for W8 / FDB-71; not a production default.
 name: dc_layered_nopens_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     involvement:

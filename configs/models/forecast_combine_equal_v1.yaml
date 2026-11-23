@@ -5,7 +5,7 @@ kind: forecast_combine
 params:
   mode: equal
   members:
-    - dc_layered_v3
+    - dc_layered_v4
     - lgbm_direct_v1
 refit: every_gw
 seed: 0

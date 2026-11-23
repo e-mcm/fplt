@@ -39,7 +39,7 @@ _ZERO = {
 def test_dc_layered_predicted_xi_fork_loads() -> None:
     specs = load_model_specs()
     fork = specs["dc_layered_predicted_xi_v1"]
-    parent = specs["dc_layered_v3"]
+    parent = specs["dc_layered_v4"]
     assert fork.components["minutes"].params["predicted_xi"] is True
     assert parent.components["minutes"].params.get("predicted_xi", False) is False
     assert fork.kind == parent.kind

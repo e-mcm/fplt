@@ -19,12 +19,12 @@ change:
   diff:
     - "components.involvement.kind: involvement_shares → involvement_xg"
   notes: >
-    Control dc_layered_shares_v2 (v2 stack + shares). Treatment dc_layered_v3
+    Control dc_layered_shares_v2 (v2 stack + shares). Treatment dc_layered_v4
     (involvement_xg_v1, xg_blend=0.7). Prefers staged expected_* over Understat.
     Window GW1–20 on 2024-25 (vaastav has expected_* from 2022-23).
 
 control: dc_layered_shares_v2
-treatment: dc_layered_v3
+treatment: dc_layered_v4
 
 window:
   seasons: ["2024-25"]

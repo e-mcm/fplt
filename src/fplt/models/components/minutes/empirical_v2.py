@@ -10,7 +10,7 @@ features include ``games_since_return`` / ``absence_length``;
 status/chance/news gating defaults on (``use_availability_gate``; eval-only
 off-fork ``dc_layered_noavail_v1``). Optional ``use_injury_overlay`` applies
 staged ``player_injuries``. Optional ``predicted_xi`` mixes P(start) toward
-staged ``predicted_lineups`` near kickoff. Production ``dc_layered_v3`` keeps
+staged ``predicted_lineups`` near kickoff. Production ``dc_layered_v4`` keeps
 injury/XI overlays off — enable via ``dc_layered_injuries_v1`` /
 ``dc_layered_predicted_xi_v1``. Rest / congestion use all-comp kickoffs
 (API-Football cups + Europe) when ``competition_fixtures`` is staged.

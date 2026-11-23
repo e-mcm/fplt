@@ -101,7 +101,7 @@ minutes-measure:
 
 # ── Other-points / haul measurement (FDB-240 Rank-3 plumbing) ─────────────────
 # Usage: make other-measure SEASON=2025-26
-# Optional: ARGS='--from-gw 1 --to-gw 19 --points-model dc_layered_v3 --n-sims 500'
+# Optional: ARGS='--from-gw 1 --to-gw 19 --points-model dc_layered_v4 --n-sims 500'
 # Writes haul Brier/log, top xPts-decile haul cal, match-context other residual,
 # and unconstrained captain-regret proxy under $$FPLT_DATA_DIR/other_points_measurement/.
 # Measurement only — no PRODUCTION flip.

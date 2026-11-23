@@ -11,6 +11,7 @@ CORE_MODELS: tuple[str, ...] = (
     "dc_layered_v1",
     "dc_layered_v2",
     "dc_layered_v3",
+    "dc_layered_v4",
     "lgbm_direct_v1",
 )
 OPENFPL_MODEL = "openfpl_v1"

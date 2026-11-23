@@ -13,9 +13,9 @@ from fplt.automation.production import (
 
 
 def test_committed_production_yaml_defaults() -> None:
-    """Live automation defaults stay dc_layered_v3 at horizon 3."""
+    """Live automation defaults stay dc_layered_v4 at horizon 3."""
     ops = load_production_ops()
-    assert ops.models == ["dc_layered_v3"]
+    assert ops.models == ["dc_layered_v4"]
     assert ops.plan_horizon == 3
     assert default_production_path().is_file()
     assert default_production_path().name == "production.yaml"
@@ -24,7 +24,7 @@ def test_committed_production_yaml_defaults() -> None:
 def test_env_overrides_models_and_horizon(tmp_path: Path) -> None:
     path = tmp_path / "production.yaml"
     path.write_text(
-        yaml.safe_dump({"models": ["dc_layered_v3"], "plan_horizon": 3}),
+        yaml.safe_dump({"models": ["dc_layered_v4"], "plan_horizon": 3}),
         encoding="utf-8",
     )
     ops = load_production_ops(
@@ -41,7 +41,7 @@ def test_env_overrides_models_and_horizon(tmp_path: Path) -> None:
 def test_env_can_override_one_field_only(tmp_path: Path) -> None:
     path = tmp_path / "production.yaml"
     path.write_text(
-        yaml.safe_dump({"models": ["dc_layered_v3"], "plan_horizon": 3}),
+        yaml.safe_dump({"models": ["dc_layered_v4"], "plan_horizon": 3}),
         encoding="utf-8",
     )
     models_only = load_production_ops(
@@ -50,14 +50,14 @@ def test_env_can_override_one_field_only(tmp_path: Path) -> None:
     assert models_only.models == ["rolling_mean_v1"]
     assert models_only.plan_horizon == 3
     horizon_only = load_production_ops(path, environ={"FPLT_PLAN_HORIZON": "8"})
-    assert horizon_only.models == ["dc_layered_v3"]
+    assert horizon_only.models == ["dc_layered_v4"]
     assert horizon_only.plan_horizon == 8
 
 
 def test_empty_env_override_raises(tmp_path: Path) -> None:
     path = tmp_path / "production.yaml"
     path.write_text(
-        yaml.safe_dump({"models": ["dc_layered_v3"], "plan_horizon": 3}),
+        yaml.safe_dump({"models": ["dc_layered_v4"], "plan_horizon": 3}),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="FPLT_PRODUCTION_MODELS"):
@@ -88,4 +88,4 @@ def test_missing_or_invalid_yaml_raises(tmp_path: Path) -> None:
 
 def test_production_ops_rejects_blank_model_names() -> None:
     with pytest.raises(ValueError, match="non-empty"):
-        ProductionOps(models=["dc_layered_v3", "  "], plan_horizon=3)
+        ProductionOps(models=["dc_layered_v4", "  "], plan_horizon=3)

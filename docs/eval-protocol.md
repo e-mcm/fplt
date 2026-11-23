@@ -74,8 +74,9 @@ Same shape via chip / horizon boards ([`promote-pipeline-unified.md`](promote-pi
 
 | Keep | Status | Notes |
 |---|---|---|
-| Defcon-rate → production `dc_layered_v3` | **Provisional** (FDB-255 confirm **fail**) | Protocol disjoint GW1–19 / GW20–38 failed interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md)). Leave production rate until an explicit flip PR. Compose renamed in FDB-226 (frozen mean-wire `dc_layered_v2`). |
+| Defcon-rate → production `dc_layered_v3` (now on `dc_layered_v4`) | **Provisional** (FDB-255 confirm **fail**) | Protocol disjoint GW1–19 / GW20–38 failed interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md)). Leave production rate until an explicit flip PR. Compose renamed in FDB-226 (frozen mean-wire `dc_layered_v2`); CS bump FDB-267. |
 | Within-horizon `mean_gw_delta` price forecast (live default) | **Confirmed** (FDB-256) | Independent confirmation season 2024-25 logged under §2.3 — [`price-forecast-confirm.md`](price-forecast-confirm.md). Live default stays. |
+| CS-only `market_cs_strength=0.5` → production `dc_layered_v4` | **Keep** (FDB-262 / FDB-267) | Player/RMSE + CS Brier on 2024-25 GW1–20 / GW21–38 ([`cs-only-player-rmse-promote.md`](cs-only-player-rmse-promote.md)). Opt-out `dc_layered_nocs_v1`; frozen pre-CS `dc_layered_v3`. |
 
 Do **not** silently un-flip provisional rows. New levers must follow §1–§2; revisit provisional rows when sealed / confirmation capacity exists.
 
@@ -108,7 +109,7 @@ Boards that claim live-comparable season points **report against this config**. 
 | `lineup_reopt` | `true` |
 | `price_forecast` | `mean_gw_delta` (`DEFAULT_LIVE_PRICE_FORECAST_METHOD`) |
 | `bench_weight` | `0` (`configs/squad_state.yaml`) |
-| `model` | `dc_layered_v3` (`configs/ops/production.yaml`) |
+| `model` | `dc_layered_v4` (`configs/ops/production.yaml`) |
 | HiGHS (boards) | §5 — deterministic; live planner may keep the 600s / gap `1e-3` production knobs |
 
 Chip-board **control** A/Bs may omit `--price-forecast` on purpose; say so. The reference row for “what live would score” includes `mean_gw_delta`.
@@ -187,4 +188,4 @@ Canonical detail: [`feature-eval-pipeline.md`](feature-eval-pipeline.md) §4.2 a
 
 ## 9. ModelSpec versioning (FDB-226 done)
 
-Production `dc_layered_v2` was edited in place when defcon-rate flipped (`4d715b5`). **FDB-226** froze mean-wire `dc_layered_v2` (pre-flip `model_id`) and moved production to `dc_layered_v3`. Do not edit a released production ModelSpec in place again — bump the versioned YAML and retarget ops / forks. Boards label `name (model_id)` so a stable name alone cannot hide a hash change.
+Production `dc_layered_v2` was edited in place when defcon-rate flipped (`4d715b5`). **FDB-226** froze mean-wire `dc_layered_v2` (pre-flip `model_id`) and moved production to `dc_layered_v3`. **FDB-267** moved production to `dc_layered_v4` (`market_cs_strength=0.5`) without editing `dc_layered_v3` in place. Do not edit a released production ModelSpec in place again — bump the versioned YAML and retarget ops / forks. Boards label `name (model_id)` so a stable name alone cannot hide a hash change.

@@ -435,6 +435,8 @@ entries:
     treatment_spec_sha256: aaae21939b436b62ce06c9a1ce966bc1f364dbd5cb1ea62b26d37db2ba94c92f
     note: 'Clean-ledger confirm. RMSE Δ +0.00213; HAC CI entirely positive; CS Brier better; RPS flat; coverage 91.2%.'
   notes: >
-    Written keep under eval-protocol §2. PRODUCTION stays dc_layered_v3 until an
-    explicit flip PR bumps to dc_layered_v4+ with market_cs_strength=0.5.
-    Confirmation must use a fresh data_dir — shared ledger contaminates summary/HAC.
+    Written keep under eval-protocol §2. FDB-267 flipped PRODUCTION to
+    dc_layered_v4 (market_cs_strength=0.5); frozen pre-CS parent remains
+    dc_layered_v3; opt-out fork is dc_layered_nocs_v1. Arms below are the
+    keep-audit control/treatment (v3 vs cs_v1). Confirmation must use a
+    fresh data_dir — shared ledger contaminates summary/HAC.

@@ -58,7 +58,10 @@ def test_committed_registry_loads_and_links_audits() -> None:
     assert cs.verdict == "keep"
     assert cs.provisional is False
     assert cs.eval_spec == "cs_only_player_rmse_ab"
+    # Keep-audit arms (pre-flip); production flip is dc_layered_v4 (FDB-267).
+    assert cs.control == "dc_layered_v3"
     assert cs.treatment == "dc_layered_cs_v1"
+    assert "dc_layered_v4" in (cs.notes or "")
     roles = {w.role for w in cs.windows}
     assert roles == {"development", "confirm"}
 

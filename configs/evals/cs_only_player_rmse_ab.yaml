@@ -1,23 +1,23 @@
 # FDB-239: CS-only market λ player/RMSE revisit (Rank-2).
-# Components-only board cs_only_market_lambda_ab already showed CS Brier↑ /
-# RPS flat — do not promote without this prediction suite + confirm.
-# Prematch 1X2 / equal-combine / closing prior stay dropped; not on this board.
+# After keep / FDB-267, production dc_layered_v4 is the CS treatment; nocs is
+# opt-out. Components-only board cs_only_market_lambda_ab already showed CS
+# Brier↑ / RPS flat. Prematch 1X2 / equal-combine / closing prior stay dropped.
 name: cs_only_player_rmse_ab
 kind: data
 question: >
   Does borrowing the market's zero-goal (clean-sheet) margin from
   prematch_scheduled odds at strength 0.5 improve player-fixture RMSE
-  (and keep CS Brier better / RPS not worse) vs dc_layered_v3 under
+  (and keep CS Brier better / RPS not worse) vs vanilla DC under
   strict PIT?
 description: >
-  CS-only market λ player/RMSE revisit (FDB-239). Treatment
-  dc_layered_cs_v1 (market_cs_strength=0.5). Control production
-  dc_layered_v3. Gate on prematch_scheduled deadline coverage.
-  Forecast claim only — no PRODUCTION flip without interim keep + confirm.
+  CS-only market λ player/RMSE revisit (FDB-239). Treatment production
+  dc_layered_v4 (market_cs_strength=0.5). Control opt-out
+  dc_layered_nocs_v1. Gate on prematch_scheduled deadline coverage.
+  Forecast claim only.
 
 change:
   lever: data_table
-  orientation: opt_in
+  orientation: opt_out
   slot: score
   control_kind: dixon_coles
   treatment_kind: dixon_coles
@@ -30,10 +30,10 @@ change:
     prematch_scheduled under strict PIT; closing proxy left off (DC default).
     Full-strength λ / 1X2 blends and forecast_combine_equal stay off.
     Strength 0.5 unchanged from the components-only board — no dose retune
-    on confirmation.
+    on confirmation. After FDB-267 keep flip, production is the treatment.
 
-control: dc_layered_v3
-treatment: dc_layered_cs_v1
+control: dc_layered_nocs_v1
+treatment: dc_layered_v4
 
 window:
   seasons: ["2024-25"]
@@ -67,5 +67,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "CS-only market λ player RMSE vs dc_layered_v3 (prematch, strict PIT)"
+  title: "CS-only market λ player RMSE vs vanilla DC (prematch, strict PIT)"
   store_doc: cs-only-player-rmse-promote.md

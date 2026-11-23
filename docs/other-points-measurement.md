@@ -6,7 +6,7 @@ Today the simulator adds bonus / saves / cards / defcon / residual other from th
 
 ## What it reports
 
-On horizon-1 walk-forward rows from a layered points model (default `dc_layered_v3`):
+On horizon-1 walk-forward rows from a layered points model (default `dc_layered_v4`):
 
 1. **Haul Brier + log score** overall, on the decision-relevant pool, by position, and by realised minutes bucket.
 2. **Top xPts-decile haul calibration** — `haul_mean_p`, `haul_mean_y`, `haul_cal_gap`, plus haul Brier inside the top decile.

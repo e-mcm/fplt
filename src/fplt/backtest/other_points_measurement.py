@@ -41,7 +41,7 @@ from fplt.types import GWKey
 logger = logging.getLogger(__name__)
 
 _EPS = 1e-15
-_DEFAULT_POINTS = "dc_layered_v3"
+_DEFAULT_POINTS = "dc_layered_v4"
 _HAUL_THRESHOLD = 10
 
 

@@ -6,20 +6,20 @@ kind: forecast_combine
 params:
   mode: position
   members:
-    - dc_layered_v3
+    - dc_layered_v4
     - lgbm_direct_v1
   position_weights:
     GKP:
-      dc_layered_v3: 0.7
+      dc_layered_v4: 0.7
       lgbm_direct_v1: 0.3
     DEF:
-      dc_layered_v3: 0.7
+      dc_layered_v4: 0.7
       lgbm_direct_v1: 0.3
     MID:
-      dc_layered_v3: 0.4
+      dc_layered_v4: 0.4
       lgbm_direct_v1: 0.6
     FWD:
-      dc_layered_v3: 0.4
+      dc_layered_v4: 0.4
       lgbm_direct_v1: 0.6
 refit: every_gw
 seed: 0

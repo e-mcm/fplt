@@ -3,7 +3,7 @@
 **Date:** 2026-11-23 · **Task:** FDB-255  
 **Protocol:** [`eval-protocol.md`](./eval-protocol.md) §1–§2  
 **Prior keep:** [`defcon-rate-promote.md`](./defcon-rate-promote.md) (FDB-211, nested windows → provisional)  
-**Production:** `dc_layered_v3` (rate wire; FDB-226)  
+**Production (at confirm):** `dc_layered_v3` (rate wire; FDB-226). Later FDB-267 moved live compose to `dc_layered_v4` (CS on; rate unchanged).  
 **Archive:** `internal/defcon-rate-confirm/`
 
 ---

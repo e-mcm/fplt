@@ -17,15 +17,17 @@ from fplt.models.spec import (
 )
 from fplt.types import GWKey
 
-# Extends-fork model_ids for package 0.1.0 (parent dc_layered_v3 params).
+# Extends-fork model_ids for package 0.1.0 (parent dc_layered_v4 params).
 # Update when intentional parent param changes land (e.g. calibrate_chance_flags).
-# FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes track parent.
+# FDB-267: forks retargeted from pre-CS v3 → v4; resolved hashes track parent.
 _FORK_MODEL_IDS = {
-    "dc_layered_nopens_v1": "84922f31e5ade22d",
-    "dc_layered_nodefcon_v1": "00935aff55fc6ae3",
-    "dc_layered_odds_v1": "e87dbbe279a20fa2",
+    "dc_layered_nopens_v1": "a7cda12921319ff7",
+    "dc_layered_nodefcon_v1": "e6d154082f36a186",
+    "dc_layered_odds_v1": "1f2f8ec99771e82c",
+    "dc_layered_nocs_v1": "d5459f59f887fc2a",
 }
 _PRE_DEFCON_RATE_V2_MODEL_ID = "b12aad1575ff0d34"
+_PRE_CS_V3_MODEL_ID = "30367a901721a5d6"
 
 
 def test_loaded_spec_matches_the_object_and_includes_package_version(
@@ -144,9 +146,20 @@ def test_dc_layered_v2_keeps_pre_defcon_rate_model_id() -> None:
     assert specs["dc_layered_v3"].components["other"].params["defcon_mode"] == "rate"
 
 
+def test_dc_layered_v3_keeps_pre_cs_model_id() -> None:
+    """CS keep audits used this hash under the name dc_layered_v3 (FDB-267)."""
+    specs = load_model_specs()
+    assert specs["dc_layered_v3"].model_id == _PRE_CS_V3_MODEL_ID
+    v3_score = specs["dc_layered_v3"].components["score"]
+    assert "market_cs_strength" not in v3_score.params
+    assert specs["dc_layered_v4"].model_id != _PRE_CS_V3_MODEL_ID
+    v4_score = specs["dc_layered_v4"].components["score"]
+    assert v4_score.params["market_cs_strength"] == 0.5
+
+
 def test_extends_forks_match_manual_full_merge() -> None:
     specs = load_model_specs()
-    parent = specs["dc_layered_v3"].model_dump(mode="json")
+    parent = specs["dc_layered_v4"].model_dump(mode="json")
     expected = {
         "dc_layered_nopens_v1": deep_merge(
             parent,
@@ -180,6 +193,18 @@ def test_extends_forks_match_manual_full_merge() -> None:
                     "score": {
                         "name": "dixon_coles_odds_v1",
                         "params": {"market_prior_strength": 1.0},
+                    }
+                },
+            },
+        ),
+        "dc_layered_nocs_v1": deep_merge(
+            parent,
+            {
+                "name": "dc_layered_nocs_v1",
+                "components": {
+                    "score": {
+                        "name": "dixon_coles_v2",
+                        "params": {"market_cs_strength": 0.0},
                     }
                 },
             },

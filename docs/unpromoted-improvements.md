@@ -34,7 +34,7 @@ None currently queued outside in-flight / evaluated rows.
 | `lineup_reopt` / EV default | evaluated | **Keep** — default already True; no flip. 2025-26 **+130**, 2024-25 **0**. [lineup-reopt-promote.md](./lineup-reopt-promote.md) | optional SAA arm later |
 | History rating prior (`dc_layered_history_v1`) | evaluated | **Tune** @ 1.0 — no PRODUCTION flip. [history-market-prior-promote.md](./history-market-prior-promote.md) | optional dose grid |
 | Defcon P(award)/rate (`defcon_mode: rate`) | evaluated | **Keep (provisional)** — flipped into `dc_layered_v2`. [defcon-rate-promote.md](./defcon-rate-promote.md) | done (FDB-211); provisional until FDB-73 |
-| CS-only λ (`dc_layered_cs_v1`) | evaluated | **Keep** (player/RMSE + CS Brier; confirm GW21–38). [cs-only-player-rmse-promote.md](./cs-only-player-rmse-promote.md). Components prior: [cs-only-market-lambda-eval.md](./cs-only-market-lambda-eval.md) | flip PR → `dc_layered_v4+`; PRODUCTION still `dc_layered_v3` |
+| CS-only λ (`dc_layered_cs_v1` → `dc_layered_v4`) | evaluated | **Keep** — flipped into `dc_layered_v4` (`market_cs_strength=0.5`). [cs-only-player-rmse-promote.md](./cs-only-player-rmse-promote.md). Opt-out `dc_layered_nocs_v1`. | done (FDB-267) |
 | LGBM production flip | evaluated (bakeoff) | Ranking companion only | **skip** PRODUCTION |
 | W7 λ prior (`dc_layered_odds_v1`) | evaluated | Drop (closing ≠ PIT) | **skip** / closed |
 | 1X2-region blend (`dc_layered_1x2_v1`) | evaluated; **revisit in flight** FDB-207 | Prior: do not promote | defer to FDB-207 |
@@ -72,7 +72,7 @@ None currently queued outside in-flight / evaluated rows.
 ## Priority for *new* launches (after in-flight)
 
 ### P2
-1. CS-only λ **flip PR** (`dc_layered_v4+`) — keep recorded; [cs-only-player-rmse-promote.md](./cs-only-player-rmse-promote.md)  
+1. ~~CS-only λ **flip PR** (`dc_layered_v4`)~~ — done (FDB-267); [cs-only-player-rmse-promote.md](./cs-only-player-rmse-promote.md)  
 2. OpenFPL / Understat / Review / W8 — **blocked on user/data**
 
 **Blocked pending user/data:** Understat Deep/PPDA; FPL Review Patreon archives; snapshot `penalties_order` for W8; API-Football/Touchline for FDB-208; `FPLT_ENTRY_ID` only for live-squad paths.

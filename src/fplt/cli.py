@@ -286,8 +286,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     explain.add_argument(
         "--model",
-        default="dc_layered_v3",
-        help="YAML spec name (default: dc_layered_v3)",
+        default="dc_layered_v4",
+        help="YAML spec name (default: dc_layered_v4)",
     )
     explain.add_argument("--season", required=True)
     explain.add_argument("--gw", type=int, required=True)
@@ -703,8 +703,8 @@ def main(argv: list[str] | None = None) -> None:
     other_measure.add_argument("--to-gw", type=int, default=10)
     other_measure.add_argument(
         "--points-model",
-        default="dc_layered_v3",
-        help="Layered points YAML name (default: dc_layered_v3)",
+        default="dc_layered_v4",
+        help="Layered points YAML name (default: dc_layered_v4)",
     )
     other_measure.add_argument(
         "--n-sims",
@@ -796,8 +796,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     ensemble_sensitivity.add_argument(
         "--control",
-        default="dc_layered_v3",
-        help="YAML ModelSpec for the ownership path (default: dc_layered_v3)",
+        default="dc_layered_v4",
+        help="YAML ModelSpec for the ownership path (default: dc_layered_v4)",
     )
     ensemble_sensitivity.add_argument(
         "--challengers",

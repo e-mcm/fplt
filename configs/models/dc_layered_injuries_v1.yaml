@@ -1,7 +1,7 @@
 # Opt-in API-Football injury overlay on the production layered stack.
 # Does not change PRODUCTION_MODELS / dc_layered_v2 (overlay stays off there).
 name: dc_layered_injuries_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     minutes:

@@ -18,12 +18,12 @@ change:
   diff:
     - "components.involvement.params.use_penalties_order: false → true"
   notes: >
-    Control dc_layered_nopens_v1. Treatment dc_layered_v3 (default true).
+    Control dc_layered_nopens_v1. Treatment dc_layered_v4 (default true).
     Window must be snapshot-backed. Vaastav non-null rate is 0 and the
     arms tie via the penalties_missed fallback.
 
 control: dc_layered_nopens_v1
-treatment: dc_layered_v3
+treatment: dc_layered_v4
 
 window:
   seasons: ["2025-26"]
