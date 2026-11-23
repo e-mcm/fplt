@@ -2,6 +2,8 @@
 
 How agents (and humans) draft an **initial fifteen** or **wildcard-from-empty** plan with the **live production** model — not bakeoff forks.
 
+Logged-in squad for the next deadline (browser auth, resolve the gameweek, then predict → plan) is [`next-gw-actions.md`](next-gw-actions.md). Do not follow this page when `FPLT_ENTRY_ID` is set.
+
 ## Production model
 
 | Source of truth | Today |

@@ -64,6 +64,7 @@ Understat, API-Football injuries, and match odds each have a dedicated sensor (t
 | `uv run fplt backtest` / `make eval-board` | On demand for train/eval |
 | `uv run fplt predict` / `fplt plan` | On demand or until sensors cover your entry |
 | Blank / empty-squad draft | Unset `FPLT_ENTRY_ID` + `owned: []`; production model from ops YAML — [`blank-week-prod-plan.md`](blank-week-prod-plan.md) |
+| Next-GW actions (logged-in squad) | Browser auth, resolve the next deadline, production `predict` then `plan` — [`next-gw-actions.md`](next-gw-actions.md). `apply --confirm` is not part of that |
 
 ### Gaps to know
 

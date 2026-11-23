@@ -55,7 +55,9 @@ uv run fplt auth clear                     # drops the token
 # Fallback if needed: uv run fplt auth set --entry-id YOUR_ID
 ```
 
-Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux. Safari is not supported. Settings load `~/.config/fplt/env` (or `$FPLT_ENV_FILE`) before the repo `.env`. Without a token, use `--entry-json` or public finished-GW picks (no selling prices). Missing ntfy/SMTP config is a no-op.
+Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux. Safari is not supported. Settings load `~/.config/fplt/env` (or `$FPLT_ENV_FILE`) **before** the repo `.env`, and the first source wins. A token that exists only in the checkout `.env` is used when the user file is missing; once that JWT is stale, `my-team` returns 403 even though logs say `token=set`. Run `auth from-browser` again after refreshing the FPL tab. Without a token, use `--entry-json` or public finished-GW picks (no selling prices). Missing ntfy/SMTP config is a no-op.
+
+Logged-in next-deadline actions (production model, not a guessed season/GW, and not `apply --confirm`): [`docs/next-gw-actions.md`](docs/next-gw-actions.md).
 
 ## Common tasks
 
@@ -74,6 +76,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
 | Chip three-arm board (C3) | `make chip-decision-board SEASON=2025-26` (or `SEASON=2024-25 RULES_SEASON=2025-26` for a labelled counterfactual) |
 | Predict next gameweeks | `uv run fplt predict --model dc_layered_v1 --horizon 5` |
+| Next-GW actions (logged-in, production model) | [`docs/next-gw-actions.md`](docs/next-gw-actions.md) — resolve the deadline; do not copy the `2025-26` examples below |
 | Recommend transfers | `make plan SEASON=2025-26 GW=10` (or `uv run fplt plan --model … --season … --gw …`) |
 | Verbose CLI logs | `uv run fplt -v plan …` / `uv run fplt backtest -v …` (DEBUG; default is INFO) |
 | Recommend transfers (saved picks) | `uv run fplt plan --model dc_layered_v1 --season 2025-26 --gw 10 --entry-json picks.json` |
@@ -84,7 +87,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Store live-team token (manual paste) | `uv run fplt auth set --entry-id …` |
 | Leaderboard app | `make leaderboard` |
 
-Run `fplt auth set` (or set `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` in `~/.config/fplt/env`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `rolling_mean_v1`; override with `MODEL=dc_layered_v1`. Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
+Run `fplt auth from-browser` (or `fplt auth set`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `dc_layered_v4` (same as `configs/ops/production.yaml`); pass `MODEL=` to override. `SEASON` / `GW` on that target are required and are **not** “whatever is next” — resolve them ([`docs/next-gw-actions.md`](docs/next-gw-actions.md)). Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
 
 ## Adding things
 
