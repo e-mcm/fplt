@@ -4,7 +4,7 @@ The oracle is **not** unbounded perfect foresight. It reuses the decision
 simulator (``simulate_decisions`` / ``plan_squad``) with realised points as
 the planner's ``xpts``, under the same free-transfer banking, hit cost,
 budget, squad composition, and FPL 50% sell-on selling prices (as-of staged
-``player_status`` prices; no within-horizon price forecasts) as the
+``player_status`` prices; within-horizon forecasts off by default) as the
 decision bakeoff. Default chip policy is ``off`` (N5 board / ``--with-oracle``);
 pass ``chip_arm="optimised"`` (and fixtures) for a chips-on attainable ceiling.
 ``chip_timing_regret`` remains a placeholder while chips are off.

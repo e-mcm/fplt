@@ -54,7 +54,7 @@ from fplt.optimise.long_horizon import (
     coarsen_steps,
     shift_horizon_picks,
 )
-from fplt.optimise.prices import fpl_selling_price
+from fplt.optimise.prices import list_price_matrix, sell_price_matrix
 from fplt.optimise.scenarios import ScenarioBundle
 from fplt.optimise.squad import (
     _MAX_PER_CLUB,  # pyright: ignore[reportPrivateUsage]
@@ -81,6 +81,7 @@ from fplt.schemas.plan import (
     HorizonPickSchema,
     HorizonPointsSchema,
     PlanSchema,
+    PriceForecastSchema,
 )
 from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
 
@@ -89,6 +90,7 @@ _Schema = (
     | type[HorizonPickSchema]
     | type[HorizonPointsSchema]
     | type[PlanSchema]
+    | type[PriceForecastSchema]
 )
 
 _MAX_MOVES = 15
@@ -148,6 +150,7 @@ def plan_squad(
     scenarios: ScenarioBundle | None = None,
     p_haul: pl.DataFrame | None = None,
     haul_weight: float = DEFAULT_HAUL_WEIGHT,
+    price_forecast: pl.DataFrame | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -199,6 +202,9 @@ def plan_squad(
         scenarios: Optional shared scenarios for step-0 lineup SAA.
         p_haul: Optional ``player_key``, ``step``, ``p_haul`` for captaincy.
         haul_weight: Weight on ``p_haul`` in the EV lineup path.
+        price_forecast: Optional ``PriceForecastSchema`` list prices per
+            ``player_key`` × ``step``. ``None`` keeps as-of prices for
+            every step (default). Step 0 must match candidate prices.
 
     Returns:
         Squad members and sales at every step.
@@ -251,17 +257,20 @@ def plan_squad(
         raise ValueError(f"owned players are not in the pool: {missing}")
     count = pool.height
     expected = _expected(scored, index, count, horizon)
-    list_price = pool["price"].to_numpy().astype(np.float64)
-    # As-of sell-on only: within-horizon steps keep these credits (no price
-    # forecasts). purchase_price is sticky; market comes from candidates.
-    sell_price = list_price.copy()
+    as_of_prices = {
+        int(key): int(price)
+        for key, price in pool.select("player_key", "price").iter_rows()
+    }
+    forecast = (
+        None if price_forecast is None else _frame(price_forecast, PriceForecastSchema)
+    )
+    list_price = list_price_matrix(keys, horizon, as_of_prices, price_forecast=forecast)
+    # Owned sell credits follow 50% sell-on at each step's list price.
+    # Non-owned mid-horizon churn uses list price (v1 approx).
+    sell_price = sell_price_matrix(list_price, owned, index)
     owned_at = np.zeros(count, dtype=bool)
     for player in owned:
-        at = index[player.player_key]
-        owned_at[at] = True
-        sell_price[at] = float(
-            fpl_selling_price(player.purchase_price, int(list_price[at]))
-        )
+        owned_at[index[player.player_key]] = True
     options = DEFAULT_HIGHS_OPTIONS if highs_options is None else highs_options
     lh_policy = (
         DEFAULT_LONG_HORIZON_POLICY
@@ -1066,20 +1075,24 @@ def _free_hit_budget(
     sell_price: np.ndarray,
     bank: int,
 ) -> None:
-    """Temporary Free Hit squad costs at most permanent selling value + bank."""
+    """Temporary Free Hit squad costs at most permanent selling value + bank.
+
+    ``price`` / ``sell_price`` are ``(horizon, n)`` matrices; permanent squad
+    value and earlier transfers use the step at which they occur.
+    """
     chosen: list[int] = []
     weights: list[float] = []
     for index in range(columns.count):
         chosen.append(int(columns.fh_squad[step][index]))
-        weights.append(float(price[index]))
+        weights.append(float(price[step, index]))
         chosen.append(int(columns.squad[step][index]))
-        weights.append(-float(sell_price[index]))
+        weights.append(-float(sell_price[step, index]))
     for earlier in range(step + 1):
         for index in range(columns.count):
             chosen.append(int(columns.sell[earlier][index]))
-            weights.append(-float(sell_price[index]))
+            weights.append(-float(sell_price[earlier, index]))
             chosen.append(int(columns.buy[earlier][index]))
-            weights.append(float(price[index]))
+            weights.append(float(price[earlier, index]))
     _row(
         solver,
         -solver.getInfinity(),
@@ -1187,6 +1200,7 @@ def _cash(
     bank: int,
     horizon: int,
 ) -> None:
+    """Budget across steps; ``price`` / ``sell_price`` are ``(horizon, n)``."""
     limit = solver.getInfinity()
     for step in range(horizon):
         chosen: list[int] = []
@@ -1194,9 +1208,9 @@ def _cash(
         for earlier in range(step + 1):
             for index in range(columns.count):
                 chosen.append(int(columns.sell[earlier][index]))
-                weights.append(float(sell_price[index]))
+                weights.append(float(sell_price[earlier, index]))
                 chosen.append(int(columns.buy[earlier][index]))
-                weights.append(-float(price[index]))
+                weights.append(-float(price[earlier, index]))
         _row(
             solver,
             -float(bank),
