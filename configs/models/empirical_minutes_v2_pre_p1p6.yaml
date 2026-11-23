@@ -1,0 +1,10 @@
+# Eval-only twin: P1–P6 toggles off (face-value chance, no return ramp,
+# no horizon recovery). Absence-share exclusion and 1-GK hard XI remain
+# always-on code paths with no ModelSpec off-switch.
+name: empirical_minutes_v2_pre_p1p6
+extends: empirical_minutes_v2
+overrides:
+  params:
+    calibrate_chance_flags: false
+    return_ramp_games: 0.0
+    availability_recovery_games: 0.0
