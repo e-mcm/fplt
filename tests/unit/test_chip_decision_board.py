@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import polars as pl
+import pytest
 
 from fplt.optimise.chip_windows import ChipUseWindows, rule_based_chip_windows
 from fplt.optimise.decisions import (
@@ -10,6 +14,7 @@ from fplt.optimise.decisions import (
     simulate_decisions,
     summarise_chip_decisions,
 )
+from fplt.optimise.plan import plan_squad
 from fplt.optimise.state import ChipInventory, SquadState
 from fplt.scoring.chips import ChipRules
 
@@ -100,6 +105,83 @@ def test_decision_rows_accept_chip_after_leading_nulls() -> None:
     rows.append({**rows[-1], "gw": 20, "player_key": 999, "chip": "bboost"})
     frame = pl.DataFrame(rows, schema=schema)
     assert frame.filter(pl.col("chip") == "bboost").height == 1
+
+
+def test_simulate_decisions_forwards_lineup_reopt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``lineup_reopt=False`` reaches ``plan_squad`` (MILP-only ablation)."""
+    candidates, predictions, actuals, _fixtures = _toy_season()
+    seen: dict[str, object] = {}
+    real = plan_squad
+
+    def spy_plan(*args: object, **kwargs: object):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
+    simulate_decisions(
+        candidates,
+        predictions,
+        actuals,
+        _draft(),
+        model_id="reopt_test",
+        season="2024-25",
+        gameweeks=[1],
+        horizon=1,
+        chip_arm="off",
+        lineup_reopt=False,
+    )
+    assert seen["lineup_reopt"] is False
+
+
+def test_chip_board_cli_passes_no_lineup_reopt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``fplt decisions --chip-board --no-lineup-reopt`` reaches the board."""
+    from fplt.cli import main
+    from fplt.settings import get_settings
+
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    fake = pl.DataFrame(
+        {
+            "model_id": ["m::chip_optimised"],
+            "base_model_id": ["m"],
+            "season": ["2025-26"],
+            "chip_arm": ["optimised"],
+            "rules_label": ["2025-26"],
+            "counterfactual": [False],
+            "total_points": [100],
+            "gameweeks": [2],
+            "per_gw": [[50, 50]],
+        }
+    )
+    with patch("fplt.cli.run_chip_decision_board", return_value=fake) as run_mock:
+        try:
+            main(
+                [
+                    "decisions",
+                    "--chip-board",
+                    "--season",
+                    "2025-26",
+                    "--horizon",
+                    "3",
+                    "--models",
+                    "rolling_mean_v1",
+                    "--from-gw",
+                    "1",
+                    "--to-gw",
+                    "2",
+                    "--chip-arms",
+                    "optimised",
+                    "--summarise-only",
+                    "--no-lineup-reopt",
+                ]
+            )
+        finally:
+            get_settings.cache_clear()
+    assert run_mock.call_args.kwargs["lineup_reopt"] is False
 
 
 def test_free_hit_advance_keeps_permanent_squad() -> None:

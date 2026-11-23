@@ -397,6 +397,14 @@ def main(argv: list[str] | None = None) -> None:
             "optimised chip scheduler (ablation; default keeps force-play on)"
         ),
     )
+    decisions.add_argument(
+        "--no-lineup-reopt",
+        action="store_true",
+        help=(
+            "Keep the raw MILP XI / captain / vice (ablation; default re-opts "
+            "lineups via EV after the transfer solve)"
+        ),
+    )
     sim_season = sub.add_parser(
         "sim-season",
         parents=[log_flags],
@@ -1653,6 +1661,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 simulate=not bool(args.summarise_only),
                 max_mean_ppg=None if max_mean <= 0 else max_mean,
                 force_play=not bool(args.no_force_play),
+                lineup_reopt=not bool(args.no_lineup_reopt),
             )
             print(format_chip_decision_scoreboard(summary))
         else:
