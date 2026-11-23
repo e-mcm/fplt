@@ -31,6 +31,7 @@ from fplt.utils.rng import (
     player_seed_for,
     seed_for,
 )
+from fplt.utils.timing import timed_phase
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,14 @@ class CompositePredictor:
 
     def fit(self, view: PITView) -> None:
         """Fit each component on rows visible at ``view.as_of``."""
-        self._score.fit(view)
-        self._minutes.fit(view)
-        self._involvement.fit(view)
-        self._other.fit(view)
+        with timed_phase("fit/score"):
+            self._score.fit(view)
+        with timed_phase("fit/minutes"):
+            self._minutes.fit(view)
+        with timed_phase("fit/involvement"):
+            self._involvement.fit(view)
+        with timed_phase("fit/other"):
+            self._other.fit(view)
         _apply_involvement_sim_params(self)
         self._fitted = True
 
@@ -136,23 +141,27 @@ class CompositePredictor:
         """
         if not self._fitted:
             raise RuntimeError("fit the layered model before predicting")
-        rows = player_fixtures(view, horizon)
-        if rows.is_empty():
-            zero = pl.lit(0.0)
-            return prediction_frame(self.spec, view.as_of, rows, zero, zero, zero, zero)
-        squad = _squad(view, rows)
-        fixtures = list(_fixtures(view, squad).iter_rows(named=True))
+        with timed_phase("predict/setup"):
+            rows = player_fixtures(view, horizon)
+            if rows.is_empty():
+                zero = pl.lit(0.0)
+                return prediction_frame(
+                    self.spec, view.as_of, rows, zero, zero, zero, zero
+                )
+            squad = _squad(view, rows)
+            fixtures = list(_fixtures(view, squad).iter_rows(named=True))
         pieces: list[pl.DataFrame] = []
-        for index, row in enumerate(fixtures, start=1):
-            logger.info(
-                "%s fixture %s (%s/%s)",
-                self.spec.name,
-                row["fixture_id"],
-                index,
-                len(fixtures),
-            )
-            pieces.append(_fixture(self, view, squad, row))
-        combined = pl.concat(pieces, how="vertical")
+        with timed_phase("predict/fixtures"):
+            for index, row in enumerate(fixtures, start=1):
+                logger.info(
+                    "%s fixture %s (%s/%s)",
+                    self.spec.name,
+                    row["fixture_id"],
+                    index,
+                    len(fixtures),
+                )
+                pieces.append(_fixture(self, view, squad, row))
+            combined = pl.concat(pieces, how="vertical")
         return prediction_frame(
             self.spec,
             view.as_of,

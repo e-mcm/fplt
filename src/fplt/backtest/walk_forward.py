@@ -17,6 +17,13 @@ from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
 from fplt.types import GWKey
+from fplt.utils.timing import (
+    TimingSession,
+    format_gw_breakdown,
+    format_run_summary,
+    timed_phase,
+    timing_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +71,10 @@ def walk_forward(
 ) -> pl.DataFrame:
     """Fit and predict at each as-of deadline.
 
+    Logs per-gameweek wall times split into setup / fit / predict / write, and
+    an end-of-run summary with totals and shares. Nested model phases (when
+    recorded via ``timed_phase``) appear after ``|`` on the summary line.
+
     Args:
         model: Predictor whose ``spec`` supplies the refit policy and window.
         pit: Source of point-in-time views.
@@ -85,6 +96,7 @@ def walk_forward(
     )
     frames: list[pl.DataFrame] = []
     total = len(as_ofs)
+    run_timings = TimingSession()
     for index, as_of in enumerate(as_ofs):
         refitting = should_refit(model.spec, index)
         logger.info(
@@ -97,25 +109,34 @@ def walk_forward(
             "fitting" if refitting else "predicting",
         )
         started = time.perf_counter()
-        seasons = allowed_seasons(as_of, model.spec.train_window.seasons_back)
-        view = pit.view(as_of).within_seasons(seasons)
-        if refitting:
-            logger.debug("fit at %s (index=%s)", as_of, index)
-            model.fit(view)
-        else:
-            logger.debug("reuse fit at %s (index=%s)", as_of, index)
-        predicted = model.predict(view, horizon_for(as_of, steps))
-        recorded = ledger_rows(predicted, view, as_of, run_kind)
+        gw_timings = TimingSession()
+        with timing_session(gw_timings):
+            with timed_phase("setup"):
+                seasons = allowed_seasons(as_of, model.spec.train_window.seasons_back)
+                view = pit.view(as_of).within_seasons(seasons)
+            if refitting:
+                logger.debug("fit at %s (index=%s)", as_of, index)
+                with timed_phase("fit"):
+                    model.fit(view)
+            else:
+                logger.debug("reuse fit at %s (index=%s)", as_of, index)
+            with timed_phase("predict"):
+                predicted = model.predict(view, horizon_for(as_of, steps))
+            with timed_phase("write"):
+                recorded = ledger_rows(predicted, view, as_of, run_kind)
+        run_timings.merge(gw_timings)
         logger.info(
-            "%s %s gw %s done in %.1fs, %s rows",
+            "%s %s gw %s done in %.1fs (%s), %s rows",
             model.spec.name,
             as_of.season,
             as_of.gw,
             time.perf_counter() - started,
+            format_gw_breakdown(gw_timings),
             recorded.height,
         )
         if not recorded.is_empty():
             frames.append(recorded)
+    logger.info(format_run_summary(model.spec.name, run_timings, n_gw=total))
     combined = (
         pl.DataFrame(schema=LEDGER_COLUMNS)
         if not frames
