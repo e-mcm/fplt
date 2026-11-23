@@ -13,7 +13,7 @@ force_play: true
 lineup_reopt: true
 price_forecast: mean_gw_delta
 bench_weight: 0.0
-model: dc_layered_v4
+model: dc_layered_v4_native
 highs:
   # Deterministic board solves (FDB-228). Live plan may keep open_fpl_defaults.
   # threads=1 + scheduler reset in HighsSolveOptions.apply (FDB-269).

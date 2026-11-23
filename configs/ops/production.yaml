@@ -2,16 +2,21 @@
 # Keep this list short — never silently multi-arm live.
 #
 # Override without a PR via env (takes precedence over this file):
-#   FPLT_PRODUCTION_MODELS=dc_layered_v4          # comma-separated
+#   FPLT_PRODUCTION_MODELS=dc_layered_v4_native   # comma-separated
 #   FPLT_PLAN_HORIZON=3
 #
 # CLI / make plan still default to DEFAULT_PLAN_HORIZON in
 # fplt.optimise.plan; this file only feeds automation.
 #
-# FDB-267: production is dc_layered_v4 (CS-only keep, market_cs_strength=0.5).
+# FDB-267: stack is dc_layered_v4 (CS-only keep, market_cs_strength=0.5).
+# FDB-293: PRODUCTION Monte Carlo is native via dc_layered_v4_native
+# (mc_backend: native). Requires the fplt-mc wheel from
+# https://e-mcm.github.io/fplt/simple/ (Mac arm64 + Linux x86_64).
+# Missing wheel fails loud — no silent Python MC fallback.
+# Python parent remains dc_layered_v4; frozen pre-CS parent dc_layered_v3.
 # Do not edit a released production ModelSpec in place — bump the versioned
-# YAML instead. Frozen pre-CS parent remains dc_layered_v3.
+# YAML instead.
 
 models:
-  - dc_layered_v4
+  - dc_layered_v4_native
 plan_horizon: 3
