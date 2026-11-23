@@ -141,6 +141,7 @@ Fields below marked **P1** are the contract for the next PR. They do not load on
 ```yaml
 name: minutes_lgbm_vs_empirical
 kind: component
+claim: forecasts                 # default; use squad_points for any season/squad-points assertion
 question: "Does a LightGBM minutes model beat empirical_minutes_v2 on Brier, then on xPts?"  # P1; runner refuses a blank question
 description: "dc_layered minutes slot: empirical_minutes_v2 → lgbm_minutes"
 
@@ -205,11 +206,31 @@ report:
 | `data` | prediction; components if the consumer has one | same, plus coverage |
 | `feature` | prediction | Spearman, RMSE (MAE secondary) |
 | `component` | components, then prediction | slot metric before xPts `keep` |
-| `model` | prediction; decisions only when claiming squad points | RMSE, Spearman, Brier (MAE secondary) |
+| `model` | prediction; decisions only when `claim: squad_points` | RMSE, Spearman, Brier (MAE secondary); season points when claiming |
 | `environment` | prediction ledger diff | count and size of diffs; metric intervals |
 | `refactor` | resolved-spec hash first; ledger diff only if the hashes differ | identical yes/no |
 
-`suites.decisions` defaults off. A data or config promo does not need a decision bakeoff. W9’s `tune` was a prediction-only call. `kind: model` still needs S3+ before a production flip that claims transfers. `kind: component` needs a slot-metric win before an xPts `keep`; decisions stay optional.
+`suites.decisions` defaults off. A data or config promo does not need a decision bakeoff. W9’s `tune` was a prediction-only call. `kind: component` needs a slot-metric win before an xPts `keep`; decisions stay optional for forecast claims.
+
+### 4.2 Decisions suite gate (`claim`)
+
+`claim` is the explicit gate for what the EvalSpec may assert:
+
+| `claim` | Meaning | `suites.decisions` |
+|---|---|---|
+| `forecasts` (default) | Prediction / component metrics only (RMSE, Brier, slot metrics, …) | May stay `false` |
+| `squad_points` | Any **season-points** or **squad-points** assertion (transfers, mean PPG under the optimiser, “this ModelSpec earns more points”) | **Must** be `true` |
+
+Rules enforced at load and again at preflight (after tier / `--skip-decisions` clamps):
+
+1. `claim: squad_points` with `suites.decisions: false` → **fail**.
+2. `claim: squad_points` under tier S0–S2, `--skip-decisions`, or an equivalence kind → **fail** (those paths turn decisions off).
+3. Prose in `question` / `description` / `change.notes` / `report.title` that names `season points`, `squad points`, `mean ppg`, or `realised points` while `claim` stays `forecasts` and decisions is off → **fail**. Reword to a forecast metric, or set `claim: squad_points` and turn decisions on.
+4. Equivalence kinds (`environment`, `refactor`) cannot set `claim: squad_points`.
+
+`claim: squad_points` still runs today’s chips-off-shaped `fplt decisions` line inside promote-eval (P4). It is **not** a substitute for decision-**policy** A/Bs (`force_play`, horizon, chip arm, lineup reopt) — those stay on `fplt decisions --chip-board` / `fplt sim-season` (see project `docs/promote-pipeline-unified.md`). A ModelSpec promote that only improves forecasts, then checks live transfers separately on the chip board, keeps `claim: forecasts` and leaves decisions off.
+
+Scaffold: `configs/evals/example_model_squad_points.yaml`. Current real EvalSpecs on main are forecast claims; none needed wiring to `decisions: true`.
 
 ---
 
@@ -478,12 +499,14 @@ Exit `2` on fail, before any fit. Exit `1` later only for a coverage `drop` or a
 | Effective diff of the resolved specs ≠ `change.diff` | The diff is a story. Applies once `extends` exists (P1.5) |
 | Dirty tree without `--allow-dirty` | Not reproducible |
 | Cached ledger whose stored key ≠ the key just computed | Stale cache (P2.5) |
+| `claim: squad_points` with decisions off (YAML, S0–S2, `--skip-decisions`, or equivalence kind) | Season/squad points asserted without the decisions suite (§4.2) |
+| Forecast `claim` whose prose names season/squad points / mean PPG / realised points while decisions is off | Smuggled points claim; set `claim: squad_points` or reword (§4.2) |
 
 **Warn, and continue**
 
 | Check | What the operator still does |
 |---|---|
-| Tier S0–S2 with `suites.decisions: true` | Decisions are forced off (already implemented) |
+| Tier S0–S2 with `suites.decisions: true` on a **forecast** claim | Decisions are forced off (already implemented). A `squad_points` claim fails instead (§4.2) |
 | Closing-proxy rows exist | Print the caveat and both rates. Existence alone is not a fail |
 | Team-key odds rate exceeds fixture_id rate by &gt; 5pp | Fix stays in the model |
 | Printed `eval-components` line has no arm-specific model flags | Unresolved arm YAML / missing `components.<slot>.name`; the line is not an A/B |
@@ -605,7 +628,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 | **P1.5** | `extends` / `overrides` on the ModelSpec loader. Deep-merge a dict, then the existing pydantic model. One parent. Migrate `dc_layered_nopens_v1`, `dc_layered_nodefcon_v1`, and `dc_layered_odds_v1`. Resolved hash equals the old copy. No model run. | OmegaConf. Chains. |
 | **P2.5** | Done: `produce_ledger` and the content-addressed parquet cache under `ledger_cache/<digest>/`. `fplt compare` CLI unchanged (produce twice, then summarise). | `joblib`. |
 | **P3** | Done: components command names the two slot specs; `--skip-sims` by default. Scoreline levers: `per_match.parquet` and the raw de-vig row. | Using `odds_poisson_v1` as the book. |
-| **P4** | Decisions suite. Still opt-in. Data and config promos do not wait for it. | — |
+| **P4** | Decisions suite. Opt-in via `claim: squad_points` (gate in §4.2). Data and config forecast promos do not wait for it. | Using decisions as a chip-board / policy substitute |
 | **P7** | Done: `kind: environment` and `kind: refactor`, including the §3.2 verdict. Worktree, `uv sync --frozen`, subprocess produce per arm; ledger identity via `assert_frame_equal` then intervals. | `nox`, until more than one such eval exists. An unlisted `uv lock --upgrade` as a single lever. |
 | **Bakeoff** | Done: thin multi-arm wrapper on compare / promote-eval. `fplt bakeoff` + `BakeoffSpec` (≥3 ModelSpecs, shared window, SPA/MCS + **RMSE** rank → `ranking.md`; MAE still in the metric table). EvalSpec optional `arms:` for a dose on the promote-eval compare. Shared ledgers via the content-addressed cache. Optional `pairwise_evals:` compose N promote-eval runs. | Running the Deep/PPDA + odds championship itself (FDB-99). A second framework. Emitting `keep` from the ranking window. |
 | **History prior** | `market_prior_source: history` as specified in §5.1. Then one EvalSpec. A dose on that window is descriptive. | Re-running the predict-time λ blend as that study. Optuna inside the runner. Blocking this PR on `match_odds_deadline`. |
@@ -731,7 +754,9 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
      scoreline arms also write the raw de-vig row and the HAC / bootstrap intervals
      improvement recommendation is inconclusive, or drop on coverage
      equivalence recommendation follows the identical / not-worse / worse rule
-5. Decisions only if the claim is the squad (kind: model, or an explicit opt-in).
+5. Decisions only when claim: squad_points (any season/squad-points assertion).
+   That sets suites.decisions: true and needs tier S3+. Forecast claims leave
+   decisions off. Decision-policy levers stay on fplt decisions --chip-board.
 6. Production change is a later PR. keep on an opt-out means "leave it on".
    A dose on one window does not promote. Confirmation is a fresh window.
 7. Multi-arm championship / dose ranking:
