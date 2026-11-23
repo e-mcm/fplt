@@ -1,6 +1,6 @@
 # FDB-257: cumulative minutes P1–P6 keep after plumbing (#175–#182).
 # Opt-out: control turns off calibrate_chance_flags / return_ramp /
-# availability_recovery; treatment is production dc_layered_v3.
+# availability_recovery; treatment is production dc_layered_v4.
 # Always-on code (absence-share exclusion, 1-GK hard XI) has no off-switch.
 name: minutes_p1p6_keep_ab
 kind: config
@@ -27,7 +27,7 @@ change:
     - "components.minutes.params.return_ramp_games: 0.0 → 2.0"
     - "components.minutes.params.availability_recovery_games: 0.0 → 3.0"
   notes: >
-    Control dc_layered_minutes_pre_p1p6_v1. Treatment dc_layered_v3.
+    Control dc_layered_minutes_pre_p1p6_v1. Treatment dc_layered_v4.
     Windows declared before confirmation numbers (eval protocol §1):
     development 2024-25 GW1–20; confirmation 2024-25 GW21–38; sealed
     unfinished 2026-27 GWs. Primary structural read needs snapshot
@@ -36,7 +36,7 @@ change:
     fail / no-op arms until denser deadline captures exist.
 
 control: dc_layered_minutes_pre_p1p6_v1
-treatment: dc_layered_v3
+treatment: dc_layered_v4
 
 window:
   seasons: ["2024-25"]

@@ -22,12 +22,12 @@ change:
   diff:
     - "components.other.kind: other_player → other_match_conditioned"
   notes: >
-    Control dc_layered_v3 (other_player_defcon_rate_v1). Treatment
+    Control dc_layered_v4 (other_player_defcon_rate_v1). Treatment
     dc_layered_match_other_v1. Development window per eval-protocol §1
     (2025-26 GW1–19). Confirmation on a pre-declared disjoint window
     (prefer 2024-25 GW21–38 or sealed). No dose arms. No production flip.
 
-control: dc_layered_v3
+control: dc_layered_v4
 treatment: dc_layered_match_other_v1
 
 window:

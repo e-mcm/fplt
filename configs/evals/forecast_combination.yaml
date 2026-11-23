@@ -7,16 +7,16 @@
 
 name: forecast_combination
 question: >
-  Do equal-weight and position-weighted blends of dc_layered_v3 +
+  Do equal-weight and position-weighted blends of dc_layered_v4 +
   lgbm_direct_v1 beat either singleton on 2024-25 GW1–20 walk-forward MAE
   (and Spearman)? Descriptive; not a keep.
 description: >
   Forecast combination bakeoff. Shared window with the championship board;
   ledgers reuse the content-addressed compare cache for singleton arms.
 
-control: dc_layered_v3
+control: dc_layered_v4
 models:
-  - dc_layered_v3
+  - dc_layered_v4
   - lgbm_direct_v1
   - forecast_combine_equal_v1
   - forecast_combine_pos_v1

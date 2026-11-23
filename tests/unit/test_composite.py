@@ -32,7 +32,7 @@ def test_dc_layered_odds_v1_wires_odds_score_component() -> None:
     assert spec.kind == "dc_layered"
     assert spec.components["score"].name == "dixon_coles_odds_v1"
     assert spec.components["score"].params["market_prior_strength"] == 1.0
-    vanilla = load_model_specs()["dc_layered_v3"]
+    vanilla = load_model_specs()["dc_layered_v4"]
     assert "market_prior_strength" not in vanilla.components["score"].params
 
 
@@ -42,7 +42,7 @@ def test_dc_layered_history_v1_wires_history_score_component() -> None:
     assert spec.components["score"].name == "dixon_coles_history_v1"
     assert spec.components["score"].params["market_prior_source"] == "history"
     assert spec.components["score"].params["market_prior_strength"] == 1.0
-    vanilla = load_model_specs()["dc_layered_v3"]
+    vanilla = load_model_specs()["dc_layered_v4"]
     assert "market_prior_source" not in vanilla.components["score"].params
 
 
@@ -57,8 +57,8 @@ def test_dc_layered_v2_keeps_mean_wire_identity() -> None:
     assert spec.model_id == "b12aad1575ff0d34"
 
 
-def test_dc_layered_v3_wires_improved_components() -> None:
-    spec = load_model_specs()["dc_layered_v3"]
+def test_dc_layered_v4_wires_improved_components() -> None:
+    spec = load_model_specs()["dc_layered_v4"]
     assert spec.kind == "dc_layered"
     assert spec.params["n_sims"] == 10000
     assert spec.params["cs_red_void_prob"] == pytest.approx(0.02)
@@ -66,7 +66,8 @@ def test_dc_layered_v3_wires_improved_components() -> None:
     assert spec.params["sample_other"] is True
     assert spec.params["hard_starters"] is True
     assert spec.params["target_starters"] == 11
-    assert spec.components["score"].name == "dixon_coles_v2"
+    assert spec.components["score"].name == "dixon_coles_cs_v1"
+    assert spec.components["score"].params["market_cs_strength"] == 0.5
     assert spec.components["minutes"].kind == "empirical_minutes_v2"
     assert spec.components["involvement"].kind == "involvement_xg"
     assert spec.components["other"].kind == "other_player"
@@ -81,9 +82,9 @@ def test_dc_layered_v3_wires_improved_components() -> None:
     assert model._target_starters == 11
 
 
-def test_dc_layered_v3_scores_a_gameweek(tmp_path: Path) -> None:
-    spec = load_model_specs()["dc_layered_v3"].model_copy(
-        update={"params": {**load_model_specs()["dc_layered_v3"].params, "n_sims": 80}}
+def test_dc_layered_v4_scores_a_gameweek(tmp_path: Path) -> None:
+    spec = load_model_specs()["dc_layered_v4"].model_copy(
+        update={"params": {**load_model_specs()["dc_layered_v4"].params, "n_sims": 80}}
     )
     store = build_league(DataStore(tmp_path / "league"))
     view = PITData(store).view(GWKey("2024-25", 1))

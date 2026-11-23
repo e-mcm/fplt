@@ -5,10 +5,10 @@ kind: data
 question: >
   Does blending DC's 1X2 margins toward de-vigged prematch_scheduled odds
   at market_1x2_strength=1.0 improve player RMSE (and scoreline RPS/LL)
-  vs dc_layered_v3 under strict PIT?
+  vs dc_layered_v4 under strict PIT?
 description: >
   Prematch de-vig 1X2 prior (market_1x2_strength=1.0, use_closing_proxy=false).
-  Control keeps production dc_layered_v3. Gate on prematch_scheduled
+  Control keeps production dc_layered_v4. Gate on prematch_scheduled
   deadline coverage. Confirmation: re-run with --seasons 2025-26.
 
 change:
@@ -29,7 +29,7 @@ change:
     prematch_scheduled under strict PIT; refuse closing proxy. Not the
     closing-oracle dc_layered_1x2_v1 arm and not CS-only λ.
 
-control: dc_layered_v3
+control: dc_layered_v4
 treatment: dc_layered_1x2_prematch_v1
 
 window:
@@ -59,5 +59,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "Prematch de-vig 1X2 prior vs dc_layered_v3 (strict PIT)"
+  title: "Prematch de-vig 1X2 prior vs dc_layered_v4 (strict PIT)"
   store_doc: prematch-1x2-prior-promote.md

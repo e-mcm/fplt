@@ -1,9 +1,11 @@
-# Same composition as dc_layered_v3; score borrows market CS margin only.
+# Explicit CS-borrow arm (same score path as production dc_layered_v4 after
+# FDB-262 keep / FDB-267 rename). Kept for historical EvalSpec tips; prefer
+# dc_layered_v4. Opt-out is dc_layered_nocs_v1.
 # use_closing_proxy stays at the DC default (false when market_1x2 is off)
 # so strict PIT / prematch_scheduled rows are used — do not set it here or
 # the promote-eval one-lever check sees a second param family.
 name: dc_layered_cs_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     score:

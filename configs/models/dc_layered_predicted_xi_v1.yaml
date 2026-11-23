@@ -2,7 +2,7 @@
 # (still dc_layered_v2). Enable Touchline ingest with FPLT_TOUCHLINE_LINEUPS_ENABLED=1
 # and score accuracy via score_predicted_starts before promoting.
 name: dc_layered_predicted_xi_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     minutes:

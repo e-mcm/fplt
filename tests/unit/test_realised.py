@@ -131,12 +131,12 @@ def test_summarise_ranks_models_and_formats_table() -> None:
     assert format_decision_scoreboard(summary.clear()) == "_No decision rows to score._"
     named = summary.with_columns(
         pl.when(pl.col("model_id") == "b")
-        .then(pl.lit("dc_layered_v3"))
+        .then(pl.lit("dc_layered_v4"))
         .otherwise(pl.lit("dc_layered_v2"))
         .alias("model_name")
     )
     named_table = format_decision_scoreboard(named)
-    assert "| 1 | dc_layered_v3 (b) |" in named_table
+    assert "| 1 | dc_layered_v4 (b) |" in named_table
     assert "| 2 | dc_layered_v2 (a) |" in named_table
 
 

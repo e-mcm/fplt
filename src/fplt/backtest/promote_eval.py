@@ -2186,27 +2186,20 @@ def _check_orientation(
 def _orientation_keys(
     control: ModelSpec, treatment: ModelSpec, slot: str | None
 ) -> list[str]:
+    """Return orientation params whose effective values differ between arms.
+
+    Shared production knobs that resolve to the same effective value on both
+    arms (e.g. ``market_cs_strength=0.5`` after FDB-267 on production and on a
+    score fork that deep-merges parent params) are not the lever under test and
+    must not fail preflight with ``no contrast``.
+    """
     found: list[str] = []
     for key in sorted(_ORIENTATION_PARAMS):
-        c_params = _params_for(control, slot)
-        t_params = _params_for(treatment, slot)
-        explicit = key in c_params or key in t_params
         c_val = effective_param(control, slot, key)
         t_val = effective_param(treatment, slot, key)
-        if c_val != t_val or explicit:
-            # Only track when at least one arm sets the key, or values diverge
-            # via defaults (absent vs explicit).
-            if explicit or c_val != t_val:
-                found.append(key)
+        if c_val != t_val:
+            found.append(key)
     return found
-
-
-def _params_for(spec: ModelSpec, slot: str | None) -> dict[str, Any]:
-    if slot is None:
-        return dict(spec.params)
-    if slot not in spec.components:
-        return {}
-    return dict(spec.components[slot].params)
 
 
 def _check_tables(spec: EvalSpec, store: DataStore) -> list[str]:

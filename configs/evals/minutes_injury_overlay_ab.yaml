@@ -3,7 +3,7 @@ name: minutes_injury_overlay_ab
 kind: config
 question: >
   Does staged player_injuries (use_injury_overlay) improve minutes Brier /
-  player RMSE versus FPL tags only on dc_layered_v3?
+  player RMSE versus FPL tags only on dc_layered_v4?
 description: "API-Football injury overlay A/B. Opt-in."
 
 change:
@@ -18,11 +18,11 @@ change:
   diff:
     - "components.minutes.params.use_injury_overlay: false → true"
   notes: >
-    Control dc_layered_v3. Treatment dc_layered_injuries_v1.
+    Control dc_layered_v4. Treatment dc_layered_injuries_v1.
     Needs non-empty mapped player_injuries under PIT. Empty/unmapped tables
     fail coverage preflight (injury_overlay_mapped), not an inconclusive no-op.
 
-control: dc_layered_v3
+control: dc_layered_v4
 treatment: dc_layered_injuries_v1
 
 window:
@@ -56,5 +56,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "Injury overlay vs dc_layered_v3"
+  title: "Injury overlay vs dc_layered_v4"
   store_doc: availability-overlays-promote.md

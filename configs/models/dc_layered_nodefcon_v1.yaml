@@ -1,7 +1,7 @@
-# dc_layered_v3 with other_player defensive contribution forced off.
+# dc_layered_v4 with other_player defensive contribution forced off.
 # Eval-only fork for 2025-26 A/B (FDB-72 / W9); not a production default.
 name: dc_layered_nodefcon_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     other:

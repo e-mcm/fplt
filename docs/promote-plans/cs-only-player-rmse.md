@@ -2,15 +2,16 @@
 
 **Eval status:** player/RMSE board **keep** —
 [cs-only-player-rmse-promote.md](../cs-only-player-rmse-promote.md).
-Components-only prior remains do-not-promote-alone. PRODUCTION flip pending
-(`dc_layered_v4+`).  
+Components-only prior remains do-not-promote-alone. PRODUCTION flip **done**
+(`dc_layered_v4`, FDB-267).  
 **Path:** ModelSpec · primary **RMSE** (CS Brier secondary; RPS sanity).  
 **Inventory:** [unpromoted-improvements.md](../unpromoted-improvements.md) ·
 [cs-only-market-lambda-eval.md](../cs-only-market-lambda-eval.md)
 
 | | Control | Treatment |
 |---|---|---|
-| Spec | `dc_layered_v3` | `dc_layered_cs_v1` (`market_cs_strength=0.5`, prematch PIT) |
+| Spec (keep audit) | `dc_layered_v3` | `dc_layered_cs_v1` (`market_cs_strength=0.5`, prematch PIT) |
+| Spec (post-flip) | `dc_layered_nocs_v1` | production `dc_layered_v4` |
 
 ### Artifact / runner
 
@@ -52,18 +53,18 @@ stands. Runner auto-verdict stays `inconclusive` until FDB-73 thresholds.
   revisit only with new evidence, not via this EvalSpec.
 - Full-strength λ prior (`dc_layered_odds_v1`) — closed.
 - `forecast_combine_equal_v1` — dropped.
-- `PRODUCTION_MODELS` / ops flip — **only** after interim keep + confirm.
+- `PRODUCTION_MODELS` / ops flip — **done** (FDB-267 → `dc_layered_v4`).
 
-### Flip PR surface (after keep only)
+### Flip PR surface
 
-- Compose `market_cs_strength` into a new production ModelSpec bump
-  (`dc_layered_v4+`); do not edit `dc_layered_v3` in place.
-- Update ops `models` / prefs / design in the same flip PR.
+- **Done (FDB-267):** `dc_layered_v4` with `market_cs_strength=0.5`; frozen
+  `dc_layered_v3`; opt-out `dc_layered_nocs_v1`; ops / reference board /
+  design / prefs / registry notes retargeted.
 
 ### Ordered steps
 
 1. Land EvalSpec + tests — done (#187).
 2. Run development promote-eval; archive artifacts — done (FDB-262).
 3. Confirmation on disjoint window (fresh data_dir) — done.
-4. Written call under eval protocol §2 — **keep**; flip PR still open
-   (`dc_layered_v4+`, no silent PRODUCTION edit).
+4. Written call under eval protocol §2 — **keep**.
+5. PRODUCTION flip — done (FDB-267 → `dc_layered_v4`).

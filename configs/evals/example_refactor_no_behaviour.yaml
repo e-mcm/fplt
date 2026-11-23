@@ -19,8 +19,8 @@ change:
     Scaffold only. control_ref and treatment_ref must differ; resolved specs
     and uv.lock must match. Orientation does not apply.
 
-control: dc_layered_v3
-treatment: dc_layered_v3
+control: dc_layered_v4
+treatment: dc_layered_v4
 
 window:
   seasons: ["2024-25"]

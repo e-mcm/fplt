@@ -1,0 +1,13 @@
+# dc_layered_v4 with market CS borrow forced off (vanilla dixon_coles_v2).
+# Opt-out / historical control after the CS-only keep (FDB-262 / FDB-267);
+# not production. Frozen pre-CS compose without the flip is also dc_layered_v3.
+# Explicit market_cs_strength: 0 is required — deep_merge would otherwise keep
+# the parent's 0.5 when only the score name is overridden.
+name: dc_layered_nocs_v1
+extends: dc_layered_v4
+overrides:
+  components:
+    score:
+      name: dixon_coles_v2
+      params:
+        market_cs_strength: 0.0

@@ -1,8 +1,8 @@
-# Explicit rate-model arm (same DC path as production dc_layered_v3 after
+# Explicit rate-model arm (same DC path as production dc_layered_v4 after
 # FDB-211 keep / FDB-226 rename). Kept for historical EvalSpec tips; prefer
-# dc_layered_v3. Mean-wire opt-out is dc_layered_defcon_mean_v1.
+# dc_layered_v4. Mean-wire opt-out is dc_layered_defcon_mean_v1.
 name: dc_layered_defcon_rate_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     other:

@@ -43,7 +43,7 @@ def test_spec_registers_and_fork_extends_v3() -> None:
     layered = specs["dc_layered_match_other_v1"]
     assert layered.components["other"].kind == "other_match_conditioned"
     assert layered.components["other"].name == "other_match_conditioned_v1"
-    assert specs["dc_layered_v3"].components["other"].kind == "other_player"
+    assert specs["dc_layered_v4"].components["other"].kind == "other_player"
 
 
 def test_match_delta_broadcasts_across_sims(tmp_path: Path) -> None:

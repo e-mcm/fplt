@@ -2,15 +2,16 @@
 # Keep this list short — never silently multi-arm live.
 #
 # Override without a PR via env (takes precedence over this file):
-#   FPLT_PRODUCTION_MODELS=dc_layered_v3          # comma-separated
+#   FPLT_PRODUCTION_MODELS=dc_layered_v4          # comma-separated
 #   FPLT_PLAN_HORIZON=3
 #
 # CLI / make plan still default to DEFAULT_PLAN_HORIZON in
 # fplt.optimise.plan; this file only feeds automation.
 #
-# FDB-226: production is dc_layered_v3 (defcon-rate keep). Do not edit a
-# released production ModelSpec in place — bump the versioned YAML instead.
+# FDB-267: production is dc_layered_v4 (CS-only keep, market_cs_strength=0.5).
+# Do not edit a released production ModelSpec in place — bump the versioned
+# YAML instead. Frozen pre-CS parent remains dc_layered_v3.
 
 models:
-  - dc_layered_v3
+  - dc_layered_v4
 plan_horizon: 3

@@ -1,8 +1,8 @@
-# CS-only player RMSE — **keep** (no PRODUCTION flip yet)
+# CS-only player RMSE — **keep** (PRODUCTION flipped to `dc_layered_v4`)
 
 **Date:** 2026-11-23 · **Task:** FDB-262 / FDB-239  
 **Status:** Written **keep** under [`eval-protocol.md`](./eval-protocol.md) §1–§2.  
-**Production:** unchanged (`dc_layered_v3`; `market_cs_strength` off). Flip is a **later** PR (`dc_layered_v4+`).  
+**Production:** `dc_layered_v4` (`market_cs_strength=0.5`) after FDB-267. Frozen pre-CS: `dc_layered_v3`. Opt-out: `dc_layered_nocs_v1`.  
 **EvalSpec:** `cs_only_player_rmse_ab` · tip `98d06a2` (post-#187)  
 **Plan:** [promote-plans/cs-only-player-rmse.md](./promote-plans/cs-only-player-rmse.md)  
 **Prior components board:** [cs-only-market-lambda-eval.md](./cs-only-market-lambda-eval.md) (do-not-promote without player/RMSE)  
@@ -20,7 +20,7 @@
 - Coverage `prematch_scheduled` ≥ 0.80 on both windows.
 - Dose fixed at **0.5** (no retune on confirmation).
 - Runner auto-verdict stays **`inconclusive`** (FDB-73); this written call is the gate.
-- **Do not** edit `dc_layered_v3` in place; **do not** flip `PRODUCTION_MODELS` / ops in this record.
+- Flip landed in FDB-267 (`dc_layered_v4`); this record's keep arms stay `v3` vs `cs_v1`.
 
 ---
 
@@ -102,12 +102,12 @@ First confirmation attempt reused `$FPLT_DATA_DIR` from development. The shared 
 
 ---
 
-## Flip surface (later PR only)
+## Flip surface
 
-1. New compose ModelSpec `dc_layered_v4+` with `market_cs_strength=0.5` (do not edit `dc_layered_v3` in place — FDB-226).
-2. Retarget `configs/ops/production.yaml` / `PRODUCTION_MODELS`.
-3. Registry / design / prefs in the same flip PR.
-4. Optional second confirm on finished 2025-26 GWs before or with the flip.
+1. ~~New compose ModelSpec~~ → `dc_layered_v4` with `market_cs_strength=0.5` (FDB-267).
+2. ~~Retarget ops / `PRODUCTION_MODELS`~~ → done.
+3. ~~Registry / design / prefs~~ → done in the flip PR.
+4. Optional second confirm on finished 2025-26 GWs remains available.
 
 ---
 

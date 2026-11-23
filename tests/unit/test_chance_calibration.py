@@ -152,7 +152,7 @@ def test_spec_defaults_enable_calibration() -> None:
     params = specs["empirical_minutes_v2"].params
     assert params["calibrate_chance_flags"] is True
     assert params["chance_cal_min_count"] == 20
-    assert specs["dc_layered_v3"].components["minutes"].params["calibrate_chance_flags"]
+    assert specs["dc_layered_v4"].components["minutes"].params["calibrate_chance_flags"]
 
 
 def _spec(**params: object) -> ModelSpec:

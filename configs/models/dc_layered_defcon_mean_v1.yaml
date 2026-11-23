@@ -1,8 +1,8 @@
-# dc_layered_v3 with other_player DC channel on the pre-FDB-211 shrunk 0/2 mean.
+# dc_layered_v4 with other_player DC channel on the pre-FDB-211 shrunk 0/2 mean.
 # Opt-out / historical control after the rate-model promote; not production.
 # Frozen mean-wire compose without the rate flip is also dc_layered_v2.
 name: dc_layered_defcon_mean_v1
-extends: dc_layered_v3
+extends: dc_layered_v4
 overrides:
   components:
     other:

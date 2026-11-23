@@ -10,7 +10,7 @@
 
 name: example_prediction_championship
 question: >
-  Which of rolling_mean_v1, dc_layered_v3, and lgbm_direct_v1 ranks best
+  Which of rolling_mean_v1, dc_layered_v4, and lgbm_direct_v1 ranks best
   on 2024-25 GW1–20 walk-forward (descriptive; not a keep)?
 description: >
   Example championship bakeoff. Shared window and seasons_back; ledgers
@@ -19,7 +19,7 @@ description: >
 control: rolling_mean_v1
 models:
   - rolling_mean_v1
-  - dc_layered_v3
+  - dc_layered_v4
   - lgbm_direct_v1
 
 window:

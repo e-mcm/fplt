@@ -15,7 +15,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 5. **Share of attainable points** needs an explicit computable definition (constrained hindsight oracle), not an unbounded perfect-foresight ideal.
 6. **Live rank** is a multi-season consistency check, never a single-GW or single-season promotion gate.
 7. **Decision-sim north star is points-at-rank, not a fixed 2400.** Raw season points are not comparable across seasons (defcon, chip-rule changes, scoring inflation/deflation). Anchor: **2400** at end of **2024-25** ≈ overall rank **~573k** (top ~5%). Per-season bars = points at that rank on each season's end-of-season ladder. See §2. Does not replace Tier A–C relative aims or A/B promote-eval gates.
-8. **Keeps under the interim rule:** defcon-rate (`defcon_mode: rate` on `dc_layered_v3`) remains **provisional** after FDB-255 protocol reconfirm failed interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md); no silent un-flip). Within-horizon `mean_gw_delta` price forecast is **confirmed** under [`eval-protocol.md`](eval-protocol.md) §2.3 (FDB-256 — [`price-forecast-confirm.md`](price-forecast-confirm.md); prior promote [`price-within-horizon-promote.md`](price-within-horizon-promote.md)).
+8. **Keeps under the interim rule:** defcon-rate (`defcon_mode: rate` on `dc_layered_v4`) remains **provisional** after FDB-255 protocol reconfirm failed interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md); no silent un-flip). Within-horizon `mean_gw_delta` price forecast is **confirmed** under [`eval-protocol.md`](eval-protocol.md) §2.3 (FDB-256 — [`price-forecast-confirm.md`](price-forecast-confirm.md); prior promote [`price-within-horizon-promote.md`](price-within-horizon-promote.md)).
 
 ---
 
@@ -54,7 +54,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 
 ### North-star score: points-at-rank (was “2400”)
 
-Full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v3` unless noted) — aim for the **points total that maps to the anchor overall rank** on that season's end-of-season ladder.
+Full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v4` unless noted) — aim for the **points total that maps to the anchor overall rank** on that season's end-of-season ladder.
 
 | | |
 |---|---|
