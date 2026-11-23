@@ -17,7 +17,6 @@ from fplt.models.spec import (
 )
 from fplt.types import GWKey
 
-
 # Extends-fork model_ids for package 0.1.0 (parent dc_layered_v3 params).
 # Update when intentional parent param changes land (e.g. logistic_blend).
 # FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes track parent.
