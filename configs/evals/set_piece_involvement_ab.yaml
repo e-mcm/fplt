@@ -1,0 +1,61 @@
+# FDB-244: set-piece order bonuses on involvement.
+# Snapshot-backed windows only; vaastav order columns are null.
+name: set_piece_involvement_ab
+kind: config
+question: >
+  Do corners/indirect + direct free-kick order==1 bonuses improve
+  goal-share MAE and MID/FWD RMSE versus production involvement?
+description: "set-piece orders on involvement (FDB-244)."
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: involvement
+  control_kind: involvement_xg
+  treatment_kind: involvement_xg
+  tables: [player_status]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.involvement.params.use_set_piece_orders: false → true (bonus default 0.1)"
+  notes: >
+    Control dc_layered_v4. Treatment dc_layered_setpieces_v1
+    (use_set_piece_orders only; set_piece_bonus code default 0.1). Gate on
+    set_piece_order_non_null. Vaastav is 0% non-null — run on snapshot-backed
+    2025-26. No PRODUCTION flip.
+
+control: dc_layered_v4
+treatment: dc_layered_setpieces_v1
+
+window:
+  seasons: ["2025-26"]
+  from_gw: 1
+  to_gw: 19
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    Development = 2025-26 GW1–19 (snapshot status). Confirmation on a
+    disjoint finished window. Vaastav seasons will fail coverage.
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: 0.01
+  allow_low_coverage: false
+  coverage:
+    metric: set_piece_order_non_null
+    read: strict_pit
+  keep_if:
+    components_any: [mae_goal_share]
+    prediction_any: [rmse]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "set-piece order involvement lift (FDB-244)"
+  store_doc: involvement-xg-blend-setpieces-promote.md

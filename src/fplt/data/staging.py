@@ -199,6 +199,8 @@ def _status(
         chance_this = element.get("chance_of_playing_this_round")
         ep = element.get("ep_next")
         order = element.get("penalties_order")
+        corners_order = element.get("corners_and_indirect_freekicks_order")
+        freekick_order = element.get("direct_freekicks_order")
         news_added = element.get("news_added")
         rows.append(
             {
@@ -218,6 +220,12 @@ def _status(
                     float(chance_this) if chance_this is not None else None
                 ),
                 "penalties_order": (int(order) if order not in (None, "") else None),
+                "corners_and_indirect_freekicks_order": (
+                    int(corners_order) if corners_order not in (None, "") else None
+                ),
+                "direct_freekicks_order": (
+                    int(freekick_order) if freekick_order not in (None, "") else None
+                ),
                 "available_at": moment,
                 "source": source,
             }

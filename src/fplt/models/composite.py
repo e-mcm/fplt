@@ -117,6 +117,8 @@ class CompositePredictor:
         self._n_sims = sims
         self._own_goal = own_goal_value
         self._p_assist = assist_value
+        self._p_penalty = 0.0
+        self._penalty_taker_keys: set[int] = set()
         self._cs_red_void_prob = void_value
         self._conceded_mode = conceded_mode
         self._sample_other = sample_other
@@ -215,12 +217,20 @@ class CompositePredictor:
 
 
 def _apply_involvement_sim_params(model: CompositePredictor) -> None:
-    """Prefer calibrated own-goal / assist knobs from involvement when present."""
+    """Prefer calibrated own-goal / assist / penalty knobs from involvement."""
     involvement = model._involvement
     if hasattr(involvement, "own_goal_weight"):
         model._own_goal = float(involvement.own_goal_weight)
     if hasattr(involvement, "p_assist"):
         model._p_assist = float(involvement.p_assist)
+    if hasattr(involvement, "p_penalty"):
+        model._p_penalty = float(involvement.p_penalty)
+    else:
+        model._p_penalty = 0.0
+    if hasattr(involvement, "penalty_taker_keys"):
+        model._penalty_taker_keys = {int(key) for key in involvement.penalty_taker_keys}
+    else:
+        model._penalty_taker_keys = set()
 
 
 def _build(spec: ModelSpec, name: str) -> Any:
@@ -274,9 +284,19 @@ def _fixture(
     match_other = (
         model._other if getattr(model._other, "match_conditioned", False) else None
     )
+    player_keys = players["player_key"].to_list()
     sim_players = _sim_players(players, weights)
-    other_grid = _other_grid(other, players["player_key"].to_list())
+    other_grid = _other_grid(other, player_keys)
+    penalty_taker = np.asarray(
+        [int(key) in model._penalty_taker_keys for key in player_keys],
+        dtype=bool,
+    )
     if model._mc_backend == "native":
+        if model._p_penalty > 0.0:
+            raise NotImplementedError(
+                "mc_backend=native does not yet support p_penalty > 0 "
+                "(penalty-event allocation); use mc_backend=python"
+            )
         # Python remains seed authority: draw kernel_seed after minutes/HS.
         kernel_seed = int(rng.integers(0, 2**63))
         result = simulate_match_native(
@@ -308,6 +328,8 @@ def _fixture(
             conceded_mode=model._conceded_mode,
             sample_other=model._sample_other,
             match_other=match_other,
+            p_penalty=model._p_penalty,
+            penalty_taker=penalty_taker,
         )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),

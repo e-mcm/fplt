@@ -1,0 +1,10 @@
+# FDB-244: half-xG dose of involvement_xg (xg_blend=0.5).
+name: involvement_xg_blend_05_v1
+kind: involvement_xg
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  xg_blend: 0.5
+refit: every_gw
+seed: 0

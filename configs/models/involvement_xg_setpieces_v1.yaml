@@ -1,0 +1,12 @@
+# FDB-244: involvement_xg with set-piece order bonuses on.
+name: involvement_xg_setpieces_v1
+kind: involvement_xg
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  xg_blend: 0.7
+  # set_piece_bonus stays code default 0.1 — one hyperparam family for EvalSpec.
+  use_set_piece_orders: true
+refit: every_gw
+seed: 0

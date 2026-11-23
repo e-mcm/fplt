@@ -1,0 +1,17 @@
+# FDB-244: set-piece order bonuses on involvement (corners + direct FK).
+# Control stays production dc_layered_v4 (use_set_piece_orders off).
+# No PRODUCTION flip from this file alone.
+name: dc_layered_setpieces_v1
+extends: dc_layered_v4
+overrides:
+  components:
+    involvement:
+      name: involvement_xg_setpieces_v1
+      kind: involvement_xg
+      params:
+        window: 10
+        shrinkage: 5
+        penalty_bonus: 0.3
+        xg_blend: 0.7
+        # set_piece_bonus stays code default 0.1 — one hyperparam family for EvalSpec.
+        use_set_piece_orders: true
