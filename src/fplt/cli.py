@@ -405,6 +405,16 @@ def main(argv: list[str] | None = None) -> None:
             "lineups via EV after the transfer solve)"
         ),
     )
+    decisions.add_argument(
+        "--price-forecast",
+        choices=["flat", "mean_gw_delta"],
+        default=None,
+        help=(
+            "Within-horizon list-price forecast for plan_squad "
+            "(default: off / as-of flat). mean_gw_delta uses PIT deadline "
+            "price history; flat matches omitting the flag"
+        ),
+    )
     sim_season = sub.add_parser(
         "sim-season",
         parents=[log_flags],
@@ -1662,6 +1672,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 max_mean_ppg=None if max_mean <= 0 else max_mean,
                 force_play=not bool(args.no_force_play),
                 lineup_reopt=not bool(args.no_lineup_reopt),
+                price_forecast_method=args.price_forecast,
             )
             print(format_chip_decision_scoreboard(summary))
         else:

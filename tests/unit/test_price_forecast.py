@@ -75,6 +75,47 @@ def test_forecast_rejects_bad_inputs() -> None:
         forecast_list_prices({1: 40}, horizon=1, method="magic")  # type: ignore[arg-type]
 
 
+def test_simulate_decisions_mean_gw_delta_requires_store() -> None:
+    from fplt.optimise.decisions import simulate_decisions
+    from fplt.optimise.state import SquadState
+
+    with pytest.raises(ValueError, match="DataStore"):
+        simulate_decisions(
+            pl.DataFrame(
+                {
+                    "gw": [1],
+                    "player_key": [1],
+                    "position": ["MID"],
+                    "team_key": [1],
+                    "price": [45],
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "as_of_gw": [1],
+                    "target_gw": [1],
+                    "player_key": [1],
+                    "xpts": [1.0],
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "gw": [1],
+                    "player_key": [1],
+                    "actual_pts": [1],
+                    "actual_minutes": [90],
+                }
+            ),
+            SquadState(bank=1000, free_transfers=1, ft_bank_cap=2, owned=[]),
+            model_id="toy",
+            season="2025-26",
+            gameweeks=[1],
+            horizon=1,
+            price_forecast_method="mean_gw_delta",
+            store=None,
+        )
+
+
 def test_list_price_matrix_none_matches_flat() -> None:
     keys = [1, 2]
     as_of = {1: 50, 2: 60}

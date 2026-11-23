@@ -48,6 +48,10 @@ from fplt.optimise.plan import (
     render_report,
     write_plan,
 )
+from fplt.optimise.price_forecast import (
+    PriceForecastMethod,
+    forecast_list_prices_from_view,
+)
 from fplt.optimise.prices import (
     apply_market_prices,
     fpl_selling_price,
@@ -225,6 +229,8 @@ def simulate_decisions(
     force_play: bool = True,
     lineup_reopt: bool = True,
     chip_windows_log: dict[int, ChipUseWindows] | None = None,
+    price_forecast_method: PriceForecastMethod | None = None,
+    store: DataStore | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -253,15 +259,24 @@ def simulate_decisions(
             ``plan_squad``). Pass false for a raw-MILP lineup ablation.
         chip_windows_log: Optional mutable map filled with each deadline's
             ``ChipUseWindows`` (for ``ledger/chip_windows`` / explain dumps).
+        price_forecast_method: Within-horizon list-price forecast. ``None``
+            or ``flat`` keeps as-of prices for every step (default).
+            ``mean_gw_delta`` needs ``store`` for PIT deadline history.
+        store: Staged tables for PIT price forecasts when
+            ``price_forecast_method`` is ``mean_gw_delta``.
 
     Returns:
         A frame matching ``DecisionSchema``.
 
     Raises:
-        ValueError: A week has no candidates, or the squad rules cannot be met.
+        ValueError: A week has no candidates, the squad rules cannot be met,
+            or ``mean_gw_delta`` is set without ``store``.
     """
     if chip_arm not in _CHIP_ARMS:
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
+    method = _normalize_price_forecast_method(price_forecast_method)
+    if method == "mean_gw_delta" and store is None:
+        raise ValueError("mean_gw_delta price forecasts require a DataStore")
     rules_season = chip_rules_season if chip_rules_season is not None else season
     rules = ChipRules.for_season(rules_season) if chip_arm != "off" else None
     static_windows = _static_windows_for_arm(
@@ -287,8 +302,7 @@ def simulate_decisions(
         pool = candidates.filter(pl.col("gw") == gameweek).drop("gw")
         if pool.is_empty():
             raise ValueError(f"no candidates for gw {gameweek}")
-        # Refresh sell-on from as-of staged prices before planning (no
-        # within-horizon price forecasts — see fplt.optimise.prices).
+        # As-of sell-on refresh; optional within-horizon list forecasts below.
         current = apply_market_prices(current, market_prices_from_candidates(pool))
         active_windows = static_windows
         if schedule_each_week:
@@ -313,6 +327,14 @@ def simulate_decisions(
             )
             if chip_windows_log is not None:
                 chip_windows_log[gameweek] = active_windows
+        forecast = _price_forecast_for_deadline(
+            method=method,
+            store=store,
+            season=season,
+            gameweek=gameweek,
+            pool=pool,
+            horizon=len(window),
+        )
         started = time.perf_counter()
         solved = plan_squad(
             pool,
@@ -326,6 +348,7 @@ def simulate_decisions(
             chip_rules_season=rules_season if chip_arm != "off" else None,
             warm_start=prior_plan,
             lineup_reopt=lineup_reopt,
+            price_forecast=forecast,
         )
         logger.info(
             "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
@@ -795,6 +818,7 @@ def run_decisions(
     chip_rules_season: str | None = None,
     force_play: bool = True,
     lineup_reopt: bool = True,
+    price_forecast_method: PriceForecastMethod | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -814,6 +838,8 @@ def run_decisions(
         force_play: Forwarded to the optimised chip scheduler (default true).
         lineup_reopt: Forwarded to ``plan_squad`` (default true; pass false
             for a raw-MILP lineup ablation).
+        price_forecast_method: Within-horizon list-price forecast method
+            (default off / as-of flat).
 
     Returns:
         The decision parquet path.
@@ -871,6 +897,8 @@ def run_decisions(
         force_play=force_play,
         lineup_reopt=lineup_reopt,
         chip_windows_log=windows_log,
+        price_forecast_method=price_forecast_method,
+        store=store,
     )
     path = write_decisions(data_dir, frame)
     if windows_log:
@@ -897,6 +925,7 @@ def run_chip_decision_board(
     max_mean_ppg: float | None = None,
     force_play: bool = True,
     lineup_reopt: bool = True,
+    price_forecast_method: PriceForecastMethod | None = None,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
 
@@ -920,6 +949,8 @@ def run_chip_decision_board(
             half-window chips. Pass false for a no-force-play ablation.
         lineup_reopt: When true (default), post-MILP EV/SAA lineup re-opt.
             Pass false for a raw-MILP XI/captain ablation.
+        price_forecast_method: Within-horizon list-price forecast method
+            (default off / as-of flat).
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
@@ -937,13 +968,14 @@ def run_chip_decision_board(
             for arm in arms:
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
-                    "force_play=%s lineup_reopt=%s",
+                    "force_play=%s lineup_reopt=%s price_forecast=%s",
                     name,
                     arm,
                     season,
                     rules_season,
                     force_play,
                     lineup_reopt,
+                    price_forecast_method,
                 )
                 run_decisions(
                     data_dir,
@@ -956,6 +988,7 @@ def run_chip_decision_board(
                     chip_rules_season=rules_season,
                     force_play=force_play,
                     lineup_reopt=lineup_reopt,
+                    price_forecast_method=price_forecast_method,
                 )
     specs = load_model_specs()
     wanted: set[str] = set()
@@ -1356,6 +1389,35 @@ def _decision_rows(
             }
         )
     return rows
+
+
+def _normalize_price_forecast_method(
+    method: PriceForecastMethod | None,
+) -> PriceForecastMethod | None:
+    """Treat ``flat`` as off (same cash constraints as ``None``)."""
+    if method is None or method == "flat":
+        return None
+    if method == "mean_gw_delta":
+        return method
+    raise ValueError(f"unknown price forecast method: {method!r}")
+
+
+def _price_forecast_for_deadline(
+    *,
+    method: PriceForecastMethod | None,
+    store: DataStore | None,
+    season: str,
+    gameweek: int,
+    pool: pl.DataFrame,
+    horizon: int,
+) -> pl.DataFrame | None:
+    """Build a PIT list-price forecast for one planning deadline."""
+    if method is None:
+        return None
+    assert store is not None
+    view = PITData(store).view(GWKey(season, gameweek))
+    as_of = market_prices_from_candidates(pool)
+    return forecast_list_prices_from_view(view, as_of, horizon, method=method)
 
 
 def advance_squad_from_plan(
