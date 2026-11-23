@@ -258,8 +258,8 @@ Implementations:
 | Kind | Examples |
 |---|---|
 | `CompositePredictor` | Dixon-Coles + minutes + involvement + other-points, combined by simulation |
-| Direct predictors | LightGBM on total points per player-fixture |
-| Forecast combination | `forecast_combine`: convex blend of member PointsPredictors (`params.members` expanded into `components` at load). Equal weights or fixed per-position weights. OpenFPL omitted until Deep/PPDA. |
+| Direct predictors | LightGBM on total points per player-fixture. Optional `params.emit_probs` (`lgbm_probs_v1`) adds binary heads for `p_haul` / `p_60` / `p_played` (single-class labels → constant prior); `xpts_sd` stays null. |
+| Forecast combination | `forecast_combine`: convex blend of member PointsPredictors (`params.members` expanded into `components` at load). Equal weights or fixed per-position weights. Equal-weight promote **dropped**; position + `lgbm_probs_v1` revisit is `forecast_combine_probs_v1` (FDB-245). OpenFPL omitted until Deep/PPDA. |
 | Baselines | Rolling mean points; FPL `ep_next` (from snapshots) |
 | External | OpenFPL adapter (§7.4) |
 
