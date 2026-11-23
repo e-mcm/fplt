@@ -1,0 +1,25 @@
+# Measured skill-by-horizon RMSE ratios → planner step weights (FDB-242).
+# weight[step] = (1 / rmse_vs_h1[step]) ** power
+#
+# Live control remains geometric SquadState.decay (0.9). Pass
+# --horizon-decay skill on decisions / plan for the treatment arm.
+# Do not flip live defaults until a season-points keep.
+metric: rmse
+power: 1.0
+source:
+  season: 2025-26
+  model: dc_layered_v2
+  model_id: b12aad1575ff0d34
+  notes: >
+    Decision-relevant pool RMSE from h8-shared-data walk-forward ledger
+    (as_of GW1–38, horizons 1–8). RMSE rises only ~4% H1→H8; geometric
+    0.9^t cuts weight ~52% by step 7.
+rmse_vs_h1:
+  - 1.0
+  - 1.011974
+  - 1.019629
+  - 1.023527
+  - 1.028998
+  - 1.033219
+  - 1.03795
+  - 1.040622

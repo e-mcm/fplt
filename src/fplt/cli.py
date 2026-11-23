@@ -103,6 +103,7 @@ from fplt.optimise.decisions import (
     run_plan,
 )
 from fplt.optimise.explain import run_explain
+from fplt.optimise.horizon_decay import HorizonDecayMethod, resolve_step_weights
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.regret_board import run_regret_board, write_regret_board
@@ -279,6 +280,15 @@ def main(argv: list[str] | None = None) -> None:
             "when --chip-arm is not optimised or with --decisions"
         ),
     )
+    plan.add_argument(
+        "--horizon-decay",
+        choices=["geometric", "skill"],
+        default="geometric",
+        help=(
+            "Planner step weights: geometric decay (live default) or "
+            "measured skill-by-horizon shrink (FDB-242 ablation)"
+        ),
+    )
     explain = sub.add_parser(
         "explain",
         parents=[log_flags],
@@ -437,6 +447,16 @@ def main(argv: list[str] | None = None) -> None:
             "Within-horizon list-price forecast for plan_squad "
             "(default: off / as-of flat). mean_gw_delta uses PIT deadline "
             "price history; flat matches omitting the flag"
+        ),
+    )
+    decisions.add_argument(
+        "--horizon-decay",
+        choices=["geometric", "skill"],
+        default="geometric",
+        help=(
+            "Planner step weights: geometric SquadState.decay (live control) "
+            "or measured skill-by-horizon RMSE shrink (FDB-242 treatment; "
+            "configs/optimise/horizon_skill_weights.yaml)"
         ),
     )
     regret_board = sub.add_parser(
@@ -1517,6 +1537,9 @@ def _plan(args: argparse.Namespace) -> None:
                 args.from_gw,
                 args.to_gw,
                 args.horizon,
+                step_weights=_step_weights_for_decay(
+                    str(args.horizon_decay), int(args.horizon)
+                ),
             )
             print(path)
             return
@@ -1567,6 +1590,9 @@ def _plan(args: argparse.Namespace) -> None:
             chip_arm=args.chip_arm,
             chip_rules_season=args.chip_rules_season,
             force_play=not bool(args.no_force_play),
+            step_weights=_step_weights_for_decay(
+                str(args.horizon_decay), int(args.horizon)
+            ),
         )
     except PlanExistsError as exc:
         print(exc.report, end="")
@@ -2015,6 +2041,9 @@ def _decisions(args: argparse.Namespace) -> None:
                 force_play=not bool(args.no_force_play),
                 lineup_reopt=not bool(args.no_lineup_reopt),
                 price_forecast_method=args.price_forecast,
+                step_weights=_step_weights_for_decay(
+                    str(args.horizon_decay), int(args.horizon)
+                ),
             )
             print(format_chip_decision_scoreboard(summary))
         else:
@@ -2233,6 +2262,27 @@ def _auth(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     raise SystemExit(_not_implemented(f"auth {command}"))
+
+
+def _step_weights_for_decay(
+    method: str,
+    horizon: int,
+) -> tuple[float, ...] | None:
+    """Resolve CLI ``--horizon-decay`` into ``plan_squad`` step weights.
+
+    Geometric (live control) returns ``None`` so ``SquadState.decay`` applies.
+    Skill loads measured RMSE ratios from
+    ``configs/optimise/horizon_skill_weights.yaml``.
+    """
+    chosen: HorizonDecayMethod
+    if method == "geometric":
+        return None
+    if method == "skill":
+        chosen = "skill"
+    else:
+        raise ValueError(f"unknown horizon decay method {method!r}")
+    # decay unused on the skill path; pass 1.0 as a placeholder.
+    return resolve_step_weights(horizon, decay=1.0, method=chosen)
 
 
 def _read_auth_token(raw: str | None) -> str:

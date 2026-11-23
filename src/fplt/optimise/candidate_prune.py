@@ -310,6 +310,7 @@ class CandidatePrunePolicy(BaseModel):
         *,
         owned_keys: Sequence[int] = (),
         decay: float = 1.0,
+        step_weights: Sequence[float] | None = None,
     ) -> pl.DataFrame:
         """Return a ``CandidateSchema`` subset of ``players``.
 
@@ -320,16 +321,21 @@ class CandidatePrunePolicy(BaseModel):
             owned_keys: Player keys that must remain selectable.
             decay: Per-step discount matching the planner
                 (``SquadState.decay``). Rank scores use
-                ``Σ_t decay^t · xPts_t`` with 0-indexed ``t``.
+                ``Σ_t decay^t · xPts_t`` with 0-indexed ``t`` when
+                ``step_weights`` is omitted.
+            step_weights: Optional explicit per-step weights matching
+                ``plan_squad`` (skill shrink). When set, replace geometric
+                ``decay``.
 
         Returns:
             Pruned candidates sorted by ``player_key``.
 
         Raises:
             ValueError: Owned keys are missing from ``players``, ``decay``
-                is invalid, or the pruned pool cannot form a legal fifteen.
+                / ``step_weights`` are invalid, or the pruned pool cannot
+                form a legal fifteen.
         """
-        if not 0.0 < decay <= 1.0:
+        if step_weights is None and not 0.0 < decay <= 1.0:
             raise ValueError(f"decay must be in (0, 1], got {decay}")
         checked = CandidateSchema.validate(players.sort("player_key"))
         assert isinstance(checked, pl.DataFrame)
@@ -344,7 +350,13 @@ class CandidatePrunePolicy(BaseModel):
 
         # Exact dominance before heuristic top-k (§2.5).
         pool = drop_dominated_players(pool, points, owned_keys=sorted(keep))
-        ranked = _rank_players(pool, points, decay=decay, min_p_60=self.min_p_60)
+        ranked = _rank_players(
+            pool,
+            points,
+            decay=decay,
+            step_weights=step_weights,
+            min_p_60=self.min_p_60,
+        )
 
         if self.top_xpts is not None:
             for position, quota in self.top_xpts.items():
@@ -451,6 +463,7 @@ def prune_candidates(
     top_k: Mapping[str, int] | None = None,
     keep_cheapest: int | None = None,
     decay: float = 1.0,
+    step_weights: Sequence[float] | None = None,
 ) -> pl.DataFrame:
     """Drop low-value candidates via ``CandidatePrunePolicy``.
 
@@ -464,7 +477,8 @@ def prune_candidates(
         top_k: Legacy override — forces ``CandidatePrunePolicy.legacy_top_k``.
         keep_cheapest: Legacy override for cheapest-per-position count.
         decay: Planner decay passed through to ranking
-            (``Σ decay^step · xPts``).
+            (``Σ decay^step · xPts``) when ``step_weights`` is omitted.
+        step_weights: Optional explicit per-step weights (skill shrink).
 
     Returns:
         A ``CandidateSchema`` subset of ``players``, sorted by ``player_key``.
@@ -482,7 +496,13 @@ def prune_candidates(
         active = DEFAULT_PRUNE_POLICY
     else:
         active = policy
-    return active.apply(players, points, owned_keys=owned_keys, decay=decay)
+    return active.apply(
+        players,
+        points,
+        owned_keys=owned_keys,
+        decay=decay,
+        step_weights=step_weights,
+    )
 
 
 def _rank_players(
@@ -490,6 +510,7 @@ def _rank_players(
     points: pl.DataFrame,
     *,
     decay: float = 1.0,
+    step_weights: Sequence[float] | None = None,
     min_p_60: float = DEFAULT_MIN_P_60,
 ) -> pl.DataFrame:
     """Attach decayed Σ xPts, PAR value, and mean ``p_60`` to ``pool``.
@@ -513,18 +534,34 @@ def _rank_players(
     missing = required - set(points.columns)
     if missing:
         raise ValueError(f"points missing columns: {sorted(missing)}")
-    if decay != 1.0 and "step" not in points.columns:
+    needs_step = step_weights is not None or decay != 1.0
+    if needs_step and "step" not in points.columns:
         raise ValueError("points missing column 'step' required for decayed ranking")
+    if step_weights is not None and any(float(w) <= 0.0 for w in step_weights):
+        raise ValueError("step_weights must be positive")
 
     scored = points
     if "step" in points.columns:
-        # Match plan_squad: weight = decay**step (step is 0-indexed).
-        scored = points.with_columns(
-            (
-                pl.col("xpts")
-                * (pl.lit(float(decay)) ** pl.col("step").cast(pl.Float64()))
-            ).alias("_decayed_xpts")
-        )
+        # Match plan_squad: explicit step_weights or decay**step.
+        if step_weights is not None:
+            weight_frame = pl.DataFrame(
+                {
+                    "step": list(range(len(step_weights))),
+                    "_step_weight": [float(w) for w in step_weights],
+                }
+            )
+            scored = points.join(weight_frame, on="step", how="left").with_columns(
+                (pl.col("xpts") * pl.col("_step_weight").fill_null(0.0)).alias(
+                    "_decayed_xpts"
+                )
+            )
+        else:
+            scored = points.with_columns(
+                (
+                    pl.col("xpts")
+                    * (pl.lit(float(decay)) ** pl.col("step").cast(pl.Float64()))
+                ).alias("_decayed_xpts")
+            )
         xpts_expr = pl.col("_decayed_xpts").sum()
     else:
         xpts_expr = pl.col("xpts").sum()

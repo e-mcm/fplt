@@ -249,6 +249,7 @@ def simulate_decisions(
     price_forecast_method: PriceForecastMethod | None = None,
     store: DataStore | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -284,6 +285,8 @@ def simulate_decisions(
             ``price_forecast_method`` is ``mean_gw_delta``.
         highs_options: HiGHS knobs forwarded to ``plan_squad``. Chip boards
             pass ``HighsSolveOptions.board_deterministic()`` (FDB-228).
+        step_weights: Optional per-step objective weights for ``plan_squad``
+            (skill shrink). ``None`` keeps geometric ``state.decay ** step``.
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -371,6 +374,7 @@ def simulate_decisions(
             lineup_reopt=lineup_reopt,
             price_forecast=forecast,
             highs_options=highs_options,
+            step_weights=None if step_weights is None else step_weights[: len(window)],
         )
         logger.info(
             "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
@@ -569,6 +573,7 @@ def run_plan(
     price_forecast_method: PriceForecastMethod | None = (
         DEFAULT_LIVE_PRICE_FORECAST_METHOD
     ),
+    step_weights: Sequence[float] | None = None,
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -600,6 +605,8 @@ def run_plan(
         price_forecast_method: Within-horizon list-price forecast. Defaults to
             ``DEFAULT_LIVE_PRICE_FORECAST_METHOD`` (``mean_gw_delta`` after
             the FDB-218 keep). Pass ``None`` / ``flat`` for as-of-only prices.
+        step_weights: Optional per-step objective weights (skill shrink
+            ablation). ``None`` keeps geometric ``SquadState.decay``.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -619,7 +626,7 @@ def run_plan(
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
         "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s "
-        "price_forecast=%s",
+        "price_forecast=%s skill_shrink=%s",
         model_name,
         season,
         gameweek,
@@ -627,6 +634,7 @@ def run_plan(
         chip_arm,
         force_play,
         price_forecast_method,
+        step_weights is not None,
     )
     plan_timings = TimingSession()
     with timing_session(plan_timings):
@@ -736,6 +744,7 @@ def run_plan(
             chip_windows=plan_windows,
             chip_rules_season=plan_rules_season,
             price_forecast=forecast,
+            step_weights=None if step_weights is None else step_weights[: len(window)],
         )
         with timed_phase("plan/write"):
             table = plan_table(solved, spec.model_id, season, gameweek, window)
@@ -884,6 +893,7 @@ def run_decisions(
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -906,6 +916,7 @@ def run_decisions(
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
         highs_options: Forwarded to ``simulate_decisions`` / ``plan_squad``.
+        step_weights: Optional per-step objective weights (skill shrink).
 
     Returns:
         The decision parquet path.
@@ -968,6 +979,7 @@ def run_decisions(
             price_forecast_method=price_forecast_method,
             store=store,
             highs_options=highs_options,
+            step_weights=step_weights,
         )
         path = write_decisions(data_dir, frame)
         if windows_log:
@@ -1005,6 +1017,7 @@ def run_chip_decision_board(
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
 
@@ -1034,6 +1047,7 @@ def run_chip_decision_board(
             ``HighsSolveOptions.board_deterministic()`` (no time limit,
             ``threads=1``, fixed seed) so identical tip + data → identical
             totals.
+        step_weights: Optional per-step objective weights (skill shrink).
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
@@ -1057,7 +1071,7 @@ def run_chip_decision_board(
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
                     "force_play=%s lineup_reopt=%s price_forecast=%s "
-                    "highs_seed=%s highs_threads=%s",
+                    "skill_shrink=%s highs_seed=%s highs_threads=%s",
                     name,
                     arm,
                     season,
@@ -1065,6 +1079,7 @@ def run_chip_decision_board(
                     force_play,
                     lineup_reopt,
                     price_forecast_method,
+                    step_weights is not None,
                     board_highs.random_seed,
                     board_highs.threads,
                 )
@@ -1081,6 +1096,7 @@ def run_chip_decision_board(
                     lineup_reopt=lineup_reopt,
                     price_forecast_method=price_forecast_method,
                     highs_options=board_highs,
+                    step_weights=step_weights,
                 )
     specs = load_model_specs()
     id_to_name = {specs[name].model_id: name for name in models}
