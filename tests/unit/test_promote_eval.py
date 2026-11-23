@@ -1603,6 +1603,31 @@ def test_overlay_eval_specs_register_coverage_and_window_note() -> None:
     assert defcon.window.note
 
 
+def test_minutes_p1p6_keep_eval_loads() -> None:
+    """FDB-257 package keep EvalSpec: opt-out, fpl_api coverage, no squad claim yet."""
+    spec = load_eval_spec("minutes_p1p6_keep_ab")
+    assert spec.kind == "config"
+    assert spec.change.lever == "hyperparam"
+    assert spec.change.orientation == "opt_out"
+    assert spec.change.slot == "minutes"
+    assert spec.change.allow_multi_lever is True
+    assert spec.control == "dc_layered_minutes_pre_p1p6_v1"
+    assert spec.treatment == "dc_layered_v3"
+    assert spec.claim == "forecasts"
+    assert spec.suites.decisions is False
+    assert spec.gates.coverage.metric == "fpl_api_status_share"
+    assert spec.gates.min_coverage == 0.01
+    assert spec.window.from_gw == 1
+    assert spec.window.to_gw == 20
+    assert "2024-25" in spec.window.seasons
+    assert "confirmation" in spec.window.note.lower()
+    plan = plan_promote_eval(spec, dry_run=True)
+    components = [cmd for cmd in plan.commands if "eval-components" in cmd]
+    assert len(components) == 1
+    assert "empirical_minutes_v2_pre_p1p6" in components[0]
+    assert "empirical_minutes_v2" in components[0]
+
+
 def test_preflight_injury_overlay_fails_when_empty(tmp_path: Path) -> None:
     _seed_overlay_base(tmp_path)
     # Empty injuries table: schema present, no rows → tables check fails.

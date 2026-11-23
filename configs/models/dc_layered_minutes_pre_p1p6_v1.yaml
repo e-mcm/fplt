@@ -1,0 +1,13 @@
+# Opt-out control for FDB-257 minutes P1–P6 keep A/B.
+# Production dc_layered_v3 keeps calibrate_chance_flags / return_ramp /
+# availability_recovery on. Does not change PRODUCTION_MODELS.
+name: dc_layered_minutes_pre_p1p6_v1
+extends: dc_layered_v3
+overrides:
+  components:
+    minutes:
+      name: empirical_minutes_v2_pre_p1p6
+      params:
+        calibrate_chance_flags: false
+        return_ramp_games: 0.0
+        availability_recovery_games: 0.0

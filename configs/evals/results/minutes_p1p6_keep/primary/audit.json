@@ -1,0 +1,81 @@
+{
+  "argv": [
+    "promote-eval",
+    "--eval",
+    "minutes_p1p6_keep_ab",
+    "--execute",
+    "--from-gw",
+    "1",
+    "--to-gw",
+    "20",
+    "--seasons",
+    "2024-25",
+    "--output-dir",
+    "/tmp/minutes-keep-results/dev"
+  ],
+  "config": {
+    "control": {
+      "model_id": "9cffba1c4d773ca7",
+      "name": "dc_layered_minutes_pre_p1p6_v1",
+      "sha256": "4b979da31e15f004b9bd30fe61b7c94da7b57d436cabff42d613cedfb8de7575"
+    },
+    "treatment": {
+      "model_id": "30367a901721a5d6",
+      "name": "dc_layered_v3",
+      "sha256": "b1a7158f17de9759a3d3d828c80ee838f89bdc20f1fbd085a88470025031de34"
+    }
+  },
+  "control_ref": null,
+  "control_ref_sha": null,
+  "data": {
+    "fixtures": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 9180,
+      "sha256": "2bef401d104a401b9c9af1e526b44381db76113c5d17a991053ec8aa4ca5ef87"
+    },
+    "gameweeks": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 721,
+      "sha256": "9f1d660dfbac8148d6367567102a5f97f5f5ac6c43e9568972c2af03b8a91132"
+    },
+    "player_fixture_stats": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 228218,
+      "sha256": "a67a6333ef136982105d309319511cd2a4fd1be1eb276a40e5f60996ce9678c2"
+    },
+    "player_status": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 146127,
+      "sha256": "4162e79a8cdd737c7232adadbf3cc640dcbe3edaef7e95276a54512e49322e84"
+    }
+  },
+  "eval_name": "minutes_p1p6_keep_ab",
+  "folds": [],
+  "force_inconclusive": false,
+  "fplt_version": "0.1.0",
+  "git_dirty": false,
+  "git_sha": "106dc1818868493a56b3a92861920354be6cb91f",
+  "market_prior_source": null,
+  "n_sims": 10000,
+  "os": "Linux-6.12.113+-x86_64-with-glibc2.39",
+  "peak_rss": {},
+  "python": "3.13.18",
+  "question_type": "improvement",
+  "seed": 0,
+  "treatment_ref": null,
+  "treatment_ref_sha": null,
+  "uv_lock_sha256": "e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73",
+  "verdict": "drop",
+  "wall_clock_s": {},
+  "window": {
+    "from_gw": 1,
+    "modes": [
+      "walk_forward"
+    ],
+    "seasons": [
+      "2024-25"
+    ],
+    "seasons_back": 4,
+    "to_gw": 20
+  }
+}

@@ -1,0 +1,74 @@
+# FDB-257: cumulative minutes P1–P6 keep after plumbing (#175–#182).
+# Opt-out: control turns off calibrate_chance_flags / return_ramp /
+# availability_recovery; treatment is production dc_layered_v3.
+# Always-on code (absence-share exclusion, 1-GK hard XI) has no off-switch.
+name: minutes_p1p6_keep_ab
+kind: config
+question: >
+  Do the P1–P6 minutes toggles (calibrated chance flags, return ramp,
+  horizon availability recovery) improve minutes Brier and player-fixture
+  RMSE versus the pre-toggle empirical_minutes_v2 baseline?
+description: >
+  Minutes P1–P6 package keep (FDB-257). Opt-out. Forecast claim (RMSE +
+  minutes Brier). Season-points / decisions suite deferred until a finished
+  GW has PIT-visible source=fpl_api status (eval protocol §8).
+
+change:
+  lever: hyperparam
+  orientation: opt_out
+  slot: minutes
+  control_kind: empirical_minutes_v2
+  treatment_kind: empirical_minutes_v2
+  tables: [player_status]
+  features: []
+  allow_multi_lever: true
+  diff:
+    - "components.minutes.params.calibrate_chance_flags: false → true"
+    - "components.minutes.params.return_ramp_games: 0.0 → 2.0"
+    - "components.minutes.params.availability_recovery_games: 0.0 → 3.0"
+  notes: >
+    Control dc_layered_minutes_pre_p1p6_v1. Treatment dc_layered_v3.
+    Windows declared before confirmation numbers (eval protocol §1):
+    development 2024-25 GW1–20; confirmation 2024-25 GW21–38; sealed
+    unfinished 2026-27 GWs. Primary structural read needs snapshot
+    player_status on finished GWs — current archive has fpl_api only from
+    2026-11-19 (first PIT-visible at GW11, unfinished). Expect coverage
+    fail / no-op arms until denser deadline captures exist.
+
+control: dc_layered_minutes_pre_p1p6_v1
+treatment: dc_layered_v3
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    Development window (eval protocol §1). Confirmation is GW21–38 on the
+    same season (disjoint). Do not re-select doses on confirmation.
+    Snapshot density is highest on live 2026-27 but those GWs are sealed /
+    unfinished — not a keep window.
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: 0.01
+  allow_low_coverage: false
+  coverage:
+    metric: fpl_api_status_share
+    read: strict_pit
+  keep_if:
+    prediction_any: [rmse, mae]
+    components_any: [brier_played, brier_60]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Minutes P1–P6 package vs pre-toggle control (FDB-257)"
+  store_doc: minutes-keep-promote.md
