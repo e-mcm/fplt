@@ -1,0 +1,26 @@
+# Reference board for live-comparable season-points / chip boards (FDB-225).
+# Boards report against these flags. Live run_plan / automation defaults must
+# match (see tests/unit/test_reference_board.py and docs/eval-protocol.md §4).
+#
+# Ablations flip one field at a time and name the flip in the promote doc.
+# Chip-board control A/Bs may omit price_forecast on purpose; the reference
+# "what live would score" row keeps mean_gw_delta.
+
+version: 1
+horizon: 3
+chip_arm: optimised
+force_play: true
+lineup_reopt: true
+price_forecast: mean_gw_delta
+bench_weight: 0.0
+model: dc_layered_v2
+highs:
+  # Deterministic board solves (FDB-228). Live plan may keep open_fpl_defaults.
+  time_limit: null
+  threads: 1
+  parallel: "off"
+  random_seed: 0
+  mip_rel_gap: 0.0
+  accept_time_limit: false
+  presolve: "on"
+  output_flag: false
