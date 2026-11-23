@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -175,6 +175,22 @@ chip-decision-board:
 		$(if $(MODELS),--models $(MODELS),) \
 		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
 		$(if $(TO_GW),--to-gw $(TO_GW),) \
+		$(ARGS)
+
+# Regret-by-component board (north-star §2): captain / XI-bench / transfers /
+# chip timing vs constrained attainable. Live-stack defaults (H=3, force-play,
+# lineup_reopt, mean_gw_delta, optimised chips, dc_layered_v2).
+# Usage: make regret-board SEASON=2025-26
+# Optional: OUT=.../regret-board/2025-26 ARGS='--policy-parquet path.parquet'
+#           MODEL=dc_layered_v2 HORIZON=3 FROM_GW=1 TO_GW=38
+regret-board:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make regret-board SEASON=2025-26"; exit 1; fi
+	uv run fplt regret-board --season $(SEASON) \
+		--horizon $(or $(HORIZON),3) \
+		--model $(or $(MODEL),dc_layered_v2) \
+		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
+		$(if $(TO_GW),--to-gw $(TO_GW),) \
+		$(if $(OUT),--output-dir $(OUT),) \
 		$(ARGS)
 
 # Chip-arm simulated-season SE smoke (N6). Short GW window × few CRN paths —

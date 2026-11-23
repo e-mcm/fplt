@@ -1,0 +1,150 @@
+{
+  "argv": [
+    "promote-eval",
+    "--eval",
+    "fpl_availability_gate_ab",
+    "--execute",
+    "--output-dir",
+    "/cursor/stores/bc-8a102b3d-bfb7-40d0-ac50-e35a866b399f/internal/availability-overlays/fpl-availability-gate-ab"
+  ],
+  "config": {
+    "control": {
+      "model_id": "cb1f05449b00d4c2",
+      "name": "dc_layered_noavail_v1",
+      "sha256": "ce0ddf9d7626e35f9844962324c1caae911aea1bde30e917b0afa029b4dcd7ec"
+    },
+    "treatment": {
+      "model_id": "b12aad1575ff0d34",
+      "name": "dc_layered_v2",
+      "sha256": "508732453a5e0f87c06f3700cf74580d1ca308cf58b991e9ec9d56af0eef7cbe"
+    }
+  },
+  "control_ref": null,
+  "control_ref_sha": null,
+  "data": {
+    "fixtures": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 9180,
+      "sha256": "2bef401d104a401b9c9af1e526b44381db76113c5d17a991053ec8aa4ca5ef87"
+    },
+    "gameweeks": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 721,
+      "sha256": "9f1d660dfbac8148d6367567102a5f97f5f5ac6c43e9568972c2af03b8a91132"
+    },
+    "player_fixture_stats": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 228218,
+      "sha256": "a67a6333ef136982105d309319511cd2a4fd1be1eb276a40e5f60996ce9678c2"
+    },
+    "player_status": {
+      "max_available_at": "2026-11-23 01:42:18+00:00",
+      "row_count": 146127,
+      "sha256": "4162e79a8cdd737c7232adadbf3cc640dcbe3edaef7e95276a54512e49322e84"
+    }
+  },
+  "eval_name": "fpl_availability_gate_ab",
+  "folds": [
+    {
+      "as_of": "2026-27_gw01",
+      "gw": 1,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw02",
+      "gw": 2,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw03",
+      "gw": 3,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw04",
+      "gw": 4,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw05",
+      "gw": 5,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw06",
+      "gw": 6,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw07",
+      "gw": 7,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw08",
+      "gw": 8,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw09",
+      "gw": 9,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    },
+    {
+      "as_of": "2026-27_gw10",
+      "gw": 10,
+      "n_test": 1334,
+      "n_train": null,
+      "season": "2026-27"
+    }
+  ],
+  "force_inconclusive": false,
+  "fplt_version": "0.1.0",
+  "git_dirty": false,
+  "git_sha": "3e9e03ccad486c7d52477c51da5a269134ea7801",
+  "market_prior_source": null,
+  "n_sims": 10000,
+  "os": "Linux-6.12.113+-x86_64-with-glibc2.39",
+  "peak_rss": {
+    "both": 403880
+  },
+  "python": "3.13.18",
+  "question_type": "improvement",
+  "seed": 0,
+  "treatment_ref": null,
+  "treatment_ref_sha": null,
+  "uv_lock_sha256": "e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73",
+  "verdict": "inconclusive",
+  "wall_clock_s": {
+    "both": 121.98850951000009
+  },
+  "window": {
+    "from_gw": 1,
+    "modes": [
+      "walk_forward"
+    ],
+    "seasons": [
+      "2026-27"
+    ],
+    "seasons_back": 4,
+    "to_gw": 10
+  }
+}
