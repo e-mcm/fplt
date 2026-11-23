@@ -176,11 +176,13 @@ def test_odds_after_deadline_are_invisible(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     prior.fit(view)
+    # Same band as other "matches vanilla" asserts in this module (1e-8 / 1e-10).
+    # Tighter 1e-12 atol flaked on CI (~3.8e-9 abs noise on a few PMF cells).
     np.testing.assert_allclose(
         vanilla.predict(view, fixtures).pmf,
         prior.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=1e-8,
+        atol=1e-10,
     )
 
 
