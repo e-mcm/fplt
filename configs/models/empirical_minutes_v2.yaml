@@ -8,6 +8,11 @@ params:
   target_starters: 11.0
   soft_squad_strength: 0.5
   l2: 1.0
+  # FPL status/chance/news gate (on here; off only in dc_layered_noavail_v1).
+  use_availability_gate: true
+  # API-Football overlay (off here; on in empirical_minutes_v2_injuries /
+  # dc_layered_injuries_v1).
+  use_injury_overlay: false
   # Near-deadline predicted XI override (off here; on in dc_layered_predicted_xi_v1).
   predicted_xi: false
   predicted_xi_window_hours: 72.0

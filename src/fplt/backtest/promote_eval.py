@@ -127,6 +127,9 @@ _TIER_TO_GW: dict[Tier, int] = {
 _BOOL_DEFAULTS: dict[str, bool] = {
     "use_penalties_order": True,
     "use_defensive_contribution": True,
+    "use_availability_gate": True,
+    "use_injury_overlay": False,
+    "predicted_xi": False,
 }
 _FLOAT_DEFAULTS: dict[str, float] = {
     "market_prior_strength": 0.0,

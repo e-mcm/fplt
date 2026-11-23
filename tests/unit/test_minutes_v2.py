@@ -79,6 +79,19 @@ def test_chance_of_zero_forces_the_bench(tmp_path: Path) -> None:
     assert dist.pmf[0, 0] == pytest.approx(1.0)
 
 
+def test_availability_gate_off_ignores_zero_chance(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        stats=[(1, "MID", 1, gw, 90, 1) for gw in range(1, 6)],
+        status={1: ("a", 0.0)},
+    )
+    model = EmpiricalMinutesV2(_spec(use_availability_gate=False, soft_squad=False))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    model.fit(view)
+    dist = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    assert dist.pmf[0, 0] < 0.5
+
+
 def test_multi_window_rates_use_recent_share(tmp_path: Path) -> None:
     # Early starts, then five blanks — windows 3/5 should dominate toward zero.
     rows = [(1, "MID", 1, gw, 90, 1) for gw in range(1, 6)]
@@ -475,3 +488,18 @@ def _utc(frame: pl.DataFrame) -> pl.DataFrame:
         if isinstance(dtype, pl.Datetime)
     ]
     return frame.with_columns(columns) if columns else frame
+
+
+def test_availability_overlay_forks_load() -> None:
+    """Board forks flip one minutes flag each; production stays gated."""
+    specs = load_model_specs()
+    parent = specs["dc_layered_v2"]
+    noavail = specs["dc_layered_noavail_v1"]
+    injuries = specs["dc_layered_injuries_v1"]
+    assert parent.components["minutes"].params.get("use_availability_gate", True) is True
+    assert noavail.components["minutes"].name == "empirical_minutes_v2_noavail"
+    assert noavail.components["minutes"].params["use_availability_gate"] is False
+    assert parent.components["minutes"].params.get("use_injury_overlay", False) is False
+    assert injuries.components["minutes"].name == "empirical_minutes_v2_injuries"
+    assert injuries.components["minutes"].params["use_injury_overlay"] is True
+    assert noavail.kind == parent.kind == injuries.kind

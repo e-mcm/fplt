@@ -1,0 +1,6 @@
+# Component-level twin of dc_layered_noavail_v1 for eval-components.
+name: empirical_minutes_v2_noavail
+extends: empirical_minutes_v2
+overrides:
+  params:
+    use_availability_gate: false
