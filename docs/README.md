@@ -2,6 +2,8 @@
 
 Authoritative architecture is **[`design.md`](design.md)**. Everything else here is a focused companion — do not fork a second design doc.
 
+## Core companions
+
 | Doc | Audience | Use when |
 |---|---|---|
 | [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, Dagster §8, storage layout |
@@ -11,6 +13,38 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 | [`benchmark-archives.md`](benchmark-archives.md) | Eval / agents | `benchmark_projections` table (ep_next / OpenFPL / FPL Review) |
 | [`openfpl.md`](openfpl.md) | Ops / agents | OpenFPL subprocess setup and season floor |
 | [`fpl_review.md`](fpl_review.md) | Ops | Manual FPL Review CSV ingest (no scrape) |
+
+## Promote / decision reference (committed from Project store)
+
+Written promote calls, plans, and decision inventory. Board parquet/logs stay in the Project store — see [`promote-archives.md`](promote-archives.md).
+
+| Doc | Use when |
+|---|---|
+| [`promote-pipeline-unified.md`](promote-pipeline-unified.md) | End-to-end promote pipeline / process |
+| [`promo-evals-consolidated.md`](promo-evals-consolidated.md) | One-page W7–W9 + Wave B + A3 + rate-model rollup |
+| [`unpromoted-improvements.md`](unpromoted-improvements.md) | Backlog of levers (kept / dropped / in flight) |
+| [`stacked-prod-2400-board.md`](stacked-prod-2400-board.md) | Stacked production board vs **2400** north-star |
+| [`live-prediction-regen.md`](live-prediction-regen.md) | Live prediction regen notes |
+| [`price-within-horizon-design.md`](price-within-horizon-design.md) | Within-horizon list-price forecast design |
+| [`promote-archives.md`](promote-archives.md) | Where bulky `internal/` board archives live |
+
+### Promote write-ups (`*-promote.md`)
+
+| Doc | Call (summary) |
+|---|---|
+| [`availability-overlays-promote.md`](availability-overlays-promote.md) | Availability overlays (injury + predicted XI) |
+| [`defcon-rate-promote.md`](defcon-rate-promote.md) | Defcon rate — **keep (provisional)** pending FDB-73 |
+| [`devig-1x2-prior-promote.md`](devig-1x2-prior-promote.md) | De-vig 1X2 — stop (no runnable prematch arm) |
+| [`force-play-eval-promote.md`](force-play-eval-promote.md) | H=8 + force-off candidate; live stays H=3 force-on |
+| [`forecast-combine-promote.md`](forecast-combine-promote.md) | Equal forecast combine — **drop** |
+| [`history-market-prior-promote.md`](history-market-prior-promote.md) | History rating prior — **tune** (no PRODUCTION flip) |
+| [`lineup-reopt-promote.md`](lineup-reopt-promote.md) | `lineup_reopt` — **keep** (already default) |
+| [`prematch-1x2-prior-promote.md`](prematch-1x2-prior-promote.md) | Prematch 1X2 prior (FDB-216 / FDB-219) |
+| [`price-dynamics-sell-on-promote.md`](price-dynamics-sell-on-promote.md) | As-of 50% sell-on — aborted (bug fix, not promote) |
+| [`price-within-horizon-promote.md`](price-within-horizon-promote.md) | `mean_gw_delta` — **keep (provisional)** pending FDB-73 |
+| [`prune-n-equivalence-promote.md`](prune-n-equivalence-promote.md) | Prune-N equivalence — **keep** (already live) |
+
+Plans that drove those boards: [`promote-plans/`](promote-plans/).
 
 ## Standing rules (agents)
 
