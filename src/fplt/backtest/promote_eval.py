@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import platform
+import re
 import resource
 import subprocess
 import sys
@@ -114,6 +115,15 @@ CoverageMetric = Literal[
 ]
 CoverageRead = Literal["strict_pit", "closing_proxy_labelled", "prematch_scheduled"]
 Verdict = Literal["keep", "tune", "drop", "inconclusive"]
+ClaimKind = Literal["forecasts", "squad_points"]
+
+# Prose that asserts a season / squad points outcome without ``claim: squad_points``.
+_POINTS_CLAIM_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bseason\s+points?\b", re.IGNORECASE), "season points"),
+    (re.compile(r"\bsquad\s+points?\b", re.IGNORECASE), "squad points"),
+    (re.compile(r"\bmean[\s_-]?ppg\b", re.IGNORECASE), "mean ppg"),
+    (re.compile(r"\brealis[ee]d\s+points?\b", re.IGNORECASE), "realised points"),
+)
 
 _TIER_TO_GW: dict[Tier, int] = {
     "S0": 1,
@@ -291,6 +301,15 @@ class EvalSpec(BaseModel):
     kind: EvalKind
     question: str
     description: str = ""
+    claim: ClaimKind = Field(
+        default="forecasts",
+        description=(
+            "What the EvalSpec is allowed to assert. ``forecasts`` is the "
+            "default (prediction / component suites). ``squad_points`` means "
+            "any season-points or squad-points claim and requires "
+            "``suites.decisions: true`` (S3+)."
+        ),
+    )
     change: ChangeSpec
     control: str
     treatment: str
@@ -340,6 +359,11 @@ class EvalSpec(BaseModel):
                 )
             if self.arms:
                 raise ValueError("equivalence kinds must leave arms empty")
+            if self.claim == "squad_points":
+                raise ValueError(
+                    "claim=squad_points is incompatible with equivalence kinds "
+                    "(environment/refactor force the decisions suite off)"
+                )
         elif self.control == self.treatment:
             raise ValueError("control and treatment must differ")
         for arm in self.arms:
@@ -348,9 +372,72 @@ class EvalSpec(BaseModel):
                     f"arms entry {arm!r} duplicates control or treatment; "
                     "omit it from arms"
                 )
+        failures = decisions_claim_failures(self)
+        if failures:
+            raise ValueError("; ".join(failures))
         if len(set(self.arms)) != len(self.arms):
             raise ValueError("arms must be unique")
         return self
+
+
+def detect_points_claim_phrase(text: str) -> str | None:
+    """Return the first season/squad-points phrase found in ``text``, if any.
+
+    Args:
+        text: Free-text EvalSpec prose (question, description, notes, title).
+
+    Returns:
+        A short label such as ``"season points"``, or ``None``.
+    """
+    for pattern, label in _POINTS_CLAIM_PATTERNS:
+        if pattern.search(text):
+            return label
+    return None
+
+
+def decisions_claim_failures(
+    spec: EvalSpec, *, decisions_enabled: bool | None = None
+) -> list[str]:
+    """Return structural failures for the decisions / points-claim gate.
+
+    ``claim: squad_points`` (any season-points or squad-points assertion) requires
+    ``suites.decisions: true``. Forecast claims may leave decisions off. Prose that
+    names season/squad points while ``claim`` stays ``forecasts`` also fails so
+    authors cannot smuggle a points keep past a prediction-only suite.
+
+    Args:
+        spec: Loaded EvalSpec.
+        decisions_enabled: Effective decisions flag after tier / ``--skip-decisions``
+            / equivalence clamps. Defaults to ``spec.suites.decisions``.
+
+    Returns:
+        Human-readable failure strings (empty when the gate passes).
+    """
+    enabled = spec.suites.decisions if decisions_enabled is None else decisions_enabled
+    failures: list[str] = []
+    if spec.claim == "squad_points" and not enabled:
+        failures.append(
+            "claim=squad_points requires suites.decisions: true "
+            "(season/squad points cannot be asserted from prediction-only suites; "
+            "use tier S3+ and do not pass --skip-decisions)"
+        )
+    if spec.claim == "forecasts" and not enabled:
+        blob = " ".join(
+            [
+                spec.question,
+                spec.description,
+                spec.change.notes,
+                spec.report.title,
+            ]
+        )
+        hit = detect_points_claim_phrase(blob)
+        if hit is not None:
+            failures.append(
+                f"prose claims {hit!r} but claim is forecasts and "
+                "suites.decisions is false; set claim: squad_points and "
+                "suites.decisions: true, or reword to a forecast metric"
+            )
+    return failures
 
 
 def compare_arm_names(spec: EvalSpec) -> list[str]:
@@ -711,6 +798,10 @@ def preflight_promote_eval(
     elif dirty and allow_dirty:
         force_inconclusive = True
         warnings.append("--allow-dirty set; verdict forced to inconclusive")
+
+    failures.extend(
+        decisions_claim_failures(spec, decisions_enabled=plan.suites.decisions)
+    )
 
     specs = load_model_specs(models_dir)
     control = specs.get(spec.control)

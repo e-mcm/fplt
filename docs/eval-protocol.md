@@ -4,7 +4,16 @@
 
 **Status:** Interim. Addresses the gap between promote-eval’s auto-`inconclusive` (FDB-73 thresholds unset) and recent **written** keeps (defcon-rate, price-within-horizon). Those two keeps are **provisional** under this protocol until re-confirmed on independent windows.
 
-**Related tasks:** FDB-225 (this doc + reference board), FDB-228 (deterministic HiGHS), FDB-226 (v3 rename plan — stub §8), FDB-227 (`decisions: true` gate — stub §8).
+**Related tasks:** FDB-225 (this doc + reference board + north-star fixes), FDB-228 (deterministic HiGHS), FDB-227 (decisions-suite gate — §8, landed in loader), FDB-226 (v3 rename plan — stub §9).
+
+| Item | Owner | Status |
+|---|---|---|
+| 1 Windows + interim keep | FDB-225 | This doc §1–§2 |
+| 2 Reference board config | FDB-225 | This doc §4 + `configs/boards/reference.yaml` |
+| 3 Production model rename (`dc_layered_v3`) | FDB-226 | Sibling (§9) |
+| 4 Decisions suite gate | FDB-227 | Landed — §8 + loader |
+| 5 Deterministic HiGHS | FDB-228 (+ FDB-225) | This doc §5 |
+| 6 North-star doc fixes | FDB-225 | This doc §6 |
 
 ---
 
@@ -59,7 +68,7 @@ Written **`tune`:** mixed metrics, nested/overlapping windows only, or developme
 
 ### 2.3 Decision-policy keeps
 
-Same shape via chip / horizon boards (Project store `promote-pipeline-unified.md` / FDB-129): primary season board → confirmation season → optional N6 SE when claiming chips / H. Control and treatment differ by **one** policy flag. Report against the **reference board** (§4).
+Same shape via chip / horizon boards ([`promote-pipeline-unified.md`](promote-pipeline-unified.md) / FDB-129): primary season board → confirmation season → optional N6 SE when claiming chips / H. Control and treatment differ by **one** policy flag. Report against the **reference board** (§4).
 
 ### 2.4 Provisional keeps (as of 2026-11-23)
 
@@ -140,15 +149,41 @@ Live `fplt plan` keeps `HighsSolveOptions.open_fpl_defaults()` (600s, gap `1e-3`
 5. Written call under §2; mark **provisional** if confirmation is weak or nested.
 6. Flip PR only after keep; update defaults + prefs + design; never chat-only.
 7. Decision boards: reference config (§4) + deterministic HiGHS (§5); tip + run-twice check.
+8. ModelSpec season/squad-points claims: `claim: squad_points` + `suites.decisions: true` (§8).
 
 ---
 
-## 8. Follow-ups (stubs — do not block this protocol)
+## 8. Decisions suite gate (FDB-227)
 
-### FDB-226 — `dc_layered_v3` after in-place defcon edit
+**Rule:** any EvalSpec that claims **season points** or **squad points** must set:
+
+```yaml
+claim: squad_points
+suites:
+  decisions: true
+```
+
+and run at tier **S3+** (S0–S2 force decisions off and fail this claim).
+
+| Claim | When to use | Decisions suite |
+|---|---|---|
+| `forecasts` (default) | RMSE / Brier / slot metrics / equivalence | Off (default) |
+| `squad_points` | “This ModelSpec earns more season / squad points” | **Required on** |
+
+Enforced in `fplt.backtest.promote_eval.EvalSpec` / `decisions_claim_failures` (load + preflight):
+
+- `claim: squad_points` + decisions off → fail.
+- Forecast claim whose `question` / `description` / `change.notes` / `report.title` names `season points`, `squad points`, `mean ppg`, or `realised points` while decisions is off → fail (reword or flip the claim).
+- Equivalence kinds cannot take `claim: squad_points`.
+
+**Not this gate:** decision-**policy** levers (`force_play`, `DEFAULT_PLAN_HORIZON`, chip arm, lineup reopt, sell-on). Those are chip-board / `fplt sim-season` A/Bs, not ModelSpec EvalSpecs — see [`promote-pipeline-unified.md`](promote-pipeline-unified.md). Promote-eval’s decisions suite remains the chips-off-shaped bridge for ModelSpec season-points claims (P4).
+
+**Wiring:** scaffold `configs/evals/example_model_squad_points.yaml`. Existing real EvalSpecs on main are forecast claims (`decisions: false`); none asserted season points, so none were flipped.
+
+Canonical detail: [`feature-eval-pipeline.md`](feature-eval-pipeline.md) §4.2 and §8.
+
+---
+
+## 9. Follow-up — FDB-226 (`dc_layered_v3`)
 
 Production `dc_layered_v2` was edited in place when defcon-rate flipped. **Plan (separate PR):** introduce `dc_layered_v3` (or a new `model_id`-bumping compose) for the next behaviour change; leave `v2` as the frozen pre-change hash label on old boards. Boards already key ledgers by `model_id` — stop editing the shipping YAML without a rename when behaviour changes.
-
-### FDB-227 — when `suites.decisions: true` is required
-
-Today almost every EvalSpec sets `decisions: false`. **Rule of thumb for a follow-up PR:** require `suites.decisions: true` when the **written claim** is about squad / season points (typically `kind: model` past S2, or any promote that asserts decision lift). Prediction-only data/feature/config/component levers stay `false`. The chip-board / reference-board path remains the decision-policy promote tool; EvalSpec decisions is the bridge for ModelSpec claims, not a second framework.

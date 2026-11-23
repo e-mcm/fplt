@@ -1,0 +1,52 @@
+# Scaffold: ModelSpec promote that claims season / squad points.
+# claim: squad_points requires suites.decisions: true and tier S3+.
+name: example_model_squad_points
+kind: model
+claim: squad_points
+question: >
+  Scaffold only: does lgbm_direct_v1 beat rolling_mean_v1 on season points
+  under the decisions suite (not prediction RMSE alone)?
+description: >
+  Shape demo for claim: squad_points. Real ModelSpec promotes that assert
+  squad or season points must set this claim and leave decisions on.
+
+change:
+  lever: model_fork
+  orientation: opt_in
+  slot: null
+  control_kind: rolling_mean
+  treatment_kind: lgbm_direct
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "kind: rolling_mean → lgbm_direct"
+  notes: "Scaffold only. Decision-policy levers (force_play, H, chips) stay on fplt decisions --chip-board."
+
+control: rolling_mean_v1
+treatment: lgbm_direct_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: true
+  steps: 1
+  decisions_horizon: 3
+  max_mean_ppg: 90
+
+gates:
+  keep_if:
+    prediction_any: [rmse, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Example: model fork claiming squad points"

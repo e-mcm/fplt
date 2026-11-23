@@ -15,6 +15,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 5. **Share of attainable points** needs an explicit computable definition (constrained hindsight oracle), not an unbounded perfect-foresight ideal.
 6. **Live rank** is a multi-season consistency check, never a single-GW or single-season promotion gate.
 7. **2400 season points** on full-rules decision backtests is the absolute north-star score for decision sims (chips on, sell-on, real banking; same board rules as live defaults). It does not replace Tier A–C relative aims or A/B promote-eval gates.
+8. **Provisional keeps:** defcon-rate (`defcon_mode: rate`) and within-horizon `mean_gw_delta` price forecast are live defaults from written promote calls, but remain **provisional** until FDB-73 / the eval protocol sets an interim keep rule and independent confirmation windows. See [`defcon-rate-promote.md`](./defcon-rate-promote.md) and [`price-within-horizon-promote.md`](./price-within-horizon-promote.md).
 
 ---
 
