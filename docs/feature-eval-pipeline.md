@@ -572,6 +572,16 @@ $FPLT_DATA_DIR/promote_eval/<eval_name>/<stamp>/
 
 `audit.json` is the reproducibility record. It does not need a tracking server.
 
+**Committed results registry.** After a written call, record the verdict in
+`configs/evals/results/registry.yaml` and commit the run's `audit.json` under
+`configs/evals/results/<id>/<role>/audit.json`. The registry links verdict ↔
+EvalSpec ↔ audit path ↔ window ↔ staged-data SHA-256 (loader:
+`fplt.backtest.results_registry`). Decision-policy boards (no EvalSpec) still
+get a row with `path: decision_policy` and tip / model hashes when available.
+Do not treat this file as a second `PRODUCTION_MODELS`. Mark keeps
+`provisional: true` when FDB-73 thresholds / independent confirmation are still
+outstanding (seed: defcon-rate and within-horizon price).
+
 | Field | How |
 |---|---|
 | `git_sha`, `git_dirty` | Dirty tree fails unless `--allow-dirty`. That flag forces `inconclusive` and is printed on line 1 of `recommendation.md` |
@@ -765,6 +775,8 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
    decisions off. Decision-policy levers stay on fplt decisions --chip-board.
 6. Production change is a later PR. keep on an opt-out means "leave it on".
    A dose on one window does not promote. Confirmation is a fresh window.
+   Commit the call to configs/evals/results/registry.yaml (+ audit.json);
+   provisional keeps set provisional: true until FDB-73 / confirmation policy.
 7. Multi-arm championship / dose ranking:
      fplt bakeoff --bakeoff <name> --execute
        or: fplt bakeoff --models a b c --control a --season … --execute
