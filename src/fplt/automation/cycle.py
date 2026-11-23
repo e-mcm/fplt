@@ -6,6 +6,10 @@ order, so a week that was skipped while the process was down is picked up on
 the next run. The pre-deadline refresh does the same for a single upcoming deadline
 and does not walk earlier weeks.
 
+When availability signals (``player_status``, ``predicted_lineups``,
+``player_injuries``) move after a plan was written, ``pre_deadline`` retires
+the stale plan and re-predicts / re-optimises (FDB-253 late-refresh hook).
+
 When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_API_TOKEN`` for the live squad),
 each plan starts from ``resolve_squad_state`` / ``load_current_team`` rather
 than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
@@ -23,6 +27,7 @@ from pathlib import Path
 
 import polars as pl
 
+from fplt.automation.late_refresh import plans_stale_vs_signals, retire_plans
 from fplt.automation.production import load_production_ops
 from fplt.backtest.run import run_backtest
 from fplt.data.benchmark_projections import archive_if_missing
@@ -137,8 +142,10 @@ def pre_deadline(
     now: datetime,
     models: list[str] | None = None,
     horizon: int | None = None,
+    *,
+    refresh_if_stale: bool = True,
 ) -> GWKey | None:
-    """Plan the deadline inside the next three hours, when it has no plan yet.
+    """Plan the deadline inside the next three hours when missing or stale.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives the plan.
@@ -146,6 +153,9 @@ def pre_deadline(
         models: YAML spec names. Defaults to ``load_production_ops().models``.
         horizon: Weeks the plan looks ahead. Defaults to
             ``load_production_ops().plan_horizon``.
+        refresh_if_stale: When true (default), retire write-once plans whose
+            mtime is older than the latest ``player_status`` /
+            ``predicted_lineups`` / ``player_injuries`` signal and rebuild.
 
     Returns:
         The deadline that was planned, or ``None`` when nothing was due.
@@ -153,15 +163,26 @@ def pre_deadline(
     ops = load_production_ops()
     chosen = list(ops.models) if models is None else models
     steps = ops.plan_horizon if horizon is None else horizon
-    key = due_gameweek(DataStore(data_dir), now)
+    store = DataStore(data_dir)
+    key = due_gameweek(store, now)
     if key is None:
         logger.info("pre_deadline: nothing due within %s", _WINDOW)
         return None
     # North-star N1: archive ep_next + OpenFPL before the deadline (write-once).
     archive_if_missing(data_dir, key, now=now)
     if plans_exist(data_dir, chosen, key, steps):
-        logger.info("pre_deadline: plan already exists for %s", key)
-        return None
+        if refresh_if_stale and plans_stale_vs_signals(
+            data_dir, store, chosen, key, steps, now=now
+        ):
+            retired = retire_plans(data_dir, chosen, key, steps, retired_at=now)
+            logger.info(
+                "pre_deadline: retired %s stale plan(s) for %s; re-predicting",
+                len(retired),
+                key,
+            )
+        else:
+            logger.info("pre_deadline: plan already exists for %s", key)
+            return None
     logger.info("pre_deadline: planning %s models=%s", key, chosen)
     _play(data_dir, chosen, key, steps)
     return key

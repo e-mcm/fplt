@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -98,6 +98,15 @@ minutes-brier:
 minutes-measure:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make minutes-measure SEASON=2025-26"; exit 1; fi
 	uv run fplt minutes-measure --season $(SEASON) $(ARGS)
+
+# ── Predicted XI accuracy audit (FDB-253 / PR8) ────────────────────────────────
+# Usage: make predicted-xi-audit SEASON=2025-26
+# Optional: ARGS='--from-gw 1 --to-gw 19 --source touchline_wire --min-accuracy 0.55'
+# Writes start precision/recall, bench→start rate, full-XI coverage under
+# $$FPLT_DATA_DIR/predicted_xi_audit/. Exit 1 when start precision < min-accuracy.
+predicted-xi-audit:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make predicted-xi-audit SEASON=2025-26"; exit 1; fi
+	uv run fplt predicted-xi-audit --season $(SEASON) $(ARGS)
 
 # ── Forecast skill by lead time (MAE/RMSE for H=1…STEPS; wraps compare) ────────
 # Usage: make horizon-skill SEASON=2024-25
