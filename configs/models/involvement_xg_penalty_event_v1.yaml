@@ -6,7 +6,7 @@ params:
   shrinkage: 5
   penalty_bonus: 0.3
   xg_blend: 0.7
+  # p_penalty stays code default 0.12 — one hyperparam family for EvalSpec.
   use_penalty_event: true
-  p_penalty: 0.12
 refit: every_gw
 seed: 0

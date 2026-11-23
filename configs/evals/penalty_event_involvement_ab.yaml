@@ -17,12 +17,12 @@ change:
   features: []
   allow_multi_lever: false
   diff:
-    - "components.involvement.params.use_penalty_event: false → true (p_penalty=0.12)"
+    - "components.involvement.params.use_penalty_event: false → true"
   notes: >
     Control dc_layered_v4 (penalty_bonus rate bump). Treatment
-    dc_layered_penalty_event_v1. On vaastav, takers come from
-    penalties_missed fallback so the board is still informative. No
-    PRODUCTION flip.
+    dc_layered_penalty_event_v1 (use_penalty_event only; p_penalty code
+    default 0.12). On vaastav, takers come from penalties_missed fallback
+    so the board is still informative. No PRODUCTION flip.
 
 control: dc_layered_v4
 treatment: dc_layered_penalty_event_v1

@@ -17,11 +17,12 @@ change:
   features: []
   allow_multi_lever: false
   diff:
-    - "components.involvement.params.use_set_piece_orders: false → true"
+    - "components.involvement.params.use_set_piece_orders: false → true (bonus default 0.1)"
   notes: >
     Control dc_layered_v4. Treatment dc_layered_setpieces_v1
-    (set_piece_bonus=0.1). Gate on set_piece_order_non_null. Vaastav is 0%
-    non-null — run on snapshot-backed 2025-26. No PRODUCTION flip.
+    (use_set_piece_orders only; set_piece_bonus code default 0.1). Gate on
+    set_piece_order_non_null. Vaastav is 0% non-null — run on snapshot-backed
+    2025-26. No PRODUCTION flip.
 
 control: dc_layered_v4
 treatment: dc_layered_setpieces_v1
