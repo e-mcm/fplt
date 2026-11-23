@@ -1,0 +1,13 @@
+# Production dc_layered_v4 + mid-season score covariates (FDB-243).
+# Opt-in treatment; do not flip PRODUCTION_MODELS from this fork alone.
+name: dc_layered_covariate_v1
+extends: dc_layered_v4
+overrides:
+  components:
+    score:
+      name: dixon_coles_covariate_v1
+      params:
+        rest_coef: 0.05
+        congestion_coef: 0.05
+        form_window: 5
+        form_strength: 0.2
