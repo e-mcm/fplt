@@ -279,6 +279,33 @@ class PredictedLineupsSchema(pa.DataFrameModel):
         coerce = True
 
 
+class CompetitionFixturesSchema(pa.DataFrameModel):
+    """Cup / Europe fixtures from API-Football for all-comp rest features.
+
+    Grain: one row per ``(season, api_fixture_id, available_at)``. Only
+    fixtures involving at least one mapped EPL ``team_key`` are staged.
+    ``competition`` is a stable label from
+    ``configs/api_football/competitions.yaml`` (e.g. ``ucl``, ``fa_cup``).
+    ``available_at`` is the raw capture stamp (PIT).
+    """
+
+    season: str
+    api_fixture_id: int
+    competition: str
+    league_id: int
+    team_h_key: int = pa.Field(nullable=True)
+    team_a_key: int = pa.Field(nullable=True)
+    api_team_h_id: int
+    api_team_a_id: int
+    kickoff_time: datetime
+    available_at: datetime
+    source: str
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "players": PlayersSchema,
     "teams": TeamsSchema,
@@ -291,6 +318,7 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "player_injuries": PlayerInjuriesSchema,
     "match_odds": MatchOddsSchema,
     "predicted_lineups": PredictedLineupsSchema,
+    "competition_fixtures": CompetitionFixturesSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -325,6 +353,11 @@ TABLE_KEYS: dict[str, list[str]] = {
         "team_key",
         "fixture_id",
         "player_key",
+        "available_at",
+    ],
+    "competition_fixtures": [
+        "season",
+        "api_fixture_id",
         "available_at",
     ],
 }
@@ -487,6 +520,19 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "element_id": pl.Int64(),
         "role": pl.Utf8(),
         "confidence": pl.Float64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "competition_fixtures": {
+        "season": pl.Utf8(),
+        "api_fixture_id": pl.Int64(),
+        "competition": pl.Utf8(),
+        "league_id": pl.Int64(),
+        "team_h_key": pl.Int64(),
+        "team_a_key": pl.Int64(),
+        "api_team_h_id": pl.Int64(),
+        "api_team_a_id": pl.Int64(),
+        "kickoff_time": pl.Datetime(time_zone="UTC"),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

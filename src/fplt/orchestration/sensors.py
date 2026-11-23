@@ -147,13 +147,14 @@ def understat_sensor(
     job=api_football_ingest_job,
     minimum_interval_seconds=_TEN_MINUTES,
     description=(
-        "Fetch snapshots and stage API-Football injuries when injury raw files arrive."
+        "Fetch snapshots and stage API-Football injuries / cup fixtures when "
+        "raw files arrive (lineups excluded)."
     ),
 )
 def api_football_sensor(
     context: dg.SensorEvaluationContext,
 ) -> dg.RunRequest | dg.SkipReason:
-    """Request ``api_football_ingest`` when new injury raw files land."""
+    """Request ``api_football_ingest`` when new AF injury/fixture raw files land."""
     return _side_ingest_tick(
         context,
         prefix="api_football",

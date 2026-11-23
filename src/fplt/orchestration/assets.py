@@ -184,12 +184,13 @@ understat_ingest_job = dg.define_asset_job(
 
 @dg.asset(name="api_football_ingest")
 def api_football_ingest() -> int:
-    """Stage API-Football injuries from write-once raw JSON.
+    """Stage API-Football injuries and cup/Europe fixtures from raw JSON.
 
     Reads ``$FPLT_DATA_DIR/raw/api_football/...`` and the repo id maps at
     ``configs/api_football/id_maps.yaml``. Unmapped players keep a null
-    ``player_key``. Does not touch FPL snapshot ingest or
-    ``PRODUCTION_MODELS``.
+    ``player_key``. Cup / Europe fixtures stage into
+    ``competition_fixtures`` for all-comp rest features. Does not touch FPL
+    snapshot ingest or ``PRODUCTION_MODELS``.
     """
     settings = get_settings()
     player_keys, team_keys = load_api_football_id_maps(api_football_id_maps_path())

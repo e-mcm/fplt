@@ -19,10 +19,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install httpx
-        run: pip install httpx
+      - name: Install httpx + PyYAML
+        run: pip install httpx pyyaml
 
-      - name: Capture API-Football injuries
+      - name: Capture API-Football injuries + cup/Europe fixtures
         env:
           # Prefer repo secret API_FOOTBALL_KEY (also accepts APISPORTS_KEY).
           # Local / Settings name is FPLT_API_FOOTBALL_KEY.
@@ -60,5 +60,5 @@ jobs:
             echo "api_football snapshots already present"
             exit 0
           fi
-          git commit -m "Capture API-Football injuries JSON"
+          git commit -m "Capture API-Football injuries + cup/Europe fixtures"
           git push origin HEAD:snapshots

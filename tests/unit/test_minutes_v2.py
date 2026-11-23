@@ -609,3 +609,37 @@ def test_availability_overlay_forks_load() -> None:
     assert injuries.components["minutes"].name == "empirical_minutes_v2_injuries"
     assert injuries.components["minutes"].params["use_injury_overlay"] is True
     assert noavail.kind == parent.kind == injuries.kind
+
+
+def test_predict_runs_with_competition_fixtures(tmp_path: Path) -> None:
+    """Cup/Europe kickoffs in competition_fixtures must not break fit/predict."""
+    store = _store(
+        tmp_path,
+        stats=[(1, "MID", 1, gw, 90, 1) for gw in range(1, 8)],
+        status={1: ("a", 100.0)},
+    )
+    # Midweek Europe three days before GW8 PL kickoff for team 1.
+    store.write(
+        "competition_fixtures",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [_SEASON],
+                    "api_fixture_id": [9001],
+                    "competition": ["ucl"],
+                    "league_id": [2],
+                    "team_h_key": [1],
+                    "team_a_key": [None],
+                    "api_team_h_id": [40],
+                    "api_team_a_id": [541],
+                    "kickoff_time": [_kick(8) - timedelta(days=3)],
+                    "available_at": [_START],
+                    "source": ["api_football"],
+                }
+            )
+        ),
+    )
+    _expose_future_fixtures(store, from_gw=8)
+    dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    assert dist.pmf.shape[0] == 1
+    assert dist.pmf.sum() == pytest.approx(1.0)

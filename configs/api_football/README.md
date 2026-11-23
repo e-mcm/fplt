@@ -1,12 +1,16 @@
-# API-Football id maps
+# API-Football id maps + competitions
 
 `id_maps.yaml` maps API-Football (API-Sports) integer ids onto FPL codes used
 elsewhere in `fplt`:
 
 | Map key | API-Football field | FPL field |
 |---|---|---|
-| `teams` | `team.id` on `/injuries` | `team_key` (team `code`) |
+| `teams` | `team.id` on `/injuries` / `/fixtures` | `team_key` (team `code`) |
 | `players` | `player.id` on `/injuries` | `player_key` (element `code`) |
+
+`competitions.yaml` lists cup / Europe league ids fetched for all-comp rest
+features (FA Cup, EFL Cup, Community Shield, UCL, UEL, UECL). Premier League
+is omitted — FPL `fixtures` already cover domestic league kickoffs.
 
 ## Mapping gaps
 
@@ -41,19 +45,21 @@ and never call the network.
 ## Fetch → stage
 
 ```bash
-# Write-once raw injuries JSON under raw/api_football/...
+# Write-once raw injuries + cup/Europe fixtures under raw/api_football/...
 # Skips when a capture newer than --min-interval-hours (default 4) exists.
 make fetch-api-football SEASON=2024-25
 # equivalent:
 #   export FPLT_API_FOOTBALL_KEY=...   # or API_FOOTBALL_KEY / APISPORTS_KEY
 #   python scripts/fetch_api_football.py --out "$FPLT_DATA_DIR/raw" --season 2024-25
+#   # --skip-fixtures to capture injuries only
 
-# Stage player_injuries (Dagster api_football_ingest job).
+# Stage player_injuries + competition_fixtures (Dagster api_football_ingest).
 make dagster-dev
 ```
 
-Free tier is ~100 requests/day. One league+season `/injuries` call per capture
-is enough; the 4h min-interval matches upstream refresh cadence.
+Free tier is ~100 requests/day. One `/injuries` call plus one `/fixtures` call
+per cup/Europe league per capture; the 4h min-interval matches upstream
+refresh cadence. Only fixtures with a mapped EPL `team_key` stage.
 
 ## Minutes overlay
 
