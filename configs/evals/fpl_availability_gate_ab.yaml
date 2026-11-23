@@ -1,0 +1,54 @@
+# Package A (#116): FPL status/chance/news gate already on in production.
+# Opt-out control measures minutes Brier / xPts RMSE lift of the baked-in gate.
+name: fpl_availability_gate_ab
+kind: config
+question: >
+  Does the FPL status/chance/news availability gate improve minutes Brier and
+  player-fixture RMSE versus an ungated empirical minutes baseline?
+description: "FPL availability gate on vs off (Package A). Opt-out."
+
+change:
+  lever: hyperparam
+  orientation: opt_out
+  slot: minutes
+  control_kind: empirical_minutes_v2
+  treatment_kind: empirical_minutes_v2
+  tables: [player_status]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.minutes.params.use_availability_gate: false → true"
+  notes: >
+    Control dc_layered_noavail_v1 (minutes twin empirical_minutes_v2_noavail).
+    Treatment dc_layered_v2 (default true). Window must be snapshot-backed
+    (source=fpl_api). Vaastav status is always "a" with null chance/news, so
+    arms would tie there.
+
+control: dc_layered_noavail_v1
+treatment: dc_layered_v2
+
+window:
+  seasons: ["2026-27"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse, mae]
+    components_any: [brier_played, brier_60]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "FPL availability gate vs no-overlay control (Package A)"
+  store_doc: availability-overlays-promote.md

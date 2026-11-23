@@ -4,15 +4,16 @@ Prices are integers in tenths of a million (55 = £5.5m), matching
 ``player_status.price`` / FPL ``now_cost``.
 
 Decision sims and live plans refresh selling prices from **as-of** market
-prices already staged in ``player_status``. Multi-step plan horizons do
-**not** forecast future rises or falls: within a horizon, sell credits stay
-at the as-of selling price (honest gap vs predicting price changes).
+prices already staged in ``player_status``. Multi-step plan horizons default
+to those as-of credits; optional ``price_forecast`` rows (see
+``fplt.optimise.price_forecast``) can vary list / sell prices by step.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
+import numpy as np
 import polars as pl
 
 from fplt.optimise.state import OwnedPlayer, SquadState
@@ -109,3 +110,88 @@ def market_prices_from_candidates(candidates: pl.DataFrame) -> dict[int, int]:
         int(key): int(price)
         for key, price in candidates.select("player_key", "price").iter_rows()
     }
+
+
+def list_price_matrix(
+    keys: Sequence[int],
+    horizon: int,
+    as_of_prices: Mapping[int, int],
+    price_forecast: pl.DataFrame | None = None,
+) -> np.ndarray:
+    """Build ``(horizon, n_players)`` list prices for the MILP cash rows.
+
+    When ``price_forecast`` is ``None``, every step copies the as-of price.
+    Otherwise each ``player_key`` × ``step`` must supply ``list_price``, and
+    step 0 must match ``as_of_prices``.
+
+    Args:
+        keys: Pool ``player_key`` order (column index in the matrix).
+        horizon: Number of plan steps.
+        as_of_prices: As-of list price per ``player_key``.
+        price_forecast: Optional ``PriceForecastSchema`` frame.
+
+    Returns:
+        Float matrix of list prices shaped ``(horizon, len(keys))``.
+
+    Raises:
+        ValueError: Forecast missing a cell, or step-0 disagrees with as-of.
+    """
+    count = len(keys)
+    matrix = np.zeros((horizon, count), dtype=np.float64)
+    if price_forecast is None:
+        for index, key in enumerate(keys):
+            price = float(as_of_prices[int(key)])
+            matrix[:, index] = price
+        return matrix
+
+    required = {"player_key", "step", "list_price"}
+    missing_cols = required - set(price_forecast.columns)
+    if missing_cols:
+        raise ValueError(f"price_forecast is missing {sorted(missing_cols)}")
+    by_key_step = {
+        (int(player_key), int(step)): int(list_price)
+        for player_key, step, list_price in price_forecast.select(
+            "player_key", "step", "list_price"
+        ).iter_rows()
+    }
+    for index, key in enumerate(keys):
+        as_of = int(as_of_prices[int(key)])
+        for step in range(horizon):
+            predicted = by_key_step.get((int(key), step))
+            if predicted is None:
+                raise ValueError(f"price_forecast missing player_key={key} step={step}")
+            if step == 0 and predicted != as_of:
+                raise ValueError(
+                    f"price_forecast step 0 for player_key={key} is "
+                    f"{predicted}, as-of list price is {as_of}"
+                )
+            matrix[step, index] = float(predicted)
+    return matrix
+
+
+def sell_price_matrix(
+    list_prices: np.ndarray,
+    owned: Sequence[OwnedPlayer],
+    key_index: Mapping[int, int],
+) -> np.ndarray:
+    """Derive sell credits from list prices and sticky purchase prices.
+
+    Non-owned players sell at the step's list price. Owned players use
+    ``fpl_selling_price(purchase, list[step])``.
+
+    Args:
+        list_prices: ``(horizon, n_players)`` list-price matrix.
+        owned: Current squad with sticky ``purchase_price``.
+        key_index: ``player_key`` → column index in ``list_prices``.
+
+    Returns:
+        Float matrix the same shape as ``list_prices``.
+    """
+    sell = np.array(list_prices, dtype=np.float64, copy=True)
+    for player in owned:
+        at = key_index[player.player_key]
+        for step in range(sell.shape[0]):
+            sell[step, at] = float(
+                fpl_selling_price(player.purchase_price, int(list_prices[step, at]))
+            )
+    return sell

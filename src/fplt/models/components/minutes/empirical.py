@@ -47,6 +47,7 @@ class EmpiricalMinutes:
         shrinkage = spec.params.get("shrinkage", 5.0)
         doubtful = spec.params.get("doubtful_chance", 0.5)
         overlay = spec.params.get("use_injury_overlay", False)
+        avail_gate = spec.params.get("use_availability_gate", True)
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -57,10 +58,15 @@ class EmpiricalMinutes:
             raise ValueError(f"doubtful_chance must be in [0, 1], got {doubtful_value}")
         if not isinstance(overlay, bool):
             raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
+        if not isinstance(avail_gate, bool):
+            raise ValueError(
+                f"use_availability_gate must be a bool, got {avail_gate!r}"
+            )
         self._window = window
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
         self._use_injury_overlay = overlay
+        self._use_availability_gate = avail_gate
         self._fitted = False
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}
@@ -170,6 +176,7 @@ class EmpiricalMinutes:
             self._doubtful,
             injury=injury,
             use_injury_overlay=self._use_injury_overlay,
+            use_availability_gate=self._use_availability_gate,
         )
         p_start *= gate
         p_sub *= gate

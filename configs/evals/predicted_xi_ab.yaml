@@ -1,0 +1,52 @@
+# Package C (#119): predicted_xi off in production; opt-in treatment.
+name: predicted_xi_ab
+kind: config
+question: >
+  Does near-deadline predicted_xi improve player RMSE / minutes Brier versus
+  production dc_layered_v2?
+description: "Predicted-XI minutes override A/B. Opt-in."
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: minutes
+  control_kind: empirical_minutes_v2
+  treatment_kind: empirical_minutes_v2
+  tables: [predicted_lineups]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.minutes.params.predicted_xi: false → true"
+  notes: >
+    Control dc_layered_v2. Treatment dc_layered_predicted_xi_v1.
+    Needs staged predicted_lineups visible before deadline inside the KO
+    window. Preflight: score_predicted_starts before claiming keep.
+
+control: dc_layered_v2
+treatment: dc_layered_predicted_xi_v1
+
+window:
+  seasons: ["2026-27"]
+  from_gw: 1
+  to_gw: 10
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse, mae]
+    components_any: [brier_played, brier_60]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Predicted XI override vs dc_layered_v2"
+  store_doc: availability-overlays-promote.md

@@ -233,26 +233,33 @@ def _draft_state(**overrides: object) -> SquadState:
     return SquadState.model_validate(base)
 
 
-def test_plan_squad_auto_prunes_from_horizon_five() -> None:
-    """H≥5 auto-prunes and still returns a legal fifteen."""
-    assert PRUNE_AUTO_MIN_HORIZON == 5
+def test_plan_squad_auto_prunes_from_horizon_three() -> None:
+    """H≥3 (live default) auto-prunes and still returns a legal fifteen.
+
+    Regression for forecast-combine H=3 continuous hangs: full-pool MILPs
+    at the live horizon must shortlist via the default prune policy.
+    """
+    assert PRUNE_AUTO_MIN_HORIZON == 3
+    policy = CandidatePrunePolicy.target_pool()
+    assert policy.should_auto_apply(2) is False
+    assert policy.should_auto_apply(3) is True
     players = _players()
     cand = players.drop("sum_xpts")
     plan = plan_squad(
         cand,
-        _points(players, horizon=5),
+        _points(players, horizon=3),
         _draft_state(),
         initial=True,
-        horizon=5,
+        horizon=3,
         prune=True,
     )
     assert plan.picks.filter((pl.col("step") == 0) & ~pl.col("sold")).height == 15
     plan_auto = plan_squad(
         cand,
-        _points(players, horizon=5),
+        _points(players, horizon=3),
         _draft_state(),
         initial=True,
-        horizon=5,
+        horizon=3,
     )
     assert plan_auto.picks.filter((pl.col("step") == 0) & ~pl.col("sold")).height == 15
 

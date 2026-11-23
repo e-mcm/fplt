@@ -1,0 +1,10 @@
+# Eval-only control: FPL status/chance/news gate off.
+# Production dc_layered_v2 keeps use_availability_gate true (code default).
+name: dc_layered_noavail_v1
+extends: dc_layered_v2
+overrides:
+  components:
+    minutes:
+      name: empirical_minutes_v2_noavail
+      params:
+        use_availability_gate: false

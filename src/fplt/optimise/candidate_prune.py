@@ -73,8 +73,10 @@ DEFAULT_TOP_WINDOW: Mapping[str, int] = {
 DEFAULT_WINDOW_LENGTHS: tuple[int, ...] = (2, 3)
 
 # Auto-enable when the planner horizon reaches this unless the caller
-# forces prune on/off.
-PRUNE_AUTO_MIN_HORIZON = 5
+# forces prune on/off. Live default is H=3; full-pool H=3 continuous
+# seasons can hang in HiGHS (forecast-combine GW16), so shortlist at
+# the live horizon rather than only at H≥5.
+PRUNE_AUTO_MIN_HORIZON = 3
 
 
 def _validate_window_lengths(value: Sequence[int] | None) -> tuple[int, ...]:
