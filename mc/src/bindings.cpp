@@ -9,7 +9,7 @@
 namespace nb = nanobind;
 
 NB_MODULE(_core, m) {
-  m.doc() = "fplt-mc native Monte Carlo kernel (skeleton)";
+  m.doc() = "fplt-mc native Monte Carlo kernel (K2 allocate in _testing)";
   m.attr("KERNEL_API") = fplt_mc::KERNEL_API;
   m.def("build_info", &fplt_mc::build_info,
         "Return version, git SHA, compiler, and flags.");

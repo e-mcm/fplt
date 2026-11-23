@@ -63,6 +63,7 @@ add_library(fplt_mc_core STATIC
   src/rng.cpp
   src/mathx.cpp
   src/build_info.cpp
+  src/allocate.cpp
 )
 add_library(fplt_mc::core ALIAS fplt_mc_core)
 # Required when the static lib is linked into the nanobind shared module.

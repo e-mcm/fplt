@@ -23,6 +23,18 @@ from fplt.types import GWKey
 
 _SEASON = "2024-25"
 _START = datetime(2024, 8, 1, tzinfo=UTC)
+# Independent L-BFGS fits of the same data can differ by ~1e-8 on the PMF
+# (seen on CI for strength-zero / odds-invisible cases). Real market blends
+# move mass by O(0.1), so this band stays well clear of both.
+_VANILLA_PMF_RTOL = 1e-7
+_VANILLA_PMF_ATOL = 1e-8
+
+
+def _assert_pmf_matches_vanilla(left: np.ndarray, right: np.ndarray) -> None:
+    """Assert two PMFs match within L-BFGS fit noise (vanilla-equivalence)."""
+    np.testing.assert_allclose(
+        left, right, rtol=_VANILLA_PMF_RTOL, atol=_VANILLA_PMF_ATOL
+    )
 
 
 def test_odds_specs_are_registered_without_changing_vanilla() -> None:
@@ -70,11 +82,9 @@ def test_market_prior_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     zero_prior.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         zero_prior.predict(view, fixtures).pmf,
-        rtol=1e-8,
-        atol=1e-10,
     )
 
 
@@ -102,11 +112,9 @@ def test_missing_odds_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     with_prior.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         with_prior.predict(view, fixtures).pmf,
-        rtol=1e-8,
-        atol=1e-10,
     )
 
 
@@ -176,11 +184,9 @@ def test_odds_after_deadline_are_invisible(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     prior.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         prior.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
     )
 
 
@@ -222,11 +228,9 @@ def test_market_1x2_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     zero.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         zero.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
     )
 
 
@@ -369,13 +373,9 @@ def test_market_cs_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     zero.fit(view)
-    # Fit noise can differ by ~1e-8 across independent L-BFGS runs; match the
-    # market_prior_strength_zero tolerance rather than bit-identity.
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         zero.predict(view, fixtures).pmf,
-        rtol=1e-8,
-        atol=1e-10,
     )
 
 
@@ -459,11 +459,9 @@ def test_odds_after_deadline_leave_cs_blend_as_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     cs.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         cs.predict(view, fixtures).pmf,
-        rtol=1e-10,
-        atol=1e-12,
     )
 
 
