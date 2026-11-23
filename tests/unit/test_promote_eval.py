@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from fplt.backtest.component_eval import ComponentEvalResult
 from fplt.backtest.promote_eval import (
     EvalSpec,
+    decisions_claim_failures,
+    detect_points_claim_phrase,
     execute_promote_eval,
     format_plan,
     is_n_sims_lever,
@@ -270,6 +272,143 @@ def test_eval_spec_rejects_kind_lever_mismatch() -> None:
 def test_eval_spec_rejects_blank_question() -> None:
     with pytest.raises(ValidationError):
         EvalSpec.model_validate(_base_payload(question="   "))
+
+
+def test_detect_points_claim_phrase() -> None:
+    assert detect_points_claim_phrase("better season points") == "season points"
+    assert detect_points_claim_phrase("squad points under H=3") == "squad points"
+    assert detect_points_claim_phrase("mean PPG gate") == "mean ppg"
+    assert detect_points_claim_phrase("realised points share") == "realised points"
+    assert detect_points_claim_phrase("Does RMSE improve?") is None
+
+
+def test_claim_squad_points_requires_decisions() -> None:
+    with pytest.raises(ValidationError, match="claim=squad_points"):
+        EvalSpec.model_validate(
+            _base_payload(
+                kind="model",
+                claim="squad_points",
+                question="Does the fork earn more season points?",
+                change={
+                    "lever": "model_fork",
+                    "orientation": "opt_in",
+                    "slot": None,
+                    "control_kind": "rolling_mean",
+                    "treatment_kind": "lgbm_direct",
+                    "diff": ["kind: rolling_mean → lgbm_direct"],
+                },
+                control="rolling_mean_v1",
+                treatment="lgbm_direct_v1",
+                suites={
+                    "prediction": True,
+                    "components": False,
+                    "decisions": False,
+                },
+            )
+        )
+
+
+def test_forecast_prose_points_claim_rejected() -> None:
+    with pytest.raises(ValidationError, match="season points"):
+        EvalSpec.model_validate(
+            _base_payload(
+                question="Does the treatment earn more season points?",
+                suites={
+                    "prediction": True,
+                    "components": False,
+                    "decisions": False,
+                },
+            )
+        )
+
+
+def test_claim_squad_points_loads_when_decisions_on() -> None:
+    spec = EvalSpec.model_validate(
+        _base_payload(
+            kind="model",
+            claim="squad_points",
+            question="Does the fork earn more season points?",
+            change={
+                "lever": "model_fork",
+                "orientation": "opt_in",
+                "slot": None,
+                "control_kind": "rolling_mean",
+                "treatment_kind": "lgbm_direct",
+                "diff": ["kind: rolling_mean → lgbm_direct"],
+            },
+            control="rolling_mean_v1",
+            treatment="lgbm_direct_v1",
+            suites={
+                "prediction": True,
+                "components": False,
+                "decisions": True,
+                "decisions_horizon": 3,
+            },
+        )
+    )
+    assert spec.claim == "squad_points"
+    assert spec.suites.decisions is True
+    assert decisions_claim_failures(spec) == []
+
+
+def test_tier_s1_fails_squad_points_claim(tmp_path: Path) -> None:
+    _write_eval(
+        tmp_path,
+        "squad_claim",
+        _base_payload(
+            name="squad_claim",
+            kind="model",
+            claim="squad_points",
+            question="Does the fork earn more season points?",
+            change={
+                "lever": "model_fork",
+                "orientation": "opt_in",
+                "slot": None,
+                "control_kind": "rolling_mean",
+                "treatment_kind": "lgbm_direct",
+                "diff": ["kind: rolling_mean → lgbm_direct"],
+            },
+            control="rolling_mean_v1",
+            treatment="lgbm_direct_v1",
+            suites={
+                "prediction": True,
+                "components": False,
+                "decisions": True,
+                "decisions_horizon": 3,
+            },
+        ),
+    )
+    spec = load_eval_spec("squad_claim", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=True, tier="S1")
+    assert plan.suites.decisions is False
+    fails = decisions_claim_failures(spec, decisions_enabled=plan.suites.decisions)
+    assert fails and "claim=squad_points" in fails[0]
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert not result.ok
+    assert any("claim=squad_points" in f for f in result.failures)
+
+
+def test_equivalence_rejects_squad_points_claim() -> None:
+    with pytest.raises(ValidationError, match="equivalence"):
+        EvalSpec.model_validate(
+            {
+                "name": "env_claim",
+                "kind": "environment",
+                "claim": "squad_points",
+                "question": "Does the lock upgrade keep season points?",
+                "change": {
+                    "lever": "dependency_upgrade",
+                    "packages": ["numpy"],
+                    "control_ref": "main",
+                    "treatment_ref": "lock-bump",
+                    "diff": ["uv.lock"],
+                },
+                "control": "dc_layered_v2",
+                "treatment": "dc_layered_v2",
+                "suites": {"prediction": True, "decisions": True},
+            }
+        )
 
 
 def test_component_swap_requires_slot() -> None:
@@ -560,6 +699,7 @@ def test_repo_example_evals_load() -> None:
         "example_config_dc_v1_vs_v2",
         "example_component_minutes_v1_vs_v2",
         "example_model_lgbm_vs_rolling",
+        "example_model_squad_points",
         "example_data_odds_prior",
         "example_environment_lock_upgrade",
         "example_refactor_no_behaviour",
@@ -570,6 +710,12 @@ def test_repo_example_evals_load() -> None:
         assert plan.eval_name == name
         assert plan.commands
         assert spec.question.strip()
+        if name == "example_model_squad_points":
+            assert spec.claim == "squad_points"
+            assert spec.suites.decisions is True
+            assert plan.suites.decisions is True
+        else:
+            assert spec.claim == "forecasts"
 
 
 def test_cli_promote_eval_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
