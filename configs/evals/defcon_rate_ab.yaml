@@ -1,14 +1,15 @@
-# FDB-211: Poisson P(DC award) other_points vs production shrunk 0/2 wire.
+# FDB-211: Poisson P(DC award) other_points vs shrunk 0/2 mean wire.
+# After keep, production dc_layered_v2 is the rate treatment; mean is opt-out.
 name: defcon_rate_ab
 kind: config
 question: >
   Does a Poisson P(award)|minutes,position,rate defensive-contribution
-  prior beat the production shrunk 0/2 wire on RMSE for 2025-26?
-description: "defcon rate model vs other_player mean wire (FDB-211). Opt-in."
+  prior beat the shrunk 0/2 mean wire on RMSE for 2025-26?
+description: "defcon rate model vs other_player mean wire (FDB-211). Opt-out."
 
 change:
   lever: hyperparam
-  orientation: opt_in
+  orientation: opt_out
   slot: other
   control_kind: other_player
   treatment_kind: other_player
@@ -18,12 +19,12 @@ change:
   diff:
     - "components.other.params.defcon_mode: mean → rate"
   notes: >
-    Control dc_layered_v2 (other_player_v1 mean wire). Treatment
-    dc_layered_defcon_rate_v1 (other_player_defcon_rate_v1). Primary window
-    2025-26 GW1–38; confirmation GW20–38. RMSE headline.
+    Control dc_layered_defcon_mean_v1 (shrunk 0/2 wire). Treatment
+    dc_layered_v2 (other_player_defcon_rate_v1, production after FDB-211 keep).
+    Primary window 2025-26 GW1–38; confirmation GW20–38. RMSE headline.
 
-control: dc_layered_v2
-treatment: dc_layered_defcon_rate_v1
+control: dc_layered_defcon_mean_v1
+treatment: dc_layered_v2
 
 window:
   seasons: ["2025-26"]

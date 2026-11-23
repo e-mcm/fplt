@@ -1,6 +1,6 @@
-# dc_layered_v2 with other_player DC channel via Poisson rate → P(award).
-# Opt-in treatment vs production wire (FDB-211); not a production default
-# until promote-eval keeps. Bucket minutes use code defaults (0 / 45 / 75).
+# Explicit rate-model arm (same DC path as production dc_layered_v2 after
+# FDB-211 keep). Kept for historical EvalSpec tips; prefer dc_layered_v2.
+# Mean-wire opt-out is dc_layered_defcon_mean_v1.
 name: dc_layered_defcon_rate_v1
 extends: dc_layered_v2
 overrides:

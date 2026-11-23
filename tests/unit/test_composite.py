@@ -59,6 +59,8 @@ def test_dc_layered_v2_wires_improved_components() -> None:
     assert spec.components["minutes"].kind == "empirical_minutes_v2"
     assert spec.components["involvement"].kind == "involvement_xg"
     assert spec.components["other"].kind == "other_player"
+    assert spec.components["other"].name == "other_player_defcon_rate_v1"
+    assert spec.components["other"].params["defcon_mode"] == "rate"
     model = CompositePredictor(spec)
     assert model._n_sims == 10000
     assert model._cs_red_void_prob == pytest.approx(0.02)
