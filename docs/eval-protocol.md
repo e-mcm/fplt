@@ -74,7 +74,7 @@ Same shape via chip / horizon boards ([`promote-pipeline-unified.md`](promote-pi
 
 | Keep | Status | Why provisional |
 |---|---|---|
-| Defcon-rate → production `dc_layered_v2` | **Provisional** | Confirmation GWs nested inside primary; re-confirm on a disjoint window / second season under §1–§2. |
+| Defcon-rate → production `dc_layered_v3` | **Provisional** | Confirmation GWs nested inside primary; re-confirm on a disjoint window / second season under §1–§2. Compose renamed in FDB-226 (frozen mean-wire `dc_layered_v2`). |
 | Within-horizon `mean_gw_delta` price forecast (live default) | **Provisional** | Board keep stands operationally; mark provisional until an independent confirmation season is logged under this protocol. |
 
 Do **not** silently un-flip these. New levers must follow §1–§2; revisit provisional rows when sealed / confirmation capacity exists.
@@ -108,7 +108,7 @@ Boards that claim live-comparable season points **report against this config**. 
 | `lineup_reopt` | `true` |
 | `price_forecast` | `mean_gw_delta` (`DEFAULT_LIVE_PRICE_FORECAST_METHOD`) |
 | `bench_weight` | `0` (`configs/squad_state.yaml`) |
-| `model` | `dc_layered_v2` (`configs/ops/production.yaml`) |
+| `model` | `dc_layered_v3` (`configs/ops/production.yaml`) |
 | HiGHS (boards) | §5 — deterministic; live planner may keep the 600s / gap `1e-3` production knobs |
 
 Chip-board **control** A/Bs may omit `--price-forecast` on purpose; say so. The reference row for “what live would score” includes `mean_gw_delta`.
@@ -184,6 +184,6 @@ Canonical detail: [`feature-eval-pipeline.md`](feature-eval-pipeline.md) §4.2 a
 
 ---
 
-## 9. Follow-up — FDB-226 (`dc_layered_v3`)
+## 9. ModelSpec versioning (FDB-226 done)
 
-Production `dc_layered_v2` was edited in place when defcon-rate flipped. **Plan (separate PR):** introduce `dc_layered_v3` (or a new `model_id`-bumping compose) for the next behaviour change; leave `v2` as the frozen pre-change hash label on old boards. Boards already key ledgers by `model_id` — stop editing the shipping YAML without a rename when behaviour changes.
+Production `dc_layered_v2` was edited in place when defcon-rate flipped (`4d715b5`). **FDB-226** froze mean-wire `dc_layered_v2` (pre-flip `model_id`) and moved production to `dc_layered_v3`. Do not edit a released production ModelSpec in place again — bump the versioned YAML and retarget ops / forks. Boards label `name (model_id)` so a stable name alone cannot hide a hash change.
