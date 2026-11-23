@@ -1,0 +1,54 @@
+# Forecast combination equal blend vs production DC (FDB-214 promote path).
+# Descriptive bakeoff: configs/evals/forecast_combination.yaml (2024-25 GW1–20).
+# This EvalSpec is the pairwise keep/drop board; confirm on a fresh season.
+name: forecast_combine_equal_ab
+kind: model
+question: >
+  Does equal-weight blending of dc_layered_v2 + lgbm_direct_v1
+  (forecast_combine_equal_v1) beat dc_layered_v2 on player RMSE?
+description: >
+  ModelSpec promote for forecast_combine_equal_v1. Cite 2024-25 GW1–20
+  bakeoff RMSE; confirmation window is 2025-26 GW1–20. Decisions at H=3
+  (live horizon) stay on fplt decisions --chip-board, not this suite.
+
+change:
+  lever: model_fork
+  orientation: opt_in
+  slot: null
+  control_kind: dc_layered
+  treatment_kind: forecast_combine
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "kind: dc_layered → forecast_combine (equal blend of dc_layered_v2 + lgbm_direct_v1)"
+  notes: >
+    OpenFPL omitted until Deep/PPDA. Position-weighted blend is not this
+    lever. PRODUCTION_MODELS flip only after keep + H=3 decision gates.
+
+control: dc_layered_v2
+treatment: forecast_combine_equal_v1
+
+window:
+  seasons: ["2025-26"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse, mae, spearman]
+  drop_if:
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Forecast combine equal vs dc_layered_v2"
+  store_doc: forecast-combine-promote.md
