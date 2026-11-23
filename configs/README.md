@@ -8,6 +8,7 @@ YAML that drives models, scoring, chips, evals, and live ops. **No hyperparamete
 | `scoring/<season>.yaml` | FPL points rules for that season | `fplt.scoring.Rules.for_season` |
 | `chips/<season>.yaml` | Chip grants / windows | `fplt.scoring.chips` |
 | `ops/production.yaml` | Live unattended models + plan horizon | `fplt.automation.production.load_production_ops` |
+| `boards/reference.yaml` | Frozen live-comparable board flags + deterministic HiGHS | `fplt.optimise.reference_board.load_reference_board` |
 | `evals/*.yaml` | Promote-eval / bakeoff specs | `fplt promote-eval` / `fplt bakeoff` |
 | `evals/results/registry.yaml` | Written promote calls (verdict ↔ EvalSpec ↔ audit ↔ hashes) | `fplt.backtest.results_registry` |
 | `evals/results/<id>/…/audit.json` | Committed promote-eval audits for registry rows | same |

@@ -40,6 +40,7 @@ from fplt.optimise.chip_windows import (
     rule_based_chip_windows,
     rules_label,
 )
+from fplt.optimise.highs_options import HighsSolveOptions
 from fplt.optimise.plan import (
     GameweekPlan,
     next_free_transfers,
@@ -239,6 +240,7 @@ def simulate_decisions(
     chip_windows_log: dict[int, ChipUseWindows] | None = None,
     price_forecast_method: PriceForecastMethod | None = None,
     store: DataStore | None = None,
+    highs_options: HighsSolveOptions | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -272,6 +274,8 @@ def simulate_decisions(
             ``mean_gw_delta`` needs ``store`` for PIT deadline history.
         store: Staged tables for PIT price forecasts when
             ``price_forecast_method`` is ``mean_gw_delta``.
+        highs_options: HiGHS knobs forwarded to ``plan_squad``. Chip boards
+            pass ``HighsSolveOptions.board_deterministic()`` (FDB-228).
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -357,6 +361,7 @@ def simulate_decisions(
             warm_start=prior_plan,
             lineup_reopt=lineup_reopt,
             price_forecast=forecast,
+            highs_options=highs_options,
         )
         logger.info(
             "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
@@ -844,6 +849,7 @@ def run_decisions(
     force_play: bool = True,
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
+    highs_options: HighsSolveOptions | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -865,6 +871,7 @@ def run_decisions(
             for a raw-MILP lineup ablation).
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
+        highs_options: Forwarded to ``simulate_decisions`` / ``plan_squad``.
 
     Returns:
         The decision parquet path.
@@ -924,6 +931,7 @@ def run_decisions(
         chip_windows_log=windows_log,
         price_forecast_method=price_forecast_method,
         store=store,
+        highs_options=highs_options,
     )
     path = write_decisions(data_dir, frame)
     if windows_log:
@@ -951,6 +959,7 @@ def run_chip_decision_board(
     force_play: bool = True,
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
+    highs_options: HighsSolveOptions | None = None,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
 
@@ -976,6 +985,9 @@ def run_chip_decision_board(
             Pass false for a raw-MILP XI/captain ablation.
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
+        highs_options: HiGHS knobs for board solves. Defaults to
+            ``HighsSolveOptions.board_deterministic()`` (no time limit, one
+            thread, fixed seed) so identical tip + data → identical totals.
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
@@ -988,12 +1000,18 @@ def run_chip_decision_board(
     if not arms:
         raise ValueError("arms must be non-empty")
     rules_season = chip_rules_season if chip_rules_season is not None else season
+    board_highs = (
+        HighsSolveOptions.board_deterministic()
+        if highs_options is None
+        else highs_options
+    )
     if simulate:
         for name in models:
             for arm in arms:
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
-                    "force_play=%s lineup_reopt=%s price_forecast=%s",
+                    "force_play=%s lineup_reopt=%s price_forecast=%s "
+                    "highs_seed=%s highs_threads=%s",
                     name,
                     arm,
                     season,
@@ -1001,6 +1019,8 @@ def run_chip_decision_board(
                     force_play,
                     lineup_reopt,
                     price_forecast_method,
+                    board_highs.random_seed,
+                    board_highs.threads,
                 )
                 run_decisions(
                     data_dir,
@@ -1014,6 +1034,7 @@ def run_chip_decision_board(
                     force_play=force_play,
                     lineup_reopt=lineup_reopt,
                     price_forecast_method=price_forecast_method,
+                    highs_options=board_highs,
                 )
     specs = load_model_specs()
     id_to_name = {specs[name].model_id: name for name in models}

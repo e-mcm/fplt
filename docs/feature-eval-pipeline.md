@@ -626,7 +626,7 @@ Player metrics stay on per-GW win counts, mean xPts versus mean actual, and posi
 1. Preflight fail → exit 2. No recommendation file required.
 2. Coverage under `min_coverage` → `drop`, unless `allow_low_coverage` (then `inconclusive`).
 3. Otherwise P2 writes **`inconclusive`** and the delta table. It does not apply `keep_if`.
-4. After FDB-73 publishes the three hand results, a follow-up may turn `keep_if` into a rule. W9 says that rule needs RMSE, bias, and per-GW counts, not MAE alone. No ε in the P1+P2 PR.
+4. **Written** `keep` / `tune` / `drop` for improvement levers follows the interim rule in [`eval-protocol.md`](eval-protocol.md) §2 (non-overlapping confirmation window, SPA/MCS budget, RMSE headline). Auto-verdict stays `inconclusive` until numeric `keep_if` lands. Defcon-rate and within-horizon price keeps are **provisional** under that protocol.
 5. Decisions mean-PPG above `max_mean_ppg` → `drop`, and only when that suite ran.
 6. Component slot metric gates xPts `keep` once P3 exists. An xPts-only win with a worse slot metric is `tune`.
 7. Quality numbers stay out of pytest.

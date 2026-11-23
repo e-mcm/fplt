@@ -131,6 +131,26 @@ class HighsSolveOptions(BaseModel):
             accept_time_limit=False,
         )
 
+    @classmethod
+    def board_deterministic(cls) -> HighsSolveOptions:
+        """Return reproducible board knobs (no time limit, 1 thread, seed 0).
+
+        Chip / season-points boards use this so a second run on the same tip
+        and staged data yields identical totals (``docs/eval-protocol.md`` §5).
+        Live ``fplt plan`` keeps ``open_fpl_defaults`` so unattended solves
+        stay wall-clock bounded.
+        """
+        return cls(
+            time_limit=None,
+            mip_rel_gap=0.0,
+            output_flag=False,
+            presolve="on",
+            parallel="off",
+            threads=1,
+            random_seed=0,
+            accept_time_limit=False,
+        )
+
     def apply(self, solver: highspy.Highs) -> None:
         """Write these options onto ``solver``."""
         solver.setOptionValue("output_flag", self.output_flag)
