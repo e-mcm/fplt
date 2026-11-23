@@ -759,6 +759,10 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
 ## 14. Operator card
 
 ```text
+0. Plumbing PR ≠ done. Every new measurement / forecast plumbing land
+   (EvalSpec, fork, staged-table consumer, coverage gate) must kick off
+   promote-eval: development → confirmation → written keep/drop/tune.
+   Do not stop when the EvalSpec merges. See eval-protocol.md §7.
 1. Off state and on state are the two ModelSpecs. Production stays the one
    it already is. Fork the other. Never edit production YAML in place.
 2. configs/evals/<name>.yaml — question, one lever, orientation, coverage metric.
@@ -774,9 +778,11 @@ Copy these habits into the thin runner, without those dependencies: Evidently’
    That sets suites.decisions: true and needs tier S3+. Forecast claims leave
    decisions off. Decision-policy levers stay on fplt decisions --chip-board.
 6. Production change is a later PR. keep on an opt-out means "leave it on".
-   A dose on one window does not promote. Confirmation is a fresh window.
-   Commit the call to configs/evals/results/registry.yaml (+ audit.json);
-   provisional keeps set provisional: true until FDB-73 / confirmation policy.
+   A dose on one window does not promote. Confirmation is a fresh window
+   (and a fresh FPLT_DATA_DIR / empty ledger — shared ledgers contaminate
+   summary and HAC). Commit the call to configs/evals/results/registry.yaml
+   (+ audit.json); provisional keeps set provisional: true until FDB-73 /
+   confirmation policy. Registry keep ≠ PRODUCTION flip.
 7. Multi-arm championship / dose ranking:
      fplt bakeoff --bakeoff <name> --execute
        or: fplt bakeoff --models a b c --control a --season … --execute

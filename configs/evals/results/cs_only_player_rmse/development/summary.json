@@ -1,0 +1,148 @@
+{
+  "eval_name": "cs_only_player_rmse_ab",
+  "verdict": "inconclusive",
+  "summary": [
+    {
+      "model_id": "30367a901721a5d6",
+      "horizon": 1,
+      "target_season": "2024-25",
+      "rmse": 2.713904639831868,
+      "mae": 1.7583615871470302,
+      "spearman": 0.5491150592435564,
+      "top10_precision": 0.16999999999999998,
+      "brier_played": 0.16592470415611815,
+      "log_played": 0.5120285646341487,
+      "brier_60": 0.18000099741317754,
+      "log_60": 0.54412593298725,
+      "brier_goal": 0.06493686252028563,
+      "log_goal": 0.24007061917089698,
+      "brier_assist": 0.06390887364329763,
+      "log_assist": 0.25771975988534507,
+      "brier_cs": 0.11790748993021746,
+      "log_cs": 0.3889968563527104,
+      "brier_haul": 0.03046181196689387,
+      "log_haul": 0.14241448867967438,
+      "n": 6162,
+      "model_name": "dc_layered_v3",
+      "mode": "walk_forward"
+    },
+    {
+      "model_id": "b16a511a480735f5",
+      "horizon": 1,
+      "target_season": "2024-25",
+      "rmse": 2.712206633269568,
+      "mae": 1.7563784160986693,
+      "spearman": 0.550513366495463,
+      "top10_precision": 0.175,
+      "brier_played": 0.16596200206426487,
+      "log_played": 0.5120161165282977,
+      "brier_60": 0.1800012848247322,
+      "log_60": 0.5438244739203302,
+      "brier_goal": 0.06489157963972736,
+      "log_goal": 0.23967296004875913,
+      "brier_assist": 0.06386567743589744,
+      "log_assist": 0.25745169451459043,
+      "brier_cs": 0.11726581399707887,
+      "log_cs": 0.38706934152286016,
+      "brier_haul": 0.030466636845180143,
+      "log_haul": 0.13828137540997967,
+      "n": 6162,
+      "model_name": "dc_layered_cs_v1",
+      "mode": "walk_forward"
+    }
+  ],
+  "deltas": {
+    "rmse": 0.001698006562299792,
+    "mae": 0.0019831710483608767,
+    "brier_played": -3.7297908146716185e-05,
+    "brier_60": -2.874115546669387e-07,
+    "brier_goal": 4.528288055827279e-05,
+    "brier_assist": 4.319620740018959e-05,
+    "brier_cs": 0.0006416759331385885,
+    "brier_haul": -4.824878286274065e-06,
+    "log_played": 1.2448105850992874e-05,
+    "log_60": 0.00030145906691980695,
+    "log_goal": 0.00039765912213785004,
+    "log_assist": 0.0002680653707546332,
+    "log_cs": 0.0019275148298502631,
+    "log_haul": 0.004133113269694705,
+    "spearman": 0.0013983072519065942,
+    "top10_precision": 0.0050000000000000044,
+    "intervals": [
+      {
+        "metric": "rmse",
+        "position": null,
+        "n_gw": 20,
+        "mean": 0.001519833778646329,
+        "hac_se": 0.0008760730364957116,
+        "hac_pvalue": 0.08277173120119734,
+        "hac_ci": [
+          -0.00019723782071191082,
+          0.0032369053780045677
+        ],
+        "bootstrap_ci": [
+          -3.4073325849526605e-05,
+          0.00285493188275148
+        ],
+        "bootstrap_reps": 2000,
+        "bootstrap_seed": 0,
+        "entirely_bad": false
+      },
+      {
+        "metric": "mae",
+        "position": null,
+        "n_gw": 20,
+        "mean": 0.00205263718816594,
+        "hac_se": 0.000662025193426195,
+        "hac_pvalue": 0.0019316654991085854,
+        "hac_ci": [
+          0.0007550916521924342,
+          0.0033501827241394447
+        ],
+        "bootstrap_ci": [
+          0.0010042678677982335,
+          0.0031341184966390996
+        ],
+        "bootstrap_reps": 2000,
+        "bootstrap_seed": 0,
+        "entirely_bad": false
+      },
+      {
+        "metric": "spearman",
+        "position": null,
+        "n_gw": 20,
+        "mean": 0.0021195831921767714,
+        "hac_se": 0.00037767609331947717,
+        "hac_pvalue": 1.9980270074996513e-08,
+        "hac_ci": [
+          0.0013793516514488072,
+          0.0028598147329047348
+        ],
+        "bootstrap_ci": [
+          0.001372099030666852,
+          0.002840001912350669
+        ],
+        "bootstrap_reps": 2000,
+        "bootstrap_seed": 0,
+        "entirely_bad": false
+      }
+    ],
+    "equivalence_interval_drop": false,
+    "per_gw_wins": {
+      "control": 7,
+      "treatment": 13,
+      "ties": 0
+    },
+    "per_gw_wins_mae": {
+      "control": 5,
+      "treatment": 15,
+      "ties": 0
+    }
+  },
+  "component_deltas": {
+    "logloss_delta": 1.6577440648646302e-05,
+    "rps_delta": 2.916488204662837e-06,
+    "brier_cs_home_delta": 0.004896909132791616,
+    "brier_cs_away_delta": 0.006148180882303733
+  }
+}
