@@ -279,7 +279,15 @@ def test_truth_rates_from_actuals_and_chip_arm_policies() -> None:
     )
     assert [p.policy_id for p in policies] == ["toy", "toy::chip_optimised"]
     assert [p.chip_arm for p in policies] == ["off", "optimised"]
+    assert all(p.force_play for p in policies)
     assert chip_arm_control_pairs(policies) == [("toy", "toy::chip_optimised")]
+    off_policies = chip_arm_policies(
+        preds,
+        base_model_id="toy",
+        arms=("optimised",),
+        force_play=False,
+    )
+    assert off_policies[0].force_play is False
 
 
 def test_chip_arms_require_fixtures() -> None:
@@ -552,6 +560,110 @@ def test_run_chip_arm_sim_season_loads_ledger_and_delegates(tmp_path) -> None:
     assert kwargs["fixtures"].equals(fixtures)
     policies = eval_mock.call_args.args[1]
     assert [p.chip_arm for p in policies] == ["off", "optimised"]
+    assert all(p.force_play for p in policies)
+
+
+def test_run_chip_arm_sim_season_forwards_force_play(tmp_path) -> None:
+    """``force_play=False`` lands on every chip-arm DecisionPolicy."""
+    from fplt.backtest.simulated_season import (
+        SimulatedSeasonReport,
+        run_chip_arm_sim_season,
+    )
+
+    fake_report = SimulatedSeasonReport(
+        paths=_empty_season_paths_frame(),
+        diffs=_empty_diffs_frame(),
+        n_paths=1,
+        seed=0,
+        with_attainable=False,
+    )
+    preds = pl.DataFrame(
+        {
+            "as_of_gw": [1],
+            "target_gw": [1],
+            "player_key": [1],
+            "xpts": [2.0],
+        }
+    )
+    actuals = pl.DataFrame(
+        {
+            "gw": [1],
+            "player_key": [1],
+            "actual_pts": [3],
+            "actual_minutes": [90],
+        }
+    )
+
+    class _Spec:
+        model_id = "mid"
+
+    class _Store:
+        def read(self, _name: str) -> pl.DataFrame:
+            return pl.DataFrame(
+                {
+                    "season": ["2025-26"],
+                    "gw": [1],
+                    "team_h_key": [1],
+                    "team_a_key": [2],
+                }
+            )
+
+    with (
+        patch(
+            "fplt.backtest.simulated_season.load_model_specs",
+            return_value={"rolling_mean_v1": _Spec()},
+        ),
+        patch(
+            "fplt.backtest.simulated_season.load_squad_state",
+            return_value=_state(),
+        ),
+        patch("fplt.backtest.simulated_season.DataStore", return_value=_Store()),
+        patch("fplt.backtest.simulated_season.PITData") as pit_cls,
+        patch(
+            "fplt.backtest.simulated_season.candidates_as_of",
+            return_value=pl.DataFrame(
+                {
+                    "player_key": [1],
+                    "position": ["MID"],
+                    "team_key": [1],
+                    "price": [50],
+                }
+            ),
+        ),
+        patch(
+            "fplt.backtest.simulated_season.read_predictions",
+            return_value=pl.DataFrame(),
+        ),
+        patch(
+            "fplt.backtest.simulated_season.prediction_rows_from_ledger",
+            return_value=preds,
+        ),
+        patch(
+            "fplt.backtest.simulated_season.actual_rows_from_ledger",
+            return_value=actuals,
+        ),
+        patch(
+            "fplt.backtest.simulated_season.run_simulated_season_eval",
+            return_value=fake_report,
+        ) as eval_mock,
+    ):
+        pit_cls.return_value.view.return_value = object()
+        run_chip_arm_sim_season(
+            tmp_path,
+            "rolling_mean_v1",
+            "2025-26",
+            1,
+            1,
+            3,
+            arms=("optimised",),
+            n_paths=1,
+            seed=0,
+            force_play=False,
+        )
+    policies = eval_mock.call_args.args[1]
+    assert len(policies) == 1
+    assert policies[0].force_play is False
+    assert policies[0].chip_arm == "optimised"
 
 
 def test_run_chip_arm_sim_season_rejects_empty_actuals(tmp_path) -> None:
@@ -622,6 +734,118 @@ def test_run_chip_arm_sim_season_rejects_empty_actuals(tmp_path) -> None:
             n_paths=1,
             seed=0,
         )
+
+
+def test_policy_force_play_and_horizon_forwarded_to_simulate() -> None:
+    """Per-policy force_play / horizon override the eval defaults (case E)."""
+    candidates, rates, preds_a, preds_b = _tiny_season()
+    seen: list[dict[str, object]] = []
+
+    def _spy(*_args: object, **kwargs: object) -> pl.DataFrame:
+        seen.append(
+            {
+                "model_id": kwargs["model_id"],
+                "horizon": kwargs["horizon"],
+                "force_play": kwargs["force_play"],
+            }
+        )
+        return pl.DataFrame(
+            schema={
+                "model_id": pl.Utf8(),
+                "season": pl.Utf8(),
+                "gw": pl.Int64(),
+                "player_key": pl.Int64(),
+                "points": pl.Int64(),
+                "hits": pl.Int64(),
+                "chip": pl.Utf8(),
+            }
+        )
+
+    policies = [
+        DecisionPolicy(
+            "control_h3_force",
+            preds_a,
+            chip_arm="off",
+            force_play=True,
+            horizon=3,
+        ),
+        DecisionPolicy(
+            "candidate_h8_noforce",
+            preds_b,
+            chip_arm="off",
+            force_play=False,
+            horizon=8,
+        ),
+    ]
+    with patch(
+        "fplt.backtest.simulated_season.simulate_decisions",
+        side_effect=_spy,
+    ):
+        report = run_simulated_season_eval(
+            candidates,
+            policies,
+            _state(),
+            season="2024-25",
+            gameweeks=[1, 2],
+            horizon=1,
+            n_paths=1,
+            seed=0,
+            truth_rates=rates,
+        )
+    assert report.n_paths == 1
+    by_id = {row["model_id"]: row for row in seen}
+    assert by_id["control_h3_force"]["horizon"] == 3
+    assert by_id["control_h3_force"]["force_play"] is True
+    assert by_id["candidate_h8_noforce"]["horizon"] == 8
+    assert by_id["candidate_h8_noforce"]["force_play"] is False
+
+
+def test_sim_season_cli_passes_no_force_play(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.backtest.simulated_season import SimulatedSeasonReport
+    from fplt.cli import main
+    from fplt.settings import get_settings
+
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    fake = SimulatedSeasonReport(
+        paths=_empty_season_paths_frame(),
+        diffs=_empty_diffs_frame(),
+        n_paths=1,
+        seed=0,
+        with_attainable=False,
+    )
+    with (
+        patch(
+            "fplt.cli.run_chip_arm_sim_season",
+            return_value=fake,
+        ) as run_mock,
+    ):
+        try:
+            main(
+                [
+                    "sim-season",
+                    "--season",
+                    "2025-26",
+                    "--from-gw",
+                    "1",
+                    "--to-gw",
+                    "2",
+                    "--horizon",
+                    "3",
+                    "--n-paths",
+                    "1",
+                    "--models",
+                    "rolling_mean_v1",
+                    "--chip-arms",
+                    "optimised",
+                    "--no-force-play",
+                ]
+            )
+        finally:
+            get_settings.cache_clear()
+    assert run_mock.call_args.kwargs["force_play"] is False
 
 
 def test_sim_season_cli_rejects_empty_arms(tmp_path, monkeypatch) -> None:

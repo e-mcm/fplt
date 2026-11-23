@@ -62,6 +62,10 @@ class DecisionPolicy:
     ``chip_arm`` defaults to chips-off. Non-off arms use the same windows /
     scheduler contract as the C6 chip decision board
     (``simulate_decisions(..., chip_arm=...)``).
+
+    ``force_play`` is forwarded to the optimised chip scheduler (default on).
+    ``horizon`` overrides the eval-level look-ahead when set — needed to CRN-
+    compare H=3 force-on vs H=8 force-off in one N6 run (promote case E).
     """
 
     policy_id: str
@@ -69,6 +73,8 @@ class DecisionPolicy:
     chip_arm: ChipArm = "off"
     chip_windows: ChipUseWindows | None = None
     chip_rules_season: str | None = None
+    force_play: bool = True
+    horizon: int | None = None
 
 
 @dataclass(frozen=True)
@@ -321,6 +327,7 @@ def chip_arm_policies(
     arms: Sequence[ChipArm] = _CHIP_ARMS,
     chip_rules_season: str | None = None,
     chip_windows: Mapping[ChipArm, ChipUseWindows] | None = None,
+    force_play: bool = True,
 ) -> list[DecisionPolicy]:
     """Build decision policies for the C6 chip arms on shared predictions.
 
@@ -334,6 +341,7 @@ def chip_arm_policies(
         chip_rules_season: Chip-rules year for non-off arms.
         chip_windows: Optional precomputed windows per arm (otherwise
             rule-based builds landmarks and optimised schedules weekly).
+        force_play: Forwarded to optimised arms (default true; ablation off).
 
     Returns:
         One ``DecisionPolicy`` per arm.
@@ -358,6 +366,7 @@ def chip_arm_policies(
                 chip_arm=arm,
                 chip_windows=windows,
                 chip_rules_season=chip_rules_season,
+                force_play=force_play,
             )
         )
     return policies
@@ -408,7 +417,8 @@ def run_simulated_season_eval(
         state: Starting squad (typically empty owned, bank 1000).
         season: Season label written onto decision rows.
         gameweeks: Deadlines to play, in order.
-        horizon: Planner look-ahead.
+        horizon: Default planner look-ahead; each policy may override via
+            ``DecisionPolicy.horizon``.
         n_paths: Required when drawing from ``truth_rates``.
         seed: Master seed for path draws.
         truth_rates: Held-out intensities (``TruthRateSchema``).
@@ -481,6 +491,7 @@ def run_simulated_season_eval(
             else:
                 attainable = int(oracle_summary["total_points"][0])
         for policy in policies:
+            policy_horizon = horizon if policy.horizon is None else policy.horizon
             decisions = simulate_decisions(
                 candidates,
                 policy.predictions,
@@ -489,11 +500,12 @@ def run_simulated_season_eval(
                 model_id=policy.policy_id,
                 season=season,
                 gameweeks=weeks,
-                horizon=horizon,
+                horizon=policy_horizon,
                 chip_arm=policy.chip_arm,
                 chip_rules_season=policy.chip_rules_season,
                 chip_windows=policy.chip_windows,
                 fixtures=fixtures,
+                force_play=policy.force_play,
             )
             summary = summarise_decisions(decisions)
             total = int(summary["total_points"][0]) if not summary.is_empty() else 0
@@ -535,6 +547,7 @@ def run_chip_arm_sim_season(
     n_paths: int = 5,
     seed: int = 0,
     with_attainable: bool = False,
+    force_play: bool = True,
 ) -> SimulatedSeasonReport:
     """Run chip-arm simulated-season SE from staged data + the prediction ledger.
 
@@ -554,6 +567,8 @@ def run_chip_arm_sim_season(
         n_paths: Monte Carlo path count.
         seed: Master draw seed.
         with_attainable: Optional N5 share SE (oracle remains chips-off).
+        force_play: Optimised-arm half-window packing (default true; CLI
+            ``--no-force-play`` sets false). Does not flip the live default.
 
     Returns:
         ``SimulatedSeasonReport`` with path totals and paired SEs.
@@ -596,14 +611,17 @@ def run_chip_arm_sim_season(
         base_model_id=spec.model_id,
         arms=arms,
         chip_rules_season=rules_season,
+        force_play=force_play,
     )
     logger.info(
-        "chip-arm sim-season model=%s season=%s gw=%s-%s arms=%s n_paths=%s",
+        "chip-arm sim-season model=%s season=%s gw=%s-%s arms=%s "
+        "force_play=%s n_paths=%s",
         model_name,
         season,
         from_gw,
         to_gw,
         list(arms),
+        force_play,
         n_paths,
     )
     return run_simulated_season_eval(

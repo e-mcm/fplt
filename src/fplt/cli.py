@@ -246,6 +246,15 @@ def main(argv: list[str] | None = None) -> None:
             "Ignored when --chip-arm=off or with --decisions"
         ),
     )
+    plan.add_argument(
+        "--no-force-play",
+        action="store_true",
+        help=(
+            "Disable half-window force-packing in the optimised chip "
+            "scheduler (ablation; default keeps force-play on). Ignored "
+            "when --chip-arm is not optimised or with --decisions"
+        ),
+    )
     explain = sub.add_parser(
         "explain",
         parents=[log_flags],
@@ -443,6 +452,16 @@ def main(argv: list[str] | None = None) -> None:
         "--with-attainable",
         action="store_true",
         help="Also report share-of-attainable SEs (N5 chips-off oracle per path)",
+    )
+    sim_season.add_argument(
+        "--no-force-play",
+        action="store_true",
+        help=(
+            "Disable half-window force-packing in the optimised chip "
+            "scheduler (ablation; default keeps force-play on). Same-H "
+            "force ablation; for H×force CRN pairs (promote case E) build "
+            "two DecisionPolicy rows with per-policy horizon/force_play"
+        ),
     )
     eval_components = sub.add_parser(
         "eval-components",
@@ -1296,6 +1315,7 @@ def _plan(args: argparse.Namespace) -> None:
             squad=squad,
             chip_arm=args.chip_arm,
             chip_rules_season=args.chip_rules_season,
+            force_play=not bool(args.no_force_play),
         )
     except PlanExistsError as exc:
         print(exc.report, end="")
@@ -1590,6 +1610,7 @@ def _sim_season(args: argparse.Namespace) -> None:
                 n_paths=int(args.n_paths),
                 seed=int(args.seed),
                 with_attainable=bool(args.with_attainable),
+                force_play=not bool(args.no_force_play),
             )
             print(f"## model={model_name}")
             print(format_simulated_season_report(report))

@@ -245,6 +245,34 @@ def test_plan_cli_passes_chip_arm_override(
     finally:
         get_settings.cache_clear()
     assert run.call_args.kwargs["chip_arm"] == "off"
+    assert run.call_args.kwargs["force_play"] is True
+
+
+def test_plan_cli_passes_no_force_play(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
+    get_settings.cache_clear()
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    monkeypatch.setattr("fplt.cli.run_plan", run)
+    try:
+        main(
+            [
+                "plan",
+                "--model",
+                "rolling_mean_v1",
+                "--season",
+                "2024-25",
+                "--gw",
+                "1",
+                "--no-force-play",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+    assert run.call_args.kwargs["force_play"] is False
+    assert run.call_args.kwargs["chip_arm"] == DEFAULT_LIVE_CHIP_ARM
 
 
 def test_plan_rebuild_clears_owned_and_folds_selling_prices(

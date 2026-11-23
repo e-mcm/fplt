@@ -179,7 +179,10 @@ chip-decision-board:
 
 # Chip-arm simulated-season SE smoke (N6). Short GW window × few CRN paths —
 # not a full 38-GW × large-N board. Needs prediction ledger with actuals and
-# --steps matching HORIZON. Does not flip DEFAULT_PLAN_HORIZON or live chips.
+# --steps matching HORIZON. Does not flip DEFAULT_PLAN_HORIZON or live chips /
+# force_play defaults. Same-H force ablation: ARGS='--chip-arms optimised
+# --no-force-play'. Promote case E (H=3 force-on vs H=8 force-off) needs two
+# DecisionPolicy rows in one run_simulated_season_eval — see design §7.4 N6.
 # Usage: make sim-season-smoke SEASON=2025-26
 # Optional: FROM_GW=1 TO_GW=3 N_PATHS=3 SEED=0 MODELS='dc_layered_v2'
 #           RULES_SEASON=2025-26 HORIZON=3 ARGS='--chip-arms off optimised'
