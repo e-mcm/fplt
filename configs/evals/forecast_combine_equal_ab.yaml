@@ -4,8 +4,8 @@
 name: forecast_combine_equal_ab
 kind: model
 question: >
-  Does equal-weight blending of dc_layered_v2 + lgbm_direct_v1
-  (forecast_combine_equal_v1) beat dc_layered_v2 on player RMSE?
+  Does equal-weight blending of dc_layered_v3 + lgbm_direct_v1
+  (forecast_combine_equal_v1) beat dc_layered_v3 on player RMSE?
 description: >
   ModelSpec promote for forecast_combine_equal_v1. Cite 2024-25 GW1–20
   bakeoff RMSE; confirmation window is 2025-26 GW1–20. Decisions at H=3
@@ -21,12 +21,12 @@ change:
   features: []
   allow_multi_lever: false
   diff:
-    - "kind: dc_layered → forecast_combine (equal blend of dc_layered_v2 + lgbm_direct_v1)"
+    - "kind: dc_layered → forecast_combine (equal blend of dc_layered_v3 + lgbm_direct_v1)"
   notes: >
     OpenFPL omitted until Deep/PPDA. Position-weighted blend is not this
     lever. PRODUCTION_MODELS flip only after keep + H=3 decision gates.
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: forecast_combine_equal_v1
 
 window:
@@ -50,5 +50,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "Forecast combine equal vs dc_layered_v2"
+  title: "Forecast combine equal vs dc_layered_v3"
   store_doc: forecast-combine-promote.md

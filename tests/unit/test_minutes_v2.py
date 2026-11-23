@@ -493,7 +493,7 @@ def _utc(frame: pl.DataFrame) -> pl.DataFrame:
 def test_availability_overlay_forks_load() -> None:
     """Board forks flip one minutes flag each; production stays gated."""
     specs = load_model_specs()
-    parent = specs["dc_layered_v2"]
+    parent = specs["dc_layered_v3"]
     noavail = specs["dc_layered_noavail_v1"]
     injuries = specs["dc_layered_injuries_v1"]
     parent_gate = parent.components["minutes"].params.get("use_availability_gate", True)

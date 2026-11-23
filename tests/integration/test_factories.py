@@ -67,6 +67,7 @@ def test_defs_registers_factory_assets_and_lineage_job() -> None:
         "ep_next_v1",
         "dc_layered_v1",
         "dc_layered_v2",
+        "dc_layered_v3",
         "dc_layered_odds_v1",
         "lgbm_direct_v1",
         "openfpl_v1",

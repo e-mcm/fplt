@@ -51,7 +51,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 
 **Separate the forecast from the optimiser.** Run a 2×2 swap: your forecasts vs the benchmark's, each through your optimiser and through a reference optimiser (e.g. FPL-Optimization-Tools). Otherwise you can't tell which part earns the gain.
 
-**North-star score: 2400 season points** on full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v2` unless noted). Current boards often land ~1900–2300 depending on season/arm; **2400 is the stretch target**, not a claim we already hit it. This is an absolute bar for decision sims, not a replacement for A/B promote calls or the Tier A–C relative aims.
+**North-star score: 2400 season points** on full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v3` unless noted). Current boards often land ~1900–2300 depending on season/arm; **2400 is the stretch target**, not a claim we already hit it. This is an absolute bar for decision sims, not a replacement for A/B promote calls or the Tier A–C relative aims.
 
 **Metrics**
 

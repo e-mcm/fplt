@@ -3,11 +3,11 @@ name: cs_only_market_lambda_ab
 kind: data
 question: >
   Does borrowing the market's zero-goal (clean-sheet) margin from
-  prematch_scheduled odds at strength 0.5 improve CS Brier vs dc_layered_v2
+  prematch_scheduled odds at strength 0.5 improve CS Brier vs dc_layered_v3
   while keeping DC's 1X2 under strict PIT?
 description: >
   CS-only market λ (market_cs_strength=0.5); control keeps production
-  dc_layered_v2. Gate on prematch_scheduled deadline coverage.
+  dc_layered_v3. Gate on prematch_scheduled deadline coverage.
 
 change:
   lever: data_table
@@ -24,7 +24,7 @@ change:
     prematch_scheduled under strict PIT; closing proxy left off (DC default).
     Full-strength λ / 1X2 blends stay off. Strength below 1 by design.
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: dc_layered_cs_v1
 
 window:
@@ -53,5 +53,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "CS-only market λ vs dc_layered_v2 (prematch, strict PIT)"
+  title: "CS-only market λ vs dc_layered_v3 (prematch, strict PIT)"
   store_doc: cs-only-market-lambda-eval.md

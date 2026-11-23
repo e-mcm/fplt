@@ -1,6 +1,6 @@
-# Same composition as dc_layered_v2; only the score component adds a market prior.
+# Same composition as dc_layered_v3; only the score component adds a market prior.
 name: dc_layered_odds_v1
-extends: dc_layered_v2
+extends: dc_layered_v3
 overrides:
   components:
     score:

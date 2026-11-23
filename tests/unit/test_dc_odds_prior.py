@@ -29,7 +29,7 @@ def test_odds_specs_are_registered_without_changing_vanilla() -> None:
     specs = load_model_specs()
     assert "dixon_coles_odds_v1" in specs
     assert "dc_layered_odds_v1" in specs
-    vanilla_score = specs["dc_layered_v2"].components["score"].params
+    vanilla_score = specs["dc_layered_v3"].components["score"].params
     assert "market_prior_strength" not in specs["dixon_coles_v2"].params
     assert "market_prior_strength" not in vanilla_score
     assert specs["dixon_coles_odds_v1"].params["market_prior_strength"] == 1.0
@@ -278,7 +278,7 @@ def test_dixon_coles_1x2_and_layered_specs_registered() -> None:
     assert layered.components["score"].params["market_1x2_strength"] == 1.0
     assert layered.components["score"].params["use_closing_proxy"] is True
     assert (
-        "market_prior_strength" not in specs["dc_layered_v2"].components["score"].params
+        "market_prior_strength" not in specs["dc_layered_v3"].components["score"].params
     )
 
 
@@ -297,7 +297,7 @@ def test_dixon_coles_1x2_prematch_and_layered_specs_registered() -> None:
     # Explicit false overrides MatchScoreModel's default (true when 1x2 on).
     assert nested.params["use_closing_proxy"] is False
     assert (
-        "market_1x2_strength" not in specs["dc_layered_v2"].components["score"].params
+        "market_1x2_strength" not in specs["dc_layered_v3"].components["score"].params
     )
 
 
@@ -332,7 +332,7 @@ def test_dixon_coles_cs_and_layered_specs_registered() -> None:
     # Layered fork omits use_closing_proxy so one-lever diffs stay on
     # market_cs_strength alone; MatchScoreModel still defaults it off.
     assert "use_closing_proxy" not in score.params
-    assert "market_cs_strength" not in specs["dc_layered_v2"].components["score"].params
+    assert "market_cs_strength" not in specs["dc_layered_v3"].components["score"].params
 
 
 def test_market_cs_strength_zero_matches_vanilla(tmp_path: Path) -> None:

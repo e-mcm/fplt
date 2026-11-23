@@ -339,11 +339,35 @@ def summarise_decisions(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def model_board_label(
+    model_id: str,
+    *,
+    model_name: str | None = None,
+) -> str:
+    """Stable board label: YAML name plus ``model_id`` hash when known.
+
+    Boards must not rely on the YAML name alone — editing a released
+    ModelSpec in place (e.g. pre-4d715b5 ``dc_layered_v2``) changes the
+    hash while keeping the name. Prefer ``name (model_id)``.
+
+    Args:
+        model_id: Spec hash (or chip-suffixed ledger id).
+        model_name: YAML ``ModelSpec.name`` when known.
+
+    Returns:
+        ``"{name} ({model_id})"`` when ``model_name`` is set, else ``model_id``.
+    """
+    if model_name:
+        return f"{model_name} ({model_id})"
+    return model_id
+
+
 def format_decision_scoreboard(summary: pl.DataFrame) -> str:
     """Render a markdown table of season totals ranked by realised points.
 
     When ``attainable_points`` / ``share_of_attainable`` are present (from
-    ``enrich_decision_summary``), those columns are appended.
+    ``enrich_decision_summary``), those columns are appended. When
+    ``model_name`` is present, the Model column shows ``name (model_id)``.
     """
     if summary.is_empty():
         return "_No decision rows to score._"
@@ -363,9 +387,14 @@ def format_decision_scoreboard(summary: pl.DataFrame) -> str:
     for index, row in enumerate(summary.iter_rows(named=True), start=1):
         gameweeks = int(row["gameweeks"])
         mean = float(row["total_points"]) / gameweeks if gameweeks else 0.0
+        name = row.get("model_name")
+        label = model_board_label(
+            str(row["model_id"]),
+            model_name=str(name) if name is not None else None,
+        )
         cells = [
             str(index),
-            str(row["model_id"]),
+            label,
             str(row["season"]),
             str(row["total_points"]),
             str(gameweeks),

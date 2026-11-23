@@ -20,12 +20,12 @@ change:
     - "components.minutes.params.use_availability_gate: false → true"
   notes: >
     Control dc_layered_noavail_v1 (minutes twin empirical_minutes_v2_noavail).
-    Treatment dc_layered_v2 (default true). Window must be snapshot-backed
+    Treatment dc_layered_v3 (default true). Window must be snapshot-backed
     (source=fpl_api). Vaastav status is always "a" with null chance/news, so
     arms would tie there.
 
 control: dc_layered_noavail_v1
-treatment: dc_layered_v2
+treatment: dc_layered_v3
 
 window:
   seasons: ["2026-27"]

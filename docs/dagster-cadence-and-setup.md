@@ -31,7 +31,7 @@ Two layers: **remote capture** (GitHub Actions → `snapshots` branch) and **loc
 | `pre_deadline_sensor` | **15 min** | `pre_deadline` → plan + `benchmark_archive` | Next deadline **within 3 hours** and plan and/or `benchmark_projections` still missing | Near-deadline plan + archive `ep_next`/OpenFPL |
 | `notify_run_failure` | on failure | n/a | Any run fails and `FPLT_NTFY_URL` is set | Ops alert only |
 
-Live models + planner horizon: `configs/ops/production.yaml` via `fplt.automation.production.load_production_ops` (defaults today: `dc_layered_v2`, horizon **3**). Override without a PR: `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` (env wins). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML for imports; prefer `load_production_ops()` so overrides apply. CLI / `make plan` still use `DEFAULT_PLAN_HORIZON` in `fplt.optimise.plan`.
+Live models + planner horizon: `configs/ops/production.yaml` via `fplt.automation.production.load_production_ops` (defaults today: `dc_layered_v3`, horizon **3**). Override without a PR: `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` (env wins). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML for imports; prefer `load_production_ops()` so overrides apply. CLI / `make plan` still use `DEFAULT_PLAN_HORIZON` in `fplt.optimise.plan`.
 
 ### Dagster jobs without sensors (manual UI / CLI)
 

@@ -44,15 +44,15 @@ def test_defcon_rate_ab_is_one_param_family() -> None:
     specs = load_model_specs()
     spec = load_eval_spec("defcon_rate_ab")
     assert spec.control == "dc_layered_defcon_mean_v1"
-    assert spec.treatment == "dc_layered_v2"
-    assert specs["dc_layered_v2"].components["other"].params["defcon_mode"] == "rate"
+    assert spec.treatment == "dc_layered_v3"
+    assert specs["dc_layered_v3"].components["other"].params["defcon_mode"] == "rate"
     assert (
         specs["dc_layered_defcon_mean_v1"].components["other"].params["defcon_mode"]
         == "mean"
     )
     assert (
         _check_one_lever(
-            spec, specs["dc_layered_defcon_mean_v1"], specs["dc_layered_v2"]
+            spec, specs["dc_layered_defcon_mean_v1"], specs["dc_layered_v3"]
         )
         == []
     )

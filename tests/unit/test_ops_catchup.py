@@ -26,7 +26,7 @@ def test_format_ops_catchup_status_lists_planned_and_pending() -> None:
             api_football_captures=4,
             planned=[GWKey("2024-25", 1)],
             still_pending=[GWKey("2024-25", 2)],
-            models=["dc_layered_v2"],
+            models=["dc_layered_v3"],
             horizon=3,
         )
     )
@@ -34,7 +34,7 @@ def test_format_ops_catchup_status_lists_planned_and_pending() -> None:
     assert "staged snapshots:  1" in text
     assert "understat matches: 3" in text
     assert "api_football:      4" in text
-    assert "dc_layered_v2 / H=3" in text
+    assert "dc_layered_v3 / H=3" in text
     assert "planned this run:  2024-25 gw1" in text
     assert "still pending:     2024-25 gw2" in text
     assert text.endswith("\n")
@@ -253,7 +253,7 @@ def test_cli_ops_catchup_prints_status_and_auth(
         api_football_captures=0,
         planned=[],
         still_pending=[],
-        models=["dc_layered_v2"],
+        models=["dc_layered_v3"],
         horizon=3,
     )
     monkeypatch.setattr(

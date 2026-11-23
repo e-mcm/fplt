@@ -34,12 +34,12 @@ _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
 _ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_production_models_are_dc_layered_v2_at_default_horizon() -> None:
+def test_production_models_are_dc_layered_v3_at_default_horizon() -> None:
     """Unattended plans use the control model at the live planner horizon."""
     ops = load_production_ops()
-    assert ops.models == ["dc_layered_v2"]
+    assert ops.models == ["dc_layered_v3"]
     assert ops.plan_horizon == 3
-    assert PRODUCTION_MODELS == ["dc_layered_v2"]
+    assert PRODUCTION_MODELS == ["dc_layered_v3"]
     assert DEFAULT_PLAN_HORIZON == 3
     assert catch_up.__defaults__ is not None
     assert catch_up.__defaults__[-1] is None

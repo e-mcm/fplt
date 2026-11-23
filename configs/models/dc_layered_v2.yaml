@@ -1,3 +1,6 @@
+# Frozen mean-wire layered stack (pre-defcon-rate / pre-4d715b5 identity).
+# Production moved to dc_layered_v3 after FDB-211 keep (FDB-226).
+# Do not edit in place — bump a new version for production changes.
 name: dc_layered_v2
 kind: dc_layered
 params:
@@ -45,15 +48,11 @@ components:
       penalty_bonus: 0.3
       xg_blend: 0.7
   other:
-    # FDB-211 keep: Poisson P(award)|minutes,position,rate for DC.
-    # Released other_player_v1.yaml stays on mean; opt-out fork
-    # dc_layered_defcon_mean_v1 restores the shrunk 0/2 wire.
-    name: other_player_defcon_rate_v1
+    name: other_player_v1
     kind: other_player
     params:
       window: 10
       shrinkage: 5
       bps_bonus_weight: 0.5
-      defcon_mode: rate
 refit: every_gw
 seed: 0

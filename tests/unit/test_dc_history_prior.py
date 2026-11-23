@@ -35,7 +35,7 @@ def test_history_specs_are_registered_without_changing_vanilla() -> None:
     assert layered.name == "dixon_coles_history_v1"
     assert layered.params["market_prior_source"] == "history"
     assert (
-        "market_prior_source" not in specs["dc_layered_v2"].components["score"].params
+        "market_prior_source" not in specs["dc_layered_v3"].components["score"].params
     )
 
 

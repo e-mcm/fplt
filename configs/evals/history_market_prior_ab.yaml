@@ -1,4 +1,4 @@
-# History rating prior (feature-eval-pipeline §5.1) vs vanilla dc_layered_v2.
+# History rating prior (feature-eval-pipeline §5.1) vs vanilla dc_layered_v3.
 # Championship bakeoff was descriptive only — this EvalSpec is the promote path.
 # odds_history_join coverage is not implemented yet; run ungated and audit
 # past-close joins in the recommendation (or land the gate in a follow-up PR).
@@ -6,9 +6,9 @@ name: history_market_prior_ab
 kind: config
 question: >
   Does a Gaussian history rating prior from past PIT-visible closes
-  (market_prior_source=history) improve player RMSE vs dc_layered_v2?
+  (market_prior_source=history) improve player RMSE vs dc_layered_v3?
 description: >
-  Deadline-safe history prior. Control keeps production dc_layered_v2
+  Deadline-safe history prior. Control keeps production dc_layered_v3
   (all market strengths off). Treatment dc_layered_history_v1.
 
 change:
@@ -29,7 +29,7 @@ change:
     on target fixtures. Coverage gate odds_history_join TBD — min_coverage
     left null until that metric lands.
 
-control: dc_layered_v2
+control: dc_layered_v3
 treatment: dc_layered_history_v1
 
 window:
@@ -54,5 +54,5 @@ gates:
     mean_ppg_gate_fail: true
 
 report:
-  title: "History rating prior vs dc_layered_v2"
+  title: "History rating prior vs dc_layered_v3"
   store_doc: null

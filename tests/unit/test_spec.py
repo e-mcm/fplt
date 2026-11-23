@@ -17,13 +17,15 @@ from fplt.models.spec import (
 )
 from fplt.types import GWKey
 
-# Extends-fork model_ids for package 0.1.0 (parent dc_layered_v2 params).
+# Extends-fork model_ids for package 0.1.0 (parent dc_layered_v3 params).
 # Update when intentional parent param changes land (e.g. hard_starters).
+# FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes unchanged.
 _FORK_MODEL_IDS = {
     "dc_layered_nopens_v1": "bf2b8802ee1d6f8d",
     "dc_layered_nodefcon_v1": "c14fad44539f9ecd",
     "dc_layered_odds_v1": "887c384a79a2232f",
 }
+_PRE_DEFCON_RATE_V2_MODEL_ID = "b12aad1575ff0d34"
 
 
 def test_loaded_spec_matches_the_object_and_includes_package_version(
@@ -134,9 +136,17 @@ def test_extends_forks_preserve_pre_migration_model_ids() -> None:
         assert specs[name].model_id == expected, name
 
 
+def test_dc_layered_v2_keeps_pre_defcon_rate_model_id() -> None:
+    """Boards from before 4d715b5 used this hash under the name dc_layered_v2."""
+    specs = load_model_specs()
+    assert specs["dc_layered_v2"].model_id == _PRE_DEFCON_RATE_V2_MODEL_ID
+    assert specs["dc_layered_v3"].model_id != _PRE_DEFCON_RATE_V2_MODEL_ID
+    assert specs["dc_layered_v3"].components["other"].params["defcon_mode"] == "rate"
+
+
 def test_extends_forks_match_manual_full_merge() -> None:
     specs = load_model_specs()
-    parent = specs["dc_layered_v2"].model_dump(mode="json")
+    parent = specs["dc_layered_v3"].model_dump(mode="json")
     expected = {
         "dc_layered_nopens_v1": deep_merge(
             parent,

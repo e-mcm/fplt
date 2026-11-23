@@ -1,7 +1,7 @@
 name: dc_layered_1x2_v1
 kind: dc_layered
 params:
-  # Same stack as dc_layered_v2; score component blends 1X2 toward de-vigged
+  # Same stack as dc_layered_v3; score component blends 1X2 toward de-vigged
   # closing books. Does not change the production default dc_layered_v2.
   n_sims: 10000
   own_goal_weight: 0.05

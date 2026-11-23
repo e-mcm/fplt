@@ -29,14 +29,16 @@ def test_default_models_are_the_core_set() -> None:
     assert resolve_eval_models("2024-25") == list(CORE_MODELS)
 
 
-def test_core_models_include_dc_layered_v2() -> None:
+def test_core_models_include_dc_layered_v3() -> None:
     """Default ``fplt compare`` / eval-board set includes the live control."""
     assert "dc_layered_v2" in CORE_MODELS
+    assert "dc_layered_v3" in CORE_MODELS
     assert CORE_MODELS == (
         "rolling_mean_v1",
         "ep_next_v1",
         "dc_layered_v1",
         "dc_layered_v2",
+        "dc_layered_v3",
         "lgbm_direct_v1",
     )
 
