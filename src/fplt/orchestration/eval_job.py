@@ -41,6 +41,14 @@ from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.settings import get_settings
 from fplt.types import GWKey
+from fplt.utils.timing import (
+    TimingSession,
+    binds_timing_artifacts,
+    format_kind_summary,
+    timed_phase,
+    timing_session,
+    write_timing_record,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +87,7 @@ class EvalBoardConfig(Config):
     steps: int = 1
 
 
+@binds_timing_artifacts()
 def run_eval_board(
     data_dir: Path,
     season: str,
@@ -138,35 +147,48 @@ def run_eval_board(
     others = [name for name in chosen if name != OPENFPL_MODEL]
     include_openfpl = OPENFPL_MODEL in chosen
     ran: list[ModelSpec] = []
-    if others:
-        ran.extend(
-            run_backtest(
-                data_dir,
-                season,
-                from_gw,
-                to_gw,
-                others,
-                refit=refit,
-                seasons_back=seasons_back,
-                time_decay=time_decay,
-                steps=steps,
-            )
-        )
-    if include_openfpl:
-        ran.append(
-            _run_openfpl(
-                data_dir,
-                season,
-                from_gw,
-                to_gw,
-                model_dir=openfpl_model_dir,
-                refit=refit,
-                seasons_back=seasons_back,
-                time_decay=time_decay,
-                steps=steps,
-            )
-        )
-        fill_actuals(data_dir, DataStore(data_dir))
+    board_timings = TimingSession()
+    with timing_session(board_timings):
+        if others:
+            with timed_phase("board/core"):
+                ran.extend(
+                    run_backtest(
+                        data_dir,
+                        season,
+                        from_gw,
+                        to_gw,
+                        others,
+                        refit=refit,
+                        seasons_back=seasons_back,
+                        time_decay=time_decay,
+                        steps=steps,
+                    )
+                )
+        if include_openfpl:
+            with timed_phase("board/openfpl"):
+                ran.append(
+                    _run_openfpl(
+                        data_dir,
+                        season,
+                        from_gw,
+                        to_gw,
+                        model_dir=openfpl_model_dir,
+                        refit=refit,
+                        seasons_back=seasons_back,
+                        time_decay=time_decay,
+                        steps=steps,
+                    )
+                )
+                fill_actuals(data_dir, DataStore(data_dir))
+    meta = {
+        "season": season,
+        "from_gw": from_gw,
+        "to_gw": to_gw,
+        "n_models": len(ran),
+        "steps": steps,
+    }
+    logger.info(format_kind_summary("eval_board", board_timings, meta=meta))
+    write_timing_record("eval_board", board_timings, meta=meta)
     if skipped:
         logger.info(skipped)
     return EvalResult(specs=tuple(ran), skipped_openfpl=skipped)

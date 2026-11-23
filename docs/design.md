@@ -122,7 +122,8 @@ data/
 ├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── archive_compare/<stamp>/     # N2 paired board vs archives (§7.5)
 ├── ledger/                      # backtest ledger (§7.2)
-└── plans/<model_id>/as_of=.../  # optimiser outputs
+├── plans/<model_id>/as_of=.../  # optimiser outputs
+└── timing/*.json                # wall-clock phase timings (`fplt.utils.timing`; `fplt perf-report`)
 ```
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet. football-data E0 files are plain CSV (write-once) as published upstream.

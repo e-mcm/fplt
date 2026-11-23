@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,16 @@ from typing import Any, cast
 
 from fplt.data.staging import stage_bootstrap, stage_event_live
 from fplt.data.store import DataStore
+from fplt.utils.timing import (
+    TimingSession,
+    format_kind_summary,
+    timed_phase,
+    timing_artifacts,
+    timing_session,
+    write_timing_record,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,32 +67,47 @@ def read_json(path: Path) -> Any:
 
 def ingest_raw(store: DataStore, raw_root: Path) -> int:
     """Stage every snapshot and checked live payload. Return files consumed."""
-    count = 0
-    for snap in iter_snapshots(raw_root):
-        bootstrap: dict[str, Any] = read_json(snap.bootstrap_path)
-        fixtures = cast(
-            list[dict[str, Any]],
-            read_json(snap.fixtures_path) if snap.fixtures_path else [],
-        )
-        frames = stage_bootstrap(bootstrap, fixtures, snap.captured_at, snap.season)
-        for name, frame in frames.items():
-            if frame.is_empty():
-                continue
-            store.write(name, frame)
-        codes = {
-            int(row["element_id"]): int(row["player_key"])
-            for row in frames["players"].iter_rows(named=True)
-        }
-        live_root = raw_root / "fpl_api" / f"season={snap.season}" / "event_live"
-        if live_root.exists():
-            for path in sorted(live_root.glob("gw=*/captured_at=*/event_live.json.gz")):
-                gw = int(path.parents[1].name.removeprefix("gw="))
-                captured = _stamp(path.parent.name.removeprefix("captured_at="))
-                stats = stage_event_live(
-                    read_json(path), snap.season, gw, captured, codes
-                )
-                if not stats.is_empty():
-                    store.write("player_fixture_stats", stats)
-                count += 1
-        count += 1
+    session = TimingSession()
+    with timing_artifacts(store.root):
+        with timing_session(session):
+            with timed_phase("ingest"):
+                count = 0
+                for snap in iter_snapshots(raw_root):
+                    bootstrap: dict[str, Any] = read_json(snap.bootstrap_path)
+                    fixtures = cast(
+                        list[dict[str, Any]],
+                        read_json(snap.fixtures_path) if snap.fixtures_path else [],
+                    )
+                    frames = stage_bootstrap(
+                        bootstrap, fixtures, snap.captured_at, snap.season
+                    )
+                    for name, frame in frames.items():
+                        if frame.is_empty():
+                            continue
+                        store.write(name, frame)
+                    codes = {
+                        int(row["element_id"]): int(row["player_key"])
+                        for row in frames["players"].iter_rows(named=True)
+                    }
+                    live_root = (
+                        raw_root / "fpl_api" / f"season={snap.season}" / "event_live"
+                    )
+                    if live_root.exists():
+                        for path in sorted(
+                            live_root.glob("gw=*/captured_at=*/event_live.json.gz")
+                        ):
+                            gw = int(path.parents[1].name.removeprefix("gw="))
+                            captured = _stamp(
+                                path.parent.name.removeprefix("captured_at=")
+                            )
+                            stats = stage_event_live(
+                                read_json(path), snap.season, gw, captured, codes
+                            )
+                            if not stats.is_empty():
+                                store.write("player_fixture_stats", stats)
+                            count += 1
+                    count += 1
+        meta = {"files": count, "raw_root": str(raw_root)}
+        logger.info(format_kind_summary("ingest", session, meta=meta))
+        write_timing_record("ingest", session, meta=meta)
     return count

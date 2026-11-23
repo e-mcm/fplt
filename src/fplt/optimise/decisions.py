@@ -77,6 +77,14 @@ from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
+from fplt.utils.timing import (
+    TimingSession,
+    binds_timing_artifacts,
+    format_kind_summary,
+    timed_phase,
+    timing_session,
+    write_timing_record,
+)
 
 TeamLoader = Callable[..., CurrentTeam]
 logger = logging.getLogger(__name__)
@@ -319,18 +327,19 @@ def simulate_decisions(
         active_windows = static_windows
         if schedule_each_week:
             assert rules is not None
-            active_windows = _scheduled_windows(
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                as_of_gw=gameweek,
-                short_horizon=len(window),
-                predictions=predictions,
-                pool=pool,
-                state=current,
-                gameweeks=gameweeks,
-                force_play=force_play,
-            )
+            with timed_phase("plan/chips"):
+                active_windows = _scheduled_windows(
+                    fixtures=fixtures,
+                    season=season,
+                    rules=rules,
+                    as_of_gw=gameweek,
+                    short_horizon=len(window),
+                    predictions=predictions,
+                    pool=pool,
+                    state=current,
+                    gameweeks=gameweeks,
+                    force_play=force_play,
+                )
         if active_windows is not None:
             logger.info(
                 "chip windows gw=%s %s",
@@ -544,6 +553,7 @@ def resolve_squad_state(
     return state
 
 
+@binds_timing_artifacts()
 def run_plan(
     data_dir: Path,
     model_name: str,
@@ -618,124 +628,147 @@ def run_plan(
         force_play,
         price_forecast_method,
     )
-    spec = load_model_specs()[model_name]
-    store = DataStore(data_dir)
-    view = PITData(store).view(GWKey(season, gameweek))
-    if squad is not None:
-        state = squad
-        logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
-    else:
-        state = resolve_squad_state(
-            view,
-            entry_json=entry_json,
-            event=gameweek,
-        )
-    window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
-    candidates = candidates_as_of(view)
-    ledger = read_predictions(data_dir)
-    points = points_from_ledger(ledger, spec.model_id, season, gameweek, window)
-    logger.info(
-        "optimiser inputs: candidates=%s prediction_rows=%s window=%s initial=%s",
-        candidates.height,
-        points.height,
-        window,
-        not state.owned,
-    )
-    _require_usable_points(points, candidates, window, model_name)
-    state = apply_market_prices(state, market_prices_from_candidates(candidates))
-    rules_season = chip_rules_season if chip_rules_season is not None else season
-    plan_season: str | None = None
-    plan_gameweeks: list[int] | None = None
-    plan_windows: ChipUseWindows | None = None
-    plan_rules_season: str | None = None
-    if chip_arm != "off":
-        rules = ChipRules.for_season(rules_season)
-        state = _ensure_chip_inventory(state, rules)
-        fixtures = store.read("fixtures").filter(pl.col("season") == season)
-        predictions = _prediction_rows(ledger, spec.model_id, season)
-        rest_of_season = list(range(gameweek, 39))
-        if chip_arm == "optimised":
-            plan_windows = _scheduled_windows(
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                as_of_gw=gameweek,
-                short_horizon=len(window),
-                predictions=predictions,
-                pool=candidates,
-                state=state,
-                gameweeks=rest_of_season,
-                force_play=force_play,
+    plan_timings = TimingSession()
+    with timing_session(plan_timings):
+        with timed_phase("plan/setup"):
+            spec = load_model_specs()[model_name]
+            store = DataStore(data_dir)
+            view = PITData(store).view(GWKey(season, gameweek))
+            if squad is not None:
+                state = squad
+                logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
+            else:
+                state = resolve_squad_state(
+                    view,
+                    entry_json=entry_json,
+                    event=gameweek,
+                )
+            window = [
+                gameweek + offset
+                for offset in range(horizon)
+                if gameweek + offset <= 38
+            ]
+            candidates = candidates_as_of(view)
+            ledger = read_predictions(data_dir)
+            points = points_from_ledger(ledger, spec.model_id, season, gameweek, window)
+            logger.info(
+                "optimiser inputs: candidates=%s prediction_rows=%s "
+                "window=%s initial=%s",
+                candidates.height,
+                points.height,
+                window,
+                not state.owned,
             )
-        else:
-            plan_windows = _static_windows_for_arm(
-                chip_arm,
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                predictions=predictions,
-                gameweeks=rest_of_season,
-                chip_windows=None,
+            _require_usable_points(points, candidates, window, model_name)
+            state = apply_market_prices(
+                state, market_prices_from_candidates(candidates)
             )
-        plan_season = season
-        plan_gameweeks = window
-        plan_rules_season = rules_season
-    if plan_windows is not None:
-        logger.info(
-            "chip windows gw=%s %s",
-            gameweek,
-            format_chip_use_windows(plan_windows),
-        )
-        write_chip_windows(
-            data_dir,
-            model_id=chip_arm_model_id(spec.model_id, chip_arm)
-            if chip_arm != "off"
-            else spec.model_id,
+            rules_season = (
+                chip_rules_season if chip_rules_season is not None else season
+            )
+            plan_season: str | None = None
+            plan_gameweeks: list[int] | None = None
+            plan_windows: ChipUseWindows | None = None
+            plan_rules_season: str | None = None
+        if chip_arm != "off":
+            with timed_phase("plan/chips"):
+                rules = ChipRules.for_season(rules_season)
+                state = _ensure_chip_inventory(state, rules)
+                fixtures = store.read("fixtures").filter(pl.col("season") == season)
+                predictions = _prediction_rows(ledger, spec.model_id, season)
+                rest_of_season = list(range(gameweek, 39))
+                if chip_arm == "optimised":
+                    plan_windows = _scheduled_windows(
+                        fixtures=fixtures,
+                        season=season,
+                        rules=rules,
+                        as_of_gw=gameweek,
+                        short_horizon=len(window),
+                        predictions=predictions,
+                        pool=candidates,
+                        state=state,
+                        gameweeks=rest_of_season,
+                        force_play=force_play,
+                    )
+                else:
+                    plan_windows = _static_windows_for_arm(
+                        chip_arm,
+                        fixtures=fixtures,
+                        season=season,
+                        rules=rules,
+                        predictions=predictions,
+                        gameweeks=rest_of_season,
+                        chip_windows=None,
+                    )
+                plan_season = season
+                plan_gameweeks = window
+                plan_rules_season = rules_season
+        if plan_windows is not None:
+            logger.info(
+                "chip windows gw=%s %s",
+                gameweek,
+                format_chip_use_windows(plan_windows),
+            )
+            write_chip_windows(
+                data_dir,
+                model_id=chip_arm_model_id(spec.model_id, chip_arm)
+                if chip_arm != "off"
+                else spec.model_id,
+                season=season,
+                windows_by_gw={gameweek: plan_windows},
+            )
+        forecast = _price_forecast_for_deadline(
+            method=_normalize_price_forecast_method(price_forecast_method),
+            store=store,
             season=season,
-            windows_by_gw={gameweek: plan_windows},
+            gameweek=gameweek,
+            pool=candidates,
+            horizon=len(window),
         )
-    forecast = _price_forecast_for_deadline(
-        method=_normalize_price_forecast_method(price_forecast_method),
-        store=store,
-        season=season,
-        gameweek=gameweek,
-        pool=candidates,
-        horizon=len(window),
-    )
-    solved = plan_squad(
-        candidates,
-        points,
-        state,
-        initial=not state.owned,
-        horizon=len(window),
-        season=plan_season,
-        gameweeks=plan_gameweeks,
-        chip_windows=plan_windows,
-        chip_rules_season=plan_rules_season,
-        price_forecast=forecast,
-    )
-    table = plan_table(solved, spec.model_id, season, gameweek, window)
-    names = _player_names(view)
-    report = render_report(solved, season, window, names=names)
-    if plan_windows is not None:
-        windows_line = format_chip_use_windows(plan_windows)
-        report = f"{report}\n\n## Chip windows\n\n{windows_line}\n"
-    report = _with_explain_sections(
-        report,
-        solved=solved,
-        state=state,
-        candidates=candidates,
-        data_dir=data_dir,
-        model_id=spec.model_id,
-        season=season,
-        gameweek=gameweek,
-        names=names,
-    )
-    try:
-        path = write_plan(data_dir, table)
-    except FileExistsError as exc:
-        raise PlanExistsError(Path(str(exc)), report) from exc
-    (path.parent / "report.md").write_text(report, encoding="utf-8")
+        solved = plan_squad(
+            candidates,
+            points,
+            state,
+            initial=not state.owned,
+            horizon=len(window),
+            season=plan_season,
+            gameweeks=plan_gameweeks,
+            chip_windows=plan_windows,
+            chip_rules_season=plan_rules_season,
+            price_forecast=forecast,
+        )
+        with timed_phase("plan/write"):
+            table = plan_table(solved, spec.model_id, season, gameweek, window)
+            names = _player_names(view)
+            report = render_report(solved, season, window, names=names)
+            if plan_windows is not None:
+                windows_line = format_chip_use_windows(plan_windows)
+                report = f"{report}\n\n## Chip windows\n\n{windows_line}\n"
+            report = _with_explain_sections(
+                report,
+                solved=solved,
+                state=state,
+                candidates=candidates,
+                data_dir=data_dir,
+                model_id=spec.model_id,
+                season=season,
+                gameweek=gameweek,
+                names=names,
+            )
+            try:
+                path = write_plan(data_dir, table)
+            except FileExistsError as exc:
+                raise PlanExistsError(Path(str(exc)), report) from exc
+            (path.parent / "report.md").write_text(report, encoding="utf-8")
+    meta = {
+        "model": model_name,
+        "season": season,
+        "gw": gameweek,
+        "horizon": horizon,
+        "chip_arm": chip_arm,
+    }
+    logger.info(format_kind_summary("plan", plan_timings, meta=meta))
+    write_timing_record("plan", plan_timings, meta=meta)
     logger.info(
         "plan written path=%s hits=%s points=%.2f chips=%s",
         path,
@@ -836,6 +869,7 @@ def _require_usable_points(
             )
 
 
+@binds_timing_artifacts()
 def run_decisions(
     data_dir: Path,
     model_name: str,
@@ -914,33 +948,44 @@ def run_decisions(
         else chip_arm_model_id(spec.model_id, chip_arm)
     )
     windows_log: dict[int, ChipUseWindows] = {}
-    frame = simulate_decisions(
-        pl.concat(pools),
-        predictions,
-        actuals,
-        draft,
-        model_id=ledger_id,
-        season=season,
-        gameweeks=gameweeks,
-        horizon=horizon,
-        chip_arm=chip_arm,
-        chip_rules_season=chip_rules_season,
-        fixtures=fixtures,
-        force_play=force_play,
-        lineup_reopt=lineup_reopt,
-        chip_windows_log=windows_log,
-        price_forecast_method=price_forecast_method,
-        store=store,
-        highs_options=highs_options,
-    )
-    path = write_decisions(data_dir, frame)
-    if windows_log:
-        write_chip_windows(
-            data_dir,
+    decision_timings = TimingSession()
+    with timing_session(decision_timings):
+        frame = simulate_decisions(
+            pl.concat(pools),
+            predictions,
+            actuals,
+            draft,
             model_id=ledger_id,
             season=season,
-            windows_by_gw=windows_log,
+            gameweeks=gameweeks,
+            horizon=horizon,
+            chip_arm=chip_arm,
+            chip_rules_season=chip_rules_season,
+            fixtures=fixtures,
+            force_play=force_play,
+            lineup_reopt=lineup_reopt,
+            chip_windows_log=windows_log,
+            price_forecast_method=price_forecast_method,
+            store=store,
+            highs_options=highs_options,
         )
+        path = write_decisions(data_dir, frame)
+        if windows_log:
+            write_chip_windows(
+                data_dir,
+                model_id=ledger_id,
+                season=season,
+                windows_by_gw=windows_log,
+            )
+    meta = {
+        "model": model_name,
+        "season": season,
+        "n_gw": len(gameweeks),
+        "horizon": horizon,
+        "chip_arm": chip_arm,
+    }
+    logger.info(format_kind_summary("decisions", decision_timings, meta=meta))
+    write_timing_record("decisions", decision_timings, meta=meta)
     return path
 
 

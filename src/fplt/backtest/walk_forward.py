@@ -23,6 +23,7 @@ from fplt.utils.timing import (
     format_run_summary,
     timed_phase,
     timing_session,
+    write_timing_record,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,9 @@ def walk_forward(
     Logs per-gameweek wall times split into setup / fit / predict / write, and
     an end-of-run summary with totals and shares. Nested model phases (when
     recorded via ``timed_phase``) appear after ``|`` on the summary line.
+    When a ``timing_artifacts`` ContextVar root is active (entry points use
+    ``@binds_timing_artifacts`` / ``with timing_artifacts(data_dir)``), also
+    writes a JSON artifact under ``data_dir/timing/`` for ``fplt perf-report``.
 
     Args:
         model: Predictor whose ``spec`` supplies the refit policy and window.
@@ -137,6 +141,19 @@ def walk_forward(
         if not recorded.is_empty():
             frames.append(recorded)
     logger.info(format_run_summary(model.spec.name, run_timings, n_gw=total))
+    season = as_ofs[0].season if as_ofs else None
+    write_timing_record(
+        "walk_forward",
+        run_timings,
+        meta={
+            "model": model.spec.name,
+            "model_id": model.spec.model_id,
+            "n_gw": total,
+            "steps": steps,
+            "run_kind": run_kind,
+            "season": season,
+        },
+    )
     combined = (
         pl.DataFrame(schema=LEDGER_COLUMNS)
         if not frames
