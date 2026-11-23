@@ -11,6 +11,7 @@ import pytest
 
 from fplt.models.simulation_native import (
     FixtureSummary,
+    native_kernel_available,
     resolve_mc_backend,
     simulate_match_native,
 )
@@ -38,6 +39,10 @@ def _toy_inputs(n: int = 64) -> tuple[pl.DataFrame, np.ndarray, np.ndarray, np.n
     minutes = np.full((4, n), 90.0)
     other = np.full((4, 3), 0.2)
     return players, scorelines, minutes, other
+
+
+def test_native_kernel_available_when_wheel_installed() -> None:
+    assert native_kernel_available() is True
 
 
 def test_resolve_defaults_to_python() -> None:

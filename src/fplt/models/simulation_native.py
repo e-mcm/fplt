@@ -69,6 +69,19 @@ def resolve_mc_backend(
     return value  # type: ignore[return-value]
 
 
+def native_kernel_available() -> bool:
+    """Return whether ``fplt_mc`` imports at the expected ``KERNEL_API``.
+
+    Used by contract / leaderboard suites to skip ``mc_backend=native`` specs
+    when the optional wheel is absent (local checkouts without the index pin).
+    """
+    try:
+        require_native_kernel()
+    except (ImportError, RuntimeError):
+        return False
+    return True
+
+
 def require_native_kernel() -> Any:
     """Import ``fplt_mc`` or raise (no silent fallback).
 
