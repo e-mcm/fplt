@@ -30,6 +30,7 @@ def test_available_without_news_stays_full() -> None:
 
 def test_unavailable_and_doubtful_unchanged() -> None:
     assert chance("i", None, 0.5) == 0.0
+    assert chance("s", None, 0.5) == 0.0
     assert chance("d", None, 0.4) == 0.4
     assert chance("d", 80.0, 0.4) == 0.8
 
