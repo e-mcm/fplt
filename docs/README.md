@@ -9,8 +9,9 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 | [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, Dagster §8, storage layout |
 | [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Ops / agents | GHA capture cadence, sensors, always-on setup |
 | [`feature-eval-pipeline.md`](feature-eval-pipeline.md) | Modelling / agents | Promote-eval, bakeoffs, control vs treatment, keep/drop |
-| [`eval-protocol.md`](eval-protocol.md) | Modelling / agents | Operator protocol; decisions-suite gate (`claim: squad_points`) |
-| [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; points-at-rank decision-sim bars (2400 / 2235) |
+| [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; points-at-rank bars (2400 / 2235) |
+| [`eval-protocol.md`](eval-protocol.md) | Eval / agents | Windows, interim written keep, reference board, HiGHS; `claim: squad_points` decisions gate |
+| [`w9-mae-rmse-reading.md`](w9-mae-rmse-reading.md) | Eval / agents | How to read MAE vs RMSE splits on mean-seeking boards |
 | [`benchmark-archives.md`](benchmark-archives.md) | Eval / agents | `benchmark_projections` table (ep_next / OpenFPL / FPL Review) |
 | [`openfpl.md`](openfpl.md) | Ops / agents | OpenFPL subprocess setup and season floor |
 | [`fpl_review.md`](fpl_review.md) | Ops | Manual FPL Review CSV ingest (no scrape) |

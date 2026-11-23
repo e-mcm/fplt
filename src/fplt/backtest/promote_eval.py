@@ -1854,9 +1854,11 @@ def _verdict_paragraph(
         )
     _ = deltas
     return (
-        "Improvement levers stay inconclusive until FDB-73 sets keep/drop "
-        "thresholds. Deltas are descriptive only; keep_if is not applied. "
-        f"Headline point metric is {HEADLINE_METRIC} on the decision-relevant pool."
+        "Improvement levers stay auto-inconclusive until numeric keep_if "
+        "thresholds land (FDB-73). Deltas are descriptive only; keep_if is "
+        "not applied. Written keep/tune/drop follows docs/eval-protocol.md "
+        f"§2 (confirmation window + SPA budget). Headline point metric is "
+        f"{HEADLINE_METRIC} on the decision-relevant pool."
     )
 
 

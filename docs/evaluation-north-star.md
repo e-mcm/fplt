@@ -8,14 +8,14 @@ A state-of-the-art claim has to be made at three separate levels: **forecasts**,
 
 Agreed as the guiding standard for whether the repo is achieving its aims. Additions below do not weaken the tiers; they constrain how we apply them:
 
-1. **RMSE is the headline for mean-seeking boards**; keep MAE as a secondary continuity metric so old A/Bs stay readable. Do not silently rewrite past claims. See [w9-mae-rmse-reading.md](./w9-mae-rmse-reading.md) for how to read MAE/RMSE splits.
+1. **RMSE is the headline for mean-seeking boards**; keep MAE as a secondary continuity metric so old A/Bs stay readable. Do not silently rewrite past claims. See [w9-mae-rmse-reading.md](w9-mae-rmse-reading.md) for how to read MAE/RMSE splits. Windows, interim written keeps, and the reference board live in [eval-protocol.md](eval-protocol.md).
 2. **Promote-eval (HAC / bootstrap / SPA / MCS, PIT, leakage)** remains the significance layer. This doc defines *what* to measure; that stack defines *whether a difference is real*.
 3. **FPL Review archives** only after a terms check. Until then, archive `ep_next` and OpenFPL every deadline; Tier B stays blocked on Review data.
 4. **OpenFPL comparisons** must label Deep/PPDA-degraded runs until Understat stages cleanly (FDB-55).
 5. **Share of attainable points** needs an explicit computable definition (constrained hindsight oracle), not an unbounded perfect-foresight ideal.
 6. **Live rank** is a multi-season consistency check, never a single-GW or single-season promotion gate.
 7. **Decision-sim north star is points-at-rank, not a fixed 2400.** Raw season points are not comparable across seasons (defcon, chip-rule changes, scoring inflation/deflation). Anchor: **2400** at end of **2024-25** ≈ overall rank **~573k** (top ~5%). Per-season bars = points at that rank on each season's end-of-season ladder. See §2. Does not replace Tier A–C relative aims or A/B promote-eval gates.
-8. **Provisional keeps:** defcon-rate (`defcon_mode: rate`) and within-horizon `mean_gw_delta` price forecast are live defaults from written promote calls, but remain **provisional** until FDB-73 / the eval protocol sets an interim keep rule and independent confirmation windows. See [`defcon-rate-promote.md`](./defcon-rate-promote.md) and [`price-within-horizon-promote.md`](./price-within-horizon-promote.md).
+8. **Provisional keeps:** defcon-rate (`defcon_mode: rate`) and within-horizon `mean_gw_delta` price forecast are live defaults from written promote calls, but remain **provisional** under the interim keep rule in [`eval-protocol.md`](eval-protocol.md) §2 until re-confirmed on independent windows. See [`defcon-rate-promote.md`](defcon-rate-promote.md) and [`price-within-horizon-promote.md`](price-within-horizon-promote.md).
 
 ---
 
@@ -32,7 +32,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 - The optimiser maximises **expected points**. The scoring function that's consistent for a mean is **squared error**, so **RMSE should be the headline metric, not MAE**.
 - MAE is consistent for the *median*. With zero-inflated FPL points, MAE rewards forecasts pulled towards zero and penalises correctly priced haul upside.
 - That's why W9 split (MAE worse, RMSE better), and why the RMSE side was the right call.
-- `lgbm_direct_v1` is trained with an MAE objective. It's estimating medians, which are then fed to an expected-value optimiser.
+- `lgbm_direct_v1` is trained with LightGBM `objective: regression` (L2 / mean-seeking). The YAML/`metric: mae` setting is monitoring only — it is **not** an MAE training objective. Older notes that called it an MAE/median model are wrong.
 
 **Score probabilities as well as means.**
 

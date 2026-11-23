@@ -135,6 +135,137 @@ def test_simulate_decisions_forwards_lineup_reopt(
     assert seen["lineup_reopt"] is False
 
 
+def test_simulate_decisions_forwards_board_highs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chip-board HiGHS options reach ``plan_squad`` (FDB-228)."""
+    from fplt.optimise.highs_options import HighsSolveOptions
+    from fplt.optimise.plan import GameweekPlan
+
+    candidates, predictions, actuals, _fixtures = _toy_season()
+    seen: dict[str, object] = {}
+    options = HighsSolveOptions.board_deterministic()
+    empty_picks = pl.DataFrame(
+        schema={
+            "player_key": pl.Int64,
+            "position": pl.Utf8,
+            "team_key": pl.Int64,
+            "price": pl.Int64,
+            "step": pl.Int64,
+            "in_xi": pl.Boolean,
+            "captain": pl.Boolean,
+            "vice": pl.Boolean,
+            "bought": pl.Boolean,
+            "sold": pl.Boolean,
+            "xpts": pl.Float64,
+        }
+    )
+
+    def stub_plan(*_args: object, **kwargs: object) -> GameweekPlan:
+        seen.update(kwargs)
+        return GameweekPlan(
+            picks=empty_picks,
+            hits=(0.0,),
+            free_transfers=(1,),
+            points=0.0,
+            chips=(None,),
+        )
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", stub_plan)
+    monkeypatch.setattr(
+        "fplt.optimise.decisions._decision_rows",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "fplt.optimise.decisions._advance",
+        lambda state, *_a, **_k: state,
+    )
+    frame = simulate_decisions(
+        candidates,
+        predictions,
+        actuals,
+        _draft(),
+        model_id="highs_test",
+        season="2024-25",
+        gameweeks=[1],
+        horizon=1,
+        chip_arm="off",
+        highs_options=options,
+    )
+    assert seen["highs_options"] == options
+    assert frame.is_empty()
+
+
+def test_chip_board_defaults_to_deterministic_highs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run_chip_decision_board`` passes board_deterministic into run_decisions."""
+    from fplt.optimise.decisions import run_chip_decision_board
+    from fplt.optimise.highs_options import HighsSolveOptions
+
+    captured: dict[str, object] = {}
+
+    def fake_run_decisions(*_args: object, **kwargs: object) -> Path:
+        captured.update(kwargs)
+        return tmp_path / "decisions.parquet"
+
+    monkeypatch.setattr("fplt.optimise.decisions.run_decisions", fake_run_decisions)
+    monkeypatch.setattr(
+        "fplt.optimise.decisions.load_model_specs",
+        lambda: {"rolling_mean_v1": type("S", (), {"model_id": "m"})()},
+    )
+    monkeypatch.setattr(
+        "fplt.optimise.decisions.read_decisions",
+        lambda _root: __import__("polars").DataFrame(
+            schema={
+                "model_id": pl.Utf8,
+                "season": pl.Utf8,
+                "gw": pl.Int64,
+                "player_key": pl.Int64,
+                "position": pl.Utf8,
+                "in_xi": pl.Boolean,
+                "captain": pl.Boolean,
+                "vice": pl.Boolean,
+                "bought": pl.Boolean,
+                "sold": pl.Boolean,
+                "xpts": pl.Float64,
+                "actual_pts": pl.Float64,
+                "actual_minutes": pl.Float64,
+                "hit": pl.Float64,
+                "free_transfers": pl.Int64,
+                "chip": pl.Utf8,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "fplt.optimise.decisions.summarise_chip_decisions",
+        lambda *_a, **_k: pl.DataFrame(
+            {
+                "model_id": ["m::chip_optimised"],
+                "base_model_id": ["m"],
+                "season": ["2025-26"],
+                "chip_arm": ["optimised"],
+                "rules_label": ["2025-26"],
+                "counterfactual": [False],
+                "total_points": [0],
+                "gameweeks": [0],
+                "per_gw": [[]],
+            }
+        ),
+    )
+    run_chip_decision_board(
+        tmp_path,
+        ["rolling_mean_v1"],
+        "2025-26",
+        1,
+        1,
+        3,
+        arms=["optimised"],
+        simulate=True,
+    )
+    assert captured["highs_options"] == HighsSolveOptions.board_deterministic()
+
+
 def test_chip_board_cli_passes_no_lineup_reopt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
