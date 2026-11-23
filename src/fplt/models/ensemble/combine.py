@@ -3,8 +3,9 @@
 Members are ordinary ``ModelSpec``s (typically ``dc_layered`` + ``lgbm_direct``).
 The loader expands ``params.members`` name lists into ``components`` so the
 ensemble ``model_id`` tracks member identity. Combination is a convex blend of
-``xpts`` (and optional fields) — equal weights, or fixed per-position weights.
-No OpenFPL arm until Deep/PPDA stages cleanly.
+``xpts`` (and optional fields including ``p_haul`` / ``p_60`` / ``p_played``)
+— equal weights, or fixed per-position weights. No OpenFPL arm until
+Deep/PPDA stages cleanly.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from fplt.models.spec import ModelSpec, get_model, register_model, write_identit
 from fplt.models.universe import player_fixtures
 from fplt.types import GWKey
 
-_BLEND_COLS = ("xpts", "xpts_sd", "p_haul", "p_60")
+_BLEND_COLS = ("xpts", "xpts_sd", "p_haul", "p_60", "p_played")
 _POSITIONS = ("GKP", "DEF", "MID", "FWD")
 _MODES = frozenset({"equal", "position"})
 
@@ -90,6 +91,7 @@ class ForecastCombinePredictor:
                 "xpts_sd",
                 "p_haul",
                 "p_60",
+                "p_played",
             )
             renamed = predicted.rename(
                 {
@@ -97,6 +99,7 @@ class ForecastCombinePredictor:
                     "xpts_sd": f"xpts_sd__{name}",
                     "p_haul": f"p_haul__{name}",
                     "p_60": f"p_60__{name}",
+                    "p_played": f"p_played__{name}",
                 }
             )
             frames.append(renamed)
@@ -144,6 +147,7 @@ class ForecastCombinePredictor:
                 "xpts_sd",
                 "p_haul",
                 "p_60",
+                "p_played",
             ),
             on=["season", "gw", "player_key", "fixture_id"],
             how="left",
@@ -156,6 +160,7 @@ class ForecastCombinePredictor:
             pl.col("xpts_sd"),
             pl.col("p_haul"),
             pl.col("p_60"),
+            p_played=pl.col("p_played"),
         )
 
     def save(self, path: Path) -> None:

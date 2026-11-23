@@ -25,6 +25,13 @@ zero-goal (clean-sheet) margin from ``odds_to_lambda``, then restores the
 joint's current 1X2. Use strengths below 1; leave full-strength λ / 1X2
 blends off. Prefer deadline-legal ``prematch_scheduled`` odds under strict
 PIT (``use_closing_proxy: false``).
+
+When ``rest_coef`` / ``congestion_coef`` / ``form_strength`` are > 0,
+``predict`` applies mid-season covariates on top of the fitted ratings:
+rest and congestion rescale each side's scoring rate from the all-comp
+schedule helpers; form multiplies attack/defence by an exp-residual of
+recent goals for/against versus those ratings. Zero strengths recover
+vanilla DC (batch MLE unchanged).
 """
 
 # scipy does not ship type stubs.
@@ -39,6 +46,10 @@ from scipy.optimize import minimize
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
+from fplt.models.components.score.covariates import (
+    form_rating_multipliers,
+    schedule_rate_multipliers,
+)
 from fplt.models.components.score.odds_lambda import (
     blend_lambda,
     cs_probs_from_lambda,
@@ -165,6 +176,13 @@ class MatchScoreModel:
       (0 = off). Prefer strengths below 1; keep λ / 1X2 strengths at 0.
       ``use_closing_proxy`` defaults false when only this strength is set
       so prematch / strict-PIT odds are used.
+    - ``rest_coef`` / ``congestion_coef`` — predict-time schedule
+      multipliers on each side's scoring rate (0 = off). Coefs are ≥ 0;
+      congestion is applied as a penalty. Uses all-comp rest when
+      ``competition_fixtures`` is staged.
+    - ``form_window`` / ``form_strength`` — predict-time attack/defence
+      multipliers from the last ``form_window`` current-season residuals
+      versus fitted rates (``form_strength`` 0 or ``form_window`` ≤ 0 = off).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -179,6 +197,10 @@ class MatchScoreModel:
         self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
         self._market_1x2 = float(spec.params.get("market_1x2_strength", 0.0))
         self._market_cs = float(spec.params.get("market_cs_strength", 0.0))
+        self._rest_coef = float(spec.params.get("rest_coef", 0.0))
+        self._congestion_coef = float(spec.params.get("congestion_coef", 0.0))
+        self._form_window = int(spec.params.get("form_window", 0))
+        self._form_strength = float(spec.params.get("form_strength", 0.0))
         raw_source = spec.params.get("market_prior_source")
         if raw_source is None or raw_source == "":
             self._market_source: str | None = None
@@ -194,6 +216,16 @@ class MatchScoreModel:
             )
         if self._market_cs < 0:
             raise ValueError(f"market_cs_strength must be >= 0, got {self._market_cs}")
+        if self._rest_coef < 0:
+            raise ValueError(f"rest_coef must be >= 0, got {self._rest_coef}")
+        if self._congestion_coef < 0:
+            raise ValueError(
+                f"congestion_coef must be >= 0, got {self._congestion_coef}"
+            )
+        if self._form_strength < 0:
+            raise ValueError(f"form_strength must be >= 0, got {self._form_strength}")
+        if self._form_window < 0:
+            raise ValueError(f"form_window must be >= 0, got {self._form_window}")
         if self._market_source is not None and self._market_source != "history":
             raise ValueError(
                 "market_prior_source must be absent or 'history', "
@@ -208,6 +240,9 @@ class MatchScoreModel:
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}
         self._defence: dict[int, float] = {}
+        self._attack_form: dict[int, float] = {}
+        self._defence_form: dict[int, float] = {}
+        self._form_season: str | None = None
 
     def fit(self, view: PITView) -> None:
         """Estimate ratings from finished fixtures visible at ``view.as_of``.
@@ -220,6 +255,9 @@ class MatchScoreModel:
         self._teams = []
         self._attack = {}
         self._defence = {}
+        self._attack_form = {}
+        self._defence_form = {}
+        self._form_season = view.as_of.season
         if played.is_empty():
             return
         teams = sorted(
@@ -308,6 +346,17 @@ class MatchScoreModel:
         self._teams = teams
         self._attack = dict(zip(teams, attack.tolist(), strict=True))
         self._defence = dict(zip(teams, defence.tolist(), strict=True))
+        if self._form_strength > 0 and self._form_window > 0:
+            self._attack_form, self._defence_form = form_rating_multipliers(
+                played,
+                teams,
+                self._attack,
+                self._defence,
+                home_advantage=self._home,
+                form_window=self._form_window,
+                form_strength=self._form_strength,
+                season=self._form_season,
+            )
 
     def predict(self, view: PITView, fixtures: pl.DataFrame) -> ScorelineDist:
         """Joint scorelines for ``fixtures``.
@@ -334,6 +383,15 @@ class MatchScoreModel:
         lambda_h, lambda_a = self._rates(
             fixtures["team_h_key"].to_list(), fixtures["team_a_key"].to_list()
         )
+        if self._rest_coef > 0 or self._congestion_coef > 0:
+            home_mult, away_mult = schedule_rate_multipliers(
+                view,
+                fixtures,
+                rest_coef=self._rest_coef,
+                congestion_coef=self._congestion_coef,
+            )
+            lambda_h = lambda_h * home_mult
+            lambda_a = lambda_a * away_mult
         # Predict-time λ blend is the absent-source path only; history mode
         # already folded the book into the fit via the Gaussian rating prior.
         if self._market_prior > 0 and not self._history_prior:
@@ -377,10 +435,30 @@ class MatchScoreModel:
         return ScorelineDist(ids, joint)
 
     def _rates(self, home: list[int], away: list[int]) -> tuple[np.ndarray, np.ndarray]:
-        attack_h = np.array([self._attack.get(team, _NEUTRAL) for team in home])
-        attack_a = np.array([self._attack.get(team, _NEUTRAL) for team in away])
-        defence_h = np.array([self._defence.get(team, _NEUTRAL) for team in home])
-        defence_a = np.array([self._defence.get(team, _NEUTRAL) for team in away])
+        attack_h = np.array(
+            [
+                self._attack.get(team, _NEUTRAL) * self._attack_form.get(team, 1.0)
+                for team in home
+            ]
+        )
+        attack_a = np.array(
+            [
+                self._attack.get(team, _NEUTRAL) * self._attack_form.get(team, 1.0)
+                for team in away
+            ]
+        )
+        defence_h = np.array(
+            [
+                self._defence.get(team, _NEUTRAL) * self._defence_form.get(team, 1.0)
+                for team in home
+            ]
+        )
+        defence_a = np.array(
+            [
+                self._defence.get(team, _NEUTRAL) * self._defence_form.get(team, 1.0)
+                for team in away
+            ]
+        )
         return attack_h * defence_a * self._home, attack_a * defence_h
 
 

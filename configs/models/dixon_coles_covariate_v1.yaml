@@ -1,0 +1,21 @@
+name: dixon_coles_covariate_v1
+kind: dixon_coles
+params:
+  # Same identification + CS borrow as production dixon_coles_cs_v1, plus
+  # mid-season rest / congestion / form covariates (FDB-243). Zero strengths
+  # recover vanilla CS DC.
+  xi: 0.0065
+  home_advantage: 1.3
+  rho: -0.1
+  fit_rho: true
+  fit_home_advantage: true
+  new_team_prior_strength: 3.0
+  promoted_prior_strength: 8.0
+  market_cs_strength: 0.5
+  use_closing_proxy: false
+  rest_coef: 0.05
+  congestion_coef: 0.05
+  form_window: 5
+  form_strength: 0.2
+refit: every_gw
+seed: 0
