@@ -11,14 +11,16 @@ v1 defaults (``cs_red_void_prob=0``, ``conceded_mode="scaled"``,
 Fidelity options (enabled on ``dc_layered_v2``) can void clean sheets at a
 red-card rate, apply the full conceded penalty whenever the player appears, and
 sample other points around their expectation so ``xpts_sd`` / ``p_haul`` see
-that variance. Minutes are taken as drawn; hard eleven-starter constraints are
-applied upstream via ``enforce_hard_starters`` before this module runs.
+that variance. Optional ``match_other`` adds scoreline-conditioned offsets
+(team goals / clean sheet / player goals) on top of the minutes-bucket mean.
+Minutes are taken as drawn; hard eleven-starter constraints are applied
+upstream via ``enforce_hard_starters`` before this module runs.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 import polars as pl
@@ -27,6 +29,22 @@ from fplt.scoring.rules import Rules
 
 _BUCKET_EDGES = (0, 60)
 ConcededMode = Literal["scaled", "played"]
+
+
+class MatchOtherOffsets(Protocol):
+    """Optional match-conditioned additive other-points offsets."""
+
+    def match_delta(
+        self,
+        *,
+        positions: np.ndarray,
+        minutes: np.ndarray,
+        team_goals: np.ndarray,
+        clean_sheet: np.ndarray,
+        player_goals: np.ndarray,
+    ) -> np.ndarray:
+        """Return additive other points with shape ``(players, sims)``."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -61,6 +79,7 @@ def simulate_match(
     cs_red_void_prob: float = 0.0,
     conceded_mode: ConcededMode = "scaled",
     sample_other: bool = False,
+    match_other: MatchOtherOffsets | None = None,
 ) -> MatchSimulation:
     """Simulate points for every player across the sampled scorelines.
 
@@ -86,6 +105,8 @@ def simulate_match(
             minutes are positive.
         sample_other: When true, draw other points around the bucket mean
             (Poisson / signed Poisson) instead of plugging in the mean.
+        match_other: Optional match-conditioned offsets added after the
+            minutes-bucket mean (team goals / CS / player goals).
 
     Returns:
         Points, goals, and assists per player, plus the unattributed goals.
@@ -139,6 +160,7 @@ def simulate_match(
         cs_red_void_prob=cs_red_void_prob,
         conceded_mode=conceded_mode,
         sample_other=sample_other,
+        match_other=match_other,
     )
     return MatchSimulation(
         player_key=keys,
@@ -222,6 +244,7 @@ def _points(
     cs_red_void_prob: float,
     conceded_mode: ConcededMode,
     sample_other: bool,
+    match_other: MatchOtherOffsets | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     goal_value = np.array([rules.goals[pos] for pos in positions], dtype=np.float64)
     sheet_value = np.array(
@@ -253,6 +276,15 @@ def _points(
     conceded = conceded_value[:, None] * (opponent // every) * exposure
     bucket = np.where(minutes <= 0, 0, np.where(minutes < _BUCKET_EDGES[1], 1, 2))
     other_mean = np.take_along_axis(other_points, bucket, axis=1)
+    if match_other is not None:
+        team_goals = np.where(sides[:, None] == "home", home[None, :], away[None, :])
+        other_mean = other_mean + match_other.match_delta(
+            positions=positions,
+            minutes=minutes,
+            team_goals=team_goals,
+            clean_sheet=clean_sheet,
+            player_goals=goals,
+        )
     other = _draw_other(other_mean, rng) if sample_other else other_mean
     points = (
         appearance

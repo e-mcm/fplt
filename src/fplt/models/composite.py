@@ -15,6 +15,7 @@ from fplt.models.components.involvement.shares import InvolvementShares
 from fplt.models.components.involvement.xg import InvolvementXg
 from fplt.models.components.minutes.empirical import EmpiricalMinutes
 from fplt.models.components.minutes.empirical_v2 import EmpiricalMinutesV2
+from fplt.models.components.other.match_conditioned import OtherMatchConditioned
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
@@ -46,6 +47,7 @@ _REGISTERED = (
     InvolvementXg,
     OtherPointsPriors,
     OtherPlayerPriors,
+    OtherMatchConditioned,
 )
 
 
@@ -259,6 +261,9 @@ def _fixture(
     weights = model._involvement.predict(view, asked)
     other = model._other.predict(view, asked)
     rules = Rules.for_season(str(players["season"][0]))
+    match_other = (
+        model._other if getattr(model._other, "match_conditioned", False) else None
+    )
     result = simulate_match(
         scorelines[0],
         _sim_players(players, weights),
@@ -271,6 +276,7 @@ def _fixture(
         cs_red_void_prob=model._cs_red_void_prob,
         conceded_mode=model._conceded_mode,
         sample_other=model._sample_other,
+        match_other=match_other,
     )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),

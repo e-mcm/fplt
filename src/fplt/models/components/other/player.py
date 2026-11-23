@@ -143,6 +143,33 @@ class OtherPlayerPriors:
         if self._defcon_mode == "rate" and self._use_defensive:
             self._fit_defcon_rates(view)
 
+    def expected_total(
+        self, player_key: int, position: str, minutes_bucket: str
+    ) -> float:
+        """Sum of other channels for one player × minutes bucket.
+
+        Args:
+            player_key: Stable player code.
+            position: ``GK`` / ``DEF`` / ``MID`` / ``FWD``.
+            minutes_bucket: One of ``0``, ``1-59``, ``60+``.
+
+        Returns:
+            Bonus + saves + cards + defensive contribution + residual other.
+
+        Raises:
+            RuntimeError: ``fit`` has not been called.
+        """
+        if not self._fitted:
+            raise RuntimeError("fit the other-points model before expected_total")
+        points = self._player.get((player_key, minutes_bucket))
+        if points is None:
+            points = self._prior.get((position, minutes_bucket), _ZERO)
+        if self._defcon_mode == "rate":
+            points = self._with_rate_defcon(
+                points, player_key, position, minutes_bucket
+            )
+        return float(sum(points))
+
     def predict(self, view: PITView, player_fixtures: pl.DataFrame) -> pl.DataFrame:
         """Three bucket rows for each player-fixture.
 
