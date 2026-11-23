@@ -6,11 +6,12 @@ import pandera.polars as pa
 
 
 class TruthRateSchema(pa.DataFrameModel):
-    """Held-out truth intensities used to draw one season path of actuals.
+    """Independent Poisson intensities (smoke / legacy only).
 
-    ``rate`` is the Poisson mean for ``actual_pts`` (or a pre-drawn sim mean).
-    Callers that already have full Monte Carlo draws can skip this table and
-    pass path actuals directly to the harness.
+    ``rate`` is the Poisson mean for ``actual_pts``. Prefer joint model draws
+    via ``JointTruthSimSchema`` / ``path_actuals_from_joint_sims`` for SE
+    claims; independent Poisson around realised points is not a generative
+    truth model (see Project doc ``sim-season-joint-truth.md``).
     """
 
     gw: int = pa.Field(ge=1, le=38)
@@ -22,6 +23,26 @@ class TruthRateSchema(pa.DataFrameModel):
         strict = True
         coerce = True
         unique = ["gw", "player_key"]
+
+
+class JointTruthSimSchema(pa.DataFrameModel):
+    """One joint truth draw at player–gameweek grain.
+
+    Rows that share ``sim`` are a common-random-number outcome across the
+    player pool (scoreline-correlated within each ``gw``). Stack sims into
+    season paths with ``path_actuals_from_joint_sims``.
+    """
+
+    sim: int = pa.Field(ge=0)
+    gw: int = pa.Field(ge=1, le=38)
+    player_key: int
+    points: float
+    minutes: int = pa.Field(ge=0, le=90)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["sim", "gw", "player_key"]
 
 
 class SimulatedPathActualsSchema(pa.DataFrameModel):

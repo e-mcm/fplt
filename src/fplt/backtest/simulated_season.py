@@ -1,11 +1,20 @@
 """Simulated-season decision evaluation with CRN and paired SEs (N6).
 
 Evaluation north star §2 (Uncertainty): a single real season is one
-path-dependent draw. This harness draws many outcome paths from a held-out
-truth intensity (or accepts pre-drawn actuals), runs each decision policy on
-**the same** path (common random numbers), and reports Monte Carlo standard
-errors on paired policy differences for season points and, optionally, share
-of attainable points (N5).
+path-dependent draw. This harness runs each decision policy on **shared**
+outcome paths (common random numbers) and reports Monte Carlo standard
+errors on paired policy differences for season points and, optionally,
+share of attainable points (N5).
+
+**Truth paths.** Prefer model-based **joint** draws (scoreline-correlated
+player outcomes) via ``path_actuals_from_joint_sims`` / pre-drawn
+``path_actuals``. Independent Poisson rates (``truth_rates_from_actuals`` /
+``draw_truth_paths``) remain for tiny wiring smokes only — they are not a
+generative truth model and must not back promote SE claims.
+
+**Attainable oracle.** When ``with_attainable=True``, freeze horizon,
+decay, and chip arm with :class:`~fplt.optimise.attainable.OraclePin` so
+every policy shares one denominator on each path.
 
 Supports the C6 chip board arms (``off`` / ``rule_based`` / ``optimised``)
 via ``DecisionPolicy.chip_arm`` and the same ``chip_windows`` / scheduler
@@ -32,7 +41,12 @@ from fplt.backtest.ledger import read_predictions
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.attainable import attainable_share, simulate_hindsight_oracle
+from fplt.optimise.attainable import (
+    OraclePin,
+    attainable_share,
+    resolve_oracle_pin,
+    simulate_hindsight_oracle,
+)
 from fplt.optimise.chip_windows import ChipArm, ChipUseWindows, chip_arm_model_id
 from fplt.optimise.decisions import (
     actual_rows_from_ledger,
@@ -43,6 +57,7 @@ from fplt.optimise.decisions import (
 from fplt.optimise.realised import summarise_decisions
 from fplt.optimise.state import SquadState, load_squad_state
 from fplt.schemas.simulated_season import (
+    JointTruthSimSchema,
     PolicyDiffSESchema,
     SimulatedPathActualsSchema,
     SimulatedSeasonPathSchema,
@@ -86,6 +101,7 @@ class SimulatedSeasonReport:
     n_paths: int
     seed: int | None
     with_attainable: bool
+    oracle_pin: OraclePin | None = None
 
 
 def path_seed(seed: int, path_id: int) -> int:
@@ -95,12 +111,46 @@ def path_seed(seed: int, path_id: int) -> int:
     return digest & 0x7FFF_FFFF_FFFF_FFFF
 
 
+def path_actuals_from_joint_sims(frame: pl.DataFrame) -> pl.DataFrame:
+    """Convert joint truth sims into CRN path actuals.
+
+    Maps ``sim`` → ``path_id``, ``points`` → ``actual_pts`` (rounded), and
+    ``minutes`` → ``actual_minutes``. Rows that share ``sim`` are treated as
+    one common-random-number season path (joint within each ``gw``).
+
+    Args:
+        frame: Rows matching ``JointTruthSimSchema``.
+
+    Returns:
+        A frame matching ``SimulatedPathActualsSchema``.
+
+    Raises:
+        ValueError: Validation fails or the frame is empty.
+    """
+    if frame.is_empty():
+        raise ValueError("joint truth frame must be non-empty")
+    checked = JointTruthSimSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    mapped = checked.select(
+        pl.col("sim").cast(pl.Int64).alias("path_id"),
+        pl.col("gw").cast(pl.Int64),
+        pl.col("player_key").cast(pl.Int64),
+        pl.col("points").round(0).cast(pl.Int64).clip(0, None).alias("actual_pts"),
+        pl.col("minutes").cast(pl.Int64).clip(0, 90).alias("actual_minutes"),
+    )
+    return _path_actuals(mapped)
+
+
 def draw_truth_paths(
     rates: pl.DataFrame,
     n_paths: int,
     seed: int,
 ) -> pl.DataFrame:
-    """Draw ``n_paths`` CRN-ready actuals frames from held-out truth rates.
+    """Draw independent Poisson paths from rates (smoke / legacy only).
+
+    Prefer :func:`path_actuals_from_joint_sims` for SE claims. Independent
+    Poisson noise around realised (or other) rates does not reproduce
+    scoreline correlation and must not back a promote decision SE.
 
     Each path uses ``path_seed(seed, path_id)`` so re-running with the same
     seed regenerates identical paths, and every policy that consumes a path
@@ -273,11 +323,12 @@ def policy_diff_board(
 
 
 def truth_rates_from_actuals(actuals: pl.DataFrame) -> pl.DataFrame:
-    """Build held-out Poisson rates from observed player–GW actuals.
+    """Build independent Poisson rates from observed player–GW actuals.
 
     ``actual_pts`` becomes the Poisson mean; ``actual_minutes`` (when present)
-    becomes ``minutes_rate``. Use this for smoke / CRN boards when a separate
-    truth model is not available.
+    becomes ``minutes_rate``. **Smoke / legacy only** — Poisson around
+    realised points is not a model-based joint truth. Prefer joint sims via
+    ``path_actuals_from_joint_sims`` for SE claims.
 
     Args:
         actuals: ``gw``, ``player_key``, ``actual_pts``, optional
@@ -401,14 +452,15 @@ def run_simulated_season_eval(
     truth_rates: pl.DataFrame | None = None,
     path_actuals: pl.DataFrame | None = None,
     with_attainable: bool = False,
+    oracle_pin: OraclePin | None = None,
     pairs: Sequence[tuple[str, str]] | None = None,
     fixtures: pl.DataFrame | None = None,
 ) -> SimulatedSeasonReport:
     """Run every policy on shared outcome paths and report paired SEs.
 
-    Supply either ``path_actuals`` (pre-drawn / existing sim draws labelled by
-    ``path_id``) **or** ``truth_rates`` + ``n_paths`` + ``seed`` to draw Poisson
-    paths from a held-out truth model.
+    Supply either ``path_actuals`` (joint / pre-drawn sims labelled by
+    ``path_id``) **or** ``truth_rates`` + ``n_paths`` + ``seed`` to draw
+    independent Poisson paths (smoke only).
 
     Args:
         candidates: ``gw``, ``player_key``, ``position``, ``team_key``, ``price``.
@@ -421,23 +473,30 @@ def run_simulated_season_eval(
             ``DecisionPolicy.horizon``.
         n_paths: Required when drawing from ``truth_rates``.
         seed: Master seed for path draws.
-        truth_rates: Held-out intensities (``TruthRateSchema``).
-        path_actuals: Pre-drawn paths (``SimulatedPathActualsSchema``).
+        truth_rates: Independent Poisson intensities (``TruthRateSchema``;
+            smoke / legacy only).
+        path_actuals: Pre-drawn paths (``SimulatedPathActualsSchema``),
+            preferably from joint truth sims.
         with_attainable: When true, run the N5 hindsight oracle on each path
-            and attach share of attainable (oracle stays chips-off).
+            under a single :class:`OraclePin` and attach share of attainable.
+        oracle_pin: Explicit H / decay / chip_arm for the path oracle.
+            Required when ``with_attainable`` and policies use divergent
+            horizons; otherwise defaults to eval ``horizon``, ``state.decay``,
+            chips-off.
         pairs: Optional explicit ``(control, treatment)`` pairs for the SE
             board; default is every unordered pair once (control < treatment
             lexicographically via ``policy_diff_board``), unless chip arms
             include chips-off — then each non-off arm is paired against off.
         fixtures: Staged fixtures for rule-based landmarks / optimised
-            ``schedule_chip_windows`` (required when any policy is not chips-off).
+            ``schedule_chip_windows`` (required when any policy or the
+            oracle pin is not chips-off).
 
     Returns:
         ``SimulatedSeasonReport`` with path totals and pairwise SEs.
 
     Raises:
         ValueError: Bad inputs, empty policies/gameweeks, missing fixtures for
-            chip arms, or missing draw args.
+            chip arms, divergent horizons without a pin, or missing draw args.
     """
     weeks = list(gameweeks)
     if not weeks:
@@ -447,7 +506,19 @@ def run_simulated_season_eval(
     ids = [policy.policy_id for policy in policies]
     if len(ids) != len(set(ids)):
         raise ValueError(f"duplicate policy_id: {ids}")
+
+    resolved_pin: OraclePin | None = None
+    if with_attainable:
+        resolved_pin = resolve_oracle_pin(
+            horizon=horizon,
+            state=state,
+            policy_horizons=[policy.horizon for policy in policies],
+            pin=oracle_pin,
+        )
+
     needs_fixtures = any(policy.chip_arm != "off" for policy in policies)
+    if resolved_pin is not None and resolved_pin.chip_arm != "off":
+        needs_fixtures = True
     if needs_fixtures and (fixtures is None or fixtures.is_empty()):
         raise ValueError("chip arms require non-empty fixtures")
 
@@ -467,6 +538,10 @@ def run_simulated_season_eval(
         if chip_pairs:
             chosen_pairs = chip_pairs
 
+    oracle_state = state
+    if resolved_pin is not None and resolved_pin.decay != float(state.decay):
+        oracle_state = state.model_copy(update={"decay": resolved_pin.decay})
+
     rows: list[dict[str, object]] = []
     for path_id in path_ids:
         actuals = (
@@ -476,14 +551,18 @@ def run_simulated_season_eval(
         )
         attainable: int | None = None
         if with_attainable:
+            assert resolved_pin is not None
             oracle = simulate_hindsight_oracle(
                 candidates,
                 actuals,
-                state,
+                oracle_state,
                 season=season,
                 gameweeks=weeks,
-                horizon=horizon,
+                horizon=resolved_pin.horizon,
                 model_id=ORACLE_PATH_MODEL_ID,
+                chip_arm=resolved_pin.chip_arm,
+                fixtures=fixtures,
+                force_play=resolved_pin.force_play,
             )
             oracle_summary = summarise_decisions(oracle)
             if oracle_summary.is_empty():
@@ -531,6 +610,7 @@ def run_simulated_season_eval(
         n_paths=len(path_ids),
         seed=seed,
         with_attainable=with_attainable,
+        oracle_pin=resolved_pin,
     )
 
 
@@ -551,9 +631,11 @@ def run_chip_arm_sim_season(
 ) -> SimulatedSeasonReport:
     """Run chip-arm simulated-season SE from staged data + the prediction ledger.
 
-    Builds truth rates from ledger actuals (Poisson around observed points),
-    then CRN-runs the requested chip arms. Intended for short smoke windows
-    (few GWs × small ``n_paths``), not a full 38×large-N board in CI.
+    Builds independent Poisson rates from ledger actuals (smoke only — not
+    joint truth), then CRN-runs the requested chip arms. Intended for short
+    wiring smokes (few GWs × small ``n_paths``), not promote SE boards.
+    Joint truth paths land via ``path_actuals_from_joint_sims`` (follow-up:
+    held-out layered sampler).
 
     Args:
         data_dir: Root with ``staged/`` and ``ledger/``.
@@ -566,7 +648,8 @@ def run_chip_arm_sim_season(
         chip_rules_season: Chip-rules year (default ``season``).
         n_paths: Monte Carlo path count.
         seed: Master draw seed.
-        with_attainable: Optional N5 share SE (oracle remains chips-off).
+        with_attainable: Optional N5 share SE under a chips-off
+            :class:`OraclePin` (eval horizon + state decay).
         force_play: Optimised-arm half-window packing (default true; CLI
             ``--no-force-play`` sets false). Does not flip the live default.
 
@@ -664,7 +747,19 @@ def format_simulated_season_report(report: SimulatedSeasonReport) -> str:
             )
         )
     if report.with_attainable:
-        lines.extend(["", "_Share-of-attainable diffs use the N5 path oracle._"])
+        pin = report.oracle_pin
+        if pin is None:
+            lines.extend(["", "_Share-of-attainable diffs use the N5 path oracle._"])
+        else:
+            lines.extend(
+                [
+                    "",
+                    (
+                        f"_Share-of-attainable oracle pin: H={pin.horizon}, "
+                        f"decay={pin.decay}, chip_arm={pin.chip_arm}_"
+                    ),
+                ]
+            )
     return "\n".join(lines)
 
 
