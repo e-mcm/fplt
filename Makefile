@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-bench
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -46,6 +46,11 @@ check:
 	uv run ruff format --check src tests scripts
 	uv run pyright
 	uv run pytest -m "not slow"
+
+# ── Monte Carlo micro-bench (native-mc-build-spec §1.1 / §5.5) ─────────────────
+# Synthetic 40-player fixture, n_sims=10000 by default. Best-of-3 wall times.
+mc-bench:
+	uv run python scripts/mc_bench.py $(ARGS)
 
 # ── Lint + type-check ─────────────────────────────────────────────────────────
 lint:
