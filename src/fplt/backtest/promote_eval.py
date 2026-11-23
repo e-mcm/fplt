@@ -111,6 +111,10 @@ CoverageMetric = Literal[
     "odds_history_join",
     "penalties_order_non_null",
     "dc_season_eligible",
+    "injury_overlay_mapped",
+    "predicted_lineups_pit",
+    "fpl_api_status_share",
+    "forecast_combine_member_join",
 ]
 CoverageRead = Literal["strict_pit", "closing_proxy_labelled", "prematch_scheduled"]
 Verdict = Literal["keep", "tune", "drop", "inconclusive"]
@@ -209,6 +213,13 @@ class WindowSpec(BaseModel):
     seasons_back: int = Field(default=4, ge=1)
     fit_gw: int | None = Field(default=None, ge=1, le=38)
     modes: list[CompareModeName] = Field(default_factory=lambda: ["walk_forward"])
+    note: str = Field(
+        default="",
+        description=(
+            "Pre-registered window caveat (e.g. GW1–10 is thin/S1 smoke, "
+            "never a keep/confirmation window)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _gw_order(self) -> WindowSpec:
@@ -389,6 +400,7 @@ class PromoteEvalPlan(BaseModel):
     commands: list[str]
     diff: list[str]
     notes: str
+    window_note: str = ""
     warnings: list[str] = Field(default_factory=list)
     dry_run: bool = True
 
@@ -581,6 +593,7 @@ def plan_promote_eval(
         commands=commands,
         diff=list(spec.change.diff),
         notes=spec.change.notes,
+        window_note=window.note.strip(),
         warnings=warnings,
         dry_run=dry_run,
     )
@@ -610,6 +623,8 @@ def format_plan(plan: PromoteEvalPlan) -> str:
         lines.extend(f"    - {item}" for item in plan.diff)
     if plan.notes:
         lines.append(f"  notes: {plan.notes}")
+    if plan.window_note:
+        lines.append(f"  window.note: {plan.window_note}")
     lines.append("  commands:")
     lines.extend(f"    {cmd}" for cmd in plan.commands)
     if plan.warnings:
@@ -1493,9 +1508,11 @@ def render_recommendation(
             f"- seasons_back: {plan.seasons_back}",
             f"- modes: {', '.join(plan.modes)}",
             f"- n_sims: {n_sims}",
-            "",
         ]
     )
+    if plan.window_note:
+        lines.append(f"- note: {plan.window_note}")
+    lines.append("")
     # 5. Coverage
     lines.append("## Coverage")
     cov = preflight.coverage
@@ -2149,6 +2166,32 @@ def _measure_coverage(
         )
     if metric == "dc_season_eligible":
         return _coverage_dc_season(spec, fixtures), warnings, None
+    if metric == "injury_overlay_mapped":
+        return (
+            _coverage_injury_overlay_mapped(spec, plan, store),
+            warnings,
+            None,
+        )
+    if metric == "predicted_lineups_pit":
+        return (
+            _coverage_predicted_lineups_pit(spec, plan, store, fixtures),
+            warnings,
+            None,
+        )
+    if metric == "fpl_api_status_share":
+        return (
+            _coverage_fpl_api_status_share(spec, plan, store),
+            warnings,
+            None,
+        )
+    if metric == "forecast_combine_member_join":
+        return (
+            _coverage_forecast_combine_member_join(
+                spec, plan, store, treatment, data_dir=store.root
+            ),
+            warnings,
+            None,
+        )
     if metric == "odds_history_join":
         raise ValueError(
             "odds_history_join is not implemented in P1+P2 (history prior package)"
@@ -2580,6 +2623,327 @@ def _coverage_dc_season(spec: EvalSpec, fixtures: pl.DataFrame) -> CoverageResul
         min_coverage=min_cov,
         passed=passed,
         extras={},
+    )
+
+
+def _scored_player_fixtures(store: DataStore, plan: PromoteEvalPlan) -> pl.DataFrame:
+    """Player–fixtures in the test window from ``player_fixture_stats``."""
+    return (
+        store.table("player_fixture_stats")
+        .filter(
+            pl.col("season").is_in(plan.seasons)
+            & pl.col("gw").is_between(plan.from_gw, plan.to_gw, closed="both")
+        )
+        .select(["season", "gw", "player_key", "fixture_id"])
+        .unique()
+        .collect()
+    )
+
+
+def _deadline_frame(store: DataStore, plan: PromoteEvalPlan) -> pl.DataFrame:
+    """Latest deadline per season/gw in the plan window."""
+    return (
+        store.table("gameweeks")
+        .filter(pl.col("season").is_in(plan.seasons))
+        .sort("available_at")
+        .unique(subset=["season", "gw"], keep="last")
+        .select(["season", "gw", "deadline_time"])
+        .collect()
+    )
+
+
+def _coverage_pass(rate: float, min_cov: float | None) -> bool:
+    return True if min_cov is None else rate + 1e-12 >= min_cov
+
+
+def _coverage_injury_overlay_mapped(
+    spec: EvalSpec, plan: PromoteEvalPlan, store: DataStore
+) -> CoverageResult:
+    """Share of scored player–fixtures with a mapped PIT injury row."""
+    scored = _scored_player_fixtures(store, plan)
+    denom = scored.height
+    extras: dict[str, Any] = {"mapped_injury_players": 0}
+    if denom == 0:
+        return CoverageResult(
+            metric="injury_overlay_mapped",
+            numerator=0,
+            denominator=0,
+            rate=0.0,
+            min_coverage=spec.gates.min_coverage,
+            passed=_coverage_pass(0.0, spec.gates.min_coverage),
+            extras=extras,
+        )
+    deadlines = _deadline_frame(store, plan)
+    keyed = scored.join(deadlines, on=["season", "gw"], how="left")
+    injuries = store.read("player_injuries")
+    if injuries.is_empty() or "player_key" not in injuries.columns:
+        numerator = 0
+    else:
+        mapped = injuries.filter(pl.col("player_key").is_not_null())
+        extras["mapped_injury_players"] = (
+            mapped.select("player_key").unique().height if not mapped.is_empty() else 0
+        )
+        joined = (
+            keyed.join(
+                mapped.select(["season", "player_key", "available_at"]),
+                on=["season", "player_key"],
+                how="left",
+            )
+            .filter(
+                pl.col("available_at").is_not_null()
+                & (pl.col("available_at") <= pl.col("deadline_time"))
+            )
+            .unique(subset=["season", "fixture_id", "player_key"])
+        )
+        numerator = joined.height
+    rate = (numerator / denom) if denom else 0.0
+    min_cov = spec.gates.min_coverage
+    return CoverageResult(
+        metric="injury_overlay_mapped",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=_coverage_pass(rate, min_cov),
+        extras=extras,
+    )
+
+
+def _coverage_predicted_lineups_pit(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    store: DataStore,
+    fixtures: pl.DataFrame,
+) -> CoverageResult:
+    """Share of target fixtures with a PIT ``predicted_lineups`` row."""
+    denom = fixtures.height
+    extras: dict[str, Any] = {"lineup_rows_pit": 0}
+    if denom == 0:
+        return CoverageResult(
+            metric="predicted_lineups_pit",
+            numerator=0,
+            denominator=0,
+            rate=0.0,
+            min_coverage=spec.gates.min_coverage,
+            passed=_coverage_pass(0.0, spec.gates.min_coverage),
+            extras=extras,
+        )
+    deadlines = _deadline_frame(store, plan)
+    targets = fixtures.join(deadlines, on=["season", "gw"], how="left")
+    lineups = store.read("predicted_lineups")
+    if lineups.is_empty():
+        numerator = 0
+    else:
+        pit = lineups.filter(
+            pl.col("player_key").is_not_null() & pl.col("fixture_id").is_not_null()
+        )
+        joined = (
+            targets.select(["season", "fixture_id", "deadline_time"])
+            .join(
+                pit.select(["season", "fixture_id", "available_at"]),
+                on=["season", "fixture_id"],
+                how="left",
+            )
+            .filter(
+                pl.col("available_at").is_not_null()
+                & (pl.col("available_at") <= pl.col("deadline_time"))
+            )
+        )
+        extras["lineup_rows_pit"] = joined.height
+        numerator = joined.unique(subset=["season", "fixture_id"]).height
+    rate = (numerator / denom) if denom else 0.0
+    min_cov = spec.gates.min_coverage
+    return CoverageResult(
+        metric="predicted_lineups_pit",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=_coverage_pass(rate, min_cov),
+        extras=extras,
+    )
+
+
+def _coverage_fpl_api_status_share(
+    spec: EvalSpec, plan: PromoteEvalPlan, store: DataStore
+) -> CoverageResult:
+    """Share of scored player–fixtures with PIT ``source=fpl_api`` status."""
+    scored = _scored_player_fixtures(store, plan)
+    denom = scored.height
+    extras: dict[str, Any] = {"source_fpl_api_share": 0.0}
+    if denom == 0:
+        return CoverageResult(
+            metric="fpl_api_status_share",
+            numerator=0,
+            denominator=0,
+            rate=0.0,
+            min_coverage=spec.gates.min_coverage,
+            passed=_coverage_pass(0.0, spec.gates.min_coverage),
+            extras=extras,
+        )
+    deadlines = _deadline_frame(store, plan)
+    keyed = scored.join(deadlines, on=["season", "gw"], how="left")
+    status = store.read("player_status")
+    joined = (
+        keyed.join(
+            status.select(["season", "player_key", "available_at", "source"]),
+            on=["season", "player_key"],
+            how="left",
+        )
+        .filter(
+            pl.col("available_at").is_null()
+            | (pl.col("available_at") <= pl.col("deadline_time"))
+        )
+        .sort("available_at")
+        .unique(subset=["season", "fixture_id", "player_key"], keep="last")
+    )
+    numerator = joined.filter(pl.col("source") == "fpl_api").height
+    rate = (numerator / denom) if denom else 0.0
+    extras["source_fpl_api_share"] = rate
+    min_cov = spec.gates.min_coverage
+    return CoverageResult(
+        metric="fpl_api_status_share",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=_coverage_pass(rate, min_cov),
+        extras=extras,
+    )
+
+
+def _member_prediction_keys(
+    data_dir: Path, member: ModelSpec, scored: pl.DataFrame
+) -> tuple[pl.DataFrame, str]:
+    """Keys a member covers on the scored pool.
+
+    Prefer archived ``predictions/<model_id>/`` rows when present. Otherwise
+    fall back to the ``player_fixtures`` universe from staged players/fixtures
+    (what both blend members ``predict`` on).
+    """
+    keys = ["season", "gw", "player_key", "fixture_id"]
+    empty = scored.clear()
+    pred_root = data_dir / "predictions" / member.model_id
+    if pred_root.is_dir():
+        frames: list[pl.DataFrame] = []
+        for path in pred_root.glob("as_of=*/part.parquet"):
+            try:
+                frame = pl.read_parquet(path)
+            except Exception:
+                continue
+            needed = {
+                "target_season",
+                "target_gw",
+                "player_key",
+                "fixture_id",
+                "xpts",
+            }
+            if not needed.issubset(frame.columns):
+                continue
+            frames.append(
+                frame.filter(pl.col("xpts").is_not_null())
+                .select(
+                    pl.col("target_season").alias("season"),
+                    pl.col("target_gw").alias("gw"),
+                    "player_key",
+                    "fixture_id",
+                )
+                .unique()
+            )
+        if frames:
+            covered = pl.concat(frames).unique(subset=keys)
+            return covered, "predictions"
+    # Universe fallback: players who have a fixture in the scored GWs.
+    players = DataStore(data_dir).read("players")
+    fixtures = DataStore(data_dir).read("fixtures")
+    if players.is_empty() or fixtures.is_empty() or scored.is_empty():
+        return empty, "universe"
+    roster = (
+        players.sort("available_at")
+        .unique(subset=["season", "player_key"], keep="last")
+        .select(["season", "player_key", "team_key"])
+    )
+    fix = (
+        fixtures.sort("available_at")
+        .unique(subset=["season", "fixture_id"], keep="last")
+        .select(["season", "fixture_id", "gw", "team_h_key", "team_a_key"])
+    )
+    wanted = scored.select(["season", "gw"]).unique()
+    selected = fix.join(wanted, on=["season", "gw"], how="inner")
+    home = selected.join(
+        roster, left_on=["season", "team_h_key"], right_on=["season", "team_key"]
+    )
+    away = selected.join(
+        roster, left_on=["season", "team_a_key"], right_on=["season", "team_key"]
+    )
+    universe = (
+        pl.concat([home, away], how="diagonal_relaxed").select(keys).unique(subset=keys)
+    )
+    return universe, "universe"
+
+
+def _coverage_forecast_combine_member_join(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    store: DataStore,
+    treatment: ModelSpec,
+    *,
+    data_dir: Path,
+) -> CoverageResult:
+    """Share of scored PF in the inner join of both blend members' rows."""
+    scored = _scored_player_fixtures(store, plan)
+    denom = scored.height
+    if treatment.kind != "forecast_combine":
+        raise ValueError(
+            "forecast_combine_member_join requires treatment.kind=forecast_combine"
+        )
+    members = list(treatment.components.items())
+    extras: dict[str, Any] = {
+        "members": [name for name, _ in members],
+        "member_rates": {},
+        "member_sources": {},
+        "member_missing": [],
+    }
+    if denom == 0 or len(members) < 2:
+        rate = 0.0
+        if len(members) < 2:
+            extras["member_missing"] = ["<2 members on treatment"]
+        return CoverageResult(
+            metric="forecast_combine_member_join",
+            numerator=0,
+            denominator=denom,
+            rate=rate,
+            min_coverage=spec.gates.min_coverage,
+            passed=_coverage_pass(rate, spec.gates.min_coverage),
+            extras=extras,
+        )
+
+    covered_frames: list[pl.DataFrame] = []
+    keys = ["season", "gw", "player_key", "fixture_id"]
+    for name, member_spec in members:
+        covered, source = _member_prediction_keys(data_dir, member_spec, scored)
+        on_scored = scored.join(covered, on=keys, how="inner")
+        member_rate = on_scored.height / denom
+        extras["member_rates"][name] = member_rate
+        extras["member_sources"][name] = source
+        if on_scored.height == 0:
+            extras["member_missing"].append(name)
+        covered_frames.append(on_scored.select(keys).unique())
+
+    joined = covered_frames[0]
+    for frame in covered_frames[1:]:
+        joined = joined.join(frame, on=keys, how="inner")
+    numerator = joined.height
+    rate = numerator / denom
+    min_cov = spec.gates.min_coverage
+    return CoverageResult(
+        metric="forecast_combine_member_join",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=_coverage_pass(rate, min_cov),
+        extras=extras,
     )
 
 

@@ -426,10 +426,16 @@ One formula per `gates.coverage.metric`. The YAML does not redefine the numerato
 | `odds_history_join` | Training-window fixtures, weighted by the Dixon–Coles time-decay weight | 1X2 non-null via a date-safe `fixture_id` join | `0.80` | Target-fixture strict join % (not the gate for `market_prior_source: history`) |
 | `penalties_order_non_null` | Player–fixtures scored | Latest PIT `player_status.penalties_order` non-null at that deadline | `0.01` | `== 1` rate; share of rows with `source=fpl_api` |
 | `dc_season_eligible` | Target fixtures | Season has non-empty `defensive_contributions` in scoring YAML | `1.0` | Award rate among `minutes > 0`; share of played rows with the staged column null |
+| `injury_overlay_mapped` | Player–fixtures scored | Mapped PIT `player_injuries` row (`player_key` non-null, `available_at` ≤ deadline) for that player | `0.01` | Count of distinct mapped injury players |
+| `predicted_lineups_pit` | Target fixtures | ≥1 PIT `predicted_lineups` row with non-null `player_key` / `fixture_id` before deadline | `0.01` | PIT lineup row count |
+| `fpl_api_status_share` | Player–fixtures scored | Latest PIT `player_status` has `source=fpl_api` | `0.01` | Same rate under extras |
+| `forecast_combine_member_join` | Player–fixtures scored | Inner join of both blend members’ prediction keys at that as-of (archived `predictions/<model_id>/` when present; else `player_fixtures` universe) | `0.80` | Per-member rates / sources; `member_missing` when a member covers none of the scored pool |
 
 Odds join keys, in order: `fixture_id`, else `season + team_h_key + team_a_key + match date`. Teams alone are not a key (`odds_poisson` already rejects that; `_align_odds` in `dixon_coles.py` still falls through to teams). P1 measures both rates. If the team-key rate exceeds the fixture_id rate by more than 5 percentage points, **warn**. The runner does not patch the join.
 
 `allow_low_coverage: true` turns a coverage miss into a warning and forces `inconclusive`. It never produces `keep`. Use it only to see a no-op in the tables.
+
+Empty overlay tables (injuries, predicted XI, vaastav-only status) must **fail** these gates rather than run through to an inconclusive vacuous A/B. Overlay EvalSpecs that still list GW1–10 set `window.note` that this is **thin/S1 smoke only — never a keep or confirmation window**.
 
 `change.tables` is checked whenever it is non-empty, including on `kind: config`. Each table must exist under staged storage and must have `available_at`. That check is P1; the dry-run on main does not open the store.
 
@@ -528,7 +534,7 @@ P2 prediction command is already the right shape: `fplt compare --models <contro
 
 P3 components command must name the slot specs it reads off each parent (`components.<slot>.name`), pass `--skip-sims` unless `n_sims` is the lever, and stop calling the defaults (`dixon_coles_v1`, `empirical_minutes_v1`, `involvement_shares_v1`). The dry-run on main omits those flags, so it does not compare the two arms.
 
-S0 load + preflight. S1 clamps the window to GW1–10. S2 to GW1–20. S3 adds decisions on GW1–10. S4 decisions on the full window. S5 multi-season decisions stays outside v1. Dev season for in-house models remains 2024-25, except live-only fields (defcon, snapshot `penalties_order`), which set `window.seasons` explicitly. OpenFPL still starts at 2024-25.
+S0 load + preflight. S1 clamps the window to GW1–10. S2 to GW1–20. S3 adds decisions on GW1–10. S4 decisions on the full window. S5 multi-season decisions stays outside v1. **GW1–10 (S1) is thin smoke only — never a keep or confirmation window**; EvalSpecs that still use it pre-register that via `window.note`. Dev season for in-house models remains 2024-25, except live-only fields (defcon, snapshot `penalties_order`), which set `window.seasons` explicitly. OpenFPL still starts at 2024-25.
 
 ```text
 $FPLT_DATA_DIR/promote_eval/<eval_name>/<stamp>/
