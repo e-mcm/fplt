@@ -744,9 +744,7 @@ def run_plan(
             chip_windows=plan_windows,
             chip_rules_season=plan_rules_season,
             price_forecast=forecast,
-            step_weights=None
-            if step_weights is None
-            else step_weights[: len(window)],
+            step_weights=None if step_weights is None else step_weights[: len(window)],
         )
         with timed_phase("plan/write"):
             table = plan_table(solved, spec.model_id, season, gameweek, window)
