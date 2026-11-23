@@ -11,7 +11,7 @@
 ### Artifact / runner
 - EvalSpec `configs/evals/predicted_xi_ab.yaml` (scaffold in repo PR).
 - `uv run fplt promote-eval --eval predicted_xi_ab --execute`
-- Preflight: `score_predicted_starts` on Touchline/API-Football lineups vs official XIs — **abort promote** if start accuracy is noise.
+- Preflight: `fplt predicted-xi-audit` / `score_predicted_starts` on Touchline/API-Football lineups vs official XIs — **abort promote** if start accuracy is below the audit gate (default 0.55).
 - Enable ingest: `FPLT_TOUCHLINE_LINEUPS_ENABLED=1` (or API-Football lineups).
 
 ### Windows

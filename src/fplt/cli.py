@@ -45,6 +45,14 @@ from fplt.backtest.minutes_measurement import (
     format_summary_table as format_minutes_measurement_table,
 )
 from fplt.backtest.predict_live import run_predict
+from fplt.backtest.predicted_xi_audit import (
+    DEFAULT_MIN_START_ACCURACY,
+    format_audit_markdown,
+    run_predicted_xi_audit,
+)
+from fplt.backtest.predicted_xi_audit import (
+    format_summary_table as format_predicted_xi_audit_table,
+)
 from fplt.backtest.produce_ledger import StaleLedgerCacheError
 from fplt.backtest.promote_eval import (
     execute_promote_eval,
@@ -675,6 +683,36 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary/misses parquet+JSON+markdown here",
     )
+    predicted_xi_audit = sub.add_parser(
+        "predicted-xi-audit",
+        parents=[log_flags],
+        help=(
+            "Predicted XI accuracy vs official starts: precision/recall by "
+            "source and hours-to-KO, bench→start rate, full-XI coverage"
+        ),
+    )
+    predicted_xi_audit.add_argument("--season", required=True)
+    predicted_xi_audit.add_argument("--from-gw", type=int, default=1)
+    predicted_xi_audit.add_argument("--to-gw", type=int, default=38)
+    predicted_xi_audit.add_argument(
+        "--source",
+        default=None,
+        help="Optional predicted_lineups.source filter (e.g. touchline_wire)",
+    )
+    predicted_xi_audit.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=DEFAULT_MIN_START_ACCURACY,
+        help=(
+            "Start-precision gate for promote smoke "
+            f"(default: {DEFAULT_MIN_START_ACCURACY})"
+        ),
+    )
+    predicted_xi_audit.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary/detail parquet+JSON+markdown here",
+    )
     horizon_skill = sub.add_parser(
         "horizon-skill",
         parents=[log_flags],
@@ -1135,6 +1173,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "minutes-measure":
         _minutes_measure(args)
         return
+    if args.command == "predicted-xi-audit":
+        _predicted_xi_audit(args)
+        return
     if args.command == "horizon-skill":
         _horizon_skill(args)
         return
@@ -1486,6 +1527,34 @@ def _minutes_measure(args: argparse.Namespace) -> None:
     print(format_minutes_measurement_table(result.summary))
     print(format_misses_markdown(result.misses))
     print(f"wrote {result.output_dir / 'summary.json'}")
+
+
+def _predicted_xi_audit(args: argparse.Namespace) -> None:
+    try:
+        result = run_predicted_xi_audit(
+            get_settings().data_dir,
+            args.season,
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            source=args.source,
+            min_accuracy=float(args.min_accuracy),
+            output_dir=args.output_dir,
+        )
+    except (ValueError, KeyError) as exc:
+        logger.error("predicted-xi-audit failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_predicted_xi_audit_table(result.summary))
+    print(
+        format_audit_markdown(
+            result.summary,
+            passed=result.passed_min_accuracy,
+            min_accuracy=float(args.min_accuracy),
+        )
+    )
+    print(f"wrote {result.output_dir / 'summary.json'}")
+    if not result.passed_min_accuracy:
+        raise SystemExit(1)
 
 
 def _eval_components(args: argparse.Namespace) -> None:

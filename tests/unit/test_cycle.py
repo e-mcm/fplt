@@ -81,6 +81,54 @@ def test_catch_up_plans_a_skipped_checked_week(
     assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is None
 
 
+def test_pre_deadline_refreshes_when_availability_signal_is_newer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _league(tmp_path)
+    monkeypatch.setattr(
+        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
+    )
+    moment = _GW3 - timedelta(hours=1)
+    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is not None
+    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is None
+
+    store = DataStore(tmp_path)
+    store.write(
+        "player_status",
+        pl.DataFrame(
+            {
+                "season": ["2024-25"],
+                "player_key": [100],
+                "status": ["d"],
+                "news": ["late knock"],
+                "price": [100],
+                "ep_next": [2.0],
+                "chance_of_playing": [25.0],
+                "penalties_order": [None],
+                "available_at": [moment + timedelta(minutes=5)],
+                "source": ["fpl_api"],
+            }
+        ),
+    )
+    # Plan mtime is "now"; force it older than the new status signal.
+    monkeypatch.setattr(
+        "fplt.automation.late_refresh.artifact_mtime",
+        lambda _path: moment - timedelta(hours=2),
+    )
+    later = moment + timedelta(minutes=10)
+    assert pre_deadline(tmp_path, later, ["rolling_mean_v1"], horizon=1) is not None
+    assert (
+        pre_deadline(
+            tmp_path,
+            later,
+            ["rolling_mean_v1"],
+            horizon=1,
+            refresh_if_stale=False,
+        )
+        is None
+    )
+
+
 def test_catch_up_passes_live_squad_when_entry_id_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
