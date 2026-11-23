@@ -95,33 +95,14 @@ def _synthetic_league_pool(*, n_teams: int = 20) -> tuple[pl.DataFrame, pl.DataF
 def test_board_deterministic_solves_pruned_empty_squad_h3() -> None:
     """Regression: board_deterministic must solve pruned GW1 drafts (FDB-258).
 
-    highspy 1.16 returns ``kNotset`` (elapsed 0) when ``threads=1`` is pinned
-    on auto-pruned empty-squad H=3 MILPs; ``threads=None`` + ``parallel=off``
-    + ``random_seed=0`` stays feasible and deterministic.
+    Some hosts (notably highspy 1.16 on this agent image) return ``kNotset``
+    when ``threads=1`` is pinned on auto-pruned empty-squad H=3 MILPs. That
+    failure is environment-dependent — GHA may still solve under ``threads=1``
+    — so this test only requires the published ``board_deterministic()``
+    knobs (``threads=None``, ``parallel=off``, ``random_seed=0``) to succeed.
     """
     candidates, points = _synthetic_league_pool()
     state = SquadState(bank=1000, free_transfers=1, ft_bank_cap=5)
-    broken = HighsSolveOptions(
-        time_limit=None,
-        mip_rel_gap=0.0,
-        output_flag=False,
-        presolve="on",
-        parallel="off",
-        threads=1,
-        random_seed=0,
-        accept_time_limit=False,
-    )
-    with pytest.raises(ValueError, match="no plan satisfies"):
-        plan_squad(
-            candidates,
-            points,
-            state,
-            initial=True,
-            horizon=3,
-            prune=True,
-            highs_options=broken,
-            lineup_reopt=True,
-        )
     plan = plan_squad(
         candidates,
         points,
