@@ -1126,8 +1126,17 @@ def execute_promote_eval(
             per_match.write_parquet(out / "per_match.parquet")
     if run_prediction:
         try:
+            # Promote-eval CRN: share fixture noise across arms (feature-eval §9).
+            paired_seed = (
+                int(preflight.control_spec.seed)
+                if preflight.control_spec is not None
+                else 0
+            )
             compare_result, wall_clock, peak_rss = _run_compare(
-                plan, data_dir=data_dir, output_dir=out / "compare"
+                plan,
+                data_dir=data_dir,
+                output_dir=out / "compare",
+                eval_seed=paired_seed,
             )
         except StaleLedgerCacheError as exc:
             # Cached ledger whose stored key ≠ the key just computed (§8).
@@ -3188,7 +3197,11 @@ def _check_leak(
 
 
 def _run_compare(
-    plan: PromoteEvalPlan, *, data_dir: Path, output_dir: Path
+    plan: PromoteEvalPlan,
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    eval_seed: int | None = None,
 ) -> tuple[CompareResult, dict[str, float], dict[str, int]]:
     wall: dict[str, float] = {}
     rss: dict[str, int] = {}
@@ -3207,6 +3220,7 @@ def _run_compare(
         modes=list(plan.modes),  # type: ignore[arg-type]
         steps=plan.suites.steps,
         output_dir=output_dir,
+        eval_seed=eval_seed,
     )
     # Multi-season: run remaining seasons and concat summaries.
     summaries = [result.summary]
@@ -3224,6 +3238,7 @@ def _run_compare(
             modes=list(plan.modes),  # type: ignore[arg-type]
             steps=plan.suites.steps,
             output_dir=season_out,
+            eval_seed=eval_seed,
         )
         summaries.append(part.summary)
         details.append(part.detail)

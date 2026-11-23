@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     seasons_back = payload.get("seasons_back")
     lock_root = Path(payload["lock_root"]) if payload.get("lock_root") else None
     out_parquet = Path(payload["out_parquet"])
+    eval_seed_raw = payload.get("eval_seed")
     produced = produce_ledger(
         Path(payload["data_dir"]),
         spec,
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         seasons_back=None if seasons_back is None else int(seasons_back),
         use_cache=bool(payload.get("use_cache", True)),
         lock_root=lock_root,
+        eval_seed=None if eval_seed_raw is None else int(eval_seed_raw),
     )
     out_parquet.parent.mkdir(parents=True, exist_ok=True)
     produced.frame.write_parquet(out_parquet)
