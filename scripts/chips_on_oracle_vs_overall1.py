@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Published 2024-25 Overall #1 (Lovro Budišin). Live FPL API only serves the
 # current season; pin the completed-season total from contemporaneous reports.
-DEFAULT_OVERALL1: dict[str, dict[str, object]] = {
+DEFAULT_OVERALL1: dict[str, dict[str, int | str | list[str]]] = {
     "2024-25": {
         "points": 2810,
         "manager": "Lovro Budišin",
@@ -93,11 +93,11 @@ def main() -> None:
     store = DataStore(data_dir)
     _ = store  # ensure path exists / is readable
     meta = DEFAULT_OVERALL1.get(args.season, {})
-    overall1 = (
-        int(args.overall1_points)
-        if args.overall1_points is not None
-        else int(meta.get("points") or 0)
-    )
+    if args.overall1_points is not None:
+        overall1 = int(args.overall1_points)
+    else:
+        raw_points = meta.get("points", 0)
+        overall1 = raw_points if isinstance(raw_points, int) else 0
     if overall1 <= 0:
         raise SystemExit(
             f"pass --overall1-points for season={args.season} (not in DEFAULT_OVERALL1)"
