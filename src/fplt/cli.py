@@ -37,6 +37,13 @@ from fplt.backtest.component_eval import (
 from fplt.backtest.eval_set import CORE_MODELS
 from fplt.backtest.horizon_skill import format_skill_curve, run_horizon_skill
 from fplt.backtest.horizons import DEFAULT_PROJECTION_HORIZON, DEFAULT_SKILL_STEPS
+from fplt.backtest.minutes_measurement import (
+    format_misses_markdown,
+    run_minutes_measurement,
+)
+from fplt.backtest.minutes_measurement import (
+    format_summary_table as format_minutes_measurement_table,
+)
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.produce_ledger import StaleLedgerCacheError
 from fplt.backtest.promote_eval import (
@@ -641,6 +648,33 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary JSON/parquet here",
     )
+    minutes_measure = sub.add_parser(
+        "minutes-measure",
+        parents=[log_flags],
+        help=(
+            "Snapshot minutes diagnostics: availability/rotation/early-sub "
+            "Brier+log, xPts-weighted Brier on the decision pool, weekly misses"
+        ),
+    )
+    minutes_measure.add_argument("--season", required=True)
+    minutes_measure.add_argument("--from-gw", type=int, default=1)
+    minutes_measure.add_argument("--to-gw", type=int, default=10)
+    minutes_measure.add_argument(
+        "--minutes-model",
+        default="empirical_minutes_v2",
+        help="Minutes component YAML name (default: empirical_minutes_v2)",
+    )
+    minutes_measure.add_argument(
+        "--top-misses-per-gw",
+        type=int,
+        default=25,
+        help="Rows kept per GW in the misses report (default: 25)",
+    )
+    minutes_measure.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary/misses parquet+JSON+markdown here",
+    )
     horizon_skill = sub.add_parser(
         "horizon-skill",
         parents=[log_flags],
@@ -1098,6 +1132,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "eval-components":
         _eval_components(args)
         return
+    if args.command == "minutes-measure":
+        _minutes_measure(args)
+        return
     if args.command == "horizon-skill":
         _horizon_skill(args)
         return
@@ -1429,6 +1466,26 @@ def _plan(args: argparse.Namespace) -> None:
     print(report, end="")
     print(path)
     print(path.parent / "report.md")
+
+
+def _minutes_measure(args: argparse.Namespace) -> None:
+    try:
+        result = run_minutes_measurement(
+            get_settings().data_dir,
+            args.season,
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            minutes_model=str(args.minutes_model),
+            output_dir=args.output_dir,
+            top_misses_per_gw=int(args.top_misses_per_gw),
+        )
+    except (ValueError, KeyError) as exc:
+        logger.error("minutes-measure failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_minutes_measurement_table(result.summary))
+    print(format_misses_markdown(result.misses))
+    print(f"wrote {result.output_dir / 'summary.json'}")
 
 
 def _eval_components(args: argparse.Namespace) -> None:

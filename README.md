@@ -68,6 +68,7 @@ Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux
 | Compare models (walk-forward + fixed) | `make compare-models SEASON=2024-25` or `uv run fplt compare --season 2024-25` |
 | Layered component metrics + `n_sims` sweep | `make eval-components SEASON=2024-25` or `uv run fplt eval-components --season 2024-25` |
 | Minutes v2 Brier (snapshot GWs) | `make minutes-brier SEASON=2024-25` or `uv run fplt eval-components --season 2024-25 --minutes-only` — read `slice=source=fpl_api` for P(played) / P(≥60) |
+| Minutes measurement split + misses | `make minutes-measure SEASON=2025-26` or `uv run fplt minutes-measure --season 2025-26` — availability/rotation/early-sub Brier+log, xPts-weighted pool Brier, weekly misses ([docs/minutes-measurement.md](docs/minutes-measurement.md)) |
 | Multi-model eval → ledger | `make eval-board SEASON=2024-25` |
 | Prediction championship (multi-arm bakeoff) | `make bakeoff BAKEOFF=example_prediction_championship` or `uv run fplt bakeoff --models … --control … --season …` |
 | Decision bakeoff (season points) | `make decisions-board SEASON=2024-25` (after `fplt backtest … --steps` matching `--horizon`) |
