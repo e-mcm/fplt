@@ -685,6 +685,62 @@ def test_run_plan_forwards_force_play_to_scheduler(
     assert seen["force_play"] is False
 
 
+def test_run_plan_defaults_to_mean_gw_delta_price_forecast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live ``run_plan`` passes a ``mean_gw_delta`` forecast into ``plan_squad``."""
+    _stage(tmp_path)
+    _score(tmp_path)
+    seen: dict[str, object] = {}
+    real = plan_squad
+
+    def spy_plan(*args: object, **kwargs: object):
+        seen["price_forecast"] = kwargs.get("price_forecast")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
+    run_plan(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        1,
+        1,
+        squad=_state(),
+        chip_arm="off",
+    )
+    forecast = seen["price_forecast"]
+    assert isinstance(forecast, pl.DataFrame)
+    assert forecast.height > 0
+    assert set(forecast["step"].to_list()) == {0}
+
+
+def test_run_plan_flat_price_forecast_skips_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``price_forecast_method=None`` keeps as-of-only ``plan_squad`` cash."""
+    _stage(tmp_path)
+    _score(tmp_path)
+    seen: dict[str, object] = {}
+    real = plan_squad
+
+    def spy_plan(*args: object, **kwargs: object):
+        seen["price_forecast"] = kwargs.get("price_forecast")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
+    run_plan(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        1,
+        1,
+        squad=_state(),
+        chip_arm="off",
+        price_forecast_method=None,
+    )
+    assert seen["price_forecast"] is None
+
+
 def test_run_plan_rejects_missing_or_blank_predictions(tmp_path: Path) -> None:
     _stage(tmp_path)
     with pytest.raises(ValueError, match="no predictions"):

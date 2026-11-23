@@ -89,8 +89,14 @@ _CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
 # 2025-26 H=3). Keep ``DEFAULT_PLAN_HORIZON`` at 3; do not flip from this.
 DEFAULT_LIVE_CHIP_ARM: ChipArm = "optimised"
 
+# Live within-horizon list prices. Kept off until the FDB-218 season-points
+# promote (both seasons ≥ control); ``mean_gw_delta`` is the kept treatment.
+# Decision boards still default off (omit ``--price-forecast``) for A/B.
+DEFAULT_LIVE_PRICE_FORECAST_METHOD: PriceForecastMethod = "mean_gw_delta"
+
 __all__ = [
     "DEFAULT_LIVE_CHIP_ARM",
+    "DEFAULT_LIVE_PRICE_FORECAST_METHOD",
     "PlanExistsError",
     "advance_squad_from_plan",
     "assert_sane_mean_ppg",
@@ -543,6 +549,9 @@ def run_plan(
     chip_arm: ChipArm = DEFAULT_LIVE_CHIP_ARM,
     chip_rules_season: str | None = None,
     force_play: bool = True,
+    price_forecast_method: PriceForecastMethod | None = (
+        DEFAULT_LIVE_PRICE_FORECAST_METHOD
+    ),
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -571,6 +580,9 @@ def run_plan(
         force_play: When true (default), the optimised scheduler force-packs
             remaining half-window chips. Pass false for ablations
             (``fplt plan --no-force-play``). Does not change the live default.
+        price_forecast_method: Within-horizon list-price forecast. Defaults to
+            ``DEFAULT_LIVE_PRICE_FORECAST_METHOD`` (``mean_gw_delta`` after
+            the FDB-218 keep). Pass ``None`` / ``flat`` for as-of-only prices.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -589,13 +601,15 @@ def run_plan(
     if chip_arm not in _CHIP_ARMS:
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
-        "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s",
+        "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s "
+        "price_forecast=%s",
         model_name,
         season,
         gameweek,
         horizon,
         chip_arm,
         force_play,
+        price_forecast_method,
     )
     spec = load_model_specs()[model_name]
     store = DataStore(data_dir)
@@ -673,6 +687,14 @@ def run_plan(
             season=season,
             windows_by_gw={gameweek: plan_windows},
         )
+    forecast = _price_forecast_for_deadline(
+        method=_normalize_price_forecast_method(price_forecast_method),
+        store=store,
+        season=season,
+        gameweek=gameweek,
+        pool=candidates,
+        horizon=len(window),
+    )
     solved = plan_squad(
         candidates,
         points,
@@ -683,6 +705,7 @@ def run_plan(
         gameweeks=plan_gameweeks,
         chip_windows=plan_windows,
         chip_rules_season=plan_rules_season,
+        price_forecast=forecast,
     )
     table = plan_table(solved, spec.model_id, season, gameweek, window)
     names = _player_names(view)
