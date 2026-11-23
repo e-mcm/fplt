@@ -1626,6 +1626,41 @@ def test_cs_only_player_rmse_eval_spec_loads_from_configs() -> None:
     assert "market_1x2_strength" not in score.params
 
 
+def test_dynamic_covariate_ratings_eval_spec_loads_from_configs() -> None:
+    """FDB-243: opt-in rest/congestion/form covariates; production unchanged."""
+    spec = load_eval_spec("dynamic_covariate_ratings_ab")
+    assert spec.kind == "config"
+    assert spec.control == "dc_layered_v4"
+    assert spec.treatment == "dc_layered_covariate_v1"
+    assert spec.change.orientation == "opt_in"
+    assert spec.change.allow_multi_lever is True
+    assert spec.change.slot == "score"
+    assert spec.claim == "forecasts"
+    assert spec.suites.prediction is True
+    assert spec.suites.components is True
+    assert spec.suites.decisions is False
+    assert spec.window.from_gw == 1
+    assert spec.window.to_gw == 20
+    assert "rps" in (spec.gates.keep_if.components_any or [])
+    assert "logloss" in (spec.gates.keep_if.components_any or [])
+    from fplt.models.spec import load_model_specs
+
+    specs = load_model_specs()
+    control = specs[spec.control].components["score"]
+    treatment = specs[spec.treatment].components["score"]
+    assert control.params.get("rest_coef", 0.0) == 0.0
+    assert treatment.params["rest_coef"] == pytest.approx(0.05)
+    assert treatment.params["congestion_coef"] == pytest.approx(0.05)
+    assert treatment.params["form_window"] == 5
+    assert treatment.params["form_strength"] == pytest.approx(0.2)
+    assert treatment.params["market_cs_strength"] == pytest.approx(0.5)
+    assert treatment.name == "dixon_coles_covariate_v1"
+    plan = plan_promote_eval(spec, dry_run=True)
+    assert plan.control == "dc_layered_v4"
+    assert plan.treatment == "dc_layered_covariate_v1"
+    assert any("eval-components" in cmd for cmd in plan.commands)
+
+
 def test_prematch_1x2_eval_spec_loads_from_configs() -> None:
     spec = load_eval_spec("prematch_1x2_prior_ab")
     assert spec.control == "dc_layered_v4"
@@ -1688,6 +1723,14 @@ def test_overlay_eval_specs_register_coverage_and_window_note() -> None:
     combine = load_eval_spec("forecast_combine_equal_ab")
     assert combine.gates.coverage.metric == "forecast_combine_member_join"
     assert combine.gates.min_coverage == 0.80
+
+    probs_combine = load_eval_spec("lgbm_probs_combine_ab")
+    assert probs_combine.treatment == "forecast_combine_probs_v1"
+    assert probs_combine.control == "dc_layered_v4"
+    assert probs_combine.gates.coverage.metric == "forecast_combine_member_join"
+    assert probs_combine.gates.min_coverage == 0.80
+    assert "spearman" in (probs_combine.gates.keep_if.prediction_any or [])
+    assert probs_combine.report.store_doc == "lgbm-probs-combine.md"
 
     defcon = load_eval_spec("defcon_rate_ab")
     assert defcon.gates.coverage.metric == "dc_season_eligible"

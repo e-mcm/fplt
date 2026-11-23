@@ -1,0 +1,9 @@
+# LightGBM direct points + binary event heads (FDB-245 / lever rank 8).
+# Same features and regression stack as lgbm_direct_v1; emit_probs fills
+# p_haul / p_60 / p_played so Brier and haul-aware captaincy are comparable.
+# Not production — ranking companion / combine member only.
+name: lgbm_probs_v1
+extends: lgbm_direct_v1
+overrides:
+  params:
+    emit_probs: true

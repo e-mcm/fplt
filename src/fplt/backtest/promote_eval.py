@@ -149,6 +149,10 @@ _BOOL_DEFAULTS: dict[str, bool] = {
 _FLOAT_DEFAULTS: dict[str, float] = {
     "market_prior_strength": 0.0,
     "market_cs_strength": 0.0,
+    # Mid-season DC covariates (FDB-243); absent → vanilla.
+    "rest_coef": 0.0,
+    "congestion_coef": 0.0,
+    "form_strength": 0.0,
 }
 _ORIENTATION_PARAMS = frozenset({*_BOOL_DEFAULTS, *_FLOAT_DEFAULTS})
 

@@ -1,0 +1,67 @@
+# FDB-245 / forecast lever rank 8: LGBM probs + position combination revisit.
+# Equal combine already DROPPED — this EvalSpec is position+probs only.
+# Headline for the lever ranking: within-pos Spearman; decisions on chip-board.
+name: lgbm_probs_combine_ab
+kind: model
+question: >
+  Does position-weighted blending of dc_layered_v4 + lgbm_probs_v1
+  (forecast_combine_probs_v1) beat dc_layered_v4 on within-position Spearman
+  (and RMSE) without a silent PRODUCTION flip?
+description: >
+  ModelSpec promote for forecast_combine_probs_v1 after equal-combine drop.
+  Development window 2024-25 GW1–20 (cite bakeoff / compare); confirmation
+  2025-26 GW1–20. Decision board is H=3 optimised chip-board, not this suite.
+  Do not flip PRODUCTION_MODELS from this EvalSpec alone.
+
+change:
+  lever: model_fork
+  orientation: opt_in
+  slot: null
+  control_kind: dc_layered
+  treatment_kind: forecast_combine
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "kind: dc_layered → forecast_combine (position blend of dc_layered_v4 + lgbm_probs_v1)"
+    - "lgbm member emits p_haul / p_60 / p_played (emit_probs)"
+  notes: >
+    Equal-weight forecast_combine_equal_v1 is out of scope (written drop).
+    Coverage requires both members on the scored player–fixture pool
+    (forecast_combine_member_join). PRODUCTION stays dc_layered_v4 until
+    written keep + decision gates.
+
+control: dc_layered_v4
+treatment: forecast_combine_probs_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    Development / cite window (eval-protocol §1). Confirmation is a separate
+    2025-26 GW1–20 execute — do not keep from this window alone.
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: 0.80
+  allow_low_coverage: false
+  coverage:
+    metric: forecast_combine_member_join
+    read: strict_pit
+  keep_if:
+    prediction_any: [spearman, rmse]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "LGBM probs + position combine vs dc_layered_v4"
+  store_doc: lgbm-probs-combine.md

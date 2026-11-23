@@ -25,6 +25,7 @@ from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec, get_model
 from fplt.types import GWKey
+from fplt.utils.timing import timing_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -338,16 +339,17 @@ def produce_ledger(
         spec.model_id,
     )
     started = time.perf_counter()
-    frame = _predict_window(
-        predictor,
-        pit,
-        season,
-        mode=mode,
-        fit_gw=fit_at,
-        test_from_gw=test_from_gw,
-        test_to_gw=test_to_gw,
-        steps=steps,
-    )
+    with timing_artifacts(data_dir):
+        frame = _predict_window(
+            predictor,
+            pit,
+            season,
+            mode=mode,
+            fit_gw=fit_at,
+            test_from_gw=test_from_gw,
+            test_to_gw=test_to_gw,
+            steps=steps,
+        )
     logger.info(
         "produce_ledger wrote %s rows in %.1fs (cache_miss digest=%s)",
         frame.height,

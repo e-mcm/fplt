@@ -21,7 +21,7 @@ def test_build_info_keys() -> None:
         assert isinstance(info[key], str)
         assert info[key]  # non-empty (git_sha may be "unknown" in isolated builds)
     assert info["kernel_api"] == str(fplt_mc.KERNEL_API)
-    assert info["version"] == "0.3.0"
+    assert info["version"] == "0.4.0"
 
 
 def test_philox_u01_bounds() -> None:

@@ -65,6 +65,7 @@ add_library(fplt_mc_core STATIC
   src/build_info.cpp
   src/allocate.cpp
   src/points.cpp
+  src/simulate.cpp
 )
 add_library(fplt_mc::core ALIAS fplt_mc_core)
 # Required when the static lib is linked into the nanobind shared module.

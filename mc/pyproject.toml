@@ -1,6 +1,6 @@
 [project]
 name = "fplt-mc"
-version = "0.3.0"
+version = "0.4.0"
 description = "Native C++ Monte Carlo kernel for fplt (Philox RNG + portable math)"
 readme = "README.md"
 requires-python = ">=3.12"

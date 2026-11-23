@@ -84,6 +84,7 @@ from fplt.schemas.plan import (
     PriceForecastSchema,
 )
 from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
+from fplt.utils.timing import timed_phase
 
 _Schema = (
     type[CandidateSchema]
@@ -321,13 +322,14 @@ def plan_squad(
         )
     solver.setMaximize()
     started = time.perf_counter()
-    status = _run_solver(
-        solver,
-        columns=columns,
-        options=options,
-        horizon=horizon,
-        long_horizon=lh_policy,
-    )
+    with timed_phase("optimise/milp"):
+        status = _run_solver(
+            solver,
+            columns=columns,
+            options=options,
+            horizon=horizon,
+            long_horizon=lh_policy,
+        )
     elapsed = time.perf_counter() - started
     _log.info(
         "plan_squad solve horizon=%s pool=%s binaries≈%s status=%s elapsed=%.2fs",
@@ -351,13 +353,14 @@ def plan_squad(
         context="plan_squad after solve (actionable step 0)",
     )
     if lineup_reopt:
-        refreshed = reoptimize_plan_lineups(
-            plan.picks,
-            scenarios=scenarios,
-            p_haul=p_haul,
-            haul_weight=haul_weight,
-            scenario_step=0,
-        )
+        with timed_phase("plan/lineup"):
+            refreshed = reoptimize_plan_lineups(
+                plan.picks,
+                scenarios=scenarios,
+                p_haul=p_haul,
+                haul_weight=haul_weight,
+                scenario_step=0,
+            )
         plan = replace(plan, picks=_frame(refreshed, HorizonPickSchema))
     return replace(
         plan,
