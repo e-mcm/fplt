@@ -17,14 +17,17 @@ from fplt.backtest.simulated_season import (
     format_simulated_season_report,
     mean_policy_totals,
     paired_policy_se,
+    path_actuals_from_joint_sims,
     path_seed,
     policy_diff_board,
     run_simulated_season_eval,
     truth_rates_from_actuals,
 )
+from fplt.optimise.attainable import OraclePin
 from fplt.optimise.chip_windows import ChipUseWindows
 from fplt.optimise.state import SquadState
 from fplt.schemas.simulated_season import (
+    JointTruthSimSchema,
     PolicyDiffSESchema,
     SimulatedPathActualsSchema,
     SimulatedSeasonPathSchema,
@@ -36,6 +39,131 @@ def test_path_seed_is_stable_and_varies_by_path() -> None:
     assert path_seed(7, 0) == path_seed(7, 0)
     assert path_seed(7, 0) != path_seed(7, 1)
     assert path_seed(7, 0) != path_seed(8, 0)
+
+
+def test_path_actuals_from_joint_sims_maps_sim_to_path() -> None:
+    joint = pl.DataFrame(
+        {
+            "sim": [0, 0, 1, 1],
+            "gw": [1, 1, 1, 1],
+            "player_key": [10, 20, 10, 20],
+            "points": [4.4, 1.2, 7.6, 0.1],
+            "minutes": [90, 45, 90, 0],
+        }
+    )
+    JointTruthSimSchema.validate(joint)
+    paths = path_actuals_from_joint_sims(joint)
+    SimulatedPathActualsSchema.validate(paths)
+    assert paths.sort("path_id", "player_key")["actual_pts"].to_list() == [4, 1, 8, 0]
+    assert paths["path_id"].unique().to_list() == [0, 1]
+    with pytest.raises(ValueError, match="non-empty"):
+        path_actuals_from_joint_sims(joint.clear())
+
+
+def test_with_attainable_rejects_divergent_horizons_without_pin() -> None:
+    candidates, rates, preds_a, preds_b = _tiny_season()
+    policies = [
+        DecisionPolicy("h3", preds_a, horizon=3),
+        DecisionPolicy("h8", preds_b, horizon=8),
+    ]
+    with pytest.raises(ValueError, match="OraclePin"):
+        run_simulated_season_eval(
+            candidates,
+            policies,
+            _state(),
+            season="2024-25",
+            gameweeks=[1, 2],
+            horizon=1,
+            n_paths=1,
+            seed=0,
+            truth_rates=rates,
+            with_attainable=True,
+        )
+
+
+def test_oracle_pin_forwarded_to_hindsight_oracle() -> None:
+    """Share SE uses one pinned H/decay/chip_arm for every policy on a path."""
+    candidates, rates, preds_a, preds_b = _tiny_season()
+    seen: list[dict[str, object]] = []
+    pin = OraclePin(horizon=5, decay=0.85, chip_arm="off", force_play=False)
+    empty_decisions = pl.DataFrame(
+        schema={
+            "model_id": pl.Utf8(),
+            "season": pl.Utf8(),
+            "gw": pl.Int64(),
+            "player_key": pl.Int64(),
+            "position": pl.Utf8(),
+            "in_xi": pl.Boolean(),
+            "captain": pl.Boolean(),
+            "vice": pl.Boolean(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+            "hit": pl.Int64(),
+        }
+    )
+    summary = pl.DataFrame(
+        {
+            "model_id": ["x"],
+            "season": ["2024-25"],
+            "total_points": [10],
+            "gameweeks": [1],
+            "per_gw": [[10]],
+        }
+    )
+
+    def _oracle_spy(*args: object, **kwargs: object) -> pl.DataFrame:
+        state = args[2]
+        assert isinstance(state, SquadState)
+        seen.append(
+            {
+                "horizon": kwargs["horizon"],
+                "chip_arm": kwargs["chip_arm"],
+                "force_play": kwargs["force_play"],
+                "decay": float(state.decay),
+            }
+        )
+        return empty_decisions
+
+    with (
+        patch(
+            "fplt.backtest.simulated_season.simulate_hindsight_oracle",
+            side_effect=_oracle_spy,
+        ),
+        patch(
+            "fplt.backtest.simulated_season.simulate_decisions",
+            return_value=empty_decisions,
+        ),
+        patch(
+            "fplt.backtest.simulated_season.summarise_decisions",
+            return_value=summary,
+        ),
+    ):
+        report = run_simulated_season_eval(
+            candidates,
+            [
+                DecisionPolicy("policy_a", preds_a, horizon=3),
+                DecisionPolicy("policy_b", preds_b, horizon=8),
+            ],
+            _state(),
+            season="2024-25",
+            gameweeks=[1, 2],
+            horizon=1,
+            n_paths=2,
+            seed=0,
+            truth_rates=rates,
+            with_attainable=True,
+            oracle_pin=pin,
+        )
+    assert report.oracle_pin == pin
+    assert len(seen) == 2  # one oracle call per path, not per policy
+    assert all(row == seen[0] for row in seen)
+    assert seen[0]["horizon"] == 5
+    assert seen[0]["decay"] == pytest.approx(0.85)
+    assert seen[0]["chip_arm"] == "off"
+    assert seen[0]["force_play"] is False
+    text = format_simulated_season_report(report)
+    assert "oracle pin: H=5" in text
+    assert "decay=0.85" in text
 
 
 def test_draw_truth_paths_are_reproducible_and_labelled() -> None:
