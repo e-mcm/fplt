@@ -14,7 +14,7 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 4. **OpenFPL comparisons** must label Deep/PPDA-degraded runs until Understat stages cleanly (FDB-55).
 5. **Share of attainable points** needs an explicit computable definition (constrained hindsight oracle), not an unbounded perfect-foresight ideal.
 6. **Live rank** is a multi-season consistency check, never a single-GW or single-season promotion gate.
-7. **2400 season points** on full-rules decision backtests is the absolute north-star score for decision sims (chips on, sell-on, real banking; same board rules as live defaults). It does not replace Tier A–C relative aims or A/B promote-eval gates.
+7. **Decision-sim north star is points-at-rank, not a fixed 2400.** Raw season points are not comparable across seasons (defcon, chip-rule changes, scoring inflation/deflation). Anchor: **2400** at end of **2024-25** ≈ overall rank **~573k** (top ~5%). Per-season bars = points at that rank on each season's end-of-season ladder. See §2. Does not replace Tier A–C relative aims or A/B promote-eval gates.
 
 ---
 
@@ -51,13 +51,43 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 
 **Separate the forecast from the optimiser.** Run a 2×2 swap: your forecasts vs the benchmark's, each through your optimiser and through a reference optimiser (e.g. FPL-Optimization-Tools). Otherwise you can't tell which part earns the gain.
 
-**North-star score: 2400 season points** on full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v2` unless noted). Current boards often land ~1900–2300 depending on season/arm; **2400 is the stretch target**, not a claim we already hit it. This is an absolute bar for decision sims, not a replacement for A/B promote calls or the Tier A–C relative aims.
+### North-star score: points-at-rank (was “2400”)
+
+Full-rules decision backtests — chips on, sell-on, real banking; same board rules as live defaults (H=3, force-play on, lineup_reopt on, `dc_layered_v2` unless noted) — aim for the **points total that maps to the anchor overall rank** on that season's end-of-season ladder.
+
+| | |
+|---|---|
+| **Anchor** | **2400** points at end of **2024-25** |
+| **Equivalent overall rank** | **≈573k** (exact 2400 finishes landed 569.8k–575.5k; median **572.6k**) |
+| **Percentile** | top **~5.0%** of ~11.49M managers (2024-25) |
+| **Why not fixed 2400?** | Defcon (2025-26), dual-half chips, and season scoring level make raw points incomparable. 2025-26 Overall #1 was **2582** vs **2810** in 2024-25 — a lower-scoring year at the top despite defcon. Hitting 2400 in 2025-26 would have been roughly top-~30k territory, not the same bar as 2400 in 2024-25. |
+
+#### Per-season bars
+
+| Season | Rules context | North-star points (= pts at OR ≈573k) |
+|---|---|---:|
+| **2024-25** | Pre-defcon; classic chip set (2×WC, 1×FH/BB/TC) | **2400** |
+| **2025-26** | Defcon + dual-half chips (8 chips) | **2235** |
+
+Use the **per-season bar** when scoring a single season board (e.g. [stacked-prod-2400-board.md](./stacked-prod-2400-board.md)). Gap = season points − that season's bar.
+
+#### Mean bar (dashboard rollup only)
+
+| | |
+|---|---|
+| **Mean bar** | **2318** = mean(2400, 2235) |
+
+- **Per-season bar** is the gate for each season. Never judge 2025-26 against 2400, or 2024-25 against 2235.
+- **Mean bar** is a single headline for multi-season dashboards that want one number. It is **not** a cross-season comparable points total and **not** a substitute for the per-season bars.
+- Multi-season consistency should roll up **rank / percentile** (N7 / `fplt.backtest.live_percentile.mean_percentile`) or mean of (points − season_bar), not (mean points − 2400).
+
+These bars are stretch targets for decision sims, not a claim we already hit them, and not a replacement for A/B promote calls or Tier A–C relative aims.
 
 **Metrics**
 
 | Metric | What it is | Why it matters |
 |---|---|---|
-| Season points under full rules | Chips on, price changes and the 50% sell-on, real free-transfer banking | Anything less isn't comparable to a real season; **aim for 2400** as the absolute north-star bar |
+| Season points under full rules | Chips on, price changes and the 50% sell-on, real free-transfer banking | Anything less isn't comparable to a real season; **aim for the per-season points-at-rank bar** (2400 / 2235), not a fixed absolute |
 | Share of attainable points captured | Realised points ÷ the best possible season in hindsight under the same constraints | Normalises across seasons; high-scoring years inflate everyone |
 | Regret by component | Captaincy (chosen vs best captain in your XI), XI and bench order, transfers, chip timing | Shows where points are lost |
 | Uncertainty | Many simulated seasons plus several real seasons | A single season is one path-dependent draw; the +72 OpenFPL result and the H=3 choice both rest on one |
@@ -68,13 +98,14 @@ Agreed as the guiding standard for whether the repo is achieving its aims. Addit
 
 Rank is the final test, but it's very noisy.
 
-- **The field is huge.** More than 11.5 million people took part in 2024/25.
-- **Single seasons involve luck.** The 2024/25 champion had never previously finished inside the top 500k.
+- **The field is huge.** More than 11.5 million people took part in 2024/25; ~12–13 million in 2025/26.
+- **Single seasons involve luck.** The 2024/25 champion had never previously finished inside the top 500k; the 2025/26 champion was a first-season manager.
 - **Skill shows up as consistency.** The best managers repeat: one has six consecutive top-10k finishes, and another finished inside the top 10k every season from 2019/20 to 2022/23.
 
 So the live criterion is **percentile across several seasons**, not one rank.
 
 - The FPL API's overall-league standings give the points total at any rank (e.g. the 10,000th). Use them to convert any season total, real or backtested, into an equivalent rank.
+- The decision-sim north star in §2 is the same idea applied to backtests: convert a points target through the ladder, then keep the **rank** fixed across seasons.
 - Use your simulator to estimate how much a season total varies from luck alone before reading anything into a gap.
 
 ---
@@ -87,7 +118,7 @@ So the live criterion is **percentile across several seasons**, not one rank.
 | **B: competitive with the state of the art** | Not significantly worse than FPL Review on paired RMSE and log score over a full season; better in some groups (e.g. haulers) | In the 2×2 swap, your forecasts through the same optimiser are statistically tied with FPL Review's | Around the top-10k equivalent on average across seasons |
 | **C: state of the art** | Significantly better than FPL Review on paired RMSE/log score over at least a season, prospectively | Ahead in the swap test across real and simulated seasons | Repeated top-10k finishes |
 
-Tier A is a realistic one-season aim. Tier B is the honest test of a state-of-the-art claim, and it needs about a year of saved benchmark projections. Tier C can only be confirmed over several seasons, however good the backtests look. The **2400** decision-sim bar sits beside these tiers as an absolute stretch target; hitting it does not skip promote-eval or Tier B/C relative tests.
+Tier A is a realistic one-season aim. Tier B is the honest test of a state-of-the-art claim, and it needs about a year of saved benchmark projections. Tier C can only be confirmed over several seasons, however good the backtests look. The **points-at-rank** decision-sim bars sit beside these tiers as an absolute stretch target (top ~5% / OR ≈573k equivalent); hitting them does not skip promote-eval or Tier B/C relative tests. Tier B/C live aims (top 10k) remain harder than this decision-sim bar.
 
 ---
 
@@ -98,6 +129,7 @@ Tier A is a realistic one-season aim. Tier B is the honest test of a state-of-th
 3. **Add the probabilistic event scores** (Brier/log score for played, 60+, goal, assist, clean sheet, haul) and calibration curves to the standard report.
 4. **Build the 2×2 forecast × optimiser swap** and the share-of-attainable-points metric into the decision board.
 5. **Add simulated-season evaluation**, so decision differences come with standard errors.
+6. **Keep end-of-season points-at-rank ladders** (N7 / `make fetch-overall-rank`) so new seasons can mint a per-season bar from the same OR ≈573k anchor without re-deriving from scratch.
 
 ---
 
@@ -107,3 +139,5 @@ Tier A is a realistic one-season aim. Tier B is the honest test of a state-of-th
 - Premier League, *FPL records and amazing stats from 2024/25* (11.5m participants): https://www.premierleague.com/en/news/4320685/fpl-records-and-amazing-stats-from-202425
 - Fantasy Football Scout, 2024/25 champion and hall-of-fame notes: https://www.fantasyfootballscout.co.uk/comment/27215677 and https://www.fantasyfootballscout.co.uk/comment/27215759
 - Fantasy Football Scout, 2024/25 mini-league and community winners: https://www.fantasyfootballscout.co.uk/2025/05/28/ffs-mini-leagues-and-community-competitions-the-2024-25-winners
+- FPL entry histories for exact 2400 → OR mapping (2024/25) and OR ≈573k → points mapping (2025/26); Overall #1 totals 2810 (2024/25) / 2582 (2025/26)
+- Field sizes: Fantasy Football Pundit rank-history table (2024/25 11,488,573; 2025/26 12,176,091 registered)
