@@ -89,6 +89,8 @@ class PlayerStatusSchema(pa.DataFrameModel):
     chance_of_playing: float = pa.Field(nullable=True, ge=0, le=100)
     chance_of_playing_this_round: float = pa.Field(nullable=True, ge=0, le=100)
     penalties_order: int = pa.Field(nullable=True, ge=1)
+    corners_and_indirect_freekicks_order: int = pa.Field(nullable=True, ge=1)
+    direct_freekicks_order: int = pa.Field(nullable=True, ge=1)
     available_at: datetime
     source: str
 
@@ -415,6 +417,8 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "chance_of_playing": pl.Float64(),
         "chance_of_playing_this_round": pl.Float64(),
         "penalties_order": pl.Int64(),
+        "corners_and_indirect_freekicks_order": pl.Int64(),
+        "direct_freekicks_order": pl.Int64(),
         "available_at": pl.Datetime(time_zone="UTC"),
         "source": pl.Utf8(),
     },

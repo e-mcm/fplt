@@ -1,0 +1,17 @@
+# FDB-244: simulator penalty event (p_penalty) instead of rate bump.
+# Control stays production dc_layered_v4 (rate bump, p_penalty=0).
+# No PRODUCTION flip from this file alone.
+name: dc_layered_penalty_event_v1
+extends: dc_layered_v4
+overrides:
+  components:
+    involvement:
+      name: involvement_xg_penalty_event_v1
+      kind: involvement_xg
+      params:
+        window: 10
+        shrinkage: 5
+        penalty_bonus: 0.3
+        xg_blend: 0.7
+        # p_penalty stays code default 0.12 — one hyperparam family for EvalSpec.
+        use_penalty_event: true

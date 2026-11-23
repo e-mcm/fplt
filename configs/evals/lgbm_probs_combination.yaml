@@ -1,0 +1,42 @@
+# FDB-245 descriptive bakeoff: within-pos Spearman + overall board.
+# Equal combine listed for continuity only — already DROPPED; not a keep arm.
+#
+# Dry-run:  uv run fplt bakeoff --bakeoff lgbm_probs_combination
+# Execute:  uv run fplt bakeoff --bakeoff lgbm_probs_combination --execute
+
+name: lgbm_probs_combination
+question: >
+  Do lgbm_probs_v1 and forecast_combine_probs_v1 beat dc_layered_v4 /
+  lgbm_direct_v1 on 2024-25 GW1–20 walk-forward within-position Spearman
+  (and overall RMSE/MAE)? Descriptive; not a keep.
+description: >
+  Lever-rank-8 bakeoff. Shared window with the championship board. Equal
+  blend is continuity only — promote path uses forecast_combine_probs_v1.
+
+control: dc_layered_v4
+models:
+  - dc_layered_v4
+  - lgbm_direct_v1
+  - lgbm_probs_v1
+  - forecast_combine_pos_v1
+  - forecast_combine_probs_v1
+  - forecast_combine_equal_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+pairwise_evals: []
+
+report:
+  title: "LGBM probs + combination (within-pos Spearman)"
+  store_doc: lgbm-probs-combine.md

@@ -1,0 +1,61 @@
+# FDB-292 / PR7: L6 system equivalence — python MC vs native (fplt-mc).
+# Paired seeds via promote-eval CRN (produce_ledger eval_seed). No PRODUCTION flip.
+name: dc_layered_v4_native_ab
+kind: config
+question: >
+  Is dc_layered_v4_native statistically equivalent to dc_layered_v4 under
+  paired seeds within Monte Carlo noise (L6 / native-mc-build-spec §4)?
+description: >
+  System equivalence of params.mc_backend=native vs the production python
+  backend on the same layered stack. Forecast claim only. Written L6 keep/drop
+  lives in the store doc — auto promote-eval verdict stays inconclusive.
+  Flipping PRODUCTION_MODELS is a separate PR after L6 keep.
+
+change:
+  lever: hyperparam
+  orientation: null
+  slot: null
+  control_kind: dc_layered
+  treatment_kind: dc_layered
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "params.mc_backend: python (default) → native"
+  notes: >
+    Control dc_layered_v4. Treatment dc_layered_v4_native (extends parent,
+    mc_backend=native). L6 gates (native-mc-build-spec §4): mean |ΔxPts| ≤ 0.02;
+    signed ΔxPts CI covers 0 by position; haul-Brier Δ CI covers 0; optional
+    decision-board / sim-season noise check documented separately. Same H=8
+    window as L7 timing. No PRODUCTION flip in this EvalSpec.
+
+control: dc_layered_v4
+treatment: dc_layered_v4_native
+
+window:
+  seasons: ["2025-26"]
+  from_gw: 10
+  to_gw: 17
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    H=8 walk-forward matching L7 timing (GW10–17, steps 8). Full-season
+    confirmation is optional after an L6 keep.
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 8
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse, brier_haul]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "L6 native MC equivalence (dc_layered_v4 vs _native)"
+  store_doc: native-mc-l6-equivalence.md

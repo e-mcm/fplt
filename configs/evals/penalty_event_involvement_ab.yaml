@@ -1,0 +1,57 @@
+# FDB-244: simulator penalty event (p_penalty) vs rate-bump penalty_bonus.
+name: penalty_event_involvement_ab
+kind: config
+question: >
+  Does allocating a fraction of team goals as penalties to the designated
+  taker (p_penalty=0.12, no rate bump) beat production's +0.3 g/90 bump
+  on goal-share MAE and MID/FWD RMSE?
+description: "penalty event vs rate bump (FDB-244)."
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: involvement
+  control_kind: involvement_xg
+  treatment_kind: involvement_xg
+  tables: [player_status, player_fixture_stats]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.involvement.params.use_penalty_event: false → true"
+  notes: >
+    Control dc_layered_v4 (penalty_bonus rate bump). Treatment
+    dc_layered_penalty_event_v1 (use_penalty_event only; p_penalty code
+    default 0.12). On vaastav, takers come from penalties_missed fallback
+    so the board is still informative. No PRODUCTION flip.
+
+control: dc_layered_v4
+treatment: dc_layered_penalty_event_v1
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 20
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    Development = 2024-25 GW1–20. Confirmation GW21–38. Do not retune
+    p_penalty on confirmation.
+
+suites:
+  prediction: true
+  components: true
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    components_any: [mae_goal_share]
+    prediction_any: [rmse]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "penalty event vs rate bump (FDB-244)"
+  store_doc: involvement-xg-blend-setpieces-promote.md

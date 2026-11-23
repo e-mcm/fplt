@@ -1118,6 +1118,44 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    perf = sub.add_parser(
+        "perf-report",
+        parents=[log_flags],
+        help="Rank wall-clock timing hotspots from data_dir/timing/*.json",
+    )
+    perf.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    perf.add_argument(
+        "--kind",
+        choices=(
+            "walk_forward",
+            "plan",
+            "decisions",
+            "eval_board",
+            "ingest",
+        ),
+        help="Only include this timing kind",
+    )
+    perf.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max timing records to load (newest first; default 10)",
+    )
+    perf.add_argument(
+        "--hotspots",
+        type=int,
+        default=20,
+        help="Max hotspot rows to print (default 20)",
+    )
+    perf.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit ranked hotspots as JSON instead of text",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -1259,6 +1297,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "archive-compare":
         _archive_compare(args)
+        return
+    if args.command == "perf-report":
+        _perf_report(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -2042,6 +2083,56 @@ def _decisions(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     path = data_dir / "ledger" / "decisions" / "part.parquet"
     print(path)
+
+
+def _perf_report(args: argparse.Namespace) -> None:
+    """Print a hotspot ranking from ``data_dir/timing/*.json``."""
+    import json
+
+    from fplt.utils.timing import (
+        format_hotspot_report,
+        load_timing_records,
+        rank_hotspots,
+    )
+
+    data_dir = Path(args.data_dir) if args.data_dir else get_settings().data_dir
+    records = load_timing_records(
+        data_dir,
+        kind=args.kind,
+        limit=int(args.limit),
+    )
+    if bool(args.json):
+        hotspots = rank_hotspots(records)[: int(args.hotspots)]
+        payload = {
+            "data_dir": str(data_dir),
+            "n_records": len(records),
+            "records": [
+                {
+                    "kind": record.get("kind"),
+                    "total_s": record.get("total_s"),
+                    "meta": record.get("meta"),
+                    "path": record.get("_path"),
+                }
+                for record in records
+            ],
+            "hotspots": [
+                {
+                    "phase": spot.phase,
+                    "seconds": spot.seconds,
+                    "share_pct": spot.share_pct,
+                    "category": spot.category,
+                }
+                for spot in hotspots
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    print(
+        format_hotspot_report(
+            records,
+            limit=int(args.hotspots),
+        )
+    )
 
 
 def _archive_benchmarks(args: argparse.Namespace) -> None:

@@ -14,6 +14,7 @@ import fplt.models.ensemble  # noqa: F401 — runs @register_model
 import fplt.models.external.openfpl  # noqa: F401 — runs @register_model
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
+from fplt.models.simulation_native import native_kernel_available
 from fplt.models.spec import ModelSpec, get_model, load_model_specs, registered_kinds
 from fplt.models.universe import player_fixtures
 from fplt.schemas.predictions import PredictionSchema
@@ -29,9 +30,14 @@ _KEYS = ["target_season", "target_gw", "player_key", "fixture_id"]
 def _contract_specs() -> list[ModelSpec]:
     """Every PointsPredictor YAML. Multiple versions of one kind are allowed."""
     kinds = set(registered_kinds())
+    native_ok = native_kernel_available()
     specs: list[ModelSpec] = []
     for spec in load_model_specs().values():
         if spec.kind not in kinds:
+            continue
+        backend = str(spec.params.get("mc_backend", "python")).strip().lower()
+        if backend == "native" and not native_ok:
+            # Optional fplt-mc wheel; CI installs it, local may not.
             continue
         if spec.kind == "openfpl":
             # The published ensemble is fetched on first real predict and is too

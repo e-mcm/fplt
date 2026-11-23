@@ -22,6 +22,12 @@ from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.distributions import MinutesDist, enforce_hard_starters
 from fplt.models.predictions import prediction_frame
 from fplt.models.simulation import ConcededMode, simulate_match
+from fplt.models.simulation_native import (
+    FixtureSummary,
+    require_native_kernel,
+    resolve_mc_backend,
+    simulate_match_native,
+)
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
 from fplt.models.universe import player_fixtures
 from fplt.scoring.rules import Rules
@@ -72,8 +78,12 @@ class CompositePredictor:
         sample_other = spec.params.get("sample_other", False)
         hard = spec.params.get("hard_starters", False)
         target = spec.params.get("target_starters", 11)
+        backend_raw = spec.params.get("mc_backend")
         if isinstance(sims, bool) or not isinstance(sims, int) or sims < 1:
             raise ValueError(f"n_sims must be a positive int, got {sims!r}")
+        backend = resolve_mc_backend(None if backend_raw is None else str(backend_raw))
+        if backend == "native":
+            require_native_kernel()
         own_goal_value = float(own_goal)
         assist_value = float(assist)
         void_value = float(void_prob)
@@ -108,11 +118,14 @@ class CompositePredictor:
         self._n_sims = sims
         self._own_goal = own_goal_value
         self._p_assist = assist_value
+        self._p_penalty = 0.0
+        self._penalty_taker_keys: set[int] = set()
         self._cs_red_void_prob = void_value
         self._conceded_mode = conceded_mode
         self._sample_other = sample_other
         self._hard_starters = hard
         self._target_starters = target_value
+        self._mc_backend = backend
         self._score = _build(spec, "score")
         self._minutes = _build(spec, "minutes")
         self._involvement = _build(spec, "involvement")
@@ -205,12 +218,20 @@ class CompositePredictor:
 
 
 def _apply_involvement_sim_params(model: CompositePredictor) -> None:
-    """Prefer calibrated own-goal / assist knobs from involvement when present."""
+    """Prefer calibrated own-goal / assist / penalty knobs from involvement."""
     involvement = model._involvement
     if hasattr(involvement, "own_goal_weight"):
         model._own_goal = float(involvement.own_goal_weight)
     if hasattr(involvement, "p_assist"):
         model._p_assist = float(involvement.p_assist)
+    if hasattr(involvement, "p_penalty"):
+        model._p_penalty = float(involvement.p_penalty)
+    else:
+        model._p_penalty = 0.0
+    if hasattr(involvement, "penalty_taker_keys"):
+        model._penalty_taker_keys = {int(key) for key in involvement.penalty_taker_keys}
+    else:
+        model._penalty_taker_keys = set()
 
 
 def _build(spec: ModelSpec, name: str) -> Any:
@@ -264,11 +285,45 @@ def _fixture(
     match_other = (
         model._other if getattr(model._other, "match_conditioned", False) else None
     )
+    player_keys = players["player_key"].to_list()
+    sim_players = _sim_players(players, weights)
+    other_grid = _other_grid(other, player_keys)
+    penalty_taker = np.asarray(
+        [int(key) in model._penalty_taker_keys for key in player_keys],
+        dtype=bool,
+    )
+    if model._mc_backend == "native":
+        if model._p_penalty > 0.0:
+            raise NotImplementedError(
+                "mc_backend=native does not yet support p_penalty > 0 "
+                "(penalty-event allocation); use mc_backend=python"
+            )
+        # Python remains seed authority: draw kernel_seed after minutes/HS.
+        # Normal predict uses K5 summary arrays (return_samples=False).
+        # Sample planes stay available via simulate_match_native(..., True)
+        # for scenario / joint export — not needed on the predict hot path.
+        kernel_seed = int(rng.integers(0, 2**63))
+        summary = simulate_match_native(
+            scorelines[0],
+            sim_players,
+            minutes,
+            other_grid,
+            rules,
+            kernel_seed=kernel_seed,
+            own_goal_weight=model._own_goal,
+            p_assist=model._p_assist,
+            cs_red_void_prob=model._cs_red_void_prob,
+            conceded_mode=model._conceded_mode,
+            sample_other=model._sample_other,
+            match_other=match_other,
+            return_samples=False,
+        )
+        return _prediction_columns(players, summary)
     result = simulate_match(
         scorelines[0],
-        _sim_players(players, weights),
+        sim_players,
         minutes,
-        _other_grid(other, players["player_key"].to_list()),
+        other_grid,
         rules,
         rng,
         own_goal_weight=model._own_goal,
@@ -277,6 +332,8 @@ def _fixture(
         conceded_mode=model._conceded_mode,
         sample_other=model._sample_other,
         match_other=match_other,
+        p_penalty=model._p_penalty,
+        penalty_taker=penalty_taker,
     )
     return players.with_columns(
         pl.Series("xpts", result.points.mean(axis=1)),
@@ -287,6 +344,20 @@ def _fixture(
         pl.Series("p_assist", (result.assists >= 1).mean(axis=1)),
         pl.Series("p_cs", result.clean_sheets.mean(axis=1)),
         pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
+    )
+
+
+def _prediction_columns(players: pl.DataFrame, summary: FixtureSummary) -> pl.DataFrame:
+    """Attach K5 summary columns to the fixture's player rows."""
+    return players.with_columns(
+        pl.Series("xpts", summary.xpts),
+        pl.Series("xpts_sd", summary.xpts_sd),
+        pl.Series("p_played", summary.p_played),
+        pl.Series("p_60", summary.p_60),
+        pl.Series("p_goal", summary.p_goal),
+        pl.Series("p_assist", summary.p_assist),
+        pl.Series("p_cs", summary.p_cs),
+        pl.Series("p_haul", summary.p_haul),
     )
 
 

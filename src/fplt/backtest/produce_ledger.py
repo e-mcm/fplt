@@ -25,6 +25,8 @@ from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec, get_model
 from fplt.types import GWKey
+from fplt.utils.rng import paired_eval_seed
+from fplt.utils.timing import timing_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ class LedgerCacheKey:
     seasons_back: int | None
     n_sims: int | None
     seed: int
+    eval_seed: int | None = None
     version: int = _KEY_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +76,7 @@ class LedgerCacheKey:
             "seasons_back": self.seasons_back,
             "n_sims": self.n_sims,
             "seed": self.seed,
+            "eval_seed": self.eval_seed,
         }
 
     def digest(self) -> str:
@@ -110,6 +114,9 @@ class LedgerCacheKey:
             ),
             n_sims=(None if payload.get("n_sims") is None else int(payload["n_sims"])),
             seed=int(payload["seed"]),
+            eval_seed=(
+                None if payload.get("eval_seed") is None else int(payload["eval_seed"])
+            ),
             version=int(payload.get("version", _KEY_VERSION)),
         )
 
@@ -175,6 +182,7 @@ def build_ledger_cache_key(
     steps: int,
     seasons_back: int | None,
     lock_root: Path | None = None,
+    eval_seed: int | None = None,
 ) -> LedgerCacheKey:
     """Build the cache key for one arm × window × mode."""
     return LedgerCacheKey(
@@ -190,6 +198,7 @@ def build_ledger_cache_key(
         seasons_back=seasons_back,
         n_sims=n_sims_of(spec),
         seed=int(spec.seed),
+        eval_seed=eval_seed,
     )
 
 
@@ -252,6 +261,7 @@ def produce_ledger(
     use_cache: bool = True,
     lock_root: Path | None = None,
     model: PointsPredictor | None = None,
+    eval_seed: int | None = None,
 ) -> ProduceLedgerResult:
     """Fit/predict one arm for ``mode`` and optionally read/write the cache.
 
@@ -269,6 +279,9 @@ def produce_ledger(
         use_cache: When true, hit/write the content-addressed parquet cache.
         lock_root: Optional override for locating ``uv.lock``.
         model: Optional pre-built predictor (tests); otherwise ``get_model``.
+        eval_seed: When set, activate promote-eval CRN streams
+            (``paired_eval_seed``) so arms that share this seed share fixture
+            noise. ``None`` keeps production ``seed_for(model_id, ...)``.
 
     Returns:
         Prediction rows plus cache metadata.
@@ -307,6 +320,7 @@ def produce_ledger(
         steps=steps,
         seasons_back=key_seasons_back,
         lock_root=lock_root,
+        eval_seed=eval_seed,
     )
     cache_dir = ledger_cache_dir(data_dir, key)
 
@@ -331,23 +345,38 @@ def produce_ledger(
     pit = PITData(store)
     predictor = model if model is not None else get_model(spec.kind)(spec)
     logger.info(
-        "produce_ledger model=%s mode=%s refit=%s model_id=%s",
+        "produce_ledger model=%s mode=%s refit=%s model_id=%s eval_seed=%s",
         spec.name,
         mode,
         spec.refit,
         spec.model_id,
+        eval_seed,
     )
     started = time.perf_counter()
-    frame = _predict_window(
-        predictor,
-        pit,
-        season,
-        mode=mode,
-        fit_gw=fit_at,
-        test_from_gw=test_from_gw,
-        test_to_gw=test_to_gw,
-        steps=steps,
-    )
+    with timing_artifacts(data_dir):
+        if eval_seed is None:
+            frame = _predict_window(
+                predictor,
+                pit,
+                season,
+                mode=mode,
+                fit_gw=fit_at,
+                test_from_gw=test_from_gw,
+                test_to_gw=test_to_gw,
+                steps=steps,
+            )
+        else:
+            with paired_eval_seed(int(eval_seed)):
+                frame = _predict_window(
+                    predictor,
+                    pit,
+                    season,
+                    mode=mode,
+                    fit_gw=fit_at,
+                    test_from_gw=test_from_gw,
+                    test_to_gw=test_to_gw,
+                    steps=steps,
+                )
     logger.info(
         "produce_ledger wrote %s rows in %.1fs (cache_miss digest=%s)",
         frame.height,

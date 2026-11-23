@@ -1,0 +1,27 @@
+# Position-weighted blend of production DC + LGBM-with-probs (FDB-245).
+# Equal-weight combine already DROPPED (forecast-combine-promote.md) — do not
+# relaunch that arm. This revisit keeps the position priors (DC heavier on
+# GKP/DEF; LGBM heavier on MID/FWD) and swaps the ranking member to
+# lgbm_probs_v1 so blended p_haul / p_60 are non-null when LGBM contributes.
+name: forecast_combine_probs_v1
+kind: forecast_combine
+params:
+  mode: position
+  members:
+    - dc_layered_v4
+    - lgbm_probs_v1
+  position_weights:
+    GKP:
+      dc_layered_v4: 0.7
+      lgbm_probs_v1: 0.3
+    DEF:
+      dc_layered_v4: 0.7
+      lgbm_probs_v1: 0.3
+    MID:
+      dc_layered_v4: 0.4
+      lgbm_probs_v1: 0.6
+    FWD:
+      dc_layered_v4: 0.4
+      lgbm_probs_v1: 0.6
+refit: every_gw
+seed: 0

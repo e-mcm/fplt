@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -134,6 +134,12 @@ horizon-skill:
 		--to-gw $(or $(TO_GW),20) \
 		--steps $(or $(STEPS),10) \
 		$(ARGS)
+
+# Rank wall-clock timing hotspots from $$FPLT_DATA_DIR/timing/*.json
+# Usage: make perf-report
+# Optional: ARGS='--kind walk_forward --limit 5 --json'
+perf-report:
+	uv run fplt perf-report $(ARGS)
 
 # Candidate-prune loss curve (week-1 action agreement vs pool size N).
 # Usage: make pruning-loss
@@ -381,7 +387,7 @@ mc-format: ## clang-format -i on mc C++ sources
 		-print0 | xargs -0 uv run clang-format -i
 
 mc-golden: ## regenerate tests/fixtures/mc_golden (deliberate; review in PR)
-	@echo "mc-golden: golden fixtures land with L5 (PR5); nothing to regenerate yet."
+	@echo "mc-golden: edit mc/tests/test_simulate_parity.py::test_l5_golden_hashes and re-run to refresh hashes; do not auto-overwrite."
 
 mc-ci: ## CI: L0 ctest + wheel into dist/ (manylinux/macOS runners)
 	cmake -S mc -B mc/build-ci -G Ninja \

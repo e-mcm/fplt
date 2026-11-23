@@ -111,6 +111,7 @@ CoverageMetric = Literal[
     "odds_join",
     "odds_history_join",
     "penalties_order_non_null",
+    "set_piece_order_non_null",
     "dc_season_eligible",
     "injury_overlay_mapped",
     "predicted_lineups_pit",
@@ -148,6 +149,10 @@ _BOOL_DEFAULTS: dict[str, bool] = {
 _FLOAT_DEFAULTS: dict[str, float] = {
     "market_prior_strength": 0.0,
     "market_cs_strength": 0.0,
+    # Mid-season DC covariates (FDB-243); absent → vanilla.
+    "rest_coef": 0.0,
+    "congestion_coef": 0.0,
+    "form_strength": 0.0,
 }
 _ORIENTATION_PARAMS = frozenset({*_BOOL_DEFAULTS, *_FLOAT_DEFAULTS})
 
@@ -1121,8 +1126,17 @@ def execute_promote_eval(
             per_match.write_parquet(out / "per_match.parquet")
     if run_prediction:
         try:
+            # Promote-eval CRN: share fixture noise across arms (feature-eval §9).
+            paired_seed = (
+                int(preflight.control_spec.seed)
+                if preflight.control_spec is not None
+                else 0
+            )
             compare_result, wall_clock, peak_rss = _run_compare(
-                plan, data_dir=data_dir, output_dir=out / "compare"
+                plan,
+                data_dir=data_dir,
+                output_dir=out / "compare",
+                eval_seed=paired_seed,
             )
         except StaleLedgerCacheError as exc:
             # Cached ledger whose stored key ≠ the key just computed (§8).
@@ -2250,6 +2264,12 @@ def _measure_coverage(
             warnings,
             None,
         )
+    if metric == "set_piece_order_non_null":
+        return (
+            _coverage_set_piece_order(spec, plan, store, fixtures),
+            warnings,
+            None,
+        )
     if metric == "dc_season_eligible":
         return _coverage_dc_season(spec, fixtures), warnings, None
     if metric == "injury_overlay_mapped":
@@ -2684,6 +2704,101 @@ def _coverage_penalties_order(
     )
 
 
+def _coverage_set_piece_order(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    store: DataStore,
+    fixtures: pl.DataFrame,
+) -> CoverageResult:
+    """Share of player–fixtures with any non-null set-piece order at deadline."""
+    stats = (
+        store.table("player_fixture_stats")
+        .filter(
+            pl.col("season").is_in(plan.seasons)
+            & pl.col("gw").is_between(plan.from_gw, plan.to_gw, closed="both")
+        )
+        .collect()
+    )
+    if stats.is_empty():
+        denom = 0
+        numerator = 0
+        extras: dict[str, Any] = {
+            "corners_order_eq_1_rate": 0.0,
+            "direct_freekicks_order_eq_1_rate": 0.0,
+            "source_fpl_api_share": 0.0,
+        }
+    else:
+        deadlines = (
+            store.table("gameweeks")
+            .filter(pl.col("season").is_in(plan.seasons))
+            .sort("available_at")
+            .unique(subset=["season", "gw"], keep="last")
+            .select(["season", "gw", "deadline_time"])
+            .collect()
+        )
+        keyed = stats.select(["season", "gw", "player_key", "fixture_id"]).unique()
+        keyed = keyed.join(deadlines, on=["season", "gw"], how="left")
+        status = store.read("player_status")
+        order_cols = [
+            "corners_and_indirect_freekicks_order",
+            "direct_freekicks_order",
+        ]
+        present = [col for col in order_cols if col in status.columns]
+        select_cols = ["season", "player_key", "available_at", "source", *present]
+        joined = (
+            keyed.join(
+                status.select(select_cols),
+                on=["season", "player_key"],
+                how="left",
+            )
+            .filter(
+                pl.col("available_at").is_null()
+                | (pl.col("available_at") <= pl.col("deadline_time"))
+            )
+            .sort("available_at")
+            .unique(subset=["season", "fixture_id", "player_key"], keep="last")
+        )
+        denom = keyed.height
+        if present:
+            any_order = pl.any_horizontal(
+                [pl.col(col).is_not_null() for col in present]
+            )
+            numerator = joined.filter(any_order).height
+        else:
+            numerator = 0
+        corners_eq1 = (
+            joined.filter(pl.col("corners_and_indirect_freekicks_order") == 1).height
+            if "corners_and_indirect_freekicks_order" in joined.columns
+            else 0
+        )
+        freekick_eq1 = (
+            joined.filter(pl.col("direct_freekicks_order") == 1).height
+            if "direct_freekicks_order" in joined.columns
+            else 0
+        )
+        fpl = joined.filter(pl.col("source") == "fpl_api").height
+        extras = {
+            "corners_order_eq_1_rate": (corners_eq1 / denom) if denom else 0.0,
+            "direct_freekicks_order_eq_1_rate": (freekick_eq1 / denom)
+            if denom
+            else 0.0,
+            "source_fpl_api_share": (fpl / denom) if denom else 0.0,
+        }
+    rate = (numerator / denom) if denom else 0.0
+    min_cov = spec.gates.min_coverage
+    passed = True if min_cov is None else rate + 1e-12 >= min_cov
+    del fixtures
+    return CoverageResult(
+        metric="set_piece_order_non_null",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=passed,
+        extras=extras,
+    )
+
+
 def _coverage_dc_season(spec: EvalSpec, fixtures: pl.DataFrame) -> CoverageResult:
     denom = fixtures.height
     if denom == 0:
@@ -3082,7 +3197,11 @@ def _check_leak(
 
 
 def _run_compare(
-    plan: PromoteEvalPlan, *, data_dir: Path, output_dir: Path
+    plan: PromoteEvalPlan,
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    eval_seed: int | None = None,
 ) -> tuple[CompareResult, dict[str, float], dict[str, int]]:
     wall: dict[str, float] = {}
     rss: dict[str, int] = {}
@@ -3101,6 +3220,7 @@ def _run_compare(
         modes=list(plan.modes),  # type: ignore[arg-type]
         steps=plan.suites.steps,
         output_dir=output_dir,
+        eval_seed=eval_seed,
     )
     # Multi-season: run remaining seasons and concat summaries.
     summaries = [result.summary]
@@ -3118,6 +3238,7 @@ def _run_compare(
             modes=list(plan.modes),  # type: ignore[arg-type]
             steps=plan.suites.steps,
             output_dir=season_out,
+            eval_seed=eval_seed,
         )
         summaries.append(part.summary)
         details.append(part.detail)
@@ -3518,6 +3639,12 @@ def _write_audit(
         },
         "force_inconclusive": preflight.force_inconclusive,
     }
+    try:
+        from fplt.models.simulation_native import native_provenance
+
+        payload["mc"] = native_provenance()
+    except Exception as exc:  # pragma: no cover - provenance must not fail the eval
+        payload["mc"] = {"error": str(exc)}
     (out / "audit.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",
