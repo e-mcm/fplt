@@ -117,8 +117,7 @@ class ScorelineDist:
         cdf = np.cumsum(flat, axis=1)
         cdf[:, -1] = 1.0
         draws = rng.random((fixtures, n))
-        index = np.sum(cdf[:, None, :] <= draws[..., None], axis=-1)
-        index = np.minimum(index, goals * goals - 1)
+        index = _inverse_cdf_index(cdf, draws)
         home = index // goals
         away = index % goals
         return np.stack([home, away], axis=-1).astype(np.int64)
@@ -184,14 +183,13 @@ class MinutesDist:
         """
         if n < 0:
             raise ValueError("n must be non-negative")
-        players, width = self.pmf.shape
+        players, _width = self.pmf.shape
         if n == 0 or players == 0:
             return np.zeros((players, n), dtype=np.int64)
         cdf = np.cumsum(self.pmf, axis=1)
         cdf[:, -1] = 1.0
         draws = rng.random((players, n))
-        index = np.sum(cdf[:, None, :] <= draws[..., None], axis=-1)
-        index = np.minimum(index, width - 1)
+        index = _inverse_cdf_index(cdf, draws)
         return np.asarray(self.bins, dtype=np.int64)[index]
 
     def start_weights(self, starter_threshold: int = 60) -> np.ndarray:
@@ -281,30 +279,47 @@ def enforce_hard_starters(
         want = min(target, int(eligible_gk.size + eligible_out.size))
         gk_want = 1 if eligible_gk.size > 0 and want >= 1 else 0
         out_want = min(want - gk_want, int(eligible_out.size))
-        for sim in range(out.shape[1]):
-            _adjust_starter_count(
-                out,
-                gk_idx,
-                weights,
-                order_key,
-                sim,
-                want=gk_want,
-                starter_threshold=starter_threshold,
-                start_minutes=start_minutes,
-                sub_minutes=sub_minutes,
-            )
-            _adjust_starter_count(
-                out,
-                out_idx,
-                weights,
-                order_key,
-                sim,
-                want=out_want,
-                starter_threshold=starter_threshold,
-                start_minutes=start_minutes,
-                sub_minutes=sub_minutes,
-            )
+        _adjust_starter_count(
+            out,
+            gk_idx,
+            weights,
+            order_key,
+            want=gk_want,
+            starter_threshold=starter_threshold,
+            start_minutes=start_minutes,
+            sub_minutes=sub_minutes,
+        )
+        _adjust_starter_count(
+            out,
+            out_idx,
+            weights,
+            order_key,
+            want=out_want,
+            starter_threshold=starter_threshold,
+            start_minutes=start_minutes,
+            sub_minutes=sub_minutes,
+        )
     return out
+
+
+def _inverse_cdf_index(cdf: np.ndarray, uniforms: np.ndarray) -> np.ndarray:
+    """Map uniforms through a row-wise CDF (bit-identical to ``sum(cdf <= u)``).
+
+    ``np.searchsorted(..., side="right")`` returns the same index as counting
+    how many CDF entries are ``<= u``, then clipping to the last bin.
+
+    Args:
+        cdf: Shape ``(R, C)``, non-decreasing along axis 1, last column 1.
+        uniforms: Shape ``(R, N)`` draws in ``[0, 1)``.
+
+    Returns:
+        Integer indexes of shape ``(R, N)``, each in ``0 .. C-1``.
+    """
+    rows, cells = cdf.shape
+    out = np.empty(uniforms.shape, dtype=np.int64)
+    for row in range(rows):
+        out[row] = np.searchsorted(cdf[row], uniforms[row], side="right")
+    return np.minimum(out, cells - 1)
 
 
 def _adjust_starter_count(
@@ -312,26 +327,29 @@ def _adjust_starter_count(
     indexes: np.ndarray,
     weights: np.ndarray,
     order_key: np.ndarray,
-    sim: int,
     *,
     want: int,
     starter_threshold: int,
     start_minutes: int,
     sub_minutes: int,
 ) -> None:
-    """Promote/demote within ``indexes`` so about ``want`` are starters."""
+    """Promote/demote within ``indexes`` so about ``want`` are starters per sim.
+
+    Sorts the group once by ``order_key``, then applies demote/promote masks
+    over all simulation columns (same outcomes as the former per-sim loop).
+    """
     if indexes.size == 0:
         return
-    started = indexes[minutes[indexes, sim] >= starter_threshold]
-    if started.size > want:
-        ranked = started[np.argsort(order_key[started])]
-        for index in ranked[: started.size - want]:
-            minutes[int(index), sim] = sub_minutes
-    elif started.size < want:
-        pool = indexes[minutes[indexes, sim] < starter_threshold]
-        pool = pool[weights[pool] > 0]
-        if pool.size == 0:
-            return
-        ranked = pool[np.argsort(-order_key[pool])]
-        for index in ranked[: want - started.size]:
-            minutes[int(index), sim] = start_minutes
+    ranked = indexes[np.argsort(order_key[indexes])]
+    is_starter = minutes[ranked] >= starter_threshold
+    n_started = is_starter.sum(axis=0)
+    excess = np.maximum(n_started - want, 0)
+    demote = is_starter & (np.cumsum(is_starter, axis=0) <= excess)
+    rows, cols = np.nonzero(demote)
+    minutes[ranked[rows], cols] = sub_minutes
+    need = np.maximum(want - n_started, 0)
+    eligible = (weights[ranked] > 0)[:, None] & ~is_starter
+    from_high = np.cumsum(eligible[::-1], axis=0)[::-1]
+    promote = eligible & (from_high <= need)
+    rows, cols = np.nonzero(promote)
+    minutes[ranked[rows], cols] = start_minutes
