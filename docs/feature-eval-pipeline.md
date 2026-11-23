@@ -378,7 +378,7 @@ report:
 
 ### 5.3 Defensive contribution — opt-out, season filter
 
-Rules award defensive contribution only where `configs/scoring/<season>.yaml` has a non-empty `defensive_contributions` list (2025-26 and 2026-27). Earlier seasons make `use_defensive_contribution` a no-op. W9’s award rate was about 12% of played points (20.8% of DEF appearances). That rate is the interpretation. Gating on it would drop a real lever. `eval-components` has no other-points metric, so the suite stays off until one exists.
+Rules award defensive contribution only where `configs/scoring/<season>.yaml` has a non-empty `defensive_contributions` list (2025-26 and 2026-27). Earlier seasons make `use_defensive_contribution` a no-op. W9’s award rate was about 12% of played points (20.8% of DEF appearances). That rate is the interpretation. Gating on it would drop a real lever. Dedicated other/haul board: `fplt other-measure` / [`other-points-measurement.md`](other-points-measurement.md) (FDB-240). `eval-components` still has no other-points suite row; keep A/Bs for match-conditioned other stay off until that board (or a later EvalSpec) is the pre-registered read.
 
 ```yaml
 name: defcon_other_2025_26

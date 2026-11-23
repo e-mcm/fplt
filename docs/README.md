@@ -37,6 +37,7 @@ Written promote calls, plans, and decision inventory. Board parquet/logs stay in
 | [`availability-overlays-promote.md`](availability-overlays-promote.md) | Availability overlays (injury + predicted XI) |
 | [`predicted-xi-audit.md`](predicted-xi-audit.md) | Predicted XI accuracy audit + late re-predict hooks (FDB-253) |
 | [`minutes-measurement.md`](minutes-measurement.md) | Snapshot minutes measurement split + misses (FDB-246) |
+| [`other-points-measurement.md`](other-points-measurement.md) | Other-points / haul measurement + match residual (FDB-240) |
 | [`defcon-rate-promote.md`](defcon-rate-promote.md) | Defcon rate — **keep (provisional)** pending FDB-73 |
 | [`devig-1x2-prior-promote.md`](devig-1x2-prior-promote.md) | De-vig 1X2 — stop (no runnable prematch arm) |
 | [`force-play-eval-promote.md`](force-play-eval-promote.md) | H=8 + force-off candidate; live stays H=3 force-on |

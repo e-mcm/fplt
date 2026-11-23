@@ -44,6 +44,13 @@ from fplt.backtest.minutes_measurement import (
 from fplt.backtest.minutes_measurement import (
     format_summary_table as format_minutes_measurement_table,
 )
+from fplt.backtest.other_points_measurement import (
+    format_captain_regret_markdown,
+    run_other_points_measurement,
+)
+from fplt.backtest.other_points_measurement import (
+    format_summary_table as format_other_points_measurement_table,
+)
 from fplt.backtest.predict_live import run_predict
 from fplt.backtest.predicted_xi_audit import (
     DEFAULT_MIN_START_ACCURACY,
@@ -683,6 +690,33 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write summary/misses parquet+JSON+markdown here",
     )
+    other_measure = sub.add_parser(
+        "other-measure",
+        parents=[log_flags],
+        help=(
+            "Other-points / haul diagnostics: haul Brier+log, top xPts-decile "
+            "haul calibration, match-context other residual, captain-regret proxy"
+        ),
+    )
+    other_measure.add_argument("--season", required=True)
+    other_measure.add_argument("--from-gw", type=int, default=1)
+    other_measure.add_argument("--to-gw", type=int, default=10)
+    other_measure.add_argument(
+        "--points-model",
+        default="dc_layered_v3",
+        help="Layered points YAML name (default: dc_layered_v3)",
+    )
+    other_measure.add_argument(
+        "--n-sims",
+        type=int,
+        default=None,
+        help="Optional Monte Carlo override (faster smoke / measurement)",
+    )
+    other_measure.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write summary/captain_regret parquet+JSON+markdown here",
+    )
     predicted_xi_audit = sub.add_parser(
         "predicted-xi-audit",
         parents=[log_flags],
@@ -1173,6 +1207,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "minutes-measure":
         _minutes_measure(args)
         return
+    if args.command == "other-measure":
+        _other_measure(args)
+        return
     if args.command == "predicted-xi-audit":
         _predicted_xi_audit(args)
         return
@@ -1526,6 +1563,26 @@ def _minutes_measure(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(format_minutes_measurement_table(result.summary))
     print(format_misses_markdown(result.misses))
+    print(f"wrote {result.output_dir / 'summary.json'}")
+
+
+def _other_measure(args: argparse.Namespace) -> None:
+    try:
+        result = run_other_points_measurement(
+            get_settings().data_dir,
+            args.season,
+            from_gw=int(args.from_gw),
+            to_gw=int(args.to_gw),
+            points_model=str(args.points_model),
+            n_sims=args.n_sims,
+            output_dir=args.output_dir,
+        )
+    except (ValueError, KeyError) as exc:
+        logger.error("other-measure failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_other_points_measurement_table(result.summary))
+    print(format_captain_regret_markdown(result.captain_regret))
     print(f"wrote {result.output_dir / 'summary.json'}")
 
 

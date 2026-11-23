@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -98,6 +98,16 @@ minutes-brier:
 minutes-measure:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make minutes-measure SEASON=2025-26"; exit 1; fi
 	uv run fplt minutes-measure --season $(SEASON) $(ARGS)
+
+# ── Other-points / haul measurement (FDB-240 Rank-3 plumbing) ─────────────────
+# Usage: make other-measure SEASON=2025-26
+# Optional: ARGS='--from-gw 1 --to-gw 19 --points-model dc_layered_v3 --n-sims 500'
+# Writes haul Brier/log, top xPts-decile haul cal, match-context other residual,
+# and unconstrained captain-regret proxy under $$FPLT_DATA_DIR/other_points_measurement/.
+# Measurement only — no PRODUCTION flip.
+other-measure:
+	@if [ -z "$(SEASON)" ]; then echo "Usage: make other-measure SEASON=2025-26"; exit 1; fi
+	uv run fplt other-measure --season $(SEASON) $(ARGS)
 
 # ── Predicted XI accuracy audit (FDB-253 / PR8) ────────────────────────────────
 # Usage: make predicted-xi-audit SEASON=2025-26
