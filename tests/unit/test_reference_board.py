@@ -44,7 +44,7 @@ def test_reference_highs_match_board_deterministic() -> None:
     got = board.highs.to_highs_options()
     assert got == expected
     assert got.time_limit is None
-    assert got.threads is None
+    assert got.threads == 1
     assert got.parallel == "off"
     assert got.random_seed == 0
     assert got.mip_rel_gap == pytest.approx(0.0)

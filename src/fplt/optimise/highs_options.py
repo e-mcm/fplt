@@ -133,17 +133,18 @@ class HighsSolveOptions(BaseModel):
 
     @classmethod
     def board_deterministic(cls) -> HighsSolveOptions:
-        """Return reproducible board knobs (no time limit, parallel off, seed 0).
+        """Return reproducible board knobs (no time limit, 1 thread, seed 0).
 
         Chip / season-points boards use this so a second run on the same tip
         and staged data yields identical totals (``docs/eval-protocol.md`` §5).
         Live ``fplt plan`` keeps ``open_fpl_defaults`` so unattended solves
         stay wall-clock bounded.
 
-        Do **not** set ``threads=1``: with highspy 1.16 + auto-prune at H≥3,
-        ``threads=1`` returns ``HighsModelStatus.kNotset`` (elapsed 0) on the
-        empty-squad GW1 MILP. Leave ``threads=None`` and pin determinism via
-        ``parallel="off"`` + ``random_seed=0``.
+        ``threads=1`` is required for determinism: even with ``parallel="off"``,
+        HiGHS still uses the ``threads`` pool for MIP symmetry detection and
+        clique-table work, which can pick different alternate optima across
+        re-runs. ``apply`` resets the thread-local scheduler before pinning
+        so a prior prune / default-thread solve cannot leave ``kNotset``.
         """
         return cls(
             time_limit=None,
@@ -151,13 +152,20 @@ class HighsSolveOptions(BaseModel):
             output_flag=False,
             presolve="on",
             parallel="off",
-            threads=None,
+            threads=1,
             random_seed=0,
             accept_time_limit=False,
         )
 
     def apply(self, solver: highspy.Highs) -> None:
-        """Write these options onto ``solver``."""
+        """Write these options onto ``solver``.
+
+        When ``threads`` is set, reset HiGHS' thread-local scheduler first.
+        The first ``run()`` / ``presolve()`` on a thread binds the scheduler
+        size; candidate prune (and other default-thread HiGHS calls) often
+        initialize it to N cores. Setting a different nonzero ``threads``
+        after that returns ``kError`` and leaves ``HighsModelStatus.kNotset``.
+        """
         solver.setOptionValue("output_flag", self.output_flag)
         solver.setOptionValue("mip_rel_gap", self.mip_rel_gap)
         solver.setOptionValue("presolve", self.presolve)
@@ -166,6 +174,7 @@ class HighsSolveOptions(BaseModel):
         if self.parallel is not None:
             solver.setOptionValue("parallel", self.parallel)
         if self.threads is not None:
+            highspy.Highs.resetThreadScheduler(True)
             solver.setOptionValue("threads", int(self.threads))
         if self.random_seed is not None:
             solver.setOptionValue("random_seed", int(self.random_seed))

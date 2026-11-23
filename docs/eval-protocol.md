@@ -122,7 +122,7 @@ Chip-board **control** A/Bs may omit `--price-forecast` on purpose; say so. The 
 Chip-board path (`run_chip_decision_board` → `simulate_decisions` → `plan_squad`) uses `HighsSolveOptions.board_deterministic()`:
 
 - `time_limit=None` (no wall-clock cut-off; prove / finish)
-- `parallel="off"`, `threads=None` (do **not** pin `threads=1` — highspy 1.16 returns `kNotset` on pruned empty-squad H≥3 MILPs)
+- `threads=1`, `parallel="off"` (single-thread pin; `apply` calls `Highs.resetThreadScheduler` first so prior prune / default-thread solves cannot leave `kNotset`)
 - fixed `random_seed=0`
 - `mip_rel_gap=0.0`, `accept_time_limit=False`
 

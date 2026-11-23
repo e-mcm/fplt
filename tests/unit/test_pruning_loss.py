@@ -33,11 +33,13 @@ _TEST_POOL = {"GK": 6, "DEF": 16, "MID": 22, "FWD": 10}
 
 
 def _fast_options() -> HighsSolveOptions:
-    # Do not set threads=1 after other tests have used parallel HiGHS —
-    # highspy 1.16 can return kNotset immediately on the next solve.
+    # threads=1 is safe: HighsSolveOptions.apply resets the thread-local
+    # scheduler before pinning (avoids kNotset after parallel HiGHS).
     return HighsSolveOptions(
         time_limit=30.0,
         mip_rel_gap=0.0,
+        threads=1,
+        parallel="off",
         accept_time_limit=True,
     )
 
