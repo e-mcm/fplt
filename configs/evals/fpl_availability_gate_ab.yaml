@@ -21,8 +21,8 @@ change:
   notes: >
     Control dc_layered_noavail_v1 (minutes twin empirical_minutes_v2_noavail).
     Treatment dc_layered_v2 (default true). Window must be snapshot-backed
-    (source=fpl_api). Vaastav status is always "a" with null chance/news, so
-    arms would tie there.
+    (source=fpl_api). Vaastav-only status fails fpl_api_status_share coverage
+    rather than tying arms into an inconclusive no-op.
 
 control: dc_layered_noavail_v1
 treatment: dc_layered_v2
@@ -33,6 +33,10 @@ window:
   to_gw: 10
   seasons_back: 4
   modes: [walk_forward]
+  note: >
+    GW1–10 is thin/S1 smoke only — never a keep or confirmation window.
+    Early 2026-27 deadlines often lack PIT-visible fpl_api status; expect
+    coverage preflight fail until snapshot-backed finished GWs exist.
 
 suites:
   prediction: true
@@ -41,7 +45,11 @@ suites:
   steps: 1
 
 gates:
-  min_coverage: null
+  min_coverage: 0.01
+  allow_low_coverage: false
+  coverage:
+    metric: fpl_api_status_share
+    read: strict_pit
   keep_if:
     prediction_any: [rmse, mae]
     components_any: [brier_played, brier_60]

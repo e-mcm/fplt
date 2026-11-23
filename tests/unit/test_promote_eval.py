@@ -1552,3 +1552,430 @@ def test_prematch_1x2_eval_spec_loads_from_configs() -> None:
     score = treatment.components["score"]
     assert score.params["market_1x2_strength"] == 1.0
     assert score.params["use_closing_proxy"] is False
+
+
+def _seed_overlay_base(root: Path, *, status_source: str = "fpl_api") -> DataStore:
+    """Minimal scored window for availability / injury / XI coverage."""
+    store = _seed_pens_store(root, order=1, source=status_source)
+    season = "2025-26"
+    store.write(
+        "players",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": [season, season],
+                    "player_key": [100, 200],
+                    "element_id": [1, 2],
+                    "team_key": [3, 7],
+                    "position": ["MID", "FWD"],
+                    "web_name": ["A", "B"],
+                    "available_at": [_START, _START],
+                    "source": ["fpl_api", "fpl_api"],
+                }
+            )
+        ),
+    )
+    return store
+
+
+def test_overlay_eval_specs_register_coverage_and_window_note() -> None:
+    injury = load_eval_spec("minutes_injury_overlay_ab")
+    assert injury.gates.coverage.metric == "injury_overlay_mapped"
+    assert injury.gates.min_coverage == 0.01
+    assert "thin/S1" in injury.window.note or "thin" in injury.window.note.lower()
+
+    xi = load_eval_spec("predicted_xi_ab")
+    assert xi.gates.coverage.metric == "predicted_lineups_pit"
+    assert xi.gates.min_coverage == 0.01
+    assert "keep" in xi.window.note.lower()
+
+    avail = load_eval_spec("fpl_availability_gate_ab")
+    assert avail.gates.coverage.metric == "fpl_api_status_share"
+    assert avail.gates.min_coverage == 0.01
+
+    combine = load_eval_spec("forecast_combine_equal_ab")
+    assert combine.gates.coverage.metric == "forecast_combine_member_join"
+    assert combine.gates.min_coverage == 0.80
+
+    defcon = load_eval_spec("defcon_rate_ab")
+    assert defcon.gates.coverage.metric == "dc_season_eligible"
+    assert defcon.gates.min_coverage == 1.0
+    assert defcon.window.note
+
+
+def test_preflight_injury_overlay_fails_when_empty(tmp_path: Path) -> None:
+    _seed_overlay_base(tmp_path)
+    # Empty injuries table: schema present, no rows → tables check fails.
+    store = DataStore(tmp_path)
+    store.write(
+        "player_injuries",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": pl.Series([], dtype=pl.Utf8()),
+                    "player_key": pl.Series([], dtype=pl.Int64()),
+                    "api_player_id": pl.Series([], dtype=pl.Int64()),
+                    "team_key": pl.Series([], dtype=pl.Int64()),
+                    "api_team_id": pl.Series([], dtype=pl.Int64()),
+                    "api_fixture_id": pl.Series([], dtype=pl.Int64()),
+                    "fixture_id": pl.Series([], dtype=pl.Int64()),
+                    "injury_type": pl.Series([], dtype=pl.Utf8()),
+                    "reason": pl.Series([], dtype=pl.Utf8()),
+                    "category": pl.Series([], dtype=pl.Utf8()),
+                    "available_at": pl.Series([], dtype=pl.Datetime("us", "UTC")),
+                    "source": pl.Series([], dtype=pl.Utf8()),
+                }
+            )
+        ),
+    )
+    payload = _base_payload(
+        name="injury_cov",
+        kind="config",
+        question="Does injury overlay fire?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "minutes",
+            "control_kind": "empirical_minutes_v2",
+            "treatment_kind": "empirical_minutes_v2",
+            "tables": ["player_injuries"],
+            "diff": ["use_injury_overlay: false → true"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_injuries_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+            "note": "GW1–10 thin/S1 smoke only — never a keep window.",
+        },
+        suites={"prediction": True, "components": True},
+        gates={
+            "min_coverage": 0.01,
+            "coverage": {"metric": "injury_overlay_mapped", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "injury_cov", payload)
+    spec = load_eval_spec("injury_cov", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    assert plan.window_note
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        # Empty table fails change.tables check before coverage.
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert not result.ok
+    assert any("empty" in f for f in result.failures)
+
+
+def test_preflight_injury_overlay_passes_with_mapped_row(tmp_path: Path) -> None:
+    _seed_overlay_base(tmp_path)
+    store = DataStore(tmp_path)
+    store.write(
+        "player_injuries",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": ["2025-26"],
+                    "player_key": [100],
+                    "api_player_id": [9],
+                    "team_key": [3],
+                    "api_team_id": [33],
+                    "api_fixture_id": [99],
+                    "fixture_id": [1],
+                    "injury_type": ["Knock"],
+                    "reason": ["Knock"],
+                    "category": ["doubtful"],
+                    "available_at": [_START],
+                    "source": ["api_football"],
+                }
+            )
+        ),
+    )
+    payload = _base_payload(
+        name="injury_ok",
+        kind="config",
+        question="Does injury overlay fire?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "minutes",
+            "control_kind": "empirical_minutes_v2",
+            "treatment_kind": "empirical_minutes_v2",
+            "tables": ["player_injuries"],
+            "diff": ["use_injury_overlay: false → true"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_injuries_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.01,
+            "coverage": {"metric": "injury_overlay_mapped", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "injury_ok", payload)
+    spec = load_eval_spec("injury_ok", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.metric == "injury_overlay_mapped"
+    assert result.coverage.passed
+    assert result.coverage.rate >= 0.01
+
+
+def test_preflight_predicted_lineups_fails_without_pit_rows(tmp_path: Path) -> None:
+    _seed_overlay_base(tmp_path)
+    store = DataStore(tmp_path)
+    # Lineups only after deadline → rate 0.
+    store.write(
+        "predicted_lineups",
+        _utc(
+            pl.DataFrame(
+                {
+                    "season": ["2025-26"],
+                    "team_key": [3],
+                    "fixture_id": [1],
+                    "player_key": [100],
+                    "element_id": [1],
+                    "role": ["start"],
+                    "confidence": [0.9],
+                    "available_at": [_DEADLINE_GW1 + timedelta(hours=1)],
+                    "source": ["touchline_wire"],
+                }
+            )
+        ),
+    )
+    payload = _base_payload(
+        name="xi_miss",
+        kind="config",
+        question="Does predicted XI fire?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_in",
+            "slot": "minutes",
+            "control_kind": "empirical_minutes_v2",
+            "treatment_kind": "empirical_minutes_v2",
+            "tables": ["predicted_lineups"],
+            # Fork also sets window/strength; allow for coverage-unit focus.
+            "allow_multi_lever": True,
+            "diff": ["predicted_xi: false → true"],
+        },
+        control="dc_layered_v2",
+        treatment="dc_layered_predicted_xi_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.01,
+            "coverage": {"metric": "predicted_lineups_pit", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "xi_miss", payload)
+    spec = load_eval_spec("xi_miss", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.metric == "predicted_lineups_pit"
+    assert not result.coverage.passed
+    assert result.coverage.rate == 0.0
+
+
+def test_preflight_fpl_api_status_fails_on_vaastav(tmp_path: Path) -> None:
+    _seed_overlay_base(tmp_path, status_source="vaastav")
+    payload = _base_payload(
+        name="avail_vaastav",
+        kind="config",
+        question="Does the FPL gate fire on vaastav?",
+        change={
+            "lever": "hyperparam",
+            "orientation": "opt_out",
+            "slot": "minutes",
+            "control_kind": "empirical_minutes_v2",
+            "treatment_kind": "empirical_minutes_v2",
+            "tables": ["player_status"],
+            "diff": ["use_availability_gate: false → true"],
+        },
+        control="dc_layered_noavail_v1",
+        treatment="dc_layered_v2",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.01,
+            "coverage": {"metric": "fpl_api_status_share", "read": "strict_pit"},
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "avail_vaastav", payload)
+    spec = load_eval_spec("avail_vaastav", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.metric == "fpl_api_status_share"
+    assert not result.coverage.passed
+    assert result.coverage.rate == 0.0
+
+
+def test_preflight_forecast_combine_member_join_universe(tmp_path: Path) -> None:
+    _seed_overlay_base(tmp_path)
+    payload = _base_payload(
+        name="combine_cov",
+        kind="model",
+        question="Does equal blend beat DC when both members cover the pool?",
+        change={
+            "lever": "model_fork",
+            "orientation": "opt_in",
+            "control_kind": "dc_layered",
+            "treatment_kind": "forecast_combine",
+            "diff": ["kind: dc_layered → forecast_combine"],
+        },
+        control="dc_layered_v2",
+        treatment="forecast_combine_equal_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+            "note": "GW1–10 thin/S1 smoke only — never a keep window.",
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.80,
+            "coverage": {
+                "metric": "forecast_combine_member_join",
+                "read": "strict_pit",
+            },
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "combine_cov", payload)
+    spec = load_eval_spec("combine_cov", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    assert "thin" in plan.window_note.lower()
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.ok
+    assert result.coverage is not None
+    assert result.coverage.metric == "forecast_combine_member_join"
+    assert result.coverage.passed
+    assert result.coverage.rate >= 0.80
+    assert "dc_layered_v2" in result.coverage.extras["members"]
+    assert "lgbm_direct_v1" in result.coverage.extras["members"]
+    assert result.coverage.extras["member_missing"] == []
+
+
+def test_preflight_forecast_combine_fails_when_member_predictions_miss(
+    tmp_path: Path,
+) -> None:
+    _seed_overlay_base(tmp_path)
+    from fplt.models.spec import load_model_specs
+
+    specs = load_model_specs()
+    dc = specs["dc_layered_v2"]
+    lgbm = specs["lgbm_direct_v1"]
+    # Archive DC predictions for the scored pool; LGBM archive exists but
+    # covers none of the scored keys → member missing on the join.
+    pred_dir = tmp_path / "predictions" / dc.model_id / "as_of=2025-26_gw01"
+    pred_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "model_id": [dc.model_id, dc.model_id],
+            "as_of_season": ["2025-26", "2025-26"],
+            "as_of_gw": [1, 1],
+            "target_season": ["2025-26", "2025-26"],
+            "target_gw": [1, 1],
+            "player_key": [100, 200],
+            "fixture_id": [1, 1],
+            "xpts": [4.0, 5.0],
+            "xpts_sd": [1.0, 1.0],
+            "p_played": [0.9, 0.9],
+            "p_60": [0.8, 0.8],
+            "p_goal": [0.2, 0.3],
+            "p_assist": [0.1, 0.1],
+            "p_cs": [0.0, 0.0],
+            "p_haul": [0.1, 0.2],
+        }
+    ).write_parquet(pred_dir / "part.parquet")
+    lgbm_dir = tmp_path / "predictions" / lgbm.model_id / "as_of=2025-26_gw01"
+    lgbm_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "model_id": [lgbm.model_id],
+            "as_of_season": ["2025-26"],
+            "as_of_gw": [1],
+            "target_season": ["2025-26"],
+            "target_gw": [1],
+            "player_key": [999],
+            "fixture_id": [99],
+            "xpts": [1.0],
+            "xpts_sd": [0.5],
+            "p_played": [None],
+            "p_60": [None],
+            "p_goal": [None],
+            "p_assist": [None],
+            "p_cs": [None],
+            "p_haul": [None],
+        }
+    ).write_parquet(lgbm_dir / "part.parquet")
+
+    payload = _base_payload(
+        name="combine_miss",
+        kind="model",
+        question="Does a missing member fail coverage?",
+        change={
+            "lever": "model_fork",
+            "orientation": "opt_in",
+            "control_kind": "dc_layered",
+            "treatment_kind": "forecast_combine",
+            "diff": ["kind: dc_layered → forecast_combine"],
+        },
+        control="dc_layered_v2",
+        treatment="forecast_combine_equal_v1",
+        window={
+            "seasons": ["2025-26"],
+            "from_gw": 1,
+            "to_gw": 1,
+            "modes": ["walk_forward"],
+        },
+        suites={"prediction": True, "components": False},
+        gates={
+            "min_coverage": 0.80,
+            "coverage": {
+                "metric": "forecast_combine_member_join",
+                "read": "strict_pit",
+            },
+            "drop_if": {"coverage_below_min": True, "mean_ppg_gate_fail": True},
+        },
+    )
+    _write_eval(tmp_path, "combine_miss", payload)
+    spec = load_eval_spec("combine_miss", directory=tmp_path)
+    plan = plan_promote_eval(spec, dry_run=False)
+    with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
+        result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
+    assert result.coverage is not None
+    assert result.coverage.metric == "forecast_combine_member_join"
+    assert not result.coverage.passed
+    assert result.coverage.rate == 0.0
+    assert "lgbm_direct_v1" in result.coverage.extras["member_missing"]
