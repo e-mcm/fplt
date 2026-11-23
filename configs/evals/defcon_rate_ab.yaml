@@ -22,6 +22,7 @@ change:
     Control dc_layered_defcon_mean_v1 (shrunk 0/2 wire). Treatment
     dc_layered_v3 (other_player_defcon_rate_v1, production after FDB-211 keep).
     Primary window 2025-26 GW1–38; confirmation GW20–38. RMSE headline.
+    Coverage requires every target fixture in a DC-awarding season.
 
 control: dc_layered_defcon_mean_v1
 treatment: dc_layered_v3
@@ -32,6 +33,9 @@ window:
   to_gw: 38
   seasons_back: 4
   modes: [walk_forward]
+  note: >
+    GW1–10 alone is thin/S1 smoke — never a keep or confirmation window.
+    This board uses the full 2025-26 season; confirmation stays GW20–38.
 
 suites:
   prediction: true
@@ -40,7 +44,11 @@ suites:
   steps: 1
 
 gates:
-  min_coverage: null
+  min_coverage: 1.0
+  allow_low_coverage: false
+  coverage:
+    metric: dc_season_eligible
+    read: strict_pit
   keep_if:
     prediction_any: [rmse]
   drop_if:
