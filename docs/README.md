@@ -9,6 +9,7 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 | [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, Dagster §8, storage layout |
 | [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Ops / agents | GHA capture cadence, sensors, always-on setup |
 | [`feature-eval-pipeline.md`](feature-eval-pipeline.md) | Modelling / agents | Promote-eval, bakeoffs, control vs treatment, keep/drop |
+| [`eval-protocol.md`](eval-protocol.md) | Modelling / agents | Operator protocol; decisions-suite gate (`claim: squad_points`) |
 | [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; **2400** decision-sim bar |
 | [`benchmark-archives.md`](benchmark-archives.md) | Eval / agents | `benchmark_projections` table (ep_next / OpenFPL / FPL Review) |
 | [`openfpl.md`](openfpl.md) | Ops / agents | OpenFPL subprocess setup and season floor |
