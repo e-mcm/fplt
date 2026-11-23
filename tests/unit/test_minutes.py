@@ -133,6 +133,21 @@ def test_injury_overlay_zeros_suspension_without_raising_fpl_zero(
     assert zero_dist.pmf[0, 0] == pytest.approx(1.0)
 
 
+def test_fixture_scoped_suspension_overlay_only_hits_that_fixture(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path, [(1, "MID", 1, 90, 1)], {1: ("a", 100.0)})
+    _write_injury(store, player_key=1, category="out", fixture_id=8)
+    model = EmpiricalMinutes(_spec(use_injury_overlay=True))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    model.fit(view)
+    banned = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
+    clear = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [9]}))
+    ninety = int(np.flatnonzero(MINUTE_BINS == 90)[0])
+    assert banned.pmf[0, 0] == pytest.approx(1.0)
+    assert clear.pmf[0, ninety] == pytest.approx(1.0)
+
+
 def test_a_substitute_snaps_positive_minutes_off_zero(tmp_path: Path) -> None:
     store = _store(tmp_path, [(1, "MID", 1, 1, 0)], {1: ("a", 100.0)})
     dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
@@ -410,7 +425,13 @@ def _kick(gw: int) -> datetime:
     return datetime(2024, 8, 10, 15, tzinfo=UTC) + timedelta(days=7 * (gw - 1))
 
 
-def _write_injury(store: DataStore, *, player_key: int, category: str) -> None:
+def _write_injury(
+    store: DataStore,
+    *,
+    player_key: int,
+    category: str,
+    fixture_id: int | None = None,
+) -> None:
     store.write(
         "player_injuries",
         _utc(
@@ -422,7 +443,7 @@ def _write_injury(store: DataStore, *, player_key: int, category: str) -> None:
                     "team_key": [1],
                     "api_team_id": [34],
                     "api_fixture_id": [1],
-                    "fixture_id": pl.Series("fixture_id", [None], dtype=pl.Int64),
+                    "fixture_id": pl.Series("fixture_id", [fixture_id], dtype=pl.Int64),
                     "injury_type": [
                         "Injury" if category == "doubtful" else "Suspension"
                     ],

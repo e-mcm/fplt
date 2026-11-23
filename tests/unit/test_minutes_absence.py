@@ -39,10 +39,24 @@ _ZERO = {
 
 
 def test_return_metrics_tracks_streak_and_recovery() -> None:
-    assert return_metrics([]) == (0.0, 0.0)
-    assert return_metrics([False, False, False]) == (3.0, 0.0)
-    assert return_metrics([True, True, True]) == (0.0, 3.0)
-    assert return_metrics([False, True, True, False, False]) == (2.0, 2.0)
+    assert return_metrics([]) == (0.0, 0.0, False)
+    assert return_metrics([False, False, False]) == (3.0, 0.0, False)
+    assert return_metrics([True, True, True]) == (0.0, 3.0, False)
+    assert return_metrics([False, True, True, False, False]) == (2.0, 2.0, False)
+
+
+def test_return_metrics_marks_suspension_streak() -> None:
+    gsr, alen, from_ban = return_metrics(
+        [False, True, False],
+        [False, True, False],
+    )
+    assert (gsr, alen, from_ban) == (1.0, 1.0, True)
+    # Mixed injury then suspension → not suspension-only.
+    _, _, mixed = return_metrics(
+        [True, True, False],
+        [False, True, False],
+    )
+    assert mixed is False
 
 
 def test_return_ramp_factor_scales_first_games_back() -> None:
@@ -51,6 +65,7 @@ def test_return_ramp_factor_scales_first_games_back() -> None:
     assert return_ramp_factor(1.0, 3.0, 2.0) == pytest.approx(2.0 / 3.0)
     assert return_ramp_factor(2.0, 3.0, 2.0) == 1.0
     assert return_ramp_factor(0.0, 3.0, 0.0) == 1.0
+    assert return_ramp_factor(0.0, 1.0, 2.0, from_suspension=True) == 1.0
 
 
 def test_scale_return_feature_caps_at_ten() -> None:
@@ -135,6 +150,29 @@ def test_return_ramp_dampens_first_game_back(tmp_path: Path) -> None:
     assert p_ramped == pytest.approx(p_full * (2.0 / 3.0), rel=0.15)
 
 
+def test_suspension_absence_skips_return_ramp(tmp_path: Path) -> None:
+    """One-match ban must not look like an injury recovery under the ramp."""
+    store = _store_with_suspension_gap(tmp_path)
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    stats = view.latest(
+        "player_fixture_stats", ["season", "player_key", "fixture_id"]
+    ).collect()
+    tagged = annotate_absences(view, stats).sort("gw")
+    by_gw = {
+        int(row["gw"]): (bool(row["is_absence"]), bool(row["is_suspension"]))
+        for row in tagged.iter_rows(named=True)
+    }
+    assert by_gw[3] == (True, True)
+    assert by_gw[4] == (True, True)
+    assert by_gw[5] == (True, True)
+    ask = pl.DataFrame({"player_key": [1], "fixture_id": [8]})
+    full = _predict_ramp(store, ask, ramp=0.0)
+    ramped = _predict_ramp(store, ask, ramp=2.0)
+    assert float(1.0 - ramped.pmf[0, 0]) == pytest.approx(
+        float(1.0 - full.pmf[0, 0]), rel=1e-6
+    )
+
+
 def test_bad_return_ramp_refused() -> None:
     with pytest.raises(ValueError, match="return_ramp_games"):
         EmpiricalMinutesV2(
@@ -169,9 +207,19 @@ def _predict_ramp(store: DataStore, ask: pl.DataFrame, *, ramp: float):
 
 def _store_with_injury_gap(root: Path) -> DataStore:
     """Regular starter, three injured blanks, one game back — predict GW8."""
+    return _store_with_absence_gap(root, absent_status="i")
+
+
+def _store_with_suspension_gap(root: Path) -> DataStore:
+    """Same timeline as the injury gap, but status ``s`` for the blanks."""
+    return _store_with_absence_gap(root, absent_status="s")
+
+
+def _store_with_absence_gap(root: Path, *, absent_status: str) -> DataStore:
+    """Regular starter, three unavailable blanks, one game back — predict GW8."""
     store = DataStore(root)
     max_gw = 8
-    # GW1–2 start; GW3–5 injured zeros; GW6 one game back (predict as-of GW8).
+    # GW1–2 start; GW3–5 unavailable zeros; GW6 one game back (predict as-of GW8).
     stats = [
         (1, 90, 1),
         (2, 90, 1),
@@ -256,10 +304,9 @@ def _store_with_injury_gap(root: Path) -> DataStore:
             )
         ),
     )
-    # Status timeline: available → injured from GW3 deadline → available GW6.
     status_rows = [
         (_START, "a", 100.0),
-        (deadlines[2] - timedelta(hours=1), "i", 0.0),
+        (deadlines[2] - timedelta(hours=1), absent_status, 0.0),
         (deadlines[5] - timedelta(hours=1), "a", 100.0),
     ]
     store.write(

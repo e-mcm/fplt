@@ -19,9 +19,11 @@ from fplt.models.components.minutes.common import (
     availability,
     availability_gate,
     counts,
+    fixture_injuries,
     injuries,
     normalise,
     positions,
+    resolve_injury,
     shrunk,
 )
 from fplt.models.distributions import MINUTE_BINS, MinutesDist
@@ -143,10 +145,22 @@ class EmpiricalMinutes:
         keys = player_fixtures.select("player_key", "fixture_id")
         chance_map = availability(view)
         injury_map = injuries(view) if self._use_injury_overlay else {}
+        injury_by_fixture = fixture_injuries(view) if self._use_injury_overlay else {}
         pmf = np.zeros((keys.height, WIDTH), dtype=np.float64)
-        for index, player in enumerate(keys["player_key"].to_list()):
+        for index, (player, fixture) in enumerate(
+            zip(
+                keys["player_key"].to_list(),
+                keys["fixture_id"].to_list(),
+                strict=True,
+            )
+        ):
             tags = chance_map.get(int(player))
-            pmf[index] = self._mix(int(player), tags, injury_map.get(int(player)))
+            injury = (
+                resolve_injury(int(player), int(fixture), injury_map, injury_by_fixture)
+                if self._use_injury_overlay
+                else None
+            )
+            pmf[index] = self._mix(int(player), tags, injury)
         return MinutesDist(keys, MINUTE_BINS, pmf)
 
     def _remember_player(self, player: int, recent: pl.DataFrame) -> None:

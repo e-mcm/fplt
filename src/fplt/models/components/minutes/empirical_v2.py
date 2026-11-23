@@ -39,9 +39,11 @@ from fplt.models.components.minutes.common import (
     availability,
     availability_gate,
     counts,
+    fixture_injuries,
     injuries,
     normalise,
     positions,
+    resolve_injury,
     shrunk,
 )
 from fplt.models.components.minutes.predicted_xi import apply_predicted_xi
@@ -261,6 +263,7 @@ class EmpiricalMinutesV2:
         context = _predict_context(view, keys)
         chance_map = availability(view)
         injury_map = injuries(view) if self._use_injury_overlay else {}
+        injury_by_fixture = fixture_injuries(view) if self._use_injury_overlay else {}
         p_start = np.zeros(keys.height, dtype=np.float64)
         p_sub = np.zeros(keys.height, dtype=np.float64)
         p_long = np.zeros(keys.height, dtype=np.float64)
@@ -268,12 +271,18 @@ class EmpiricalMinutesV2:
         sub_hist = np.zeros((keys.height, WIDTH), dtype=np.float64)
         for index, row in enumerate(context.iter_rows(named=True)):
             player = int(row["player_key"])
+            fixture = int(row["fixture_id"])
             position = self._position.get(player, "UNK")
             tags = chance_map.get(player)
+            injury = (
+                resolve_injury(player, fixture, injury_map, injury_by_fixture)
+                if self._use_injury_overlay
+                else None
+            )
             gate = availability_gate(
                 tags,
                 self._doubtful,
-                injury=injury_map.get(player),
+                injury=injury,
                 use_injury_overlay=self._use_injury_overlay,
                 use_availability_gate=self._use_availability_gate,
             )
@@ -294,6 +303,7 @@ class EmpiricalMinutesV2:
                 features.get("games_since_return", 0.0),
                 features.get("absence_length", 0.0),
                 self._return_ramp_games,
+                from_suspension=bool(features.get("from_suspension", 0.0)),
             )
             p_start[index] = blended * ramp * gate
             p_sub[index] = base_sub * gate * (1.0 - blended)
@@ -376,6 +386,7 @@ def _empty_player_features() -> dict[str, float]:
         "minutes_std_5": 0.0,
         "games_since_return": 0.0,
         "absence_length": 0.0,
+        "from_suspension": 0.0,
     }
 
 
@@ -546,18 +557,28 @@ def _training_rows(
 def _shifted_return_features(ordered: pl.DataFrame) -> pl.DataFrame:
     """Per-row return metrics from appearances strictly before that row."""
     rows: list[dict[str, float | int]] = []
+    has_suspend = "is_suspension" in ordered.columns
     for key, group in ordered.group_by("player_key", maintain_order=True):
         player = int(key[0])
         flags = [bool(flag) for flag in group["is_absence"].to_list()]
+        suspend = (
+            [bool(flag) for flag in group["is_suspension"].to_list()]
+            if has_suspend
+            else None
+        )
         fixtures = group["fixture_id"].to_list()
         for index, fixture in enumerate(fixtures):
-            gsr, alen = return_metrics(flags[:index])
+            gsr, alen, from_suspension = return_metrics(
+                flags[:index],
+                suspend[:index] if suspend is not None else None,
+            )
             rows.append(
                 {
                     "player_key": player,
                     "fixture_id": int(fixture),
                     "games_since_return": gsr,
                     "absence_length": alen,
+                    "from_suspension": 1.0 if from_suspension else 0.0,
                 }
             )
     if not rows:
@@ -567,6 +588,7 @@ def _shifted_return_features(ordered: pl.DataFrame) -> pl.DataFrame:
                 "fixture_id": pl.Int64(),
                 "games_since_return": pl.Float64(),
                 "absence_length": pl.Float64(),
+                "from_suspension": pl.Float64(),
             }
         )
     return pl.DataFrame(rows)

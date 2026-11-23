@@ -33,11 +33,17 @@ class PlayerAvailability:
 
 @dataclass(frozen=True)
 class PlayerInjury:
-    """Latest staged API-Football injury tag for one mapped player."""
+    """Staged API-Football injury / suspension tag for one mapped player.
+
+    When ``fixture_id`` is set, the overlay applies only to that FPL fixture
+    (fixture-scoped bans already in ``player_injuries``). ``None`` means the
+    tag applies to every fixture while visible.
+    """
 
     category: str
     injury_type: str
     reason: str
+    fixture_id: int | None = None
 
 
 def snap(minutes: np.ndarray) -> np.ndarray:
@@ -154,11 +160,11 @@ def gate_for(row: PlayerAvailability, doubtful: float) -> float:
 
 
 def injuries(view: PITView) -> dict[int, PlayerInjury]:
-    """Latest mapped injury tags per ``player_key`` visible on ``view``.
+    """Latest player-level injury tags (rows with null ``fixture_id``).
 
-    Unmapped rows (null ``player_key``) are ignored. When several fixtures
-    list the same player, the most severe category wins (``out`` over
-    ``doubtful``).
+    Fixture-scoped bans live in ``fixture_injuries``. Unmapped rows (null
+    ``player_key``) are ignored. When several player-level rows list the same
+    player, the most severe category wins (``out`` over ``doubtful``).
     """
     frame = (
         view.table("player_injuries")
@@ -167,6 +173,8 @@ def injuries(view: PITView) -> dict[int, PlayerInjury]:
     )
     if frame.is_empty():
         return {}
+    if "fixture_id" in frame.columns:
+        frame = frame.filter(pl.col("fixture_id").is_null())
     found: dict[int, PlayerInjury] = {}
     ordered = frame.sort("available_at")
     for row in ordered.iter_rows(named=True):
@@ -176,6 +184,7 @@ def injuries(view: PITView) -> dict[int, PlayerInjury]:
             category=category,
             injury_type=str(row.get("injury_type") or ""),
             reason=str(row.get("reason") or ""),
+            fixture_id=None,
         )
         previous = found.get(player)
         if previous is None or _INJURY_RANK.get(category, 0) >= _INJURY_RANK.get(
@@ -183,6 +192,56 @@ def injuries(view: PITView) -> dict[int, PlayerInjury]:
         ):
             found[player] = tag
     return found
+
+
+def fixture_injuries(view: PITView) -> dict[tuple[int, int], PlayerInjury]:
+    """Fixture-scoped injury / suspension tags keyed by ``(player_key, fixture_id)``.
+
+    Only rows with a non-null FPL ``fixture_id`` are included. When several
+    rows share the same key, the most severe category wins.
+    """
+    frame = (
+        view.table("player_injuries")
+        .filter(pl.col("player_key").is_not_null())
+        .collect()
+    )
+    if frame.is_empty() or "fixture_id" not in frame.columns:
+        return {}
+    scoped = frame.filter(pl.col("fixture_id").is_not_null())
+    if scoped.is_empty():
+        return {}
+    found: dict[tuple[int, int], PlayerInjury] = {}
+    ordered = scoped.sort("available_at")
+    for row in ordered.iter_rows(named=True):
+        player = int(row["player_key"])
+        fixture = int(row["fixture_id"])
+        category = str(row.get("category") or "doubtful")
+        tag = PlayerInjury(
+            category=category,
+            injury_type=str(row.get("injury_type") or ""),
+            reason=str(row.get("reason") or ""),
+            fixture_id=fixture,
+        )
+        key = (player, fixture)
+        previous = found.get(key)
+        if previous is None or _INJURY_RANK.get(category, 0) >= _INJURY_RANK.get(
+            previous.category, 0
+        ):
+            found[key] = tag
+    return found
+
+
+def resolve_injury(
+    player: int,
+    fixture_id: int,
+    player_level: dict[int, PlayerInjury],
+    by_fixture: dict[tuple[int, int], PlayerInjury],
+) -> PlayerInjury | None:
+    """Prefer a fixture-scoped tag; else the player-level overlay."""
+    scoped = by_fixture.get((player, fixture_id))
+    if scoped is not None:
+        return scoped
+    return player_level.get(player)
 
 
 def injury_multiplier(category: str, doubtful: float) -> float:
