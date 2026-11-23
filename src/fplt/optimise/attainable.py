@@ -5,8 +5,9 @@ simulator (``simulate_decisions`` / ``plan_squad``) with realised points as
 the planner's ``xpts``, under the same free-transfer banking, hit cost,
 budget, squad composition, and FPL 50% sell-on selling prices (as-of staged
 ``player_status`` prices; no within-horizon price forecasts) as the
-chips-off decision bakeoff. ``chip_timing_regret`` remains available when
-chips are off.
+decision bakeoff. Default chip policy is ``off`` (N5 board / ``--with-oracle``);
+pass ``chip_arm="optimised"`` (and fixtures) for a chips-on attainable ceiling.
+``chip_timing_regret`` remains a placeholder while chips are off.
 
 Share of attainable points = realised season total ÷ oracle season total.
 """
@@ -22,6 +23,7 @@ from fplt.backtest.ledger import read_predictions
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
+from fplt.optimise.chip_windows import ChipArm, chip_arm_model_id
 from fplt.optimise.decisions import (
     candidates_as_of,
     simulate_decisions,
@@ -30,8 +32,14 @@ from fplt.optimise.decisions import (
 from fplt.optimise.plan import plan_squad
 from fplt.optimise.realised import score_gameweek, summarise_decisions
 from fplt.optimise.squad import select_squad
-from fplt.optimise.state import OwnedPlayer, SquadState, load_squad_state
+from fplt.optimise.state import (
+    ChipInventory,
+    OwnedPlayer,
+    SquadState,
+    load_squad_state,
+)
 from fplt.schemas.attainable import AttainableShareSchema, ComponentRegretSchema
+from fplt.scoring.chips import ChipRules, empty_remaining
 from fplt.types import GWKey
 
 ORACLE_MODEL_ID = "hindsight_oracle_v1"
@@ -39,12 +47,14 @@ ORACLE_MODEL_ID = "hindsight_oracle_v1"
 __all__ = [
     "ORACLE_MODEL_ID",
     "ChipTimingRegret",
+    "actuals_from_staged",
     "attainable_share",
     "chip_timing_regret",
     "component_regret",
     "enrich_decision_summary",
     "foresight_predictions",
     "format_attainable_scoreboard",
+    "oracle_ledger_model_id",
     "run_hindsight_oracle",
     "simulate_hindsight_oracle",
     "summarise_attainable",
@@ -110,6 +120,59 @@ def foresight_predictions(
     )
 
 
+def oracle_ledger_model_id(
+    chip_arm: ChipArm = "off",
+    *,
+    base_model_id: str = ORACLE_MODEL_ID,
+) -> str:
+    """Return the decision-ledger ``model_id`` for a hindsight oracle arm.
+
+    Chips-off keeps the historical ``hindsight_oracle_v1`` id so existing
+    boards stay stable. Other arms use ``chip_arm_model_id``.
+    """
+    if chip_arm == "off":
+        return base_model_id
+    return chip_arm_model_id(base_model_id, chip_arm)
+
+
+def actuals_from_staged(store: DataStore, season: str) -> pl.DataFrame:
+    """Build oracle actuals from staged ``player_fixture_stats``.
+
+    Sums ``total_points`` / ``minutes`` per player–gameweek (double GWs
+    contribute both fixtures). Prefer this when the prediction ledger is
+    empty or when the oracle should not depend on a model backtest.
+
+    Args:
+        store: Staged tables including ``player_fixture_stats``.
+        season: Season label.
+
+    Returns:
+        ``gw``, ``player_key``, ``actual_pts``, ``actual_minutes``.
+    """
+    empty = pl.DataFrame(
+        schema={
+            "gw": pl.Int64(),
+            "player_key": pl.Int64(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+        }
+    )
+    stats = store.read("player_fixture_stats")
+    if stats.is_empty():
+        return empty
+    chosen = stats.filter(pl.col("season") == season)
+    if chosen.is_empty():
+        return empty
+    return (
+        chosen.group_by("gw", "player_key")
+        .agg(
+            pl.col("total_points").sum().alias("actual_pts"),
+            pl.col("minutes").sum().alias("actual_minutes"),
+        )
+        .select("gw", "player_key", "actual_pts", "actual_minutes")
+    )
+
+
 def simulate_hindsight_oracle(
     candidates: pl.DataFrame,
     actuals: pl.DataFrame,
@@ -118,7 +181,11 @@ def simulate_hindsight_oracle(
     season: str,
     gameweeks: list[int],
     horizon: int,
-    model_id: str = ORACLE_MODEL_ID,
+    model_id: str | None = None,
+    chip_arm: ChipArm = "off",
+    chip_rules_season: str | None = None,
+    fixtures: pl.DataFrame | None = None,
+    force_play: bool = True,
 ) -> pl.DataFrame:
     """Play a constrained hindsight season via ``simulate_decisions``.
 
@@ -129,7 +196,12 @@ def simulate_hindsight_oracle(
         season: Season label written onto rows.
         gameweeks: Deadlines to play, in order.
         horizon: Planner look-ahead (same meaning as the decision bakeoff).
-        model_id: Written onto every row (default ``hindsight_oracle_v1``).
+        model_id: Written onto every row. Defaults via ``oracle_ledger_model_id``.
+        chip_arm: ``off`` (default N5), ``rule_based``, or ``optimised``.
+        chip_rules_season: Season whose ``configs/chips`` file to load when
+            chips are on. Defaults to ``season``.
+        fixtures: Staged fixtures required for ``rule_based`` / ``optimised``.
+        force_play: Forwarded to the optimised chip scheduler (default true).
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -138,16 +210,21 @@ def simulate_hindsight_oracle(
         ValueError: Propagated from ``simulate_decisions`` when a week has no
             candidates or the squad rules cannot be met.
     """
+    ledger_id = model_id if model_id is not None else oracle_ledger_model_id(chip_arm)
     predictions = foresight_predictions(actuals, gameweeks)
     return simulate_decisions(
         candidates,
         predictions,
         actuals,
         state,
-        model_id=model_id,
+        model_id=ledger_id,
         season=season,
         gameweeks=gameweeks,
         horizon=horizon,
+        chip_arm=chip_arm,
+        chip_rules_season=chip_rules_season,
+        fixtures=fixtures,
+        force_play=force_play,
     )
 
 
@@ -159,12 +236,18 @@ def run_hindsight_oracle(
     horizon: int,
     *,
     actuals_model: str | None = None,
+    chip_arm: ChipArm = "off",
+    chip_rules_season: str | None = None,
+    force_play: bool = True,
+    prefer_staged_actuals: bool = False,
 ) -> Path:
     """Simulate the constrained oracle from staged data and append the ledger.
 
     Uses the same draft rules as ``run_decisions``: 1000 budget, one free
-    transfer, YAML decay / banking cap / hit cost. Actuals are taken from the
-    prediction ledger (deduplicated like the decision bakeoff).
+    transfer, YAML decay / banking cap / hit cost. Actuals default to the
+    prediction ledger (deduplicated like the decision bakeoff); set
+    ``prefer_staged_actuals`` (or leave the ledger empty) to score from
+    staged ``player_fixture_stats`` instead.
 
     Args:
         data_dir: Root with ``staged/`` and ``ledger/``.
@@ -174,16 +257,27 @@ def run_hindsight_oracle(
         horizon: Planner horizon.
         actuals_model: YAML spec whose ledger actuals to use. Defaults to the
             first available model_id in the prediction ledger for ``season``.
+        chip_arm: Chip policy (default chips off for N5 board continuity).
+        chip_rules_season: Chip-rules season when chips are on.
+        force_play: Optimised-arm half-window packing (default true).
+        prefer_staged_actuals: Prefer staged stats over the prediction ledger.
 
     Returns:
         The decision parquet path.
 
     Raises:
         KeyError: Unknown ``actuals_model``.
-        ValueError: No ledger actuals for the season.
+        ValueError: No actuals for the season, or chips on without fixtures.
     """
     rules = load_squad_state()
     draft = rules.model_copy(update={"owned": [], "bank": 1000, "free_transfers": 1})
+    rules_season = chip_rules_season if chip_rules_season is not None else season
+    if chip_arm != "off":
+        counts = empty_remaining()
+        counts.update(ChipRules.for_season(rules_season).remaining_counts())
+        draft = draft.model_copy(
+            update={"chips": ChipInventory(remaining=counts, played=[])}
+        )
     store = DataStore(data_dir)
     gameweeks = list(range(from_gw, to_gw + 1))
     pools = [
@@ -192,11 +286,22 @@ def run_hindsight_oracle(
         )
         for gw in gameweeks
     ]
-    ledger = read_predictions(data_dir)
-    model_id = _resolve_actuals_model_id(ledger, season, actuals_model)
-    actuals = _actual_rows_for_oracle(ledger, model_id, season)
+    actuals = _resolve_oracle_actuals(
+        data_dir,
+        store,
+        season,
+        actuals_model=actuals_model,
+        prefer_staged=prefer_staged_actuals,
+    )
     if actuals.is_empty():
-        raise ValueError(f"no ledger actuals for season={season} model_id={model_id}")
+        raise ValueError(f"no oracle actuals for season={season}")
+    fixtures = (
+        store.read("fixtures").filter(pl.col("season") == season)
+        if chip_arm != "off"
+        else None
+    )
+    if chip_arm != "off" and (fixtures is None or fixtures.is_empty()):
+        raise ValueError(f"chip_arm={chip_arm!r} requires staged fixtures for {season}")
     frame = simulate_hindsight_oracle(
         pl.concat(pools),
         actuals,
@@ -204,6 +309,10 @@ def run_hindsight_oracle(
         season=season,
         gameweeks=gameweeks,
         horizon=horizon,
+        chip_arm=chip_arm,
+        chip_rules_season=chip_rules_season,
+        fixtures=fixtures,
+        force_play=force_play,
     )
     return write_decisions(data_dir, frame)
 
@@ -683,6 +792,32 @@ def _team_key_expr(frame: pl.DataFrame) -> pl.Expr:
         return pl.col("team_key")
     # Distinct synthetic clubs so max-3-per-club never binds.
     return (pl.col("player_key") % 1000 + 1).alias("team_key")
+
+
+def _resolve_oracle_actuals(
+    data_dir: Path,
+    store: DataStore,
+    season: str,
+    *,
+    actuals_model: str | None,
+    prefer_staged: bool,
+) -> pl.DataFrame:
+    """Pick staged or ledger actuals for the oracle."""
+    if prefer_staged:
+        staged = actuals_from_staged(store, season)
+        if not staged.is_empty():
+            return staged
+    ledger = read_predictions(data_dir)
+    if not ledger.is_empty():
+        try:
+            model_id = _resolve_actuals_model_id(ledger, season, actuals_model)
+        except ValueError:
+            model_id = None
+        if model_id is not None:
+            from_ledger = _actual_rows_for_oracle(ledger, model_id, season)
+            if not from_ledger.is_empty():
+                return from_ledger
+    return actuals_from_staged(store, season)
 
 
 def _resolve_actuals_model_id(
