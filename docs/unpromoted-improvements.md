@@ -31,7 +31,8 @@ None currently queued outside in-flight / evaluated rows.
 | Within-horizon price forecast (`mean_gw_delta`) | evaluated | **Keep (provisional)** — 2025-26 **+29**, 2024-25 **+9**; flip live `run_plan` default. [price-within-horizon-promote.md](./price-within-horizon-promote.md) | done (FDB-218); provisional until FDB-73 |
 | As-of 50% sell-on (#124) | canceled board | Bug fix, not promote (Eamon) | already live |
 | Prune N (`DEFAULT_TARGET_POOL≈130`) | evaluated | **Keep** — real-ledger week-1 agree **24/24**, gap **0**; already live; no retune PR. [prune-n-equivalence-promote.md](./prune-n-equivalence-promote.md) | done (FDB-212) |
-| `lineup_reopt` / EV default | evaluated | **Keep** — default already True; no flip. 2025-26 **+130**, 2024-25 **0**. [lineup-reopt-promote.md](./lineup-reopt-promote.md) | optional SAA arm later |
+| `lineup_reopt` / EV default | evaluated | **Keep** — default already True; no flip. 2025-26 **+130**, 2024-25 **0**. [lineup-reopt-promote.md](./lineup-reopt-promote.md) | — |
+| Joint scenarios SAA (`--joint-scenarios`) | plumbing | Opt-in SAA from `CompositePredictor.sample` (FDB-241). [joint-samples-optimiser-design.md](./joint-samples-optimiser-design.md) · [promote-plans/joint-scenarios-saa.md](./promote-plans/joint-scenarios-saa.md) | promote next |
 | History rating prior (`dc_layered_history_v1`) | evaluated | **Tune** @ 1.0 — no PRODUCTION flip. [history-market-prior-promote.md](./history-market-prior-promote.md) | optional dose grid |
 | Defcon P(award)/rate (`defcon_mode: rate`) | evaluated | **Keep (provisional)** — flipped into `dc_layered_v2`. [defcon-rate-promote.md](./defcon-rate-promote.md) | done (FDB-211); provisional until FDB-73 |
 | CS-only λ (`dc_layered_cs_v1` → `dc_layered_v4`) | evaluated | **Keep** — flipped into `dc_layered_v4` (`market_cs_strength=0.5`). [cs-only-player-rmse-promote.md](./cs-only-player-rmse-promote.md). Opt-out `dc_layered_nocs_v1`. | done (FDB-267) |

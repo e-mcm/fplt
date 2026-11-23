@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from fplt.optimise.lineup import (
+    compare_ev_vs_saa_lineup,
     select_lineup_expected,
     select_lineup_scenarios,
     verify_lineup_mean,
@@ -68,6 +69,38 @@ def test_p_haul_breaks_captain_ties() -> None:
     chosen = select_lineup_expected(squad, haul_weight=1.0)
     captain = chosen.players.filter(pl.col("captain"))["player_key"][0]
     assert int(captain) == 9
+
+
+def test_compare_ev_vs_saa_prefers_blank_insurance() -> None:
+    """Metric board: SAA mean ≥ EV mean under joint blanks (FDB-241)."""
+    squad = _squad()
+    keys = squad["player_key"].to_list()
+    n = len(keys)
+    points = np.full((n, 2), 2.0, dtype=np.float64)
+    minutes = np.full((n, 2), 90, dtype=np.int64)
+    i11 = keys.index(11)
+    points[i11, 0] = 10.0
+    points[i11, 1] = 0.0
+    minutes[i11, 1] = 0
+    i13 = keys.index(13)
+    points[i13] = 6.0
+    minutes[i13] = 90
+    # EV sees mean xpts: player 11 = 5, player 13 = 6 — but build xpts as
+    # EV would from marginal means so 11 looks better than a safe 2.0 bench.
+    xpts = [2.0] * 15
+    xpts[10] = 5.0  # player 11
+    xpts[12] = 4.0  # player 13 — lower EV than 11's mean
+    squad = squad.with_columns(pl.Series("xpts", xpts))
+    bundle = ScenarioBundle(
+        player_keys=np.asarray(keys, dtype=np.int64),
+        points=points,
+        minutes=minutes,
+    )
+    compared = compare_ev_vs_saa_lineup(squad, bundle)
+    assert compared.saa_mean >= compared.ev_mean - 1e-9
+    assert compared.delta == pytest.approx(
+        compared.saa_mean - compared.ev_mean, rel=0, abs=1e-9
+    )
 
 
 def test_select_lineup_rejects_bad_squad() -> None:

@@ -21,9 +21,10 @@ from fplt.models.components.other.priors import OtherPointsPriors
 from fplt.models.components.score.dixon_coles import MatchScoreModel
 from fplt.models.distributions import MinutesDist, enforce_hard_starters
 from fplt.models.predictions import prediction_frame
-from fplt.models.simulation import ConcededMode, simulate_match
+from fplt.models.simulation import ConcededMode, MatchSimulation, simulate_match
 from fplt.models.spec import ModelSpec, get_component, register_model, write_identity
 from fplt.models.universe import player_fixtures
+from fplt.schemas.scenarios import PredictionSampleSchema
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
 from fplt.utils.rng import (
@@ -162,7 +163,7 @@ class CompositePredictor:
                     index,
                     len(fixtures),
                 )
-                pieces.append(_fixture(self, view, squad, row))
+                pieces.append(_fixture_summary(self, view, squad, row, self._n_sims))
             combined = pl.concat(pieces, how="vertical")
         return prediction_frame(
             self.spec,
@@ -177,6 +178,52 @@ class CompositePredictor:
             p_assist=pl.col("p_assist"),
             p_cs=pl.col("p_cs"),
         )
+
+    def sample(self, view: PITView, horizon: list[GWKey], n: int) -> pl.DataFrame:
+        """Return joint Monte Carlo draws for every player-fixture in ``horizon``.
+
+        Same ``sim`` index within a fixture is scoreline-correlated (stacks).
+        Fixtures use independent RNG streams. Callers aggregate to
+        player–gameweek via ``scenario_bundle_from_samples`` for lineup SAA.
+
+        Args:
+            view: Point-in-time tables at one deadline.
+            horizon: Gameweeks to sample.
+            n: Number of shared draws per fixture (positive).
+
+        Returns:
+            A frame matching ``PredictionSampleSchema``.
+
+        Raises:
+            RuntimeError: ``fit`` has not been called.
+            ValueError: ``n`` is not a positive int.
+        """
+        if not self._fitted:
+            raise RuntimeError("fit the layered model before sampling")
+        if n < 1:
+            raise ValueError(f"n must be a positive int, got {n!r}")
+        rows = player_fixtures(view, horizon)
+        empty = pl.DataFrame(
+            schema={
+                "player_key": pl.Int64(),
+                "fixture_id": pl.Int64(),
+                "target_season": pl.Utf8(),
+                "target_gw": pl.Int64(),
+                "sim": pl.Int64(),
+                "points": pl.Float64(),
+                "minutes": pl.Int64(),
+            }
+        )
+        if rows.is_empty():
+            return empty
+        squad = _squad(view, rows)
+        fixtures = list(_fixtures(view, squad).iter_rows(named=True))
+        pieces: list[pl.DataFrame] = []
+        for row in fixtures:
+            pieces.append(_fixture_samples(self, view, squad, row, n))
+        if not pieces:
+            return empty
+        return pl.concat(pieces, how="vertical")
 
     def save(self, path: Path) -> None:
         """Write the fitted components. Refuses to overwrite an existing artifact."""
@@ -226,12 +273,75 @@ def _fixtures(view: PITView, squad: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _fixture(
+def _fixture_summary(
     model: CompositePredictor,
     view: PITView,
     squad: pl.DataFrame,
     fixture: dict[str, Any],
+    n_sims: int,
 ) -> pl.DataFrame:
+    """Mean / probability summary for one fixture (``predict`` path)."""
+    players, minutes, result = _simulate_fixture(model, view, squad, fixture, n_sims)
+    return players.with_columns(
+        pl.Series("xpts", result.points.mean(axis=1)),
+        pl.Series("xpts_sd", result.points.std(axis=1)),
+        pl.Series("p_played", (minutes > 0).mean(axis=1)),
+        pl.Series("p_60", (minutes >= 60).mean(axis=1)),
+        pl.Series("p_goal", (result.goals >= 1).mean(axis=1)),
+        pl.Series("p_assist", (result.assists >= 1).mean(axis=1)),
+        pl.Series("p_cs", result.clean_sheets.mean(axis=1)),
+        pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
+    )
+
+
+def _fixture_samples(
+    model: CompositePredictor,
+    view: PITView,
+    squad: pl.DataFrame,
+    fixture: dict[str, Any],
+    n_sims: int,
+) -> pl.DataFrame:
+    """Long player × sim frame for one fixture (``sample`` path)."""
+    players, minutes, result = _simulate_fixture(model, view, squad, fixture, n_sims)
+    keys = np.asarray(players["player_key"].to_list(), dtype=np.int64)
+    n_players = keys.shape[0]
+    if n_players == 0 or n_sims == 0:
+        frame = pl.DataFrame(
+            schema={
+                "player_key": pl.Int64(),
+                "fixture_id": pl.Int64(),
+                "target_season": pl.Utf8(),
+                "target_gw": pl.Int64(),
+                "sim": pl.Int64(),
+                "points": pl.Float64(),
+                "minutes": pl.Int64(),
+            }
+        )
+    else:
+        frame = pl.DataFrame(
+            {
+                "player_key": np.repeat(keys, n_sims),
+                "fixture_id": np.full(n_players * n_sims, int(fixture["fixture_id"])),
+                "target_season": [str(players["season"][0])] * (n_players * n_sims),
+                "target_gw": np.full(n_players * n_sims, int(players["gw"][0])),
+                "sim": np.tile(np.arange(n_sims, dtype=np.int64), n_players),
+                "points": result.points.reshape(-1).astype(np.float64),
+                "minutes": minutes.reshape(-1).astype(np.int64),
+            }
+        )
+    checked = PredictionSampleSchema.validate(frame)
+    assert isinstance(checked, pl.DataFrame)
+    return checked
+
+
+def _simulate_fixture(
+    model: CompositePredictor,
+    view: PITView,
+    squad: pl.DataFrame,
+    fixture: dict[str, Any],
+    n_sims: int,
+) -> tuple[pl.DataFrame, np.ndarray, MatchSimulation]:
+    """Draw scorelines, minutes, and points for one fixture."""
     fixture_id = int(fixture["fixture_id"])
     players = squad.filter(pl.col("fixture_id") == fixture_id).sort("player_key")
     asked = players.select("player_key", "fixture_id")
@@ -241,13 +351,13 @@ def _fixture(
     else:
         rng = eval_seed_for(pair_seed, view.as_of, fixture_id)
     drawn = model._score.predict(view, pl.DataFrame([fixture]))
-    scorelines = drawn.sample(rng, model._n_sims)
+    scorelines = drawn.sample(rng, n_sims)
     minutes_dist = model._minutes.predict(view, asked)
     if pair_seed is None:
-        minutes = minutes_dist.sample(rng, model._n_sims)
+        minutes = minutes_dist.sample(rng, n_sims)
     else:
         minutes = _sample_minutes_crn(
-            minutes_dist, pair_seed, view.as_of, fixture_id, model._n_sims
+            minutes_dist, pair_seed, view.as_of, fixture_id, n_sims
         )
     if model._hard_starters and minutes.size:
         minutes = enforce_hard_starters(
@@ -278,16 +388,7 @@ def _fixture(
         sample_other=model._sample_other,
         match_other=match_other,
     )
-    return players.with_columns(
-        pl.Series("xpts", result.points.mean(axis=1)),
-        pl.Series("xpts_sd", result.points.std(axis=1)),
-        pl.Series("p_played", (minutes > 0).mean(axis=1)),
-        pl.Series("p_60", (minutes >= 60).mean(axis=1)),
-        pl.Series("p_goal", (result.goals >= 1).mean(axis=1)),
-        pl.Series("p_assist", (result.assists >= 1).mean(axis=1)),
-        pl.Series("p_cs", result.clean_sheets.mean(axis=1)),
-        pl.Series("p_haul", (result.points >= 10).mean(axis=1)),
-    )
+    return players, minutes, result
 
 
 def _sample_minutes_crn(
