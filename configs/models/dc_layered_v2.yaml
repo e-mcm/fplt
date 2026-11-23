@@ -45,11 +45,15 @@ components:
       penalty_bonus: 0.3
       xg_blend: 0.7
   other:
-    name: other_player_v1
+    # FDB-211 keep: Poisson P(award)|minutes,position,rate for DC.
+    # Released other_player_v1.yaml stays on mean; opt-out fork
+    # dc_layered_defcon_mean_v1 restores the shrunk 0/2 wire.
+    name: other_player_defcon_rate_v1
     kind: other_player
     params:
       window: 10
       shrinkage: 5
       bps_bonus_weight: 0.5
+      defcon_mode: rate
 refit: every_gw
 seed: 0

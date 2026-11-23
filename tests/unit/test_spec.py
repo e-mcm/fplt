@@ -20,9 +20,9 @@ from fplt.types import GWKey
 # Extends-fork model_ids for package 0.1.0 (parent dc_layered_v2 params).
 # Update when intentional parent param changes land (e.g. hard_starters).
 _FORK_MODEL_IDS = {
-    "dc_layered_nopens_v1": "d4ae176f583fdc31",
-    "dc_layered_nodefcon_v1": "3a3bc5fc23e22b32",
-    "dc_layered_odds_v1": "8b2cafb56c04017f",
+    "dc_layered_nopens_v1": "bf2b8802ee1d6f8d",
+    "dc_layered_nodefcon_v1": "c14fad44539f9ecd",
+    "dc_layered_odds_v1": "887c384a79a2232f",
 }
 
 

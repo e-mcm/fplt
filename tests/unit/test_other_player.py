@@ -165,6 +165,11 @@ def test_rejects_non_bool_use_defensive_contribution() -> None:
         OtherPlayerPriors(_spec(use_defensive_contribution="yes"))
 
 
+def test_rejects_bad_defcon_mode() -> None:
+    with pytest.raises(ValueError, match="defcon_mode"):
+        OtherPlayerPriors(_spec(defcon_mode="gamma"))
+
+
 def test_an_unknown_player_gets_zeros(tmp_path: Path) -> None:
     store = _store(tmp_path, [_row(1, "FWD", 1, minutes=90, bonus=3)])
     frame = _predict(store, pl.DataFrame({"player_key": [99], "fixture_id": [9]}))

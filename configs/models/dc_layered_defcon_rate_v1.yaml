@@ -1,0 +1,11 @@
+# Explicit rate-model arm (same DC path as production dc_layered_v2 after
+# FDB-211 keep). Kept for historical EvalSpec tips; prefer dc_layered_v2.
+# Mean-wire opt-out is dc_layered_defcon_mean_v1.
+name: dc_layered_defcon_rate_v1
+extends: dc_layered_v2
+overrides:
+  components:
+    other:
+      name: other_player_defcon_rate_v1
+      params:
+        defcon_mode: rate
