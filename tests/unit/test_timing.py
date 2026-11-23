@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -16,10 +17,18 @@ from fplt.models.spec import ModelSpec
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
+    build_timing_record,
+    classify_phase,
     format_gw_breakdown,
+    format_hotspot_report,
+    format_kind_summary,
     format_run_summary,
+    load_timing_records,
+    rank_hotspots,
     timed_phase,
+    timing_root,
     timing_session,
+    write_timing_record,
 )
 from tests.builders import build_league
 
@@ -66,6 +75,100 @@ def test_timed_phase_records_only_with_active_session() -> None:
     assert orphan.get("fit/score") > 0
 
 
+def test_build_and_write_timing_record(tmp_path: Path) -> None:
+    session = TimingSession()
+    session.add("fit", 2.0)
+    session.add("predict", 8.0)
+    session.add("predict/fixtures", 7.5)
+    record = build_timing_record(
+        "walk_forward",
+        session,
+        meta={"model": "demo", "n_gw": 2},
+    )
+    assert record["schema_version"] == 1
+    assert record["kind"] == "walk_forward"
+    assert record["total_s"] == 10.0
+    assert record["phases"]["predict/fixtures"] == 7.5
+    assert "recorded_at" in record
+    empty = TimingSession()
+    assert write_timing_record(tmp_path, "walk_forward", empty) is None
+    path = write_timing_record(
+        tmp_path, "walk_forward", session, meta={"model": "demo"}
+    )
+    assert path is not None
+    assert path.parent == timing_root(tmp_path)
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    assert loaded["kind"] == "walk_forward"
+    assert loaded["meta"]["model"] == "demo"
+
+
+def test_rank_hotspots_and_classify() -> None:
+    records = [
+        {
+            "phases": {
+                "predict/fixtures": 90.0,
+                "fit": 5.0,
+                "optimise/milp": 10.0,
+                "ingest": 2.0,
+            }
+        },
+        {"phases": {"predict/fixtures": 10.0, "fit": 1.0}},
+    ]
+    ranked = rank_hotspots(records)
+    assert ranked[0].phase == "predict/fixtures"
+    assert ranked[0].seconds == 100.0
+    assert ranked[0].category == "python_loop"
+    assert classify_phase("optimise/milp") == "solver"
+    assert classify_phase("fit/minutes") == "fit"
+    assert classify_phase("plan/write") == "io"
+    report = format_hotspot_report(records)
+    assert "predict/fixtures=" in report
+    assert "[python_loop]" in report
+    assert format_hotspot_report([]) == "No timing artifacts found."
+
+
+def test_perf_report_cli_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from fplt.cli import main
+    from fplt.settings import get_settings
+
+    session = TimingSession()
+    session.add("predict/fixtures", 12.0)
+    session.add("fit", 3.0)
+    write_timing_record(tmp_path, "walk_forward", session, meta={"model": "cli"})
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        main(["perf-report", "--json", "--limit", "5"])
+    finally:
+        get_settings.cache_clear()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["n_records"] == 1
+    assert payload["hotspots"][0]["phase"] == "predict/fixtures"
+    assert payload["hotspots"][0]["category"] == "python_loop"
+
+
+def test_load_timing_records_filters_kind(tmp_path: Path) -> None:
+    session = TimingSession()
+    session.add("optimise/milp", 3.0)
+    session.add("plan/chips", 1.0)
+    write_timing_record(tmp_path, "plan", session, meta={"model": "x"})
+    walk = TimingSession()
+    walk.add("predict", 9.0)
+    write_timing_record(tmp_path, "walk_forward", walk, meta={"model": "y"})
+    plans = load_timing_records(tmp_path, kind="plan")
+    assert len(plans) == 1
+    assert plans[0]["kind"] == "plan"
+    limited = load_timing_records(tmp_path, limit=1)
+    assert len(limited) == 1
+    summary = format_kind_summary("plan", session, meta={"model": "x", "horizon": 3})
+    assert "timing kind=plan" in summary
+    assert "optimise/milp=" in summary
+
+
 class _SlowMean(RollingMeanPredictor):
     """Baseline that sleeps in fit/predict so wall times are measurable."""
 
@@ -90,7 +193,13 @@ def test_walk_forward_logs_fit_predict_split_and_summary(
     )
     as_ofs = [GWKey("2024-25", 1), GWKey("2024-25", 2)]
     with caplog.at_level(logging.INFO, logger="fplt.backtest.walk_forward"):
-        walk_forward(_SlowMean(spec), PITData(store), as_ofs, steps=1)
+        walk_forward(
+            _SlowMean(spec),
+            PITData(store),
+            as_ofs,
+            steps=1,
+            timing_dir=tmp_path,
+        )
     assert "gw 1 done in" in caplog.text
     assert "fit=" in caplog.text
     assert "predict=" in caplog.text
@@ -106,3 +215,9 @@ def test_walk_forward_logs_fit_predict_split_and_summary(
     assert "gws=2" in summary
     assert "fit=" in summary and "predict=" in summary
     assert "%" in summary
+    artifacts = list(timing_root(tmp_path).glob("walk_forward_*.json"))
+    assert len(artifacts) == 1
+    payload = json.loads(artifacts[0].read_text(encoding="utf-8"))
+    assert payload["kind"] == "walk_forward"
+    assert payload["meta"]["model"] == "rolling_mean"
+    assert "predict" in payload["phases"]

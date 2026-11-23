@@ -102,7 +102,7 @@ def run_backtest(
             spec.model_id,
         )
         model = get_model(spec.kind)(spec)
-        frame = walk_forward(model, pit, as_ofs, steps=steps)
+        frame = walk_forward(model, pit, as_ofs, steps=steps, timing_dir=data_dir)
         logger.info(
             "%s wrote %s prediction rows",
             spec.name,
