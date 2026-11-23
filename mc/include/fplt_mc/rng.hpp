@@ -24,9 +24,10 @@ class Philox4x64 {
 
   /// Run one Philox4x64-10 round block on a 4×u64 counter.
   /// Returns four independent u64 outputs.
-  [[nodiscard]] std::array<std::uint64_t, 4> generate(
-      std::uint64_t c0, std::uint64_t c1, std::uint64_t c2,
-      std::uint64_t c3) const noexcept;
+  [[nodiscard]] std::array<std::uint64_t, 4> generate(std::uint64_t c0,
+                                                      std::uint64_t c1,
+                                                      std::uint64_t c2,
+                                                      std::uint64_t c3) const noexcept;
 
   /// Uniform double in [0, 1) from the high bits of a u64
   /// (`(x >> 11) * 2^-53`).

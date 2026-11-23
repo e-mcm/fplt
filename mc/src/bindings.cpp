@@ -16,9 +16,7 @@ NB_MODULE(_core, m) {
   m.def(
       "philox_u01",
       [](std::uint64_t seed, std::uint32_t stream, std::uint32_t sim,
-         std::uint32_t slot) {
-        return fplt_mc::philox_u01(seed, stream, sim, slot);
-      },
+         std::uint32_t slot) { return fplt_mc::philox_u01(seed, stream, sim, slot); },
       nb::arg("seed"), nb::arg("stream"), nb::arg("sim"), nb::arg("slot"),
       "Draw one Philox uniform in [0, 1).");
   m.def(

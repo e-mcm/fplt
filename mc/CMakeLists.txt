@@ -57,6 +57,8 @@ add_library(fplt_mc_core STATIC
   src/build_info.cpp
 )
 add_library(fplt_mc::core ALIAS fplt_mc_core)
+# Required when the static lib is linked into the nanobind shared module.
+set_target_properties(fplt_mc_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(fplt_mc_core
   PUBLIC
     "${CMAKE_SOURCE_DIR}/include"

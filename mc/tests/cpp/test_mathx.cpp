@@ -1,5 +1,6 @@
-#include <cmath>
 #include <gtest/gtest.h>
+
+#include <cmath>
 
 #include "fplt_mc/mathx.hpp"
 

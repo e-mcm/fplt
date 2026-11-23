@@ -376,8 +376,9 @@ mc-test: ## ctest L0 + fplt-mc Python smoke
 	uv run pytest mc/tests -q
 
 mc-format: ## clang-format -i on mc C++ sources
+	uv pip install -q 'clang-format==18.1.8'
 	find mc \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' -o -name '*.cc' \) \
-		-print0 | xargs -0 clang-format -i
+		-print0 | xargs -0 uv run clang-format -i
 
 mc-golden: ## regenerate tests/fixtures/mc_golden (deliberate; review in PR)
 	@echo "mc-golden: golden fixtures land with L5 (PR5); nothing to regenerate yet."

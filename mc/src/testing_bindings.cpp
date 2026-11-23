@@ -13,8 +13,7 @@ NB_MODULE(_testing, m) {
 
   m.def(
       "philox_u01_batch",
-      [](std::uint64_t seed, std::uint32_t stream, std::uint32_t sim,
-         std::uint32_t n) {
+      [](std::uint64_t seed, std::uint32_t stream, std::uint32_t sim, std::uint32_t n) {
         std::vector<double> out(n);
         for (std::uint32_t i = 0; i < n; ++i) {
           out[i] = fplt_mc::philox_u01(seed, stream, sim, i);
