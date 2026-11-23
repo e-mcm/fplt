@@ -28,7 +28,9 @@ class ReferenceHighs(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     time_limit: float | None = None
-    threads: int = Field(default=1, ge=1)
+    # None: do not pin HiGHS threads (see board_deterministic — threads=1
+    # returns kNotset on pruned empty-squad MILPs under highspy 1.16).
+    threads: int | None = Field(default=None, ge=1)
     parallel: Literal["on", "off"] = "off"
     random_seed: int = Field(default=0, ge=0)
     mip_rel_gap: float = Field(default=0.0, ge=0.0)

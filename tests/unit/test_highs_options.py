@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import highspy
+import polars as pl
 import pytest
 
 from fplt.optimise.highs_options import HighsSolveOptions
+from fplt.optimise.plan import plan_squad
+from fplt.optimise.state import SquadState
 
 
 def test_open_fpl_defaults_accept_time_limit() -> None:
@@ -25,11 +28,15 @@ def test_unlimited_optimal_rejects_time_limit() -> None:
     assert not options.accepts_status(highspy.HighsModelStatus.kTimeLimit)
 
 
-def test_board_deterministic_is_single_threaded_seeded() -> None:
-    """Chip boards use no time limit, one thread, and a fixed random seed."""
+def test_board_deterministic_is_seeded_parallel_off() -> None:
+    """Chip boards use no time limit, parallel off, and a fixed random seed.
+
+    ``threads`` stays ``None``: pinning ``threads=1`` makes highspy 1.16
+    return ``kNotset`` on pruned empty-squad H≥3 MILPs (FDB-258).
+    """
     options = HighsSolveOptions.board_deterministic()
     assert options.time_limit is None
-    assert options.threads == 1
+    assert options.threads is None
     assert options.parallel == "off"
     assert options.random_seed == 0
     assert options.mip_rel_gap == pytest.approx(0.0)
@@ -45,9 +52,69 @@ def test_board_deterministic_is_single_threaded_seeded() -> None:
         assert status == highspy.HighsStatus.kOk
         return value
 
-    assert _opt("threads") == 1
     assert _opt("random_seed") == 0
     assert _opt("parallel") == "off"
+
+
+def _synthetic_league_pool(*, n_teams: int = 20) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build a mid-size candidate pool + H=3 xPts for prune / HiGHS tests."""
+    rows: list[dict[str, int | str]] = []
+    player_key = 1
+    for team in range(1, n_teams + 1):
+        for position, count, base_price in (
+            ("GK", 4, 40),
+            ("DEF", 8, 40),
+            ("MID", 8, 45),
+            ("FWD", 5, 45),
+        ):
+            for offset in range(count):
+                rows.append(
+                    {
+                        "player_key": player_key,
+                        "position": position,
+                        "team_key": team,
+                        "price": base_price + offset,
+                    }
+                )
+                player_key += 1
+    candidates = pl.DataFrame(rows)
+    points = pl.DataFrame(
+        {
+            "player_key": [int(r["player_key"]) for r in rows for _ in range(3)],
+            "step": [step for _ in rows for step in range(3)],
+            "xpts": [
+                float((int(r["player_key"]) % 50) / 10 + step)
+                for r in rows
+                for step in range(3)
+            ],
+        }
+    )
+    return candidates, points
+
+
+def test_board_deterministic_solves_pruned_empty_squad_h3() -> None:
+    """Regression: board_deterministic must solve pruned GW1 drafts (FDB-258).
+
+    Some hosts (notably highspy 1.16 on this agent image) return ``kNotset``
+    when ``threads=1`` is pinned on auto-pruned empty-squad H=3 MILPs. That
+    failure is environment-dependent — GHA may still solve under ``threads=1``
+    — so this test only requires the published ``board_deterministic()``
+    knobs (``threads=None``, ``parallel=off``, ``random_seed=0``) to succeed.
+    """
+    candidates, points = _synthetic_league_pool()
+    state = SquadState(bank=1000, free_transfers=1, ft_bank_cap=5)
+    plan = plan_squad(
+        candidates,
+        points,
+        state,
+        initial=True,
+        horizon=3,
+        prune=True,
+        highs_options=HighsSolveOptions.board_deterministic(),
+        lineup_reopt=True,
+    )
+    assert plan.mip_status == "kOptimal"
+    assert plan.pool_size is not None and plan.pool_size < candidates.height
 
 
 def test_time_limit_must_be_positive() -> None:
