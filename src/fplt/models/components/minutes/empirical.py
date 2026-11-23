@@ -11,6 +11,7 @@ import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.models.components.minutes.common import (
+    DEFAULT_AVAILABILITY_RECOVERY_GAMES,
     START_FALLBACK,
     SUB_FALLBACK,
     WIDTH,
@@ -20,6 +21,7 @@ from fplt.models.components.minutes.common import (
     availability_gate,
     counts,
     fixture_injuries,
+    horizon_step,
     injuries,
     normalise,
     positions,
@@ -41,6 +43,8 @@ class EmpiricalMinutes:
     as available, which is what the vaastav seasons record.
     ``use_injury_overlay`` multiplies in staged ``player_injuries`` when on
     (default off so production stays FPL-tags-only until eval).
+    ``availability_recovery_games`` recovers the FPL / injury gate toward 1.0
+    for horizon steps after the next-round chance anchor.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -50,14 +54,23 @@ class EmpiricalMinutes:
         doubtful = spec.params.get("doubtful_chance", 0.5)
         overlay = spec.params.get("use_injury_overlay", False)
         avail_gate = spec.params.get("use_availability_gate", True)
+        recovery = spec.params.get(
+            "availability_recovery_games", DEFAULT_AVAILABILITY_RECOVERY_GAMES
+        )
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
         doubtful_value = float(doubtful)
+        recovery_value = float(recovery)
         if shrinkage_value < 0:
             raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
         if not 0.0 <= doubtful_value <= 1.0:
             raise ValueError(f"doubtful_chance must be in [0, 1], got {doubtful_value}")
+        if recovery_value < 0:
+            raise ValueError(
+                "availability_recovery_games must be non-negative, "
+                f"got {recovery_value}"
+            )
         if not isinstance(overlay, bool):
             raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
         if not isinstance(avail_gate, bool):
@@ -67,6 +80,7 @@ class EmpiricalMinutes:
         self._window = window
         self._shrinkage = shrinkage_value
         self._doubtful = doubtful_value
+        self._availability_recovery_games = recovery_value
         self._use_injury_overlay = overlay
         self._use_availability_gate = avail_gate
         self._fitted = False
@@ -146,6 +160,7 @@ class EmpiricalMinutes:
         chance_map = availability(view)
         injury_map = injuries(view) if self._use_injury_overlay else {}
         injury_by_fixture = fixture_injuries(view) if self._use_injury_overlay else {}
+        fixture_gw = _fixture_gw_map(view)
         pmf = np.zeros((keys.height, WIDTH), dtype=np.float64)
         for index, (player, fixture) in enumerate(
             zip(
@@ -160,7 +175,11 @@ class EmpiricalMinutes:
                 if self._use_injury_overlay
                 else None
             )
-            pmf[index] = self._mix(int(player), tags, injury)
+            target_gw = fixture_gw.get(int(fixture))
+            step = (
+                horizon_step(view.as_of.gw, target_gw) if target_gw is not None else 0
+            )
+            pmf[index] = self._mix(int(player), tags, injury, step=step)
         return MinutesDist(keys, MINUTE_BINS, pmf)
 
     def _remember_player(self, player: int, recent: pl.DataFrame) -> None:
@@ -179,6 +198,8 @@ class EmpiricalMinutes:
         player: int,
         tags: PlayerAvailability | None,
         injury: PlayerInjury | None = None,
+        *,
+        step: int = 0,
     ) -> np.ndarray:
         position = self._position.get(player, "UNK")
         if player in self._player_rate:
@@ -191,6 +212,8 @@ class EmpiricalMinutes:
             injury=injury,
             use_injury_overlay=self._use_injury_overlay,
             use_availability_gate=self._use_availability_gate,
+            step=step,
+            recovery_games=self._availability_recovery_games,
         )
         p_start *= gate
         p_sub *= gate
@@ -217,6 +240,26 @@ class EmpiricalMinutes:
         pmf += p_start * start
         pmf += p_sub * sub
         return pmf
+
+
+def _fixture_gw_map(view: PITView) -> dict[int, int]:
+    """Map FPL ``fixture_id`` to gameweek for horizon-step gating."""
+    fixtures = (
+        view.latest("fixtures", ["season", "fixture_id"])
+        .select("fixture_id", "gw")
+        .collect()
+    )
+    if fixtures.is_empty():
+        return {}
+    return {
+        int(fixture): int(gw)
+        for fixture, gw in zip(
+            fixtures["fixture_id"].to_list(),
+            fixtures["gw"].to_list(),
+            strict=True,
+        )
+        if gw is not None
+    }
 
 
 def _remember_position(

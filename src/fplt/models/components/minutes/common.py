@@ -18,6 +18,8 @@ START_FALLBACK = np.zeros(WIDTH, dtype=np.float64)
 START_FALLBACK[int(np.flatnonzero(MINUTE_BINS == 90)[0])] = 1.0
 SUB_FALLBACK = np.zeros(WIDTH, dtype=np.float64)
 SUB_FALLBACK[int(np.flatnonzero(MINUTE_BINS == 15)[0])] = 1.0
+# Gameweeks after the next-round FPL anchor before the gate reaches 1.0.
+DEFAULT_AVAILABILITY_RECOVERY_GAMES = 3.0
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,11 @@ def chance(
 
 
 def gate_for(row: PlayerAvailability, doubtful: float) -> float:
-    """Availability multiplier from a ``PlayerAvailability`` row."""
+    """Availability multiplier from a ``PlayerAvailability`` row.
+
+    Horizon step 0 (as-of GW) semantics: prefer ``chance_this`` over next.
+    For multi-step plans use ``gate_at_step`` / ``availability_gate(..., step=)``.
+    """
     return chance(
         row.status,
         row.chance_next,
@@ -157,6 +163,117 @@ def gate_for(row: PlayerAvailability, doubtful: float) -> float:
         news=row.news,
         news_added=row.news_added,
     )
+
+
+def horizon_step(as_of_gw: int, target_gw: int) -> int:
+    """Zero-based lead time from the as-of gameweek to a target fixture GW.
+
+    Matches ``horizon_for`` offsets: the as-of GW is step 0, the next GW is
+    step 1. Negative gaps (asking about a past GW) clamp to 0.
+    """
+    return max(0, int(target_gw) - int(as_of_gw))
+
+
+def recover_toward_one(
+    base: float, step: int, recovery_games: float, *, from_step: int = 1
+) -> float:
+    """Blend ``base`` toward 1.0 for horizon steps beyond ``from_step``.
+
+    Steps ``<= from_step`` keep ``base``. When ``recovery_games`` is 0, any
+    step past the anchor jumps to 1.0. Otherwise the gate moves linearly and
+    reaches 1.0 after ``recovery_games`` further steps.
+
+    Args:
+        base: Multiplier in ``[0, 1]`` at the anchor step.
+        step: Horizon lead time (0 = as-of GW).
+        recovery_games: Extra gameweeks after ``from_step`` to full availability.
+        from_step: Last step that keeps ``base`` unchanged (default: next round).
+
+    Returns:
+        Multiplier in ``[0, 1]``.
+    """
+    if step <= from_step:
+        return float(base)
+    if recovery_games <= 0:
+        return 1.0
+    progress = min(1.0, (step - from_step) / float(recovery_games))
+    return float(base) + (1.0 - float(base)) * progress
+
+
+def chance_at_step(
+    status: str | None,
+    chance_of_playing: float | None,
+    doubtful: float,
+    *,
+    chance_this: float | None = None,
+    news: str = "",
+    news_added: datetime | None = None,
+    step: int = 0,
+    recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+) -> float:
+    """Horizon-aware availability multiplier in ``[0, 1]``.
+
+    Step 0 (as-of / this round) prefers ``chance_this`` then next-round chance
+    (same as ``chance``). Step ≥1 anchors on next-round chance only (ignores
+    ``chance_this``), then recovers toward 1.0 over ``recovery_games`` further
+    steps so a this-round injury or suspension does not zero the whole plan.
+    """
+    this_gate = chance(
+        status,
+        chance_of_playing,
+        doubtful,
+        chance_this=chance_this,
+        news=news,
+        news_added=news_added,
+    )
+    if step <= 0:
+        return this_gate
+    next_gate = chance(
+        status,
+        chance_of_playing,
+        doubtful,
+        chance_this=None,
+        news=news,
+        news_added=news_added,
+    )
+    return recover_toward_one(next_gate, step, recovery_games, from_step=1)
+
+
+def gate_at_step(
+    row: PlayerAvailability,
+    doubtful: float,
+    step: int,
+    recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+) -> float:
+    """Horizon-aware gate from a ``PlayerAvailability`` row."""
+    return chance_at_step(
+        row.status,
+        row.chance_next,
+        doubtful,
+        chance_this=row.chance_this,
+        news=row.news,
+        news_added=row.news_added,
+        step=step,
+        recovery_games=recovery_games,
+    )
+
+
+def injury_multiplier_at_step(
+    injury: PlayerInjury,
+    doubtful: float,
+    step: int,
+    recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
+) -> float:
+    """Injury overlay multiplier, recovered by horizon step for player-level tags.
+
+    Fixture-scoped bans (``fixture_id`` set) stay at full severity — they already
+    hit only one fixture. Player-level tags recover toward 1.0 after the
+    next-round anchor, same curve as the FPL gate.
+    """
+    base = injury_multiplier(injury.category, doubtful)
+    if injury.fixture_id is not None:
+        return base
+    return recover_toward_one(base, step, recovery_games, from_step=1)
 
 
 def injuries(view: PITView) -> dict[int, PlayerInjury]:
@@ -274,23 +391,32 @@ def availability_gate(
     injury: PlayerInjury | None = None,
     use_injury_overlay: bool = False,
     use_availability_gate: bool = True,
+    step: int = 0,
+    recovery_games: float = DEFAULT_AVAILABILITY_RECOVERY_GAMES,
 ) -> float:
     """FPL availability gate, optionally soft/hard-downgraded by injuries.
 
     When ``use_availability_gate`` is false, the FPL status/chance/news
     multiplier is 1.0 (eval-only no-overlay control). When
     ``use_injury_overlay`` is false or ``injury`` is missing, behaviour
-    matches ``gate_for`` / ``chance``. Overlay never raises an FPL zero.
+    matches ``gate_at_step`` / ``chance_at_step``. Overlay never raises an
+    FPL zero. ``step`` is the horizon lead time (0 = as-of GW); recovery
+    after the next-round anchor uses ``recovery_games``.
     """
     if not use_availability_gate:
         fpl = 1.0
     elif tags is None:
-        fpl = chance(None, None, doubtful)
+        fpl = chance_at_step(
+            None, None, doubtful, step=step, recovery_games=recovery_games
+        )
     else:
-        fpl = gate_for(tags, doubtful)
+        fpl = gate_at_step(tags, doubtful, step, recovery_games)
     if not use_injury_overlay or injury is None:
         return fpl
-    return combine_gates(fpl, injury_multiplier(injury.category, doubtful))
+    return combine_gates(
+        fpl,
+        injury_multiplier_at_step(injury, doubtful, step, recovery_games),
+    )
 
 
 def normalise(counts_arr: np.ndarray | None, fallback: np.ndarray) -> np.ndarray:

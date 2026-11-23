@@ -33,6 +33,7 @@ from fplt.models.components.minutes.absence import (
     scale_return_feature,
 )
 from fplt.models.components.minutes.common import (
+    DEFAULT_AVAILABILITY_RECOVERY_GAMES,
     START_FALLBACK,
     SUB_FALLBACK,
     WIDTH,
@@ -40,6 +41,7 @@ from fplt.models.components.minutes.common import (
     availability_gate,
     counts,
     fixture_injuries,
+    horizon_step,
     injuries,
     normalise,
     positions,
@@ -70,10 +72,13 @@ class EmpiricalMinutesV2:
     against the multi-window empirical rate (default 0.5).
     ``return_ramp_games`` dampens blended P(start) for the first games back
     after an absence. Availability (status / chance_of_playing) gates both
-    rates after the logits. Optional ``use_injury_overlay`` also applies
-    staged ``player_injuries`` (default off — production stays FPL-tags-only
-    until eval). When ``predicted_xi`` is true, near-deadline predicted
-    lineup roles mix into P(start) before soft-squad projection.
+    rates after the logits, with ``availability_recovery_games`` recovering
+    the gate toward 1.0 for horizon steps after the next-round FPL anchor
+    (P3). Optional ``use_injury_overlay`` also applies staged
+    ``player_injuries`` (default off — production stays FPL-tags-only until
+    eval); player-level injury tags use the same recovery curve. When
+    ``predicted_xi`` is true, near-deadline predicted lineup roles mix into
+    P(start) before soft-squad projection.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -88,6 +93,9 @@ class EmpiricalMinutesV2:
         logistic_blend = spec.params.get("logistic_blend", 0.5)
         l2 = spec.params.get("l2", 1.0)
         ramp = spec.params.get("return_ramp_games", _DEFAULT_RETURN_RAMP_GAMES)
+        recovery = spec.params.get(
+            "availability_recovery_games", DEFAULT_AVAILABILITY_RECOVERY_GAMES
+        )
         overlay = spec.params.get("use_injury_overlay", False)
         avail_gate = spec.params.get("use_availability_gate", True)
         predicted_xi = spec.params.get("predicted_xi", False)
@@ -101,6 +109,7 @@ class EmpiricalMinutesV2:
         blend_value = _as_float(logistic_blend)
         l2_value = _as_float(l2)
         ramp_value = _as_float(ramp)
+        recovery_value = _as_float(recovery)
         xi_window_value = _as_float(xi_window)
         xi_strength_value = _as_float(xi_strength)
         if shrinkage_value < 0:
@@ -120,6 +129,11 @@ class EmpiricalMinutesV2:
         if ramp_value < 0:
             raise ValueError(
                 f"return_ramp_games must be non-negative, got {ramp_value}"
+            )
+        if recovery_value < 0:
+            raise ValueError(
+                "availability_recovery_games must be non-negative, "
+                f"got {recovery_value}"
             )
         if not isinstance(soft, bool):
             raise ValueError(f"soft_squad must be a bool, got {soft!r}")
@@ -148,6 +162,7 @@ class EmpiricalMinutesV2:
         self._logistic_blend = blend_value
         self._l2 = l2_value
         self._return_ramp_games = ramp_value
+        self._availability_recovery_games = recovery_value
         self._use_injury_overlay = overlay
         self._use_availability_gate = avail_gate
         self._predicted_xi = predicted_xi
@@ -279,12 +294,20 @@ class EmpiricalMinutesV2:
                 if self._use_injury_overlay
                 else None
             )
+            target_gw = row.get("gw")
+            step = (
+                horizon_step(view.as_of.gw, int(target_gw))
+                if target_gw is not None
+                else 0
+            )
             gate = availability_gate(
                 tags,
                 self._doubtful,
                 injury=injury,
                 use_injury_overlay=self._use_injury_overlay,
                 use_availability_gate=self._use_availability_gate,
+                step=step,
+                recovery_games=self._availability_recovery_games,
             )
             features = self._player_features.get(player, _empty_player_features())
             start_x = _start_vector(features, row)
@@ -613,10 +636,13 @@ def _fixture_context(view: PITView) -> pl.DataFrame:
             schema={
                 "season": pl.Utf8(),
                 "fixture_id": pl.Int64(),
+                "gw": pl.Int64(),
                 "team_h_key": pl.Int64(),
                 "team_a_key": pl.Int64(),
-                "rest_days": pl.Float64(),
-                "is_dgw": pl.Float64(),
+                "rest_home": pl.Float64(),
+                "rest_away": pl.Float64(),
+                "dgw_home": pl.Float64(),
+                "dgw_away": pl.Float64(),
             }
         )
     # DGW flag: team appears twice in the same GW (home or away).
@@ -780,6 +806,7 @@ def _predict_context(view: PITView, keys: pl.DataFrame) -> pl.DataFrame:
         .select(
             "player_key",
             "fixture_id",
+            "gw",
             "team_key",
             "was_home",
             "rest_days",
