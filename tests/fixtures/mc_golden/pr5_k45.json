@@ -1,0 +1,22 @@
+{
+  "version": "0.4.0",
+  "seed": 20261123,
+  "players": 6,
+  "n_sims": 32,
+  "description": "PR5 K4\u2013K5 simulate_match_with_uniforms L5 golden (Philox inject)",
+  "hashes": {
+    "xpts": "239b39523f6c15e3df5afd89149263d69c2b8e76151f63f53eb9b9d581c215b2",
+    "xpts_sd": "475c17950d3a4e2fb9ab8e2c45199dcb742191073dd308eb5ab2704b69724c32",
+    "p_played": "8268ab9a920cf9402096a7f63a1ef7aa2be9547fdf56b58f6f20af60dd40d9a7",
+    "p_60": "8268ab9a920cf9402096a7f63a1ef7aa2be9547fdf56b58f6f20af60dd40d9a7",
+    "p_goal": "3dcc3754f609c40be630eb7cfeb7872746e0b5204d0ce82bff124f096d2157e1",
+    "p_assist": "7ca02b6b0a6c1dd966f8ed7349df6a24c5ec7d80831f6de51cf45e137e39eb07",
+    "p_cs": "2761125c9fa8bf97c1aa92cf4db99a863c60652d3f9e547333bdacdbc31104bd",
+    "p_haul": "89ffeeb3732f860b39b9cba5cb8e906eaf3b84938768de7985ccafddc9bedc54",
+    "points": "30e8769d93a9ab0528d07dc35a4bfecd0a72a22241312ab0a408172fc0df3b30",
+    "goals": "81a0ae68c01e2e19258bf8ab324f3f7857f7482ac0d4bbda4e874b44914cf973",
+    "assists": "6fb19155eb0cf5d33b9262b784bc57cd8c2228f14057343917beae330360510b",
+    "unattributed_home": "235d8295313d94e181e50d210a1326c27f204834e01172ef898401be440d9856",
+    "unattributed_away": "0e82a8117fd3913a79e6f474225040e7591842d626d9beb9798a25b73c6d966d"
+  }
+}

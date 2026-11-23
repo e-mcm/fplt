@@ -28,9 +28,9 @@ make mc-bench    # §1.1 per-step timing harness (stub until kernels land)
 ## Port priority (after PR0)
 
 PR0 vectorised NumPy hard starters: **~205 ms → ~5.6 ms**. Native K1 is
-lower priority. **K2** allocate landed in 0.2.0; **K3 `points` +
-`poisson_sequential`** in 0.3.0 via `fplt_mc._testing.points_with_uniforms`
-(match_other / K4 deferred). Skeleton headers for K1/K4–K5 remain.
+lower priority. **K2** allocate (0.2.0), **K3 points** (0.3.0), **K4–K5
+match-delta + fused `simulate_match_with_uniforms` / aggregate** (0.4.0)
+via `fplt_mc._testing`. Native K1 hard starters remain deferred.
 
 ## Wheel targets (CI)
 

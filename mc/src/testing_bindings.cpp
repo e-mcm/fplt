@@ -13,6 +13,7 @@
 #include "fplt_mc/points.hpp"
 #include "fplt_mc/rng.hpp"
 #include "fplt_mc/rules.hpp"
+#include "fplt_mc/simulate.hpp"
 
 namespace nb = nanobind;
 
@@ -23,6 +24,7 @@ using F64_2 = nb::ndarray<nb::numpy, double, nb::ndim<2>, nb::c_contig>;
 using I64_1 = nb::ndarray<nb::numpy, std::int64_t, nb::ndim<1>, nb::c_contig>;
 using I64_2 = nb::ndarray<nb::numpy, std::int64_t, nb::ndim<2>, nb::c_contig>;
 using U8_1 = nb::ndarray<nb::numpy, std::uint8_t, nb::ndim<1>, nb::c_contig>;
+using U8_2 = nb::ndarray<nb::numpy, std::uint8_t, nb::ndim<2>, nb::c_contig>;
 
 template <typename T>
 nb::ndarray<nb::numpy, T, nb::c_contig> owned_array(std::vector<T>&& data,
@@ -137,6 +139,30 @@ fplt_mc::RulesPOD rules_from_arrays(std::int32_t appearance_long_minutes,
   return rules;
 }
 
+fplt_mc::MatchOtherTables tables_from_arrays(F64_2 delta_goals, F64_2 delta_cs,
+                                             F64_2 delta_scored) {
+  if (delta_goals.shape(0) != fplt_mc::kNPositions || delta_goals.shape(1) != 3) {
+    throw std::invalid_argument("delta_goals must have shape (4, 3)");
+  }
+  if (delta_cs.shape(0) != fplt_mc::kNPositions || delta_cs.shape(1) != 2) {
+    throw std::invalid_argument("delta_cs must have shape (4, 2)");
+  }
+  if (delta_scored.shape(0) != fplt_mc::kNPositions || delta_scored.shape(1) != 2) {
+    throw std::invalid_argument("delta_scored must have shape (4, 2)");
+  }
+  fplt_mc::MatchOtherTables tables;
+  for (std::size_t p = 0; p < fplt_mc::kNPositions; ++p) {
+    for (std::size_t b = 0; b < 3; ++b) {
+      tables.delta_goals[p][b] = delta_goals.data()[p * 3 + b];
+    }
+    for (std::size_t b = 0; b < 2; ++b) {
+      tables.delta_cs[p][b] = delta_cs.data()[p * 2 + b];
+      tables.delta_scored[p][b] = delta_scored.data()[p * 2 + b];
+    }
+  }
+  return tables;
+}
+
 nb::tuple points_with_uniforms(U8_1 position, U8_1 side, F64_2 minutes, I64_2 goals,
                                I64_2 assists, I64_1 home, I64_1 away,
                                F64_2 other_points, std::int32_t appearance_long_minutes,
@@ -145,7 +171,8 @@ nb::tuple points_with_uniforms(U8_1 position, U8_1 side, F64_2 minutes, I64_2 go
                                std::int32_t conceded_every, F64_1 conceded_by_pos,
                                double cs_red_void_prob, bool conceded_scaled,
                                bool sample_other, nb::object cs_void_u_obj,
-                               nb::object other_u_obj) {
+                               nb::object other_u_obj, nb::object delta_goals_obj,
+                               nb::object delta_cs_obj, nb::object delta_scored_obj) {
   const std::size_t players = minutes.shape(0);
   const std::size_t n = minutes.shape(1);
   if (position.shape(0) != players || side.shape(0) != players) {
@@ -195,16 +222,238 @@ nb::tuple points_with_uniforms(U8_1 position, U8_1 side, F64_2 minutes, I64_2 go
     other_ptr = other_u.data();
   }
 
+  const bool has_match = !delta_goals_obj.is_none();
+  if (has_match != !delta_cs_obj.is_none() || has_match != !delta_scored_obj.is_none()) {
+    throw std::invalid_argument(
+        "delta_goals, delta_cs, and delta_scored must all be set or all None");
+  }
+  fplt_mc::MatchOtherTables tables{};
+  const fplt_mc::MatchOtherTables* match_ptr = nullptr;
+  if (has_match) {
+    tables = tables_from_arrays(nb::cast<F64_2>(delta_goals_obj),
+                                nb::cast<F64_2>(delta_cs_obj),
+                                nb::cast<F64_2>(delta_scored_obj));
+    match_ptr = &tables;
+  }
+
   std::vector<double> points_out(players * n);
   std::vector<std::uint8_t> cs_out(players * n);
   fplt_mc::points(rules, position.data(), side.data(), minutes.data(), goals.data(),
                   assists.data(), home.data(), away.data(), other_points.data(),
                   cs_red_void_prob, conceded_scaled, sample_other, cs_void_ptr,
-                  other_ptr, players, n, points_out.data(), cs_out.data());
+                  other_ptr, match_ptr, players, n, points_out.data(), cs_out.data());
 
-  // Return clean_sheet as bool-compatible uint8; Python casts to bool.
   return nb::make_tuple(owned_array(std::move(points_out), {players, n}),
                         owned_array(std::move(cs_out), {players, n}));
+}
+
+auto aggregate_fixture_py(F64_2 minutes, F64_2 points, I64_2 goals, I64_2 assists,
+                          U8_2 clean_sheet) {
+  const std::size_t players = minutes.shape(0);
+  const std::size_t n = minutes.shape(1);
+  if (points.shape(0) != players || points.shape(1) != n || goals.shape(0) != players ||
+      goals.shape(1) != n || assists.shape(0) != players || assists.shape(1) != n ||
+      clean_sheet.shape(0) != players || clean_sheet.shape(1) != n) {
+    throw std::invalid_argument("all sample arrays must share shape (players, n)");
+  }
+  std::vector<double> xpts(players);
+  std::vector<double> xpts_sd(players);
+  std::vector<double> p_played(players);
+  std::vector<double> p_60(players);
+  std::vector<double> p_goal(players);
+  std::vector<double> p_assist(players);
+  std::vector<double> p_cs(players);
+  std::vector<double> p_haul(players);
+  fplt_mc::FixtureSummary summary;
+  summary.xpts = xpts.data();
+  summary.xpts_sd = xpts_sd.data();
+  summary.p_played = p_played.data();
+  summary.p_60 = p_60.data();
+  summary.p_goal = p_goal.data();
+  summary.p_assist = p_assist.data();
+  summary.p_cs = p_cs.data();
+  summary.p_haul = p_haul.data();
+  fplt_mc::aggregate_fixture(minutes.data(), points.data(), goals.data(),
+                             assists.data(), clean_sheet.data(), players, n, &summary);
+  return nb::make_tuple(
+      owned_array(std::move(xpts), {players}), owned_array(std::move(xpts_sd), {players}),
+      owned_array(std::move(p_played), {players}),
+      owned_array(std::move(p_60), {players}), owned_array(std::move(p_goal), {players}),
+      owned_array(std::move(p_assist), {players}),
+      owned_array(std::move(p_cs), {players}), owned_array(std::move(p_haul), {players}));
+}
+
+nb::dict simulate_match_with_uniforms_py(
+    I64_1 home_goals, I64_1 away_goals, U8_1 side, U8_1 position, F64_2 minutes,
+    F64_1 goal_weight, F64_1 assist_weight, F64_2 other_points,
+    std::int32_t appearance_long_minutes, double appearance_short,
+    double appearance_long, F64_1 goals_by_pos, double assists_pts, F64_1 cs_by_pos,
+    std::int32_t conceded_every, F64_1 conceded_by_pos, double own_goal_weight,
+    double p_assist, double cs_red_void_prob, bool conceded_scaled, bool sample_other,
+    F64_2 home_scorer_u, F64_2 home_assist_flag_u, F64_2 home_assister_u,
+    F64_2 away_scorer_u, F64_2 away_assist_flag_u, F64_2 away_assister_u,
+    nb::object cs_void_u_obj, nb::object other_u_obj, nb::object delta_goals_obj,
+    nb::object delta_cs_obj, nb::object delta_scored_obj, bool return_samples) {
+  const std::size_t players = minutes.shape(0);
+  const std::size_t n = minutes.shape(1);
+  if (home_goals.shape(0) != n || away_goals.shape(0) != n) {
+    throw std::invalid_argument("home/away goals length must equal minutes.shape[1]");
+  }
+  if (side.shape(0) != players || position.shape(0) != players ||
+      goal_weight.shape(0) != players || assist_weight.shape(0) != players) {
+    throw std::invalid_argument("player vectors must match minutes.shape[0]");
+  }
+  if (other_points.shape(0) != players || other_points.shape(1) != 3) {
+    throw std::invalid_argument("other_points must have shape (players, 3)");
+  }
+  if (!(p_assist >= 0.0 && p_assist <= 1.0) || own_goal_weight < 0.0 ||
+      !(cs_red_void_prob >= 0.0 && cs_red_void_prob <= 1.0)) {
+    throw std::invalid_argument("invalid sim params");
+  }
+
+  auto max_of = [](I64_1 goals) {
+    std::int64_t m = 0;
+    for (std::size_t j = 0; j < goals.shape(0); ++j) {
+      m = std::max(m, goals.data()[j]);
+    }
+    if (m < 0) {
+      throw std::invalid_argument("team goals must be non-negative");
+    }
+    return static_cast<std::size_t>(m);
+  };
+  const std::size_t home_max = max_of(home_goals);
+  const std::size_t away_max = max_of(away_goals);
+
+  auto check_side = [&](F64_2 grid, std::size_t max_g, const char* name) {
+    if (max_g == 0) {
+      return;
+    }
+    if (grid.shape(0) < max_g || grid.shape(1) != n) {
+      throw std::invalid_argument(std::string(name) + " uniforms must have shape (>= " +
+                                  std::to_string(max_g) + ", " + std::to_string(n) +
+                                  ")");
+    }
+  };
+  check_side(home_scorer_u, home_max, "home_scorer");
+  check_side(home_assist_flag_u, home_max, "home_assist_flag");
+  check_side(home_assister_u, home_max, "home_assister");
+  check_side(away_scorer_u, away_max, "away_scorer");
+  check_side(away_assist_flag_u, away_max, "away_assist_flag");
+  check_side(away_assister_u, away_max, "away_assister");
+
+  const fplt_mc::RulesPOD rules = rules_from_arrays(
+      appearance_long_minutes, appearance_short, appearance_long, goals_by_pos,
+      assists_pts, cs_by_pos, conceded_every, conceded_by_pos);
+
+  fplt_mc::SimParams params;
+  params.own_goal_weight = own_goal_weight;
+  params.p_assist = p_assist;
+  params.cs_red_void_prob = cs_red_void_prob;
+  params.conceded_scaled = conceded_scaled;
+  params.sample_other = sample_other;
+
+  fplt_mc::MatchUniforms uniforms;
+  uniforms.home_scorer = home_scorer_u.data();
+  uniforms.home_assist_flag = home_assist_flag_u.data();
+  uniforms.home_assister = home_assister_u.data();
+  uniforms.home_max_goals = home_max;
+  uniforms.away_scorer = away_scorer_u.data();
+  uniforms.away_assist_flag = away_assist_flag_u.data();
+  uniforms.away_assister = away_assister_u.data();
+  uniforms.away_max_goals = away_max;
+
+  F64_2 cs_void_u;
+  if (cs_red_void_prob > 0.0) {
+    if (cs_void_u_obj.is_none()) {
+      throw std::invalid_argument("cs_void_u required when cs_red_void_prob > 0");
+    }
+    cs_void_u = nb::cast<F64_2>(cs_void_u_obj);
+    if (cs_void_u.shape(0) != players || cs_void_u.shape(1) != n) {
+      throw std::invalid_argument("cs_void uniforms must match minutes shape");
+    }
+    uniforms.cs_void = cs_void_u.data();
+  }
+  F64_2 other_u;
+  if (sample_other) {
+    if (other_u_obj.is_none()) {
+      throw std::invalid_argument("other_u required when sample_other is true");
+    }
+    other_u = nb::cast<F64_2>(other_u_obj);
+    if (other_u.shape(0) != players || other_u.shape(1) != n) {
+      throw std::invalid_argument("other uniforms must match minutes shape");
+    }
+    uniforms.other = other_u.data();
+  }
+
+  const bool has_match = !delta_goals_obj.is_none();
+  if (has_match != !delta_cs_obj.is_none() || has_match != !delta_scored_obj.is_none()) {
+    throw std::invalid_argument(
+        "delta_goals, delta_cs, and delta_scored must all be set or all None");
+  }
+  fplt_mc::MatchOtherTables tables{};
+  const fplt_mc::MatchOtherTables* match_ptr = nullptr;
+  if (has_match) {
+    tables = tables_from_arrays(nb::cast<F64_2>(delta_goals_obj),
+                                nb::cast<F64_2>(delta_cs_obj),
+                                nb::cast<F64_2>(delta_scored_obj));
+    match_ptr = &tables;
+  }
+
+  std::vector<std::int64_t> goals(players * n);
+  std::vector<std::int64_t> assists(players * n);
+  std::vector<double> points(players * n);
+  std::vector<std::uint8_t> clean_sheets(players * n);
+  std::vector<std::int64_t> unattr_home(n);
+  std::vector<std::int64_t> unattr_away(n);
+  fplt_mc::MatchSamples samples;
+  samples.goals = goals.data();
+  samples.assists = assists.data();
+  samples.points = points.data();
+  samples.clean_sheets = clean_sheets.data();
+  samples.unattributed_home = unattr_home.data();
+  samples.unattributed_away = unattr_away.data();
+
+  std::vector<double> xpts(players);
+  std::vector<double> xpts_sd(players);
+  std::vector<double> p_played(players);
+  std::vector<double> p_60(players);
+  std::vector<double> p_goal(players);
+  std::vector<double> p_assist_arr(players);
+  std::vector<double> p_cs(players);
+  std::vector<double> p_haul(players);
+  fplt_mc::FixtureSummary summary;
+  summary.xpts = xpts.data();
+  summary.xpts_sd = xpts_sd.data();
+  summary.p_played = p_played.data();
+  summary.p_60 = p_60.data();
+  summary.p_goal = p_goal.data();
+  summary.p_assist = p_assist_arr.data();
+  summary.p_cs = p_cs.data();
+  summary.p_haul = p_haul.data();
+
+  fplt_mc::simulate_match_with_uniforms(
+      home_goals.data(), away_goals.data(), side.data(), position.data(), minutes.data(),
+      goal_weight.data(), assist_weight.data(), other_points.data(), rules, params,
+      uniforms, match_ptr, players, n, &samples, &summary);
+
+  nb::dict out;
+  out["xpts"] = owned_array(std::move(xpts), {players});
+  out["xpts_sd"] = owned_array(std::move(xpts_sd), {players});
+  out["p_played"] = owned_array(std::move(p_played), {players});
+  out["p_60"] = owned_array(std::move(p_60), {players});
+  out["p_goal"] = owned_array(std::move(p_goal), {players});
+  out["p_assist"] = owned_array(std::move(p_assist_arr), {players});
+  out["p_cs"] = owned_array(std::move(p_cs), {players});
+  out["p_haul"] = owned_array(std::move(p_haul), {players});
+  out["unattributed_home"] = owned_array(std::move(unattr_home), {n});
+  out["unattributed_away"] = owned_array(std::move(unattr_away), {n});
+  if (return_samples) {
+    out["goals"] = owned_array(std::move(goals), {players, n});
+    out["assists"] = owned_array(std::move(assists), {players, n});
+    out["points"] = owned_array(std::move(points), {players, n});
+    out["clean_sheets"] = owned_array(std::move(clean_sheets), {players, n});
+  }
+  return out;
 }
 
 }  // namespace
@@ -212,7 +461,7 @@ nb::tuple points_with_uniforms(U8_1 position, U8_1 side, F64_2 minutes, I64_2 go
 NB_MODULE(_testing, m) {
   m.doc() =
       "fplt-mc testing hooks: injected-uniform entry points for L2 parity "
-      "and Philox helpers for L0/L3.";
+      "and Philox helpers for L0/L3/L5.";
 
   m.def(
       "philox_u01_batch",
@@ -249,7 +498,30 @@ NB_MODULE(_testing, m) {
         nb::arg("cs_by_pos"), nb::arg("conceded_every"), nb::arg("conceded_by_pos"),
         nb::arg("cs_red_void_prob"), nb::arg("conceded_scaled"),
         nb::arg("sample_other"), nb::arg("cs_void_u") = nb::none(),
-        nb::arg("other_u") = nb::none(),
+        nb::arg("other_u") = nb::none(), nb::arg("delta_goals") = nb::none(),
+        nb::arg("delta_cs") = nb::none(), nb::arg("delta_scored") = nb::none(),
         "Points + CS matching simulation._points with injected uniforms "
-        "(match_other=None; K4 later).");
+        "(optional K4 match_other tables).");
+
+  m.def("aggregate_fixture", &aggregate_fixture_py, nb::arg("minutes"),
+        nb::arg("points"), nb::arg("goals"), nb::arg("assists"),
+        nb::arg("clean_sheet"),
+        "K5 one-pass summary matching composite._fixture aggregations.");
+
+  m.def("simulate_match_with_uniforms", &simulate_match_with_uniforms_py,
+        nb::arg("home_goals"), nb::arg("away_goals"), nb::arg("side"),
+        nb::arg("position"), nb::arg("minutes"), nb::arg("goal_weight"),
+        nb::arg("assist_weight"), nb::arg("other_points"),
+        nb::arg("appearance_long_minutes"), nb::arg("appearance_short"),
+        nb::arg("appearance_long"), nb::arg("goals_by_pos"), nb::arg("assists_pts"),
+        nb::arg("cs_by_pos"), nb::arg("conceded_every"), nb::arg("conceded_by_pos"),
+        nb::arg("own_goal_weight"), nb::arg("p_assist"), nb::arg("cs_red_void_prob"),
+        nb::arg("conceded_scaled"), nb::arg("sample_other"), nb::arg("home_scorer_u"),
+        nb::arg("home_assist_flag_u"), nb::arg("home_assister_u"),
+        nb::arg("away_scorer_u"), nb::arg("away_assist_flag_u"),
+        nb::arg("away_assister_u"), nb::arg("cs_void_u") = nb::none(),
+        nb::arg("other_u") = nb::none(), nb::arg("delta_goals") = nb::none(),
+        nb::arg("delta_cs") = nb::none(), nb::arg("delta_scored") = nb::none(),
+        nb::arg("return_samples") = true,
+        "K5 fuse: allocate both sides + points (+ optional K4) + aggregate.");
 }

@@ -381,7 +381,7 @@ mc-format: ## clang-format -i on mc C++ sources
 		-print0 | xargs -0 uv run clang-format -i
 
 mc-golden: ## regenerate tests/fixtures/mc_golden (deliberate; review in PR)
-	@echo "mc-golden: golden fixtures land with L5 (PR5); nothing to regenerate yet."
+	@echo "mc-golden: edit mc/tests/test_simulate_parity.py::test_l5_golden_hashes and re-run to refresh hashes; do not auto-overwrite."
 
 mc-ci: ## CI: L0 ctest + wheel into dist/ (manylinux/macOS runners)
 	cmake -S mc -B mc/build-ci -G Ninja \
