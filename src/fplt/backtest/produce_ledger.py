@@ -115,9 +115,7 @@ class LedgerCacheKey:
             n_sims=(None if payload.get("n_sims") is None else int(payload["n_sims"])),
             seed=int(payload["seed"]),
             eval_seed=(
-                None
-                if payload.get("eval_seed") is None
-                else int(payload["eval_seed"])
+                None if payload.get("eval_seed") is None else int(payload["eval_seed"])
             ),
             version=int(payload.get("version", _KEY_VERSION)),
         )

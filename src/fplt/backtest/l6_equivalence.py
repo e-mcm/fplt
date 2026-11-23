@@ -61,13 +61,8 @@ def _ci_covers_zero(interval: PairedInterval) -> bool:
     checks: list[bool] = []
     if interval.hac_ci_low is not None and interval.hac_ci_high is not None:
         checks.append(interval.hac_ci_low <= 0.0 <= interval.hac_ci_high)
-    if (
-        interval.bootstrap_ci_low is not None
-        and interval.bootstrap_ci_high is not None
-    ):
-        checks.append(
-            interval.bootstrap_ci_low <= 0.0 <= interval.bootstrap_ci_high
-        )
+    if interval.bootstrap_ci_low is not None and interval.bootstrap_ci_high is not None:
+        checks.append(interval.bootstrap_ci_low <= 0.0 <= interval.bootstrap_ci_high)
     if not checks:
         # Too few gameweeks for a CI — do not fail the gate on missing bounds.
         return True
@@ -92,7 +87,10 @@ def mean_abs_xpts_delta(
     if joined.is_empty():
         return 0.0, 0
     delta = (joined["xpts_t"] - joined["xpts_c"]).abs()
-    return float(delta.mean()), int(joined.height)
+    mean_val = delta.mean()
+    if not isinstance(mean_val, int | float):
+        return 0.0, int(joined.height)
+    return float(mean_val), int(joined.height)
 
 
 def signed_xpts_delta_intervals(
@@ -115,9 +113,7 @@ def signed_xpts_delta_intervals(
     Returns:
         Overall interval first, then one per position that has rows.
     """
-    left = control.select(*_JOIN_KEYS, "position", "xpts").rename(
-        {"xpts": "xpts_c"}
-    )
+    left = control.select(*_JOIN_KEYS, "position", "xpts").rename({"xpts": "xpts_c"})
     right = treatment.select(*_JOIN_KEYS, "xpts").rename({"xpts": "xpts_t"})
     joined = left.join(right, on=list(_JOIN_KEYS), how="inner")
     if joined.is_empty():
@@ -128,7 +124,10 @@ def signed_xpts_delta_intervals(
     results: list[PairedInterval] = []
     slices: list[str | None] = [None, *positions]
     for position in slices:
-        part = joined if position is None else joined.filter(pl.col("position") == position)
+        if position is None:
+            part = joined
+        else:
+            part = joined.filter(pl.col("position") == position)
         if part.is_empty():
             continue
         per_gw = (
