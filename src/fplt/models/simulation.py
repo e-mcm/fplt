@@ -48,6 +48,41 @@ class MatchOtherOffsets(Protocol):
 
 
 @dataclass(frozen=True)
+class SideAllocateUniforms:
+    """Injected U(0,1) draws for one side's goal / assist loop.
+
+    Each array has shape ``(G, n)`` with ``G`` at least ``max(team_goals)``
+    and ``n`` the number of simulations. Row ``g`` is the ``g``-th goal
+    iteration (scorer, assist Bernoulli, then assister). Used by L2 exact
+    equivalence against ``fplt_mc._testing``; production keeps drawing from
+    ``rng``.
+    """
+
+    scorer: np.ndarray
+    assist_flag: np.ndarray
+    assister: np.ndarray
+
+
+@dataclass(frozen=True)
+class MatchSimUniforms:
+    """Optional injected uniforms for ``simulate_match`` logic-only tests.
+
+    Any field left ``None`` is drawn from ``rng`` exactly as before. Shapes:
+
+    - ``home`` / ``away``: :class:`SideAllocateUniforms` for that side.
+    - ``cs_void``: ``(players, n)`` compared to ``cs_red_void_prob``.
+    - ``other``: ``(players, n)`` for sequential-search Poisson when
+      ``sample_other`` is true (native L2 path). When ``None``, production
+      still uses ``rng.poisson``.
+    """
+
+    home: SideAllocateUniforms | None = None
+    away: SideAllocateUniforms | None = None
+    cs_void: np.ndarray | None = None
+    other: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
 class MatchSimulation:
     """One fixture, simulated ``n`` times.
 
@@ -80,6 +115,7 @@ def simulate_match(
     conceded_mode: ConcededMode = "scaled",
     sample_other: bool = False,
     match_other: MatchOtherOffsets | None = None,
+    uniforms: MatchSimUniforms | None = None,
 ) -> MatchSimulation:
     """Simulate points for every player across the sampled scorelines.
 
@@ -93,7 +129,7 @@ def simulate_match(
             buckets 0, 1–59, and 60+, shape ``(players, 3)``.
         rules: Scoring table for the fixture's season.
         rng: Generator for the allocations. Callers should build it with
-            ``seed_for``.
+            ``seed_for``. Ignored for any stream supplied via ``uniforms``.
         own_goal_weight: Weight of the unattributed bucket, in the same units
             as ``goal_weight * minutes / 90``.
         p_assist: Probability that a goal has an assist. The assister is
@@ -107,6 +143,8 @@ def simulate_match(
             (Poisson / signed Poisson) instead of plugging in the mean.
         match_other: Optional match-conditioned offsets added after the
             minutes-bucket mean (team goals / CS / player goals).
+        uniforms: Optional injected U(0,1) arrays for L2 logic tests. ``None``
+            keeps the production RNG path (bit-identical to pre-PR2).
 
     Returns:
         Points, goals, and assists per player, plus the unattributed goals.
@@ -134,6 +172,9 @@ def simulate_match(
     unattributed = np.zeros((2, n), dtype=np.int64)
     for side_index, side_goals in enumerate((home, away)):
         mask = sides == ("home" if side_index == 0 else "away")
+        side_uniforms = None
+        if uniforms is not None:
+            side_uniforms = uniforms.home if side_index == 0 else uniforms.away
         side_goals_out, side_assists, missed = _allocate_side(
             side_goals,
             played[mask],
@@ -142,6 +183,7 @@ def simulate_match(
             own_goal_weight,
             p_assist,
             rng,
+            uniforms=side_uniforms,
         )
         goals[mask] = side_goals_out
         assists[mask] = side_assists
@@ -161,6 +203,8 @@ def simulate_match(
         conceded_mode=conceded_mode,
         sample_other=sample_other,
         match_other=match_other,
+        cs_void_uniforms=None if uniforms is None else uniforms.cs_void,
+        other_uniforms=None if uniforms is None else uniforms.other,
     )
     return MatchSimulation(
         player_key=keys,
@@ -181,41 +225,85 @@ def _allocate_side(
     own_goal_weight: float,
     p_assist: float,
     rng: np.random.Generator,
+    *,
+    uniforms: SideAllocateUniforms | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Allocate goals and assists for one side across simulations.
+
+    Args:
+        team_goals: Goals scored by this side per sim, shape ``(n,)``.
+        minutes: Minutes for this side's players, shape ``(players, n)``.
+        goal_weight: Per-player goal involvement weights, shape ``(players,)``.
+        assist_weight: Per-player assist involvement weights, shape ``(players,)``.
+        own_goal_weight: Extra mass for the unattributed bucket.
+        p_assist: Probability a claimed goal also gets an assist.
+        rng: Source for uniforms when ``uniforms`` is ``None``.
+        uniforms: Optional injected scorer / assist-flag / assister draws.
+
+    Returns:
+        ``(scored, assisted, missed)`` with shapes ``(players, n)``,
+        ``(players, n)``, and ``(n,)``.
+    """
     players = int(minutes.shape[0])
     n = int(minutes.shape[1])
     scored = np.zeros((players, n), dtype=np.int64)
     assisted = np.zeros_like(scored)
     missed = np.zeros(n, dtype=np.int64)
-    if n == 0 or int(team_goals.max(initial=0)) == 0:
+    max_goals = int(team_goals.max(initial=0))
+    if n == 0 or max_goals == 0:
         return scored, assisted, missed
     playing = minutes > 0
     goal_rates = np.where(playing, goal_weight[:, None] * minutes / 90.0, 0.0)
     assist_rates = np.where(playing, assist_weight[:, None] * minutes / 90.0, 0.0)
     if players == 0:
         return scored, assisted, team_goals.copy()
-    for _ in range(int(team_goals.max())):
+    injected: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    if uniforms is not None:
+        injected = (
+            _require_uniform_grid(uniforms.scorer, max_goals, n, "scorer"),
+            _require_uniform_grid(uniforms.assist_flag, max_goals, n, "assist_flag"),
+            _require_uniform_grid(uniforms.assister, max_goals, n, "assister"),
+        )
+    for goal_index in range(max_goals):
         active = team_goals > scored.sum(axis=0) + missed
         if not np.any(active):
             break
-        draw: np.ndarray = rng.random(n)
+        # Draw lazily so an early break consumes the same RNG stream as before.
+        if injected is None:
+            draw = rng.random(n)
+            assist_draw = rng.random(n)
+            second = rng.random(n)
+        else:
+            draw = injected[0][goal_index]
+            assist_draw = injected[1][goal_index]
+            second = injected[2][goal_index]
         scorer = _pick(goal_rates, draw, own_goal_weight)
         claimed = active & (scorer >= 0)
         missed += active & (scorer < 0)
         column = np.arange(n)
         np.add.at(scored, (np.maximum(scorer, 0), column), claimed)
-        assist_draw: np.ndarray = rng.random(n)
         want_assist = claimed & (assist_draw < p_assist)
         blocked = assist_rates.copy()
         scored_now = scorer >= 0
         blocked[np.maximum(scorer, 0), column] = np.where(
             scored_now, 0.0, blocked[np.maximum(scorer, 0), column]
         )
-        second: np.ndarray = rng.random(n)
         assister = _pick(blocked, second, 0.0)
         given = want_assist & (assister >= 0)
         np.add.at(assisted, (np.maximum(assister, 0), column), given)
     return scored, assisted, missed
+
+
+def _require_uniform_grid(
+    values: np.ndarray, rows: int, cols: int, name: str
+) -> np.ndarray:
+    """Validate an injected ``(rows, cols)`` (or taller) uniform grid."""
+    grid = np.asarray(values, dtype=np.float64)
+    if grid.ndim != 2 or grid.shape[0] < rows or grid.shape[1] != cols:
+        raise ValueError(
+            f"{name} uniforms must have shape (>= {rows}, {cols}), got {grid.shape}"
+        )
+    return grid
 
 
 def _pick(weights: np.ndarray, draw: np.ndarray, extra: float) -> np.ndarray:
@@ -245,7 +333,17 @@ def _points(
     conceded_mode: ConcededMode,
     sample_other: bool,
     match_other: MatchOtherOffsets | None = None,
+    cs_void_uniforms: np.ndarray | None = None,
+    other_uniforms: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Score appearance, involvement, CS, conceded, and other points.
+
+    Args:
+        cs_void_uniforms: Optional ``(players, n)`` uniforms for the red-card
+            CS void. ``None`` draws from ``rng``.
+        other_uniforms: Optional ``(players, n)`` uniforms for sequential-search
+            other-points sampling. ``None`` keeps ``rng.poisson``.
+    """
     goal_value = np.array([rules.goals[pos] for pos in positions], dtype=np.float64)
     sheet_value = np.array(
         [rules.clean_sheets[pos] for pos in positions], dtype=np.float64
@@ -267,7 +365,17 @@ def _points(
     )
     clean_sheet = (opponent == 0) & (minutes >= long)
     if cs_red_void_prob > 0.0:
-        voided = rng.random(minutes.shape) < cs_red_void_prob
+        void_draw = (
+            rng.random(minutes.shape)
+            if cs_void_uniforms is None
+            else np.asarray(cs_void_uniforms, dtype=np.float64)
+        )
+        if void_draw.shape != minutes.shape:
+            raise ValueError(
+                "cs_void uniforms must have shape "
+                f"{minutes.shape}, got {void_draw.shape}"
+            )
+        voided = void_draw < cs_red_void_prob
         clean_sheet = clean_sheet & ~voided
     if conceded_mode == "played":
         exposure = np.where(minutes > 0, 1.0, 0.0)
@@ -285,7 +393,10 @@ def _points(
             clean_sheet=clean_sheet,
             player_goals=goals,
         )
-    other = _draw_other(other_mean, rng) if sample_other else other_mean
+    if sample_other:
+        other = _draw_other(other_mean, rng, uniforms=other_uniforms)
+    else:
+        other = other_mean
     points = (
         appearance
         + goal_value[:, None] * goals
@@ -297,11 +408,63 @@ def _points(
     return points, clean_sheet.astype(np.bool_)
 
 
-def _draw_other(means: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Sample other points with mean equal to ``means`` (Poisson / signed)."""
+def _draw_other(
+    means: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    uniforms: np.ndarray | None = None,
+) -> np.ndarray:
+    """Sample other points with mean equal to ``means`` (Poisson / signed).
+
+    Production (``uniforms is None``) uses ``rng.poisson``. When uniforms are
+    injected, use sequential-search inversion so L2 can match the native
+    Philox path with the same U(0,1) array.
+    """
     rate = np.abs(means)
-    drawn = rng.poisson(rate).astype(np.float64)
+    if uniforms is None:
+        drawn = rng.poisson(rate).astype(np.float64)
+    else:
+        drawn = _poisson_sequential(rate, uniforms).astype(np.float64)
     return np.where(means >= 0.0, drawn, -drawn)
+
+
+def _poisson_sequential(rate: np.ndarray, uniforms: np.ndarray) -> np.ndarray:
+    """Inverse-CDF Poisson via sequential search (small-λ other-points path).
+
+    Args:
+        rate: Non-negative λ, any shape.
+        uniforms: U(0,1) draws, same shape as ``rate``.
+
+    Returns:
+        Integer counts, same shape as ``rate``.
+    """
+    u = np.asarray(uniforms, dtype=np.float64)
+    lam = np.asarray(rate, dtype=np.float64)
+    if u.shape != lam.shape:
+        raise ValueError(f"other uniforms must have shape {lam.shape}, got {u.shape}")
+    out = np.zeros(lam.shape, dtype=np.int64)
+    # λ == 0 → always 0; skip search (and avoid exp(0) churn on empties).
+    active = lam > 0.0
+    if not np.any(active):
+        return out
+    # Sequential search per cell; other-points λ is small so this is fine.
+    flat_lam = lam.reshape(-1)
+    flat_u = u.reshape(-1)
+    flat_out = out.reshape(-1)
+    for index in range(flat_lam.size):
+        intensity = flat_lam[index]
+        if intensity <= 0.0:
+            continue
+        threshold = flat_u[index]
+        prob = np.exp(-intensity)
+        cumulative = prob
+        count = 0
+        while threshold > cumulative:
+            count += 1
+            prob *= intensity / count
+            cumulative += prob
+        flat_out[index] = count
+    return out
 
 
 def _scorelines(scorelines: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

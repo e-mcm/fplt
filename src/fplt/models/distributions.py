@@ -214,6 +214,7 @@ def enforce_hard_starters(
     start_minutes: int = 90,
     sub_minutes: int = 15,
     gk_position: str = "GK",
+    tiebreak_noise: np.ndarray | None = None,
 ) -> np.ndarray:
     """Force about ``target`` starters per team-fixture column with 1 GK.
 
@@ -231,13 +232,16 @@ def enforce_hard_starters(
         minutes: Drawn minutes, shape ``(P, n)``.
         team_keys: Team id per player row, shape ``(P,)``.
         start_weight: Ranking weight per player (e.g. P(≥60)), shape ``(P,)``.
-        rng: Generator for tie-breaking among equal weights.
+        rng: Generator for tie-breaking among equal weights when
+            ``tiebreak_noise`` is ``None``.
         positions: Position string per player row, shape ``(P,)``.
         target: Desired starter count per team (usually 11).
         starter_threshold: Minutes that count as a start.
         start_minutes: Minutes assigned when promoting a player.
         sub_minutes: Minutes assigned when demoting a player.
         gk_position: Position label treated as goalkeeper (default ``GK``).
+        tiebreak_noise: Optional injected U(0,1) noise, shape ``(P,)``. When
+            set, ``rng`` is unused for the order-key tie-break (L2 / native).
 
     Returns:
         Adjusted minutes with the same shape as ``minutes``.
@@ -264,7 +268,14 @@ def enforce_hard_starters(
     if drawn.size == 0:
         return drawn.copy()
     out = drawn.copy()
-    noise = np.asarray(rng.random(int(drawn.shape[0])), dtype=np.float64)
+    if tiebreak_noise is None:
+        noise = np.asarray(rng.random(int(drawn.shape[0])), dtype=np.float64)
+    else:
+        noise = np.asarray(tiebreak_noise, dtype=np.float64)
+        if noise.shape != (drawn.shape[0],):
+            raise ValueError(
+                f"tiebreak_noise must have shape {(drawn.shape[0],)}, got {noise.shape}"
+            )
     # Stable rank: higher weight first; tiny noise breaks ties.
     order_key = np.asarray(weights + 1e-9 * noise, dtype=np.float64)
     for team in np.unique(teams):
