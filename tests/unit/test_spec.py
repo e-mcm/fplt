@@ -18,12 +18,12 @@ from fplt.models.spec import (
 from fplt.types import GWKey
 
 # Extends-fork model_ids for package 0.1.0 (parent dc_layered_v3 params).
-# Update when intentional parent param changes land (e.g. return_ramp_games).
+# Update when intentional parent param changes land (e.g. calibrate_chance_flags).
 # FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes track parent.
 _FORK_MODEL_IDS = {
-    "dc_layered_nopens_v1": "d5072fde129337b5",
-    "dc_layered_nodefcon_v1": "ea592ab2719e8de6",
-    "dc_layered_odds_v1": "3ed2797afa66b8eb",
+    "dc_layered_nopens_v1": "84922f31e5ade22d",
+    "dc_layered_nodefcon_v1": "00935aff55fc6ae3",
+    "dc_layered_odds_v1": "e87dbbe279a20fa2",
 }
 _PRE_DEFCON_RATE_V2_MODEL_ID = "b12aad1575ff0d34"
 
