@@ -323,12 +323,17 @@ def opponent_strength(view: PITView, horizon: list[GWKey]) -> pl.DataFrame:
 def training_frame(view: PITView) -> pl.DataFrame:
     """One row per visible appearance. Rolling columns exclude that appearance.
 
-    Also carries ``kickoff_time`` so trainers can apply ``TrainWindow.time_decay``.
+    Also carries ``kickoff_time`` so trainers can apply ``TrainWindow.time_decay``,
+    and ``minutes`` so optional probability heads can label P(≥60) / P(played).
     """
     stats = shifted_form(view.table("player_fixture_stats").collect())
     empty = pl.DataFrame(
         schema={column: pl.Float64() for column in FEATURE_COLUMNS}
-        | {"total_points": pl.Float64()}
+        | {
+            "total_points": pl.Float64(),
+            "minutes": pl.Float64(),
+            "kickoff_time": pl.Datetime(time_unit="us", time_zone="UTC"),
+        }
     )
     if stats.is_empty():
         return empty
@@ -377,6 +382,6 @@ def training_frame(view: PITView) -> pl.DataFrame:
             ],
         )
     )
-    return joined.select([*FEATURE_COLUMNS, "total_points", "kickoff_time"]).drop_nulls(
-        subset=FEATURE_COLUMNS[:4]
-    )
+    return joined.select(
+        [*FEATURE_COLUMNS, "total_points", "minutes", "kickoff_time"]
+    ).drop_nulls(subset=FEATURE_COLUMNS[:4])

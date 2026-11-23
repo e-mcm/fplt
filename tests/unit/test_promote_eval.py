@@ -1673,6 +1673,14 @@ def test_overlay_eval_specs_register_coverage_and_window_note() -> None:
     assert combine.gates.coverage.metric == "forecast_combine_member_join"
     assert combine.gates.min_coverage == 0.80
 
+    probs_combine = load_eval_spec("lgbm_probs_combine_ab")
+    assert probs_combine.treatment == "forecast_combine_probs_v1"
+    assert probs_combine.control == "dc_layered_v4"
+    assert probs_combine.gates.coverage.metric == "forecast_combine_member_join"
+    assert probs_combine.gates.min_coverage == 0.80
+    assert "spearman" in (probs_combine.gates.keep_if.prediction_any or [])
+    assert probs_combine.report.store_doc == "lgbm-probs-combine.md"
+
     defcon = load_eval_spec("defcon_rate_ab")
     assert defcon.gates.coverage.metric == "dc_season_eligible"
     assert defcon.gates.min_coverage == 1.0

@@ -196,3 +196,22 @@ def test_registered_production_yamls_expand() -> None:
     pos = specs["forecast_combine_pos_v1"]
     assert pos.params["mode"] == "position"
     assert "GKP" in pos.params["position_weights"]
+    probs = specs["forecast_combine_probs_v1"]
+    assert probs.params["mode"] == "position"
+    assert set(probs.components) == {"dc_layered_v4", "lgbm_probs_v1"}
+    assert specs["lgbm_probs_v1"].params.get("emit_probs") is True
+
+
+def test_probs_combine_blends_non_null_lgbm_heads(tmp_path: Path) -> None:
+    """Position+probs member keeps haul/60 heads non-null after the blend."""
+    specs = load_model_specs()
+    store = build_league(DataStore(tmp_path / "data"))
+    view = PITData(store).view(_AS_OF)
+    blend = get_model("forecast_combine")(specs["forecast_combine_probs_v1"])
+    blend.fit(view)
+    predicted = blend.predict(view, _HORIZON)
+    assert predicted.height > 0
+    assert predicted["p_haul"].null_count() == 0
+    assert predicted["p_60"].null_count() == 0
+    assert predicted["p_played"].null_count() == 0
+    assert all(0.0 <= float(v) <= 1.0 for v in predicted["p_haul"].to_list())
