@@ -108,6 +108,7 @@ def compare_models(
     openfpl_model_dir: str | None = None,
     output_dir: Path | None = None,
     use_cache: bool = True,
+    eval_seed: int | None = None,
 ) -> CompareResult:
     """Backtest selected models under shared windows and both compare modes.
 
@@ -138,6 +139,7 @@ def compare_models(
         output_dir: Where to write summary JSON/parquet. Defaults under
             ``data_dir/compare/``.
         use_cache: When true (default), reuse content-addressed ledgers.
+        eval_seed: Optional promote-eval CRN seed shared across arms.
 
     Returns:
         Runs performed plus overall and per-position summary frames.
@@ -230,6 +232,7 @@ def compare_models(
                 steps=steps,
                 seasons_back=seasons_back,
                 use_cache=use_cache,
+                eval_seed=eval_seed,
             )
             logger.info("%s/%s wrote %s rows", name, mode, produced.frame.height)
             append_predictions(data_dir, produced.frame)

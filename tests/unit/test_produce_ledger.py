@@ -93,7 +93,24 @@ def test_cache_key_includes_required_fields(tmp_path: Path) -> None:
     assert payload["seasons_back"] == 2
     assert payload["n_sims"] == 100
     assert payload["seed"] == 7
+    assert payload["eval_seed"] is None
     assert len(key.digest()) == 64
+
+    paired = build_ledger_cache_key(
+        spec,
+        data_dir=tmp_path,
+        season=_TEST,
+        test_from_gw=1,
+        test_to_gw=2,
+        fit_gw=1,
+        mode="walk_forward",
+        steps=1,
+        seasons_back=2,
+        lock_root=tmp_path,
+        eval_seed=0,
+    )
+    assert paired.to_dict()["eval_seed"] == 0
+    assert paired.digest() != key.digest()
 
 
 def test_produce_ledger_writes_and_hits_cache(tmp_path: Path) -> None:
@@ -138,6 +155,22 @@ def test_produce_ledger_writes_and_hits_cache(tmp_path: Path) -> None:
     assert second.frame.select(sorted(second.frame.columns)).equals(
         first.frame.select(sorted(first.frame.columns))
     )
+
+    paired = produce_ledger(
+        tmp_path,
+        spec,
+        _TEST,
+        mode="walk_forward",
+        test_from_gw=1,
+        test_to_gw=2,
+        steps=1,
+        seasons_back=2,
+        lock_root=tmp_path,
+        eval_seed=0,
+    )
+    assert paired.cache_hit is False
+    assert paired.key.eval_seed == 0
+    assert paired.cache_dir != first.cache_dir
 
 
 def test_stale_key_on_read_raises(tmp_path: Path) -> None:

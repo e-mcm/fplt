@@ -485,3 +485,30 @@ entries:
     control_model_id: 1a1a9fd52db7250e
     treatment_model_id: 65f462314f577b0a
   notes: Mid-season rest/congestion/form covariates worse on RPS/log-loss/RMSE both windows; no PRODUCTION flip.
+- id: dc_layered_v4_native
+  date: '2026-11-23'
+  task: FDB-292
+  path: modelspec
+  verdict: drop
+  provisional: false
+  eval_spec: dc_layered_v4_native_ab
+  control: dc_layered_v4
+  treatment: dc_layered_v4_native
+  store_doc: native-mc-l6-equivalence.md
+  windows:
+  - role: primary
+    seasons: [2025-26]
+    from_gw: 10
+    to_gw: 17
+    audit: results/dc_layered_v4_native/primary/audit.json
+    git_sha: 8af0a28e55dba323e875a45c51469305647c8a64
+    git_dirty: false
+    uv_lock_sha256: e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73
+    runner_verdict: inconclusive
+    control_model_id: 1a1a9fd52db7250e
+    treatment_model_id: 62c56f72c4e7eca4
+    notes: H=8 L6 board; mean |ΔxPts|=0.008 PASS; FWD signed ΔxPts CI excludes 0 (FAIL)
+  notes: >
+    Strict L6 FAIL on FWD signed-ΔxPts CI (+7.8e-4). Mean |ΔxPts| and haul-Brier
+    CI pass. No PRODUCTION flip. Longer window / FWD bias follow-up before keep.
+
