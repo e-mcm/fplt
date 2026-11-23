@@ -658,6 +658,33 @@ def test_run_plan_chip_arm_off_skips_chip_wiring(
     assert seen["chip_windows"] is None
 
 
+def test_run_plan_forwards_force_play_to_scheduler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``force_play=False`` reaches ``_scheduled_windows`` for optimised plans."""
+    _stage(tmp_path)
+    _score(tmp_path)
+    seen: dict[str, object] = {}
+
+    def spy_windows(**kwargs: object):
+        seen.update(kwargs)
+        from fplt.optimise.chip_windows import ChipUseWindows
+
+        return ChipUseWindows()
+
+    monkeypatch.setattr("fplt.optimise.decisions._scheduled_windows", spy_windows)
+    run_plan(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        1,
+        1,
+        squad=_state(),
+        force_play=False,
+    )
+    assert seen["force_play"] is False
+
+
 def test_run_plan_rejects_missing_or_blank_predictions(tmp_path: Path) -> None:
     _stage(tmp_path)
     with pytest.raises(ValueError, match="no predictions"):

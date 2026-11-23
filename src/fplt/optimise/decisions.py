@@ -514,6 +514,7 @@ def run_plan(
     *,
     chip_arm: ChipArm = DEFAULT_LIVE_CHIP_ARM,
     chip_rules_season: str | None = None,
+    force_play: bool = True,
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -539,6 +540,9 @@ def run_plan(
         chip_arm: Chip policy (default ``optimised`` for live / automation).
         chip_rules_season: Chip-rules year when chips are on. Defaults to
             ``season``.
+        force_play: When true (default), the optimised scheduler force-packs
+            remaining half-window chips. Pass false for ablations
+            (``fplt plan --no-force-play``). Does not change the live default.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -557,12 +561,13 @@ def run_plan(
     if chip_arm not in _CHIP_ARMS:
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
-        "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s",
+        "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s",
         model_name,
         season,
         gameweek,
         horizon,
         chip_arm,
+        force_play,
     )
     spec = load_model_specs()[model_name]
     store = DataStore(data_dir)
@@ -611,6 +616,7 @@ def run_plan(
                 pool=candidates,
                 state=state,
                 gameweeks=rest_of_season,
+                force_play=force_play,
             )
         else:
             plan_windows = _static_windows_for_arm(
