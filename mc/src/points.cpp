@@ -35,13 +35,27 @@ void poisson_sequential(const double* rate, const double* uniforms, std::size_t 
   }
 }
 
+double match_delta(const MatchOtherTables& tables, std::uint8_t position,
+                   double minutes, std::int64_t team_goals, bool clean_sheet,
+                   std::int64_t player_goals) noexcept {
+  if (!(minutes > 0.0) || position >= kNPositions) {
+    return 0.0;
+  }
+  const std::size_t band = team_goals <= 0 ? 0 : (team_goals == 1 ? 1 : 2);
+  const std::size_t cs_i = clean_sheet ? 1 : 0;
+  const std::size_t scored_i = player_goals >= 1 ? 1 : 0;
+  return tables.delta_goals[position][band] + tables.delta_cs[position][cs_i] +
+         tables.delta_scored[position][scored_i];
+}
+
 void points(const RulesPOD& rules, const std::uint8_t* position,
             const std::uint8_t* side, const double* minutes, const std::int64_t* goals,
             const std::int64_t* assists, const std::int64_t* home,
             const std::int64_t* away, const double* other_points,
             double cs_red_void_prob, bool conceded_scaled, bool sample_other,
-            const double* cs_void_u, const double* other_u, std::size_t players,
-            std::size_t n, double* points_out, std::uint8_t* clean_sheet_out) noexcept {
+            const double* cs_void_u, const double* other_u,
+            const MatchOtherTables* match_other, std::size_t players, std::size_t n,
+            double* points_out, std::uint8_t* clean_sheet_out) noexcept {
   const std::size_t pn = players * n;
   if (pn == 0) {
     return;
@@ -63,6 +77,7 @@ void points(const RulesPOD& rules, const std::uint8_t* position,
       const std::size_t k = idx(i, j, n);
       const double m = minutes[k];
       const std::int64_t opp = is_home ? away[j] : home[j];
+      const std::int64_t team_g = is_home ? home[j] : away[j];
 
       double appearance = 0.0;
       if (m >= long_minutes) {
@@ -86,12 +101,15 @@ void points(const RulesPOD& rules, const std::uint8_t* position,
       const double conceded =
           conceded_value * static_cast<double>(opp / every) * exposure;
 
-      // Bucket: 0 if minutes <= 0, 1 if < 60, else 2.
       std::size_t bucket = 0;
       if (m > 0.0) {
         bucket = (m < 60.0) ? 1 : 2;
       }
       other_mean[k] = other_points[idx(i, bucket, 3)];
+      if (match_other != nullptr) {
+        other_mean[k] += match_delta(*match_other, static_cast<std::uint8_t>(pos), m,
+                                     team_g, cs, goals[k]);
+      }
 
       points_out[k] = appearance + goal_value * static_cast<double>(goals[k]) +
                       rules.assists * static_cast<double>(assists[k]) +
