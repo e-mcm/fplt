@@ -47,6 +47,23 @@ class HorizonPointsSchema(pa.DataFrameModel):
         unique = ["player_key", "step"]
 
 
+class PriceForecastSchema(pa.DataFrameModel):
+    """Predicted list price for one player at one horizon step.
+
+    Step 0 must match the as-of candidate / ``player_status`` list price.
+    Later steps are forecasts built only from deadline-visible inputs.
+    """
+
+    player_key: int
+    step: int = pa.Field(ge=0)
+    list_price: int = pa.Field(ge=0)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["player_key", "step"]
+
+
 class HorizonPickSchema(pa.DataFrameModel):
     """A squad member or a sale at one step of the horizon."""
 
