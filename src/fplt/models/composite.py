@@ -244,6 +244,7 @@ def _fixture(
             np.asarray(players["team_key"].to_list(), dtype=np.int64),
             minutes_dist.start_weights(),
             rng,
+            positions=np.asarray(players["position"].to_list()),
             target=model._target_starters,
         )
     weights = model._involvement.predict(view, asked)

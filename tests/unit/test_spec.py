@@ -17,13 +17,15 @@ from fplt.models.spec import (
 )
 from fplt.types import GWKey
 
+
 # Extends-fork model_ids for package 0.1.0 (parent dc_layered_v3 params).
-# Update when intentional parent param changes land (e.g. hard_starters).
-# FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes unchanged.
+# Update when intentional parent param changes land (e.g. logistic_blend).
+# FDB-226: forks retargeted from rate-era v2 → v3; resolved hashes track parent.
+
 _FORK_MODEL_IDS = {
-    "dc_layered_nopens_v1": "bf2b8802ee1d6f8d",
-    "dc_layered_nodefcon_v1": "c14fad44539f9ecd",
-    "dc_layered_odds_v1": "887c384a79a2232f",
+    "dc_layered_nopens_v1": "21b0201ff51ec375",
+    "dc_layered_nodefcon_v1": "c9e83926571f90b9",
+    "dc_layered_odds_v1": "39f3faf71ef30a83",
 }
 _PRE_DEFCON_RATE_V2_MODEL_ID = "b12aad1575ff0d34"
 

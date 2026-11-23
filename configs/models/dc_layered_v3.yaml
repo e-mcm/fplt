@@ -38,6 +38,7 @@ components:
       soft_squad: true
       target_starters: 11.0
       soft_squad_strength: 0.5
+      logistic_blend: 0.5
       l2: 1.0
   involvement:
     name: involvement_xg_v1

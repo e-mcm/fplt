@@ -49,12 +49,13 @@ class EmpiricalMinutesV2:
     Rolling start shares over ``windows``, minutes volatility, home/away,
     rest days, DGW, price, and opponent strength feed two small logistics
     fit on appearances visible at the deadline. Conditional minute shapes
-    still come from shrunk start/sub histograms. Availability
-    (status / chance_of_playing) gates both rates after the logits.
-    Optional ``use_injury_overlay`` also applies staged ``player_injuries``
-    (default off — production stays FPL-tags-only until eval).
-    When ``predicted_xi`` is true, near-deadline predicted lineup roles
-    mix into P(start) before soft-squad projection.
+    still come from shrunk start/sub histograms. ``logistic_blend`` weights
+    the logistic P(start) against the multi-window empirical rate (default
+    0.5). Availability (status / chance_of_playing) gates both rates after
+    the logits. Optional ``use_injury_overlay`` also applies staged
+    ``player_injuries`` (default off — production stays FPL-tags-only until
+    eval). When ``predicted_xi`` is true, near-deadline predicted lineup
+    roles mix into P(start) before soft-squad projection.
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -65,6 +66,8 @@ class EmpiricalMinutesV2:
         soft = spec.params.get("soft_squad", True)
         target = spec.params.get("target_starters", 11.0)
         strength = spec.params.get("soft_squad_strength", 0.5)
+        # Weight on logistic P(start) vs multi-window empirical rate.
+        logistic_blend = spec.params.get("logistic_blend", 0.5)
         l2 = spec.params.get("l2", 1.0)
         overlay = spec.params.get("use_injury_overlay", False)
         avail_gate = spec.params.get("use_availability_gate", True)
@@ -76,6 +79,7 @@ class EmpiricalMinutesV2:
         doubtful_value = _as_float(doubtful)
         target_value = _as_float(target)
         strength_value = _as_float(strength)
+        blend_value = _as_float(logistic_blend)
         l2_value = _as_float(l2)
         xi_window_value = _as_float(xi_window)
         xi_strength_value = _as_float(xi_strength)
@@ -89,6 +93,8 @@ class EmpiricalMinutesV2:
             raise ValueError(
                 f"soft_squad_strength must be in [0, 1], got {strength_value}"
             )
+        if not 0.0 <= blend_value <= 1.0:
+            raise ValueError(f"logistic_blend must be in [0, 1], got {blend_value}")
         if l2_value < 0:
             raise ValueError(f"l2 must be non-negative, got {l2_value}")
         if not isinstance(soft, bool):
@@ -115,6 +121,7 @@ class EmpiricalMinutesV2:
         self._soft_squad = soft
         self._target_starters = target_value
         self._soft_strength = strength_value
+        self._logistic_blend = blend_value
         self._l2 = l2_value
         self._use_injury_overlay = overlay
         self._use_availability_gate = avail_gate
@@ -257,7 +264,8 @@ class EmpiricalMinutesV2:
                 base_start, base_sub = self._position_rate.get(position, (0.0, 0.0))
             # Blend logistic with the multi-window empirical rate so sparse
             # early-season fits do not ignore role stickiness.
-            blended = 0.5 * raw_start + 0.5 * base_start
+            blend = self._logistic_blend
+            blended = blend * raw_start + (1.0 - blend) * base_start
             p_start[index] = blended * gate
             p_sub[index] = base_sub * gate * (1.0 - blended)
             p_long[index] = raw_long

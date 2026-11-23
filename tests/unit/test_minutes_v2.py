@@ -44,6 +44,7 @@ def _spec(**params: object) -> ModelSpec:
             "soft_squad": False,
             "target_starters": 11.0,
             "soft_squad_strength": 0.5,
+            "logistic_blend": 0.5,
             "l2": 1.0,
             **params,
         },
@@ -55,6 +56,7 @@ def test_spec_registers_as_a_component() -> None:
     assert get_component("empirical_minutes_v2") is EmpiricalMinutesV2
     assert specs["empirical_minutes_v2"].params["windows"] == [3, 5, 10]
     assert specs["empirical_minutes_v2"].params["soft_squad"] is True
+    assert specs["empirical_minutes_v2"].params["logistic_blend"] == 0.5
 
 
 def test_a_regular_starter_puts_mass_on_sixty_plus(tmp_path: Path) -> None:
@@ -116,6 +118,23 @@ def test_soft_squad_reduces_overstuffed_start_mass(tmp_path: Path) -> None:
     soft_starts = _approx_p_start(soft.pmf)
     assert soft_starts.sum() < free_starts.sum()
     assert soft_starts.sum() == pytest.approx(11.0, abs=1.5)
+
+
+def test_logistic_blend_moves_p_start_between_arms(tmp_path: Path) -> None:
+    # Early starts then blanks: empirical rate is low; blend=0 tracks it,
+    # blend=1 leans on the logistic (home/rest context still softens).
+    rows = [(1, "MID", 1, gw, 90, 1) for gw in range(1, 6)]
+    rows += [(1, "MID", 1, gw, 0, 0) for gw in range(6, 11)]
+    store = _store(tmp_path, stats=rows, status={1: ("a", 100.0)}, max_gw=11)
+    ask = pl.DataFrame({"player_key": [1], "fixture_id": [11]})
+    empirical = _predict(store, ask, as_of=11, logistic_blend=0.0, soft_squad=False)
+    logistic = _predict(store, ask, as_of=11, logistic_blend=1.0, soft_squad=False)
+    mid = _predict(store, ask, as_of=11, logistic_blend=0.5, soft_squad=False)
+    p_emp = float(1.0 - empirical.pmf[0, 0])
+    p_log = float(1.0 - logistic.pmf[0, 0])
+    p_mid = float(1.0 - mid.pmf[0, 0])
+    assert p_emp != pytest.approx(p_log, abs=1e-6)
+    assert min(p_emp, p_log) <= p_mid <= max(p_emp, p_log)
 
 
 def test_a_result_after_the_deadline_is_invisible(tmp_path: Path) -> None:
@@ -180,6 +199,8 @@ def test_bad_params_are_refused() -> None:
         EmpiricalMinutesV2(_spec(target_starters=0))
     with pytest.raises(ValueError, match="soft_squad_strength"):
         EmpiricalMinutesV2(_spec(soft_squad_strength=2.0))
+    with pytest.raises(ValueError, match="logistic_blend"):
+        EmpiricalMinutesV2(_spec(logistic_blend=1.5))
     with pytest.raises(ValueError, match="l2"):
         EmpiricalMinutesV2(_spec(l2=-1))
     with pytest.raises(ValueError, match="shrinkage"):
@@ -324,9 +345,14 @@ def _predict(
     as_of: int = 8,
     soft_squad: bool = False,
     soft_squad_strength: float = 0.5,
+    logistic_blend: float = 0.5,
 ):
     model = EmpiricalMinutesV2(
-        _spec(soft_squad=soft_squad, soft_squad_strength=soft_squad_strength)
+        _spec(
+            soft_squad=soft_squad,
+            soft_squad_strength=soft_squad_strength,
+            logistic_blend=logistic_blend,
+        )
     )
     view = PITData(store).view(GWKey(_SEASON, as_of))
     model.fit(view)

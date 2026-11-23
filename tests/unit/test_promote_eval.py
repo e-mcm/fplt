@@ -1641,7 +1641,7 @@ def test_preflight_injury_overlay_fails_when_empty(tmp_path: Path) -> None:
             "tables": ["player_injuries"],
             "diff": ["use_injury_overlay: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_injuries_v1",
         window={
             "seasons": ["2025-26"],
@@ -1705,7 +1705,7 @@ def test_preflight_injury_overlay_passes_with_mapped_row(tmp_path: Path) -> None
             "tables": ["player_injuries"],
             "diff": ["use_injury_overlay: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_injuries_v1",
         window={
             "seasons": ["2025-26"],
@@ -1769,7 +1769,7 @@ def test_preflight_predicted_lineups_fails_without_pit_rows(tmp_path: Path) -> N
             "allow_multi_lever": True,
             "diff": ["predicted_xi: false → true"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="dc_layered_predicted_xi_v1",
         window={
             "seasons": ["2025-26"],
@@ -1812,7 +1812,7 @@ def test_preflight_fpl_api_status_fails_on_vaastav(tmp_path: Path) -> None:
             "diff": ["use_availability_gate: false → true"],
         },
         control="dc_layered_noavail_v1",
-        treatment="dc_layered_v2",
+        treatment="dc_layered_v3",
         window={
             "seasons": ["2025-26"],
             "from_gw": 1,
@@ -1851,7 +1851,7 @@ def test_preflight_forecast_combine_member_join_universe(tmp_path: Path) -> None
             "treatment_kind": "forecast_combine",
             "diff": ["kind: dc_layered → forecast_combine"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="forecast_combine_equal_v1",
         window={
             "seasons": ["2025-26"],
@@ -1881,7 +1881,7 @@ def test_preflight_forecast_combine_member_join_universe(tmp_path: Path) -> None
     assert result.coverage.metric == "forecast_combine_member_join"
     assert result.coverage.passed
     assert result.coverage.rate >= 0.80
-    assert "dc_layered_v2" in result.coverage.extras["members"]
+    assert "dc_layered_v3" in result.coverage.extras["members"]
     assert "lgbm_direct_v1" in result.coverage.extras["members"]
     assert result.coverage.extras["member_missing"] == []
 
@@ -1893,7 +1893,7 @@ def test_preflight_forecast_combine_fails_when_member_predictions_miss(
     from fplt.models.spec import load_model_specs
 
     specs = load_model_specs()
-    dc = specs["dc_layered_v2"]
+    dc = specs["dc_layered_v3"]
     lgbm = specs["lgbm_direct_v1"]
     # Archive DC predictions for the scored pool; LGBM archive exists but
     # covers none of the scored keys → member missing on the join.
@@ -1951,7 +1951,7 @@ def test_preflight_forecast_combine_fails_when_member_predictions_miss(
             "treatment_kind": "forecast_combine",
             "diff": ["kind: dc_layered → forecast_combine"],
         },
-        control="dc_layered_v2",
+        control="dc_layered_v3",
         treatment="forecast_combine_equal_v1",
         window={
             "seasons": ["2025-26"],

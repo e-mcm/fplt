@@ -210,12 +210,14 @@ def enforce_hard_starters(
     start_weight: np.ndarray,
     rng: np.random.Generator,
     *,
+    positions: np.ndarray,
     target: int = 11,
     starter_threshold: int = 60,
     start_minutes: int = 90,
     sub_minutes: int = 15,
+    gk_position: str = "GK",
 ) -> np.ndarray:
-    """Force about ``target`` starters per team-fixture column.
+    """Force about ``target`` starters per team-fixture column with 1 GK.
 
     A starter is a draw with minutes ≥ ``starter_threshold``. When a team has
     more than ``target`` starters in a sim, the lowest-weight extras are
@@ -223,15 +225,21 @@ def enforce_hard_starters(
     with positive ``start_weight`` are promoted to ``start_minutes``. Teams
     with fewer than ``target`` eligible players keep ``min(target, eligible)``.
 
+    Position-aware: when at least one GK has positive ``start_weight``, exactly
+    one GK is kept among the starters and the remaining slots go to outfield
+    players. With no eligible GK the outfield fills up to ``target`` alone.
+
     Args:
         minutes: Drawn minutes, shape ``(P, n)``.
         team_keys: Team id per player row, shape ``(P,)``.
         start_weight: Ranking weight per player (e.g. P(≥60)), shape ``(P,)``.
         rng: Generator for tie-breaking among equal weights.
+        positions: Position string per player row, shape ``(P,)``.
         target: Desired starter count per team (usually 11).
         starter_threshold: Minutes that count as a start.
         start_minutes: Minutes assigned when promoting a player.
         sub_minutes: Minutes assigned when demoting a player.
+        gk_position: Position label treated as goalkeeper (default ``GK``).
 
     Returns:
         Adjusted minutes with the same shape as ``minutes``.
@@ -242,10 +250,17 @@ def enforce_hard_starters(
     drawn = np.asarray(minutes, dtype=np.int64)
     teams = np.asarray(team_keys)
     weights = np.asarray(start_weight, dtype=np.float64)
+    pos = np.asarray(positions)
     if drawn.ndim != 2:
         raise ValueError(f"minutes must be 2-D, got {drawn.shape}")
-    if teams.shape != (drawn.shape[0],) or weights.shape != (drawn.shape[0],):
-        raise ValueError("team_keys and start_weight must match minutes rows")
+    if (
+        teams.shape != (drawn.shape[0],)
+        or weights.shape != (drawn.shape[0],)
+        or pos.shape != (drawn.shape[0],)
+    ):
+        raise ValueError(
+            "team_keys, start_weight, and positions must match minutes rows"
+        )
     if target < 1:
         raise ValueError(f"target must be positive, got {target}")
     if drawn.size == 0:
@@ -258,21 +273,65 @@ def enforce_hard_starters(
         indexes = np.flatnonzero(teams == team)
         if indexes.size == 0:
             continue
-        eligible = indexes[weights[indexes] > 0]
-        want = min(target, int(eligible.size), int(indexes.size))
+        is_gk = np.asarray([str(pos[i]) == gk_position for i in indexes])
+        gk_idx = indexes[is_gk]
+        out_idx = indexes[~is_gk]
+        eligible_gk = gk_idx[weights[gk_idx] > 0]
+        eligible_out = out_idx[weights[out_idx] > 0]
+        want = min(target, int(eligible_gk.size + eligible_out.size))
+        gk_want = 1 if eligible_gk.size > 0 and want >= 1 else 0
+        out_want = min(want - gk_want, int(eligible_out.size))
         for sim in range(out.shape[1]):
-            started = indexes[out[indexes, sim] >= starter_threshold]
-            if started.size > want:
-                # Demote lowest-weight starters first.
-                ranked = started[np.argsort(order_key[started])]
-                for index in ranked[: started.size - want]:
-                    out[int(index), sim] = sub_minutes
-            elif started.size < want:
-                pool = indexes[out[indexes, sim] < starter_threshold]
-                pool = pool[weights[pool] > 0]
-                if pool.size == 0:
-                    continue
-                ranked = pool[np.argsort(-order_key[pool])]
-                for index in ranked[: want - started.size]:
-                    out[int(index), sim] = start_minutes
+            _adjust_starter_count(
+                out,
+                gk_idx,
+                weights,
+                order_key,
+                sim,
+                want=gk_want,
+                starter_threshold=starter_threshold,
+                start_minutes=start_minutes,
+                sub_minutes=sub_minutes,
+            )
+            _adjust_starter_count(
+                out,
+                out_idx,
+                weights,
+                order_key,
+                sim,
+                want=out_want,
+                starter_threshold=starter_threshold,
+                start_minutes=start_minutes,
+                sub_minutes=sub_minutes,
+            )
     return out
+
+
+def _adjust_starter_count(
+    minutes: np.ndarray,
+    indexes: np.ndarray,
+    weights: np.ndarray,
+    order_key: np.ndarray,
+    sim: int,
+    *,
+    want: int,
+    starter_threshold: int,
+    start_minutes: int,
+    sub_minutes: int,
+) -> None:
+    """Promote/demote within ``indexes`` so about ``want`` are starters."""
+    if indexes.size == 0:
+        return
+    started = indexes[minutes[indexes, sim] >= starter_threshold]
+    if started.size > want:
+        ranked = started[np.argsort(order_key[started])]
+        for index in ranked[: started.size - want]:
+            minutes[int(index), sim] = sub_minutes
+    elif started.size < want:
+        pool = indexes[minutes[indexes, sim] < starter_threshold]
+        pool = pool[weights[pool] > 0]
+        if pool.size == 0:
+            return
+        ranked = pool[np.argsort(-order_key[pool])]
+        for index in ranked[: want - started.size]:
+            minutes[int(index), sim] = start_minutes
