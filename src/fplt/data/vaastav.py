@@ -395,6 +395,8 @@ def _status(
         pl.col("chance_of_playing").cast(pl.Float64),
         pl.col("chance_of_playing_this_round").cast(pl.Float64),
         pl.col("penalties_order").cast(pl.Int64),
+        pl.col("corners_and_indirect_freekicks_order").cast(pl.Int64),
+        pl.col("direct_freekicks_order").cast(pl.Int64),
     )
 
 
@@ -412,6 +414,8 @@ def _status_row(
         "chance_of_playing": None,
         "chance_of_playing_this_round": None,
         "penalties_order": None,
+        "corners_and_indirect_freekicks_order": None,
+        "direct_freekicks_order": None,
         "available_at": available_at,
         "source": "vaastav",
     }

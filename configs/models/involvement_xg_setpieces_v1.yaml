@@ -1,0 +1,12 @@
+# FDB-244: involvement_xg with set-piece order bonuses on.
+name: involvement_xg_setpieces_v1
+kind: involvement_xg
+params:
+  window: 10
+  shrinkage: 5
+  penalty_bonus: 0.3
+  xg_blend: 0.7
+  use_set_piece_orders: true
+  set_piece_bonus: 0.1
+refit: every_gw
+seed: 0

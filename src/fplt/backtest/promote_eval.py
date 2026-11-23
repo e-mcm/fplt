@@ -111,6 +111,7 @@ CoverageMetric = Literal[
     "odds_join",
     "odds_history_join",
     "penalties_order_non_null",
+    "set_piece_order_non_null",
     "dc_season_eligible",
     "injury_overlay_mapped",
     "predicted_lineups_pit",
@@ -2254,6 +2255,12 @@ def _measure_coverage(
             warnings,
             None,
         )
+    if metric == "set_piece_order_non_null":
+        return (
+            _coverage_set_piece_order(spec, plan, store, fixtures),
+            warnings,
+            None,
+        )
     if metric == "dc_season_eligible":
         return _coverage_dc_season(spec, fixtures), warnings, None
     if metric == "injury_overlay_mapped":
@@ -2679,6 +2686,101 @@ def _coverage_penalties_order(
     del fixtures
     return CoverageResult(
         metric="penalties_order_non_null",
+        numerator=numerator,
+        denominator=denom,
+        rate=rate,
+        min_coverage=min_cov,
+        passed=passed,
+        extras=extras,
+    )
+
+
+def _coverage_set_piece_order(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    store: DataStore,
+    fixtures: pl.DataFrame,
+) -> CoverageResult:
+    """Share of player–fixtures with any non-null set-piece order at deadline."""
+    stats = (
+        store.table("player_fixture_stats")
+        .filter(
+            pl.col("season").is_in(plan.seasons)
+            & pl.col("gw").is_between(plan.from_gw, plan.to_gw, closed="both")
+        )
+        .collect()
+    )
+    if stats.is_empty():
+        denom = 0
+        numerator = 0
+        extras: dict[str, Any] = {
+            "corners_order_eq_1_rate": 0.0,
+            "direct_freekicks_order_eq_1_rate": 0.0,
+            "source_fpl_api_share": 0.0,
+        }
+    else:
+        deadlines = (
+            store.table("gameweeks")
+            .filter(pl.col("season").is_in(plan.seasons))
+            .sort("available_at")
+            .unique(subset=["season", "gw"], keep="last")
+            .select(["season", "gw", "deadline_time"])
+            .collect()
+        )
+        keyed = stats.select(["season", "gw", "player_key", "fixture_id"]).unique()
+        keyed = keyed.join(deadlines, on=["season", "gw"], how="left")
+        status = store.read("player_status")
+        order_cols = [
+            "corners_and_indirect_freekicks_order",
+            "direct_freekicks_order",
+        ]
+        present = [col for col in order_cols if col in status.columns]
+        select_cols = ["season", "player_key", "available_at", "source", *present]
+        joined = (
+            keyed.join(
+                status.select(select_cols),
+                on=["season", "player_key"],
+                how="left",
+            )
+            .filter(
+                pl.col("available_at").is_null()
+                | (pl.col("available_at") <= pl.col("deadline_time"))
+            )
+            .sort("available_at")
+            .unique(subset=["season", "fixture_id", "player_key"], keep="last")
+        )
+        denom = keyed.height
+        if present:
+            any_order = pl.any_horizontal(
+                [pl.col(col).is_not_null() for col in present]
+            )
+            numerator = joined.filter(any_order).height
+        else:
+            numerator = 0
+        corners_eq1 = (
+            joined.filter(pl.col("corners_and_indirect_freekicks_order") == 1).height
+            if "corners_and_indirect_freekicks_order" in joined.columns
+            else 0
+        )
+        freekick_eq1 = (
+            joined.filter(pl.col("direct_freekicks_order") == 1).height
+            if "direct_freekicks_order" in joined.columns
+            else 0
+        )
+        fpl = joined.filter(pl.col("source") == "fpl_api").height
+        extras = {
+            "corners_order_eq_1_rate": (corners_eq1 / denom) if denom else 0.0,
+            "direct_freekicks_order_eq_1_rate": (freekick_eq1 / denom)
+            if denom
+            else 0.0,
+            "source_fpl_api_share": (fpl / denom) if denom else 0.0,
+        }
+    rate = (numerator / denom) if denom else 0.0
+    min_cov = spec.gates.min_coverage
+    passed = True if min_cov is None else rate + 1e-12 >= min_cov
+    del fixtures
+    return CoverageResult(
+        metric="set_piece_order_non_null",
         numerator=numerator,
         denominator=denom,
         rate=rate,

@@ -105,24 +105,43 @@ def penalty_takers(
     """
     if not use_penalties_order:
         return _miss_takers(history)
+    order_by_player = _latest_status_orders(view, "penalties_order")
+    takers = {player for player, order in order_by_player.items() if order == 1}
+    for player in _miss_takers(history):
+        if order_by_player.get(player) is None:
+            takers.add(player)
+    return takers
+
+
+def set_piece_takers(view: PITView) -> set[int]:
+    """Primary corner/indirect and direct free-kick takers from PIT status.
+
+    Returns players with ``corners_and_indirect_freekicks_order == 1`` or
+    ``direct_freekicks_order == 1`` on the latest visible ``player_status``
+    row. Empty when those columns are all null (vaastav).
+    """
+    corners = _latest_status_orders(view, "corners_and_indirect_freekicks_order")
+    freekicks = _latest_status_orders(view, "direct_freekicks_order")
+    return {player for player, order in corners.items() if order == 1} | {
+        player for player, order in freekicks.items() if order == 1
+    }
+
+
+def _latest_status_orders(view: PITView, column: str) -> dict[int, int | None]:
+    """Latest PIT ``player_status`` order values keyed by ``player_key``."""
     status = (
         view.latest("player_status", ["season", "player_key"])
         .collect()
         .sort("available_at")
         .unique(subset=["player_key"], keep="last")
     )
-    order_by_player: dict[int, int | None] = {}
-    if not status.is_empty() and "penalties_order" in status.columns:
-        for row in status.select("player_key", "penalties_order").iter_rows(named=True):
-            order = row["penalties_order"]
-            order_by_player[int(row["player_key"])] = (
-                None if order is None else int(order)
-            )
-    takers = {player for player, order in order_by_player.items() if order == 1}
-    for player in _miss_takers(history):
-        if order_by_player.get(player) is None:
-            takers.add(player)
-    return takers
+    orders: dict[int, int | None] = {}
+    if status.is_empty() or column not in status.columns:
+        return orders
+    for row in status.select("player_key", column).iter_rows(named=True):
+        order = row[column]
+        orders[int(row["player_key"])] = None if order is None else int(order)
+    return orders
 
 
 def _miss_takers(history: pl.DataFrame) -> set[int]:

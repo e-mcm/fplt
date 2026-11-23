@@ -122,6 +122,8 @@ def test_status_stages_per_gw_value_as_price(tmp_path: Path) -> None:
     assert status["chance_of_playing_this_round"].to_list() == [None, None]
     assert status["news_added"].to_list() == [None, None]
     assert status["penalties_order"].to_list() == [None, None]
+    assert status["corners_and_indirect_freekicks_order"].to_list() == [None, None]
+    assert status["direct_freekicks_order"].to_list() == [None, None]
     assert status["price"].to_list() == [51, 45]
     assert status["available_at"].to_list() == [
         _KICKOFF_GW2 - timedelta(hours=2),

@@ -1,0 +1,14 @@
+# FDB-244: xg_blend=0.5 dose fork (notes cite ~0.7 as the candidate).
+# Control stays production dc_layered_v4 (xg_blend=0.7). No PRODUCTION flip.
+name: dc_layered_xg_blend_05_v1
+extends: dc_layered_v4
+overrides:
+  components:
+    involvement:
+      name: involvement_xg_blend_05_v1
+      kind: involvement_xg
+      params:
+        window: 10
+        shrinkage: 5
+        penalty_bonus: 0.3
+        xg_blend: 0.5
