@@ -11,7 +11,8 @@ from __future__ import annotations
 import importlib
 import os
 from collections.abc import Mapping
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any, Literal, overload
 
 import numpy as np
 import polars as pl
@@ -23,6 +24,25 @@ McBackend = Literal["python", "native"]
 
 _POS = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 _EXPECTED_KERNEL_API = 2
+
+
+@dataclass(frozen=True)
+class FixtureSummary:
+    """K5 per-player aggregates from ``fplt_mc.simulate_fixture``.
+
+    Populated when ``return_samples=False``. Matches the prediction columns
+    that ``composite._fixture`` used to reduce from ``(P, n)`` sample planes.
+    """
+
+    player_key: np.ndarray
+    xpts: np.ndarray
+    xpts_sd: np.ndarray
+    p_played: np.ndarray
+    p_60: np.ndarray
+    p_goal: np.ndarray
+    p_assist: np.ndarray
+    p_cs: np.ndarray
+    p_haul: np.ndarray
 
 
 def resolve_mc_backend(
@@ -90,6 +110,7 @@ def native_provenance() -> dict[str, Any]:
     return payload
 
 
+@overload
 def simulate_match_native(
     scorelines: np.ndarray,
     players: pl.DataFrame,
@@ -104,8 +125,64 @@ def simulate_match_native(
     conceded_mode: Literal["scaled", "played"] = "scaled",
     sample_other: bool = False,
     match_other: MatchOtherOffsets | None = None,
-    return_samples: bool = True,
-) -> MatchSimulation:
+    return_samples: Literal[True],
+) -> MatchSimulation: ...
+
+
+@overload
+def simulate_match_native(
+    scorelines: np.ndarray,
+    players: pl.DataFrame,
+    minutes: np.ndarray,
+    other_points: np.ndarray,
+    rules: Rules,
+    *,
+    kernel_seed: int,
+    own_goal_weight: float = 0.05,
+    p_assist: float = 0.75,
+    cs_red_void_prob: float = 0.0,
+    conceded_mode: Literal["scaled", "played"] = "scaled",
+    sample_other: bool = False,
+    match_other: MatchOtherOffsets | None = None,
+    return_samples: Literal[False] = False,
+) -> FixtureSummary: ...
+
+
+@overload
+def simulate_match_native(
+    scorelines: np.ndarray,
+    players: pl.DataFrame,
+    minutes: np.ndarray,
+    other_points: np.ndarray,
+    rules: Rules,
+    *,
+    kernel_seed: int,
+    own_goal_weight: float = 0.05,
+    p_assist: float = 0.75,
+    cs_red_void_prob: float = 0.0,
+    conceded_mode: Literal["scaled", "played"] = "scaled",
+    sample_other: bool = False,
+    match_other: MatchOtherOffsets | None = None,
+    return_samples: bool = False,
+) -> MatchSimulation | FixtureSummary: ...
+
+
+def simulate_match_native(
+    scorelines: np.ndarray,
+    players: pl.DataFrame,
+    minutes: np.ndarray,
+    other_points: np.ndarray,
+    rules: Rules,
+    *,
+    kernel_seed: int,
+    own_goal_weight: float = 0.05,
+    p_assist: float = 0.75,
+    cs_red_void_prob: float = 0.0,
+    conceded_mode: Literal["scaled", "played"] = "scaled",
+    sample_other: bool = False,
+    match_other: MatchOtherOffsets | None = None,
+    return_samples: bool = False,
+) -> MatchSimulation | FixtureSummary:
     """Run allocate + points + aggregate in ``fplt_mc.simulate_fixture``.
 
     Args:
@@ -118,10 +195,13 @@ def simulate_match_native(
         own_goal_weight / p_assist / cs_red_void_prob / conceded_mode /
             sample_other: Same knobs as ``simulate_match``.
         match_other: Optional match-conditioned tables (duck-typed deltas).
-        return_samples: When true, materialise ``(P, n)`` sample planes.
+        return_samples: When true, materialise ``(P, n)`` sample planes for
+            scenario / joint export. Default false — normal predict uses the
+            K5 summary arrays already returned by the kernel.
 
     Returns:
-        ``MatchSimulation`` with the same fields as the Python path.
+        ``FixtureSummary`` (default) or ``MatchSimulation`` when samples are
+        requested.
 
     Raises:
         ImportError / RuntimeError: Native kernel unavailable or too old.
@@ -182,9 +262,17 @@ def simulate_match_native(
         **call_kw,
     )
     if not return_samples:
-        # Summary-only path still needs sample-shaped arrays for MatchSimulation;
-        # re-run is avoided by always requesting samples from the composite.
-        raise ValueError("simulate_match_native requires return_samples=True")
+        return FixtureSummary(
+            player_key=keys,
+            xpts=np.asarray(out["xpts"], dtype=np.float64),
+            xpts_sd=np.asarray(out["xpts_sd"], dtype=np.float64),
+            p_played=np.asarray(out["p_played"], dtype=np.float64),
+            p_60=np.asarray(out["p_60"], dtype=np.float64),
+            p_goal=np.asarray(out["p_goal"], dtype=np.float64),
+            p_assist=np.asarray(out["p_assist"], dtype=np.float64),
+            p_cs=np.asarray(out["p_cs"], dtype=np.float64),
+            p_haul=np.asarray(out["p_haul"], dtype=np.float64),
+        )
     return MatchSimulation(
         player_key=keys,
         points=np.asarray(out["points"], dtype=np.float64),
