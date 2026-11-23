@@ -6,17 +6,258 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  ci:
-    runs-on: ubuntu-latest
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      mc: ${{ steps.filter.outputs.mc }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Git-based filter (no GitHub API) — avoids "Resource not accessible by
+      # integration" on private repos with restricted GITHUB_TOKEN scopes.
+      - id: filter
+        name: Detect mc/ / workflow changes
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE="${{ github.sha }}^"
+            fi
+          fi
+          echo "Comparing ${BASE}...${{ github.sha }}"
+          if git diff --name-only "$BASE" "${{ github.sha }}" \
+            | grep -qE '^(mc/|\.github/workflows/ci\.yml|\.github/workflows/mc-release\.yml)'; then
+            echo "mc=true" >> "$GITHUB_OUTPUT"
+            echo "mc changes detected"
+          else
+            echo "mc=false" >> "$GITHUB_OUTPUT"
+            echo "no mc changes"
+          fi
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install dependencies
+  lint:
+    runs-on: ubuntu-24.04
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python deps
         run: uv sync --frozen
+      - name: Ruff + pyright
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+          uv run pyright
+      - name: clang-format (mc/)
+        if: needs.changes.outputs.mc == 'true'
+        run: |
+          uv pip install 'clang-format==18.1.8'
+          find mc \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' -o -name '*.cc' \) \
+            -print0 | xargs -0 uv run clang-format --dry-run --Werror
 
-      - name: Check
-        run: make check
+  version-guard:
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.mc == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require version bump when mc/ changes
+        run: bash mc/scripts/version_guard.sh origin/${{ github.base_ref || 'main' }}
+
+  mc-build-linux:
+    name: mc-build (linux-x86_64)
+    needs: [changes, version-guard]
+    if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: wheel-cache
+        with:
+          path: dist
+          key: fplt-mc-linux-x86_64-${{ hashFiles('mc/**') }}
+      - name: Install toolchain (manylinux)
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          yum install -y ninja-build git make cmake || true
+          if [ -f /opt/rh/gcc-toolset-13/enable ]; then
+            # shellcheck disable=SC1091
+            source /opt/rh/gcc-toolset-13/enable
+            echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "${GITHUB_PATH}"
+          fi
+          echo "/opt/python/cp313-cp313/bin" >> "${GITHUB_PATH}"
+          /opt/python/cp313-cp313/bin/python -m pip install -U pip build scikit-build-core nanobind
+      - uses: hendrikmuhs/ccache-action@v1
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        with:
+          key: linux-x86_64
+      - name: Build + L0 ctest + wheel
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        env:
+          CMAKE_CXX_COMPILER: g++
+        run: make mc-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  mc-build-macos:
+    name: mc-build (macos-arm64)
+    needs: [changes, version-guard]
+    if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: wheel-cache
+        with:
+          path: dist
+          key: fplt-mc-macos-arm64-${{ hashFiles('mc/**') }}
+      - name: Install toolchain (macOS)
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install ninja ccache || true
+          echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "${GITHUB_ENV}"
+      - uses: hendrikmuhs/ccache-action@v1
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        with:
+          key: macos-arm64
+      - uses: actions/setup-python@v5
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.13"
+      - name: Install build frontend (macOS)
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: python -m pip install -U pip build scikit-build-core nanobind
+      - name: Build + L0 ctest + wheel
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        env:
+          CMAKE_CXX_COMPILER: c++
+        run: make mc-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-macos-arm64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sanitizers:
+    needs: [changes, version-guard]
+    if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build cmake g++ || \
+            (curl -fsSL https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-linux.zip -o /tmp/ninja.zip \
+             && sudo unzip -o /tmp/ninja.zip -d /usr/local/bin)
+      - name: Configure ASan+UBSan Debug
+        run: |
+          cmake -S mc -B mc/build-san -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DFPLT_MC_BUILD_PYTHON=OFF \
+            -DFPLT_MC_BUILD_TESTS=ON \
+            -DFPLT_MC_SANITIZE=ON
+          cmake --build mc/build-san
+          ctest --test-dir mc/build-san --output-on-failure
+
+  test-linux:
+    name: test (linux-x86_64)
+    needs: [changes, mc-build-linux]
+    if: ${{ !cancelled() && needs.mc-build-linux.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync locked deps (no compile of fplt-mc)
+        run: uv sync --frozen
+      - name: Download freshly built fplt-mc wheel
+        if: needs.changes.outputs.mc == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
+      - name: Reinstall artifact wheel
+        if: needs.changes.outputs.mc == 'true'
+        run: |
+          ls -la dist/
+          # Prefer manylinux tag; build may leave only one wheel after auditwheel.
+          WHEEL=$(ls dist/*manylinux*.whl 2>/dev/null | head -1)
+          WHEEL=${WHEEL:-$(ls dist/*.whl | head -1)}
+          uv pip install --no-deps --reinstall "$WHEEL"
+          uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
+      - name: Pytest (fplt)
+        run: uv run pytest -m "not slow" --cov=fplt --cov-report=xml
+      - name: Pytest (fplt-mc smoke)
+        if: needs.changes.outputs.mc == 'true'
+        run: uv run pytest mc/tests -q
+
+  test-macos:
+    name: test (macos-arm64)
+    needs: [changes, mc-build-macos]
+    # macOS is 10× billable; only on mc/ PRs (fresh wheel + smoke).
+    if: ${{ !cancelled() && needs.changes.outputs.mc == 'true' && needs.mc-build-macos.result != 'failure' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync locked deps (no compile of fplt-mc)
+        run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-macos-arm64
+          path: dist
+      - name: Reinstall artifact wheel
+        run: |
+          ls -la dist/
+          WHEEL=$(ls dist/*macosx*.whl dist/*.whl 2>/dev/null | head -1)
+          uv pip install --no-deps --reinstall "$WHEEL"
+          uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
+      # Full fplt suite needs libomp for lightgbm on macOS runners; PR1 only
+      # requires the freshly built fplt-mc wheel to import and pass L0 smoke.
+      - name: Pytest (fplt-mc smoke)
+        run: uv run pytest mc/tests -q
+
+  gate:
+    needs: [changes, lint, version-guard, mc-build-linux, mc-build-macos, sanitizers, test-linux, test-macos]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all needed jobs green or skipped
+        run: |
+          echo "changes=${{ needs.changes.result }}"
+          echo "lint=${{ needs.lint.result }}"
+          echo "version-guard=${{ needs.version-guard.result }}"
+          echo "mc-build-linux=${{ needs.mc-build-linux.result }}"
+          echo "mc-build-macos=${{ needs.mc-build-macos.result }}"
+          echo "sanitizers=${{ needs.sanitizers.result }}"
+          echo "test-linux=${{ needs.test-linux.result }}"
+          echo "test-macos=${{ needs.test-macos.result }}"
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "gate failed"
+            exit 1
+          fi
+          echo "gate ok"

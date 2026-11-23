@@ -13,6 +13,15 @@ build/
 mlruns/
 output/
 
+# fplt-mc (scikit-build / cmake)
+mc/build/
+mc/build-ci/
+mc/build-san/
+mc/**/compile_commands.json
+*.so
+*.dylib
+_skbuild/
+
 # Ignore all data except tracked helpers / docs
 data/*
 !data/data_setup.py

@@ -1,0 +1,131 @@
+name: mc-release
+
+# Build fplt-mc wheels and publish them to a public GitHub Pages PEP 503
+# simple index (https://e-mcm.github.io/fplt/simple/). No UV_INDEX credentials.
+# Wheels are immutable: never overwrite a published filename.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mc/pyproject.toml"
+  workflow_dispatch:
+
+concurrency:
+  group: mc-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # push gh-pages branch
+
+jobs:
+  release-linux:
+    name: release (linux-x86_64)
+    runs-on: ubuntu-24.04
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: release-linux-x86_64
+      - name: Install toolchain
+        run: |
+          yum install -y ninja-build git make cmake || true
+          if [ -f /opt/rh/gcc-toolset-13/enable ]; then
+            # shellcheck disable=SC1091
+            source /opt/rh/gcc-toolset-13/enable
+            echo "/opt/rh/gcc-toolset-13/root/usr/bin" >> "${GITHUB_PATH}"
+          fi
+          echo "/opt/python/cp313-cp313/bin" >> "${GITHUB_PATH}"
+          /opt/python/cp313-cp313/bin/python -m pip install -U pip build scikit-build-core nanobind
+      - name: Build wheels
+        env:
+          CMAKE_CXX_COMPILER: g++
+        run: make mc-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-wheel-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  release-macos:
+    name: release (macos-arm64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: release-macos-arm64
+      - name: Install toolchain
+        run: |
+          brew install ninja ccache || true
+          echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "${GITHUB_ENV}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install build frontend
+        run: python -m pip install -U pip build scikit-build-core nanobind
+      - name: Build wheels
+        env:
+          CMAKE_CXX_COMPILER: c++
+        run: make mc-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-wheel-macos-arm64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish-pages:
+    needs: [release-linux, release-macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-wheel-*
+          merge-multiple: true
+      - name: Checkout existing gh-pages (if any)
+        run: |
+          mkdir -p site
+          if git fetch origin gh-pages:gh-pages 2>/dev/null; then
+            git archive gh-pages | tar -x -C site
+          fi
+          ls -la dist/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Merge wheels into public simple index
+        run: |
+          python scripts/mc_simple_index.py --wheels dist --out site
+          VERSION=$(grep -E '^version = ' mc/pyproject.toml | head -1 | cut -d'"' -f2)
+          echo "Prepared fplt-mc==${VERSION} for https://e-mcm.github.io/fplt/simple/fplt-mc/"
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: false
+          keep_files: false
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "Publish fplt-mc wheels to public simple index"
+      - name: Next steps (pin follow-up)
+        run: |
+          VERSION=$(grep -E '^version = ' mc/pyproject.toml | head -1 | cut -d'"' -f2)
+          cat <<EOF
+          Published to https://e-mcm.github.io/fplt/simple/
+          Follow-up PR: pin fplt-mc==${VERSION} in root pyproject + uv lock with:
+            [[tool.uv.index]]
+            name = "fplt-mc"
+            url = "https://e-mcm.github.io/fplt/simple/"
+            explicit = true
+            [tool.uv.sources]
+            fplt-mc = { index = "fplt-mc" }
+            [tool.uv]
+            no-build-package = ["fplt-mc"]
+          No UV_INDEX credentials (public Pages). Enable Pages → gh-pages if not already.
+          EOF

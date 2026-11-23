@@ -1,0 +1,4 @@
+#pragma once
+
+#define FPLT_MC_VERSION_STR "@FPLT_MC_VERSION@"
+#define FPLT_MC_GIT_SHA_STR "@FPLT_MC_GIT_SHA@"
