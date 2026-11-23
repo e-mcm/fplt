@@ -8,6 +8,7 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 |---|---|---|
 | [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, Dagster §8, storage layout |
 | [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Ops / agents | GHA capture cadence, sensors, always-on setup |
+| [`blank-week-prod-plan.md`](blank-week-prod-plan.md) | Ops / agents | Empty-squad / blank-week `fplt plan` with production model + live defaults |
 | [`feature-eval-pipeline.md`](feature-eval-pipeline.md) | Modelling / agents | Promote-eval, bakeoffs, control vs treatment, keep/drop |
 | [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; points-at-rank bars (2400 / 2235) |
 | [`eval-protocol.md`](eval-protocol.md) | Eval / agents | Windows, interim written keep, reference board, HiGHS; `claim: squad_points` decisions gate |

@@ -287,14 +287,16 @@ explain:
 
 # ── Transfer plan (uses FPLT_ENTRY_ID when set) ────────────────────────────────
 # Usage: make plan SEASON=2025-26 GW=10
-# Optional: MODEL=rolling_mean_v1 HORIZON=3 ARGS='--entry-json picks.json'
+# Optional: MODEL=dc_layered_v4 HORIZON=3 ARGS='--entry-json picks.json'
+# Default MODEL matches configs/ops/production.yaml (blank-week: leave
+# FPLT_ENTRY_ID unset + owned: [] — see docs/blank-week-prod-plan.md).
 # Default chip policy is optimised (scheduler → MILP). Override with
 # ARGS='--chip-arm off' (or rule_based). Horizon default stays 3.
 plan:
 	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
 		echo "Usage: make plan SEASON=2025-26 GW=10"; exit 1; fi
 	uv run fplt plan \
-		--model $(or $(MODEL),rolling_mean_v1) \
+		--model $(or $(MODEL),dc_layered_v4) \
 		--season $(SEASON) \
 		--gw $(GW) \
 		--horizon $(or $(HORIZON),3) \
@@ -302,12 +304,12 @@ plan:
 
 # ── Apply saved plan to FPL (dry-run unless CONFIRM=1) ─────────────────────────
 # Usage: make apply SEASON=2025-26 GW=10
-# Optional: MODEL=rolling_mean_v1 HORIZON=3 CONFIRM=1 ARGS='--transfers-only'
+# Optional: MODEL=dc_layered_v4 HORIZON=3 CONFIRM=1 ARGS='--transfers-only'
 apply:
 	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
 		echo "Usage: make apply SEASON=2025-26 GW=10"; exit 1; fi
 	uv run fplt apply \
-		--model $(or $(MODEL),rolling_mean_v1) \
+		--model $(or $(MODEL),dc_layered_v4) \
 		--season $(SEASON) \
 		--gw $(GW) \
 		--horizon $(or $(HORIZON),3) \

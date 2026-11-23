@@ -63,6 +63,7 @@ Understat, API-Football injuries, and match odds each have a dedicated sensor (t
 | `make ops-catchup` | Drain backlog after travel / daemon downtime (`fplt ops-catchup`) |
 | `uv run fplt backtest` / `make eval-board` | On demand for train/eval |
 | `uv run fplt predict` / `fplt plan` | On demand or until sensors cover your entry |
+| Blank / empty-squad draft | Unset `FPLT_ENTRY_ID` + `owned: []`; production model from ops YAML — [`blank-week-prod-plan.md`](blank-week-prod-plan.md) |
 
 ### Gaps to know
 
