@@ -20,9 +20,11 @@ change:
     - "components.other.params.defcon_mode: mean → rate"
   notes: >
     Control dc_layered_defcon_mean_v1 (shrunk 0/2 wire). Treatment
-    dc_layered_v3 (other_player_defcon_rate_v1, production after FDB-211 keep).
-    Primary window 2025-26 GW1–38; confirmation GW20–38. RMSE headline.
-    Coverage requires every target fixture in a DC-awarding season.
+    dc_layered_v3 (other_player_defcon_rate_v1, production after FDB-211 keep /
+    FDB-226 rename). Protocol windows (eval-protocol §1): development GW1–19;
+    confirmation GW20–38 (disjoint; FDB-255). RMSE headline. Coverage requires
+    every target fixture in a DC-awarding season. Forecast claim only —
+    decisions suite off (not squad_points).
 
 control: dc_layered_defcon_mean_v1
 treatment: dc_layered_v3
@@ -30,12 +32,13 @@ treatment: dc_layered_v3
 window:
   seasons: ["2025-26"]
   from_gw: 1
-  to_gw: 38
+  to_gw: 19
   seasons_back: 4
   modes: [walk_forward]
   note: >
-    GW1–10 alone is thin/S1 smoke — never a keep or confirmation window.
-    This board uses the full 2025-26 season; confirmation stays GW20–38.
+    Live-only DC awards: 2025-26 only. Development = GW1–19 (default map).
+    Confirmation = GW20–38 via --from-gw/--to-gw (non-overlapping). Do not
+    use nested GW1–38 primary + GW20–38 confirm (FDB-211 anti-pattern).
 
 suites:
   prediction: true

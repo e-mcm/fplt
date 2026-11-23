@@ -1,10 +1,11 @@
 # Defcon rate model promote — **keep (provisional)**
 
 **Date:** 2026-11-23 · **Task:** FDB-211  
-**Status:** **Provisional keep** until FDB-73 / the eval protocol sets an interim keep rule and independent confirmation windows.  
+**Status:** **Provisional keep** — FDB-255 protocol reconfirm **failed** interim RMSE keep ([defcon-rate-confirm.md](./defcon-rate-confirm.md)); production `dc_layered_v3` rate wire unchanged (no silent un-flip).  
 **Control (eval):** shrunk 0/2 mean wire (`dc_layered_v2` pre-flip / `dc_layered_defcon_mean_v1` after)  
-**Treatment:** Poisson `P(award)|minutes,position,rate` (`dc_layered_defcon_rate_v1` → flipped into production `dc_layered_v2`)  
+**Treatment:** Poisson `P(award)|minutes,position,rate` (`dc_layered_defcon_rate_v1` → production `dc_layered_v3` after FDB-226)  
 **Plan:** [promote-plans/defcon-rate-model.md](./promote-plans/defcon-rate-model.md)  
+**Protocol confirm:** [defcon-rate-confirm.md](./defcon-rate-confirm.md) (FDB-255)  
 **Prior:** W9 `tune` wire — Project store `docs/defensive-contribution-eval-2025-26.md` (not in git; see [promote-archives.md](./promote-archives.md))  
 **Archive:** Project store `internal/defcon-rate-promote/` (see [promote-archives.md](./promote-archives.md))
 
@@ -12,9 +13,9 @@
 
 ## Call
 
-**Keep — flip production compose.** *(Provisional — FDB-73 pending.)*
+**Keep — flip production compose.** *(Provisional — nested windows; FDB-255 did not clear provisional.)*
 
-RMSE headline improves on the primary 2025-26 GW1–38 walk-forward and on the GW20–38 confirmation. MAE and overall Spearman also improve; DEF RMSE/Spearman improve; MID RMSE improves (MID Spearman ≈ flat/noise). Staging + rate path replace the blunt shrunk 0/2 prior inside `dc_layered_v2`.
+RMSE headline improves on the primary 2025-26 GW1–38 walk-forward and on the GW20–38 confirmation. MAE and overall Spearman also improve; DEF RMSE/Spearman improve; MID RMSE improves (MID Spearman ≈ flat/noise). Staging + rate path replace the blunt shrunk 0/2 prior inside `dc_layered_v2` (later renamed to `dc_layered_v3`).
 
 Automated promote-eval verdict stays `inconclusive` (improvement thresholds deferred); this written call is the gate.
 
