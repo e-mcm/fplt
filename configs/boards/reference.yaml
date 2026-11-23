@@ -16,8 +16,9 @@ bench_weight: 0.0
 model: dc_layered_v3
 highs:
   # Deterministic board solves (FDB-228). Live plan may keep open_fpl_defaults.
+  # threads: null — do not pin threads=1 (highspy 1.16 kNotset on pruned H≥3).
   time_limit: null
-  threads: 1
+  threads: null
   parallel: "off"
   random_seed: 0
   mip_rel_gap: 0.0
