@@ -1601,6 +1601,9 @@ def test_overlay_eval_specs_register_coverage_and_window_note() -> None:
     assert defcon.gates.coverage.metric == "dc_season_eligible"
     assert defcon.gates.min_coverage == 1.0
     assert defcon.window.note
+    assert defcon.window.from_gw == 1
+    assert defcon.window.to_gw == 19
+    assert defcon.suites.decisions is False
 
 
 def test_minutes_p1p6_keep_eval_loads() -> None:

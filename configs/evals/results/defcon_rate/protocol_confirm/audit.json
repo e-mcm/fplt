@@ -1,0 +1,218 @@
+{
+  "argv": [
+    "promote-eval",
+    "--eval",
+    "defcon_rate_ab",
+    "--execute",
+    "--allow-dirty",
+    "--from-gw",
+    "20",
+    "--to-gw",
+    "38",
+    "--output-dir",
+    "/tmp/fplt-defcon-rate-ab-confirm2"
+  ],
+  "config": {
+    "control": {
+      "model_id": "01bf5b3c85e60fa0",
+      "name": "dc_layered_defcon_mean_v1",
+      "sha256": "1ceedd179b413a6808d36862a8ff8b1c87a35f13c5fe7dbd3831b00204b18801"
+    },
+    "treatment": {
+      "model_id": "30367a901721a5d6",
+      "name": "dc_layered_v3",
+      "sha256": "b1a7158f17de9759a3d3d828c80ee838f89bdc20f1fbd085a88470025031de34"
+    }
+  },
+  "control_ref": null,
+  "control_ref_sha": null,
+  "data": {
+    "fixtures": {
+      "max_available_at": "2026-10-12 22:00:00+00:00",
+      "row_count": 4240,
+      "sha256": "cec03c69b9fa996fd44bff55fe6cdf53e0b9081b70dc3302539a3bb8913c43a9"
+    },
+    "gameweeks": {
+      "max_available_at": "2026-07-01 00:00:00+00:00",
+      "row_count": 227,
+      "sha256": "93855742846949797a49ecc3b68ad92d7893ca07a9dd9db35ebef39070262175"
+    },
+    "player_fixture_stats": {
+      "max_available_at": "2026-10-12 22:00:00+00:00",
+      "row_count": 142912,
+      "sha256": "459e2f755b774fc4bdf5294a036f2d94b4aaaf3c3238a8b13e9db224ab526309"
+    },
+    "player_status": {
+      "max_available_at": "2026-10-10 09:30:00+00:00",
+      "row_count": 137381,
+      "sha256": "3c9519eae2d285c666ada5cb38074c38ef2bac038b6834156d8082da23ae9fef"
+    }
+  },
+  "eval_name": "defcon_rate_ab",
+  "folds": [
+    {
+      "as_of": "2025-26_gw20",
+      "gw": 20,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw21",
+      "gw": 21,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw22",
+      "gw": 22,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw23",
+      "gw": 23,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw24",
+      "gw": 24,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw25",
+      "gw": 25,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw26",
+      "gw": 26,
+      "n_test": 1844,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw27",
+      "gw": 27,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw28",
+      "gw": 28,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw29",
+      "gw": 29,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw30",
+      "gw": 30,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw31",
+      "gw": 31,
+      "n_test": 1356,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw32",
+      "gw": 32,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw33",
+      "gw": 33,
+      "n_test": 2190,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw34",
+      "gw": 34,
+      "n_test": 1174,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw35",
+      "gw": 35,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw36",
+      "gw": 36,
+      "n_test": 1846,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw37",
+      "gw": 37,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    },
+    {
+      "as_of": "2025-26_gw38",
+      "gw": 38,
+      "n_test": 1682,
+      "n_train": null,
+      "season": "2025-26"
+    }
+  ],
+  "force_inconclusive": true,
+  "fplt_version": "0.1.0",
+  "git_dirty": true,
+  "git_sha": "ed7a7988fc0e566f472292b5cae6bbd7432efb31",
+  "market_prior_source": null,
+  "n_sims": 10000,
+  "os": "Linux-6.12.113+-x86_64-with-glibc2.39",
+  "peak_rss": {
+    "both": 514600
+  },
+  "python": "3.13.18",
+  "question_type": "improvement",
+  "seed": 0,
+  "treatment_ref": null,
+  "treatment_ref_sha": null,
+  "uv_lock_sha256": "e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73",
+  "verdict": "inconclusive",
+  "wall_clock_s": {
+    "both": 319.545899495
+  },
+  "window": {
+    "from_gw": 20,
+    "modes": [
+      "walk_forward"
+    ],
+    "seasons": [
+      "2025-26"
+    ],
+    "seasons_back": 4,
+    "to_gw": 38
+  }
+}

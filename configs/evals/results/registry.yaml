@@ -8,12 +8,13 @@ entries:
   path: modelspec
   verdict: keep
   provisional: true
-  provisional_reason: Until FDB-73 / eval protocol sets an interim keep rule and independent confirmation
-    windows
+  provisional_reason: FDB-255 protocol reconfirm failed interim keep (RMSE worse on disjoint
+    2025-26 GW1–19 development and GW20–38 confirmation). Production dc_layered_v3
+    stays rate until an explicit flip PR — no silent un-flip.
   eval_spec: defcon_rate_ab
-  control: dc_layered_v2
-  treatment: dc_layered_defcon_rate_v1
-  store_doc: defcon-rate-promote.md
+  control: dc_layered_defcon_mean_v1
+  treatment: dc_layered_v3
+  store_doc: defcon-rate-confirm.md
   windows:
   - role: primary
     seasons: [2025-26]
@@ -27,7 +28,7 @@ entries:
     control_model_id: b12aad1575ff0d34
     treatment_model_id: f1737b858fb59aa8
     reconstructed_from: internal/defcon-rate-promote/primary-recommendation.md
-    note: Full audit.json was not archived; hashes reconstructed from recommendation.md
+    note: FDB-211 nested primary (historical). Full audit.json was not archived.
   - role: confirm
     seasons: [2025-26]
     from_gw: 20
@@ -40,8 +41,47 @@ entries:
     control_model_id: b12aad1575ff0d34
     treatment_model_id: f1737b858fb59aa8
     reconstructed_from: internal/defcon-rate-promote/confirm-recommendation.md
-    note: Full audit.json was not archived; hashes reconstructed from recommendation.md
-  notes: Written keep; runner stayed inconclusive. Flipped into production dc_layered_v2.
+    note: FDB-211 nested confirm (historical; not protocol-independent).
+  - role: development
+    seasons: [2025-26]
+    from_gw: 1
+    to_gw: 19
+    audit: results/defcon_rate/development/audit.json
+    git_sha: ed7a7988fc0e566f472292b5cae6bbd7432efb31
+    git_dirty: true
+    uv_lock_sha256: e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73
+    runner_verdict: inconclusive
+    data_sha256:
+      fixtures: cec03c69b9fa996fd44bff55fe6cdf53e0b9081b70dc3302539a3bb8913c43a9
+      gameweeks: 93855742846949797a49ecc3b68ad92d7893ca07a9dd9db35ebef39070262175
+      player_fixture_stats: 459e2f755b774fc4bdf5294a036f2d94b4aaaf3c3238a8b13e9db224ab526309
+      player_status: 3c9519eae2d285c666ada5cb38074c38ef2bac038b6834156d8082da23ae9fef
+    control_model_id: 01bf5b3c85e60fa0
+    control_spec_sha256: 1ceedd179b413a6808d36862a8ff8b1c87a35f13c5fe7dbd3831b00204b18801
+    treatment_model_id: 30367a901721a5d6
+    treatment_spec_sha256: b1a7158f17de9759a3d3d828c80ee838f89bdc20f1fbd085a88470025031de34
+    note: FDB-255 protocol development; RMSE Δ −0.00081 (rate worse).
+  - role: protocol_confirm
+    seasons: [2025-26]
+    from_gw: 20
+    to_gw: 38
+    audit: results/defcon_rate/protocol_confirm/audit.json
+    git_sha: ed7a7988fc0e566f472292b5cae6bbd7432efb31
+    git_dirty: true
+    uv_lock_sha256: e9ae5f72e824c4d614230105110022eb159fb9c422befd6ad0c0ea8e26a5dd73
+    runner_verdict: inconclusive
+    data_sha256:
+      fixtures: cec03c69b9fa996fd44bff55fe6cdf53e0b9081b70dc3302539a3bb8913c43a9
+      gameweeks: 93855742846949797a49ecc3b68ad92d7893ca07a9dd9db35ebef39070262175
+      player_fixture_stats: 459e2f755b774fc4bdf5294a036f2d94b4aaaf3c3238a8b13e9db224ab526309
+      player_status: 3c9519eae2d285c666ada5cb38074c38ef2bac038b6834156d8082da23ae9fef
+    control_model_id: 01bf5b3c85e60fa0
+    control_spec_sha256: 1ceedd179b413a6808d36862a8ff8b1c87a35f13c5fe7dbd3831b00204b18801
+    treatment_model_id: 30367a901721a5d6
+    treatment_spec_sha256: b1a7158f17de9759a3d3d828c80ee838f89bdc20f1fbd085a88470025031de34
+    note: FDB-255 protocol confirm; RMSE Δ −0.00188 (rate worse); MAE Δ +0.00628.
+  notes: FDB-211 written keep flipped production (now dc_layered_v3). FDB-255 protocol
+    windows fail interim RMSE keep — provisional retained; no silent un-flip.
 - id: price_within_horizon
   date: '2026-11-23'
   task: FDB-218

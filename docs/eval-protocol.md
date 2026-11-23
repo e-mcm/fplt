@@ -2,7 +2,7 @@
 
 *Standing Project protocol (2026-11-23). Complements [`feature-eval-pipeline.md`](feature-eval-pipeline.md) (runner / EvalSpec) and [`evaluation-north-star.md`](evaluation-north-star.md) (what to measure). Does not replace either.*
 
-**Status:** Interim. Addresses the gap between promote-eval’s auto-`inconclusive` (FDB-73 thresholds unset) and recent **written** keeps (defcon-rate, price-within-horizon). Defcon-rate remains **provisional** until re-confirmed on independent windows; within-horizon `mean_gw_delta` was **confirmed** under §2.3 (FDB-256 — [`price-forecast-confirm.md`](price-forecast-confirm.md)).
+**Status:** Interim. Addresses the gap between promote-eval’s auto-`inconclusive` (FDB-73 thresholds unset) and recent **written** keeps (defcon-rate, price-within-horizon). Defcon-rate remains **provisional** after FDB-255 protocol reconfirm **failed** interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md)); within-horizon `mean_gw_delta` was **confirmed** under §2.3 (FDB-256 — [`price-forecast-confirm.md`](price-forecast-confirm.md)).
 
 **Related tasks:** FDB-225 (this doc + reference board + north-star fixes), FDB-228 (deterministic HiGHS), FDB-227 (decisions-suite gate — §8, landed in loader), FDB-226 (v3 rename plan — stub §9).
 
@@ -74,7 +74,7 @@ Same shape via chip / horizon boards ([`promote-pipeline-unified.md`](promote-pi
 
 | Keep | Status | Notes |
 |---|---|---|
-| Defcon-rate → production `dc_layered_v3` | **Provisional** | Confirmation GWs nested inside primary; re-confirm on a disjoint window / second season under §1–§2. Compose renamed in FDB-226 (frozen mean-wire `dc_layered_v2`). |
+| Defcon-rate → production `dc_layered_v3` | **Provisional** (FDB-255 confirm **fail**) | Protocol disjoint GW1–19 / GW20–38 failed interim RMSE keep ([`defcon-rate-confirm.md`](defcon-rate-confirm.md)). Leave production rate until an explicit flip PR. Compose renamed in FDB-226 (frozen mean-wire `dc_layered_v2`). |
 | Within-horizon `mean_gw_delta` price forecast (live default) | **Confirmed** (FDB-256) | Independent confirmation season 2024-25 logged under §2.3 — [`price-forecast-confirm.md`](price-forecast-confirm.md). Live default stays. |
 
 Do **not** silently un-flip provisional rows. New levers must follow §1–§2; revisit provisional rows when sealed / confirmation capacity exists.

@@ -28,9 +28,17 @@ def test_committed_registry_loads_and_links_audits() -> None:
     defcon = entry_by_id(registry, "defcon_rate")
     assert defcon.verdict == "keep"
     assert defcon.provisional is True
+    assert defcon.provisional_reason is not None
+    assert "FDB-255" in defcon.provisional_reason
     assert defcon.eval_spec == "defcon_rate_ab"
+    assert defcon.treatment == "dc_layered_v3"
     assert defcon.windows[0].audit == "results/defcon_rate/primary/audit.json"
     assert defcon.windows[0].git_sha is not None
+    roles = {w.role for w in defcon.windows}
+    assert {"primary", "confirm", "development", "protocol_confirm"} <= roles
+    protocol = next(w for w in defcon.windows if w.role == "protocol_confirm")
+    assert protocol.audit == "results/defcon_rate/protocol_confirm/audit.json"
+    assert protocol.from_gw == 20 and protocol.to_gw == 38
 
     price = entry_by_id(registry, "price_within_horizon")
     assert price.verdict == "keep"
