@@ -43,6 +43,7 @@ from fplt.settings import get_settings
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
+    binds_timing_artifacts,
     format_kind_summary,
     timed_phase,
     timing_session,
@@ -86,6 +87,7 @@ class EvalBoardConfig(Config):
     steps: int = 1
 
 
+@binds_timing_artifacts()
 def run_eval_board(
     data_dir: Path,
     season: str,
@@ -186,7 +188,7 @@ def run_eval_board(
         "steps": steps,
     }
     logger.info(format_kind_summary("eval_board", board_timings, meta=meta))
-    write_timing_record(data_dir, "eval_board", board_timings, meta=meta)
+    write_timing_record("eval_board", board_timings, meta=meta)
     if skipped:
         logger.info(skipped)
     return EvalResult(specs=tuple(ran), skipped_openfpl=skipped)
@@ -230,7 +232,7 @@ def _run_openfpl(
     pit = PITData(store)
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
     model = get_model(spec.kind)(spec)
-    frame = walk_forward(model, pit, as_ofs, steps=steps, timing_dir=data_dir)
+    frame = walk_forward(model, pit, as_ofs, steps=steps)
     append_predictions(data_dir, frame)
     return spec
 

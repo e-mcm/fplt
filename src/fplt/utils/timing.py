@@ -2,7 +2,9 @@
 
 Records named durations into an active session, formats them for ``logging``,
 and optionally persists a JSON artifact agents can aggregate into a hotspot
-report. Nested ``timed_phase`` calls (for example ``fit/score`` under ``fit``)
+report. The artifact data root is ContextVar-scoped via ``timing_artifacts`` /
+``@binds_timing_artifacts`` so helpers need not take a ``timing_dir`` argument.
+Nested ``timed_phase`` calls (for example ``fit/score`` under ``fit``)
 accumulate separately so summaries can show top-level shares plus optional
 sub-breakdowns.
 
@@ -20,11 +22,13 @@ JSON shape (``schema_version`` 1)::
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import logging
 import re
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -106,6 +110,9 @@ class TimingSession:
 _active: ContextVar[TimingSession | None] = ContextVar(
     "fplt_backtest_timing", default=None
 )
+_artifact_root: ContextVar[Path | None] = ContextVar(
+    "fplt_timing_artifacts", default=None
+)
 
 
 @contextmanager
@@ -146,6 +153,69 @@ def timed_phase(name: str) -> Iterator[None]:
         bucket = _active.get()
         if bucket is not None:
             bucket.add(name, elapsed)
+
+
+def active_timing_dir() -> Path | None:
+    """Return the ContextVar-scoped data root for timing JSON, if any."""
+    return _artifact_root.get()
+
+
+@contextmanager
+def timing_artifacts(data_dir: Path) -> Iterator[Path]:
+    """Install ``data_dir`` as the default root for ``write_timing_record``.
+
+    Nested entry points push/pop via ContextVar so library helpers (for
+    example ``walk_forward``) need not take a ``timing_dir`` argument.
+
+    Args:
+        data_dir: Install root (same as ``Settings.data_dir``). Artifacts
+            land under ``data_dir/timing/``.
+
+    Yields:
+        The normalised ``data_dir`` path.
+    """
+    root = Path(data_dir)
+    token = _artifact_root.set(root)
+    try:
+        yield root
+    finally:
+        _artifact_root.reset(token)
+
+
+def binds_timing_artifacts[**P, R](
+    param: str = "data_dir",
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Decorator: wrap a call in ``timing_artifacts`` from ``param``.
+
+    Reads the wrapped function's ``param`` (default ``data_dir``) and
+    installs it for the duration of the call. When the bound value is
+    ``None``, the wrap is a no-op.
+
+    Example::
+
+        @binds_timing_artifacts()
+        def run_backtest(data_dir: Path, ...) -> list[ModelSpec]:
+            ...
+    """
+
+    def decorator(fn: Callable[P, R]) -> Callable[P, R]:
+        signature = inspect.signature(fn)
+        if param not in signature.parameters:
+            raise TypeError(f"{fn.__qualname__} has no parameter {param!r}")
+
+        @functools.wraps(fn)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            bound = signature.bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            raw = bound.arguments.get(param)
+            if raw is None:
+                return fn(*args, **kwargs)
+            with timing_artifacts(Path(raw)):
+                return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def timing_root(data_dir: Path) -> Path:
@@ -191,29 +261,35 @@ def build_timing_record(
 
 
 def write_timing_record(
-    data_dir: Path,
     kind: str,
     session: TimingSession,
     meta: Mapping[str, Any] | None = None,
+    *,
+    data_dir: Path | None = None,
 ) -> Path | None:
-    """Persist a timing JSON under ``data_dir/timing/`` (never overwrite).
+    """Persist a timing JSON under ``…/timing/`` (never overwrite).
 
-    Empty sessions are skipped (returns ``None``). Filenames include kind,
-    optional model slug, and a UTC timestamp so repeats do not collide.
+    Empty sessions are skipped (returns ``None``). When ``data_dir`` is
+    omitted, uses the active ``timing_artifacts`` ContextVar root; if neither
+    is set, returns ``None`` without writing. Filenames include kind, optional
+    model slug, and a UTC timestamp so repeats do not collide.
 
     Args:
-        data_dir: Install root (same as ``Settings.data_dir``).
         kind: Surface label.
         session: Accumulated phases.
         meta: Optional run identity.
+        data_dir: Install root override. Defaults to ``active_timing_dir()``.
 
     Returns:
-        Path written, or ``None`` when nothing was recorded.
+        Path written, or ``None`` when nothing was recorded / no root set.
     """
     if not session.phases():
         return None
+    root_dir = data_dir if data_dir is not None else active_timing_dir()
+    if root_dir is None:
+        return None
     record = build_timing_record(kind, session, meta)
-    root = timing_root(data_dir)
+    root = timing_root(root_dir)
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     model = meta.get("model") if meta else None

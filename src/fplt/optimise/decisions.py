@@ -79,6 +79,7 @@ from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
+    binds_timing_artifacts,
     format_kind_summary,
     timed_phase,
     timing_session,
@@ -552,6 +553,7 @@ def resolve_squad_state(
     return state
 
 
+@binds_timing_artifacts()
 def run_plan(
     data_dir: Path,
     model_name: str,
@@ -766,7 +768,7 @@ def run_plan(
         "chip_arm": chip_arm,
     }
     logger.info(format_kind_summary("plan", plan_timings, meta=meta))
-    write_timing_record(data_dir, "plan", plan_timings, meta=meta)
+    write_timing_record("plan", plan_timings, meta=meta)
     logger.info(
         "plan written path=%s hits=%s points=%.2f chips=%s",
         path,
@@ -867,6 +869,7 @@ def _require_usable_points(
             )
 
 
+@binds_timing_artifacts()
 def run_decisions(
     data_dir: Path,
     model_name: str,
@@ -982,7 +985,7 @@ def run_decisions(
         "chip_arm": chip_arm,
     }
     logger.info(format_kind_summary("decisions", decision_timings, meta=meta))
-    write_timing_record(data_dir, "decisions", decision_timings, meta=meta)
+    write_timing_record("decisions", decision_timings, meta=meta)
     return path
 
 

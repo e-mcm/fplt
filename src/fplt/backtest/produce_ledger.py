@@ -25,6 +25,7 @@ from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec, get_model
 from fplt.types import GWKey
+from fplt.utils.timing import timing_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -338,17 +339,17 @@ def produce_ledger(
         spec.model_id,
     )
     started = time.perf_counter()
-    frame = _predict_window(
-        predictor,
-        pit,
-        season,
-        mode=mode,
-        fit_gw=fit_at,
-        test_from_gw=test_from_gw,
-        test_to_gw=test_to_gw,
-        steps=steps,
-        timing_dir=data_dir,
-    )
+    with timing_artifacts(data_dir):
+        frame = _predict_window(
+            predictor,
+            pit,
+            season,
+            mode=mode,
+            fit_gw=fit_at,
+            test_from_gw=test_from_gw,
+            test_to_gw=test_to_gw,
+            steps=steps,
+        )
     logger.info(
         "produce_ledger wrote %s rows in %.1fs (cache_miss digest=%s)",
         frame.height,
@@ -376,14 +377,13 @@ def _predict_window(
     test_from_gw: int,
     test_to_gw: int,
     steps: int,
-    timing_dir: Path | None = None,
 ) -> pl.DataFrame:
     """Fit/predict one mode; keep only as-of rows inside the test window."""
     if mode == "walk_forward":
         as_ofs = [GWKey(season, gw) for gw in range(test_from_gw, test_to_gw + 1)]
-        return walk_forward(model, pit, as_ofs, steps=steps, timing_dir=timing_dir)
+        return walk_forward(model, pit, as_ofs, steps=steps)
     as_ofs = [GWKey(season, gw) for gw in range(fit_gw, test_to_gw + 1)]
-    frame = walk_forward(model, pit, as_ofs, steps=steps, timing_dir=timing_dir)
+    frame = walk_forward(model, pit, as_ofs, steps=steps)
     if frame.is_empty() or fit_gw == test_from_gw:
         return frame
     return frame.filter(

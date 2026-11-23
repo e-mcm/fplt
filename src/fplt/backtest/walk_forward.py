@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 
 import polars as pl
 
@@ -70,15 +69,15 @@ def walk_forward(
     as_ofs: list[GWKey],
     steps: int = DEFAULT_PROJECTION_HORIZON,
     run_kind: str = "backtest",
-    timing_dir: Path | None = None,
 ) -> pl.DataFrame:
     """Fit and predict at each as-of deadline.
 
     Logs per-gameweek wall times split into setup / fit / predict / write, and
     an end-of-run summary with totals and shares. Nested model phases (when
     recorded via ``timed_phase``) appear after ``|`` on the summary line.
-    When ``timing_dir`` is set, also writes a JSON timing artifact under
-    ``timing_dir/timing/`` for ``fplt perf-report``.
+    When a ``timing_artifacts`` ContextVar root is active (entry points use
+    ``@binds_timing_artifacts`` / ``with timing_artifacts(data_dir)``), also
+    writes a JSON artifact under ``data_dir/timing/`` for ``fplt perf-report``.
 
     Args:
         model: Predictor whose ``spec`` supplies the refit policy and window.
@@ -88,7 +87,6 @@ def walk_forward(
             so planning can request H=8–10 without re-predicting; CLI
             backtest/compare still pass an explicit ``steps``.
         run_kind: ``backtest`` or ``live``.
-        timing_dir: Optional data root that receives ``timing/*.json``.
 
     Returns:
         A ``LedgerSchema`` frame. ``actual_pts`` and ``actual_minutes`` are null.
@@ -143,21 +141,19 @@ def walk_forward(
         if not recorded.is_empty():
             frames.append(recorded)
     logger.info(format_run_summary(model.spec.name, run_timings, n_gw=total))
-    if timing_dir is not None:
-        season = as_ofs[0].season if as_ofs else None
-        write_timing_record(
-            timing_dir,
-            "walk_forward",
-            run_timings,
-            meta={
-                "model": model.spec.name,
-                "model_id": model.spec.model_id,
-                "n_gw": total,
-                "steps": steps,
-                "run_kind": run_kind,
-                "season": season,
-            },
-        )
+    season = as_ofs[0].season if as_ofs else None
+    write_timing_record(
+        "walk_forward",
+        run_timings,
+        meta={
+            "model": model.spec.name,
+            "model_id": model.spec.model_id,
+            "n_gw": total,
+            "steps": steps,
+            "run_kind": run_kind,
+            "season": season,
+        },
+    )
     combined = (
         pl.DataFrame(schema=LEDGER_COLUMNS)
         if not frames

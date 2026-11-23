@@ -17,6 +17,8 @@ from fplt.models.spec import ModelSpec
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
+    active_timing_dir,
+    binds_timing_artifacts,
     build_timing_record,
     classify_phase,
     format_gw_breakdown,
@@ -26,6 +28,7 @@ from fplt.utils.timing import (
     load_timing_records,
     rank_hotspots,
     timed_phase,
+    timing_artifacts,
     timing_root,
     timing_session,
     write_timing_record,
@@ -75,6 +78,29 @@ def test_timed_phase_records_only_with_active_session() -> None:
     assert orphan.get("fit/score") > 0
 
 
+def test_timing_artifacts_context_and_decorator(tmp_path: Path) -> None:
+    session = TimingSession()
+    session.add("predict", 1.0)
+    assert write_timing_record("walk_forward", session) is None
+    assert active_timing_dir() is None
+    with timing_artifacts(tmp_path):
+        assert active_timing_dir() == tmp_path
+        path = write_timing_record("walk_forward", session, meta={"model": "ctx"})
+    assert active_timing_dir() is None
+    assert path is not None
+    assert path.parent == timing_root(tmp_path)
+
+    @binds_timing_artifacts()
+    def _entry(data_dir: Path) -> Path | None:
+        bag = TimingSession()
+        bag.add("fit", 2.0)
+        return write_timing_record("plan", bag, meta={"model": "dec"})
+
+    written = _entry(tmp_path)
+    assert written is not None
+    assert written.parent == timing_root(tmp_path)
+
+
 def test_build_and_write_timing_record(tmp_path: Path) -> None:
     session = TimingSession()
     session.add("fit", 2.0)
@@ -91,9 +117,9 @@ def test_build_and_write_timing_record(tmp_path: Path) -> None:
     assert record["phases"]["predict/fixtures"] == 7.5
     assert "recorded_at" in record
     empty = TimingSession()
-    assert write_timing_record(tmp_path, "walk_forward", empty) is None
+    assert write_timing_record("walk_forward", empty, data_dir=tmp_path) is None
     path = write_timing_record(
-        tmp_path, "walk_forward", session, meta={"model": "demo"}
+        "walk_forward", session, meta={"model": "demo"}, data_dir=tmp_path
     )
     assert path is not None
     assert path.parent == timing_root(tmp_path)
@@ -138,7 +164,9 @@ def test_perf_report_cli_json(
     session = TimingSession()
     session.add("predict/fixtures", 12.0)
     session.add("fit", 3.0)
-    write_timing_record(tmp_path, "walk_forward", session, meta={"model": "cli"})
+    write_timing_record(
+        "walk_forward", session, meta={"model": "cli"}, data_dir=tmp_path
+    )
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     try:
@@ -155,10 +183,10 @@ def test_load_timing_records_filters_kind(tmp_path: Path) -> None:
     session = TimingSession()
     session.add("optimise/milp", 3.0)
     session.add("plan/chips", 1.0)
-    write_timing_record(tmp_path, "plan", session, meta={"model": "x"})
+    write_timing_record("plan", session, meta={"model": "x"}, data_dir=tmp_path)
     walk = TimingSession()
     walk.add("predict", 9.0)
-    write_timing_record(tmp_path, "walk_forward", walk, meta={"model": "y"})
+    write_timing_record("walk_forward", walk, meta={"model": "y"}, data_dir=tmp_path)
     plans = load_timing_records(tmp_path, kind="plan")
     assert len(plans) == 1
     assert plans[0]["kind"] == "plan"
@@ -193,13 +221,13 @@ def test_walk_forward_logs_fit_predict_split_and_summary(
     )
     as_ofs = [GWKey("2024-25", 1), GWKey("2024-25", 2)]
     with caplog.at_level(logging.INFO, logger="fplt.backtest.walk_forward"):
-        walk_forward(
-            _SlowMean(spec),
-            PITData(store),
-            as_ofs,
-            steps=1,
-            timing_dir=tmp_path,
-        )
+        with timing_artifacts(tmp_path):
+            walk_forward(
+                _SlowMean(spec),
+                PITData(store),
+                as_ofs,
+                steps=1,
+            )
     assert "gw 1 done in" in caplog.text
     assert "fit=" in caplog.text
     assert "predict=" in caplog.text
