@@ -12,6 +12,9 @@ params:
   l2: 1.0
   # Games of available appearances to full P(start) after an absence (P4).
   return_ramp_games: 2.0
+  # Extra GWs after next-round chance before the availability gate reaches 1
+  # (P3 horizon recovery). Step 0 uses this-round chance; step 1 uses next.
+  availability_recovery_games: 3.0
   # FPL status/chance/news gate (on here; off only in dc_layered_noavail_v1).
   use_availability_gate: true
   # API-Football overlay (off here; on in empirical_minutes_v2_injuries /

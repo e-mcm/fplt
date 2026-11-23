@@ -59,6 +59,7 @@ def test_spec_registers_as_a_component() -> None:
     assert specs["empirical_minutes_v2"].params["soft_squad"] is True
     assert specs["empirical_minutes_v2"].params["logistic_blend"] == 0.5
     assert specs["empirical_minutes_v2"].params["return_ramp_games"] == 2.0
+    assert specs["empirical_minutes_v2"].params["availability_recovery_games"] == 3.0
 
 
 def test_a_regular_starter_puts_mass_on_sixty_plus(tmp_path: Path) -> None:
@@ -81,6 +82,51 @@ def test_chance_of_zero_forces_the_bench(tmp_path: Path) -> None:
     )
     dist = _predict(store, pl.DataFrame({"player_key": [1], "fixture_id": [8]}))
     assert dist.pmf[0, 0] == pytest.approx(1.0)
+
+
+def test_horizon_gate_uses_next_chance_not_this_round(tmp_path: Path) -> None:
+    """This-round zero must not zero the whole plan when next-round is full (P3)."""
+    store = _store(
+        tmp_path,
+        stats=[(1, "MID", 1, gw, 90, 1) for gw in range(1, 8)],
+        # (status, chance_next, chance_this) — available history, gated now.
+        status={1: ("a", 100.0, 0.0)},
+        max_gw=10,
+    )
+    _expose_future_fixtures(store, from_gw=8)
+    model = EmpiricalMinutesV2(_spec(soft_squad=False))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    model.fit(view)
+    this_round = model.predict(
+        view, pl.DataFrame({"player_key": [1], "fixture_id": [8]})
+    )
+    next_round = model.predict(
+        view, pl.DataFrame({"player_key": [1], "fixture_id": [9]})
+    )
+    far = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [10]}))
+    assert this_round.pmf[0, 0] == pytest.approx(1.0)
+    assert next_round.pmf[0, 0] < 0.5
+    assert far.pmf[0, 0] < 0.5
+
+
+def test_horizon_gate_recovers_when_both_chances_zero(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        stats=[(1, "MID", 1, gw, 90, 1) for gw in range(1, 8)],
+        status={1: ("a", 0.0, 0.0)},
+        max_gw=12,
+    )
+    _expose_future_fixtures(store, from_gw=8)
+    model = EmpiricalMinutesV2(_spec(soft_squad=False, availability_recovery_games=3.0))
+    view = PITData(store).view(GWKey(_SEASON, 8))
+    model.fit(view)
+    this_round = model.predict(
+        view, pl.DataFrame({"player_key": [1], "fixture_id": [8]})
+    )
+    far = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [12]}))
+    assert this_round.pmf[0, 0] == pytest.approx(1.0)
+    # Step 4 with recovery_games=3 → gate 1.0, so minutes mass returns.
+    assert far.pmf[0, 0] < 0.5
 
 
 def test_availability_gate_off_ignores_zero_chance(tmp_path: Path) -> None:
@@ -475,6 +521,18 @@ def _store(
                         [status[player][1] for player in listed],
                         dtype=pl.Float64,
                     ),
+                    "chance_of_playing_this_round": pl.Series(
+                        "chance_of_playing_this_round",
+                        [
+                            (
+                                float(status[player][2])
+                                if len(status[player]) > 2
+                                else status[player][1]
+                            )
+                            for player in listed
+                        ],
+                        dtype=pl.Float64,
+                    ),
                     "available_at": [_START] * len(listed),
                     "source": ["fpl_api"] * len(listed),
                 }
@@ -509,6 +567,23 @@ def _store(
 
 def _kick(gw: int) -> datetime:
     return datetime(2024, 8, 10, 15, tzinfo=UTC) + timedelta(days=7 * (gw - 1))
+
+
+def _expose_future_fixtures(store: DataStore, *, from_gw: int) -> None:
+    """Stamp schedule rows so fixtures from ``from_gw`` are deadline-visible."""
+    fixtures = store.read("fixtures")
+    early = _START
+    store.write(
+        "fixtures",
+        _utc(
+            fixtures.with_columns(
+                pl.when(pl.col("gw") >= from_gw)
+                .then(pl.lit(early))
+                .otherwise(pl.col("available_at"))
+                .alias("available_at")
+            )
+        ),
+    )
 
 
 def _utc(frame: pl.DataFrame) -> pl.DataFrame:

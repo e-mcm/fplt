@@ -4,5 +4,7 @@ params:
   window: 5
   shrinkage: 5
   doubtful_chance: 0.5
+  # Extra GWs after next-round chance before the availability gate reaches 1.
+  availability_recovery_games: 3.0
 refit: every_gw
 seed: 0
