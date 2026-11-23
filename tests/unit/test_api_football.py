@@ -12,11 +12,15 @@ import polars as pl
 from fplt.data.api_football import (
     available_at_from_path,
     categorize_injury,
+    fixtures_raw_path,
     ingest_api_football,
     injuries_raw_path,
+    load_competitions,
     load_id_maps,
+    rows_from_fixtures_payload,
     rows_from_injuries_payload,
     season_label_from_api_year,
+    stage_competition_fixtures,
     stage_player_injuries,
 )
 from fplt.data.pit import PITData
@@ -25,6 +29,7 @@ from fplt.types import GWKey
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "api_football"
 _PAYLOAD = _FIXTURES / "injuries.json"
+_FIXTURES_PAYLOAD = _FIXTURES / "fixtures.json"
 _MAPS = _FIXTURES / "id_maps.yaml"
 _CAPTURE = datetime(2024, 8, 15, 12, 0, tzinfo=UTC)
 _DEADLINE = datetime(2024, 8, 16, 10, 0, tzinfo=UTC)
@@ -120,6 +125,77 @@ def test_ingest_skips_other_seasons(tmp_path: Path) -> None:
     store = DataStore(tmp_path / "data")
     players, teams = load_id_maps(_MAPS)
     assert ingest_api_football(store, raw, players, teams, seasons=["2024-25"]) == 0
+
+
+def test_load_competitions_reads_repo_yaml() -> None:
+    pairs = load_competitions()
+    assert (2, "ucl") in pairs
+    assert (45, "fa_cup") in pairs
+    assert all(league_id != 39 for league_id, _name in pairs)
+
+
+def test_fixtures_rows_keep_epl_sides_only() -> None:
+    payload = json.loads(_FIXTURES_PAYLOAD.read_text(encoding="utf-8"))
+    _players, teams = load_id_maps(_MAPS)
+    rows, unmapped = rows_from_fixtures_payload(
+        payload,
+        season="2024-25",
+        available_at=_CAPTURE,
+        team_keys=teams,
+        competition="ucl",
+        league_id=2,
+    )
+    assert {int(row["api_fixture_id"]) for row in rows} == {9001, 9003}
+    by_id = {int(row["api_fixture_id"]): row for row in rows}
+    assert by_id[9001]["team_h_key"] == 14
+    assert by_id[9001]["team_a_key"] is None
+    assert by_id[9003]["team_h_key"] == 3
+    assert 9999 in unmapped
+    assert 50 in unmapped
+
+
+def test_stage_competition_fixtures_and_pit(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    _write_gameweek(store)
+    payload = json.loads(_FIXTURES_PAYLOAD.read_text(encoding="utf-8"))
+    _players, teams = load_id_maps(_MAPS)
+    stage_competition_fixtures(
+        store,
+        payload,
+        "2024-25",
+        _CAPTURE,
+        teams,
+        competition="ucl",
+        league_id=2,
+    )
+    view = PITData(store).view(GWKey("2024-25", 1))
+    visible = view.table("competition_fixtures").collect()
+    assert visible.height == 2
+    assert set(visible["competition"].to_list()) == {"ucl"}
+
+
+def test_ingest_stages_fixture_snapshots(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    path = fixtures_raw_path(raw, "2024-25", 2, _CAPTURE)
+    path.parent.mkdir(parents=True)
+    payload = json.loads(_FIXTURES_PAYLOAD.read_text(encoding="utf-8"))
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    players, teams = load_id_maps(_MAPS)
+    store = DataStore(tmp_path / "data")
+    assert (
+        ingest_api_football(
+            store,
+            raw,
+            players,
+            teams,
+            competitions=[(2, "ucl")],
+        )
+        == 1
+    )
+    staged = store.read("competition_fixtures")
+    assert staged.height == 2
+    assert staged["competition"].to_list() == ["ucl", "ucl"]
 
 
 def _write_gameweek(store: DataStore) -> None:

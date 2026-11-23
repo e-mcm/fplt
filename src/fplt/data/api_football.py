@@ -1,4 +1,4 @@
-"""Stage API-Football injuries. The caller supplies id maps."""
+"""Stage API-Football injuries and cup/Europe fixtures. Caller supplies id maps."""
 
 from __future__ import annotations
 
@@ -19,6 +19,12 @@ from fplt.schemas.staged import POLARS_SCHEMAS
 _ID_MAPS = (
     Path(__file__).resolve().parents[3] / "configs" / "api_football" / "id_maps.yaml"
 )
+_COMPETITIONS = (
+    Path(__file__).resolve().parents[3]
+    / "configs"
+    / "api_football"
+    / "competitions.yaml"
+)
 _LOG = logging.getLogger(__name__)
 _CAPTURED_RE = re.compile(r"captured_at=(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)")
 _SOURCE = "api_football"
@@ -27,6 +33,43 @@ _SOURCE = "api_football"
 def default_id_maps_path() -> Path:
     """Repo-root path to ``configs/api_football/id_maps.yaml``."""
     return _ID_MAPS
+
+
+def default_competitions_path() -> Path:
+    """Repo-root path to ``configs/api_football/competitions.yaml``."""
+    return _COMPETITIONS
+
+
+def load_competitions(path: Path | None = None) -> list[tuple[int, str]]:
+    """Load cup / Europe ``(league_id, competition_name)`` pairs from YAML.
+
+    Args:
+        path: Competitions YAML. Defaults to the repo config.
+
+    Returns:
+        Ordered ``(id, name)`` pairs used by fetch + stage.
+
+    Raises:
+        ValueError: The file is not a mapping or an entry is malformed.
+    """
+    target = path if path is not None else default_competitions_path()
+    loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+    if loaded is None:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"competitions at {target} must be a mapping")
+    raw = cast(dict[str, Any], loaded).get("competitions", [])
+    if not isinstance(raw, list):
+        raise ValueError("competitions must be a list")
+    out: list[tuple[int, str]] = []
+    for entry in cast(list[Any], raw):
+        if not isinstance(entry, dict):
+            raise ValueError("each competition entry must be a mapping")
+        item = cast(dict[str, Any], entry)
+        if "id" not in item or "name" not in item:
+            raise ValueError("competition entries need id and name")
+        out.append((int(item["id"]), str(item["name"])))
+    return out
 
 
 def load_id_maps(path: Path) -> tuple[dict[int, int], dict[int, int]]:
@@ -75,6 +118,22 @@ def injuries_raw_path(root: Path, season: str, captured_at: datetime) -> Path:
         / "injuries"
         / f"captured_at={stamp}"
         / "injuries.json.gz"
+    )
+
+
+def fixtures_raw_path(
+    root: Path, season: str, league_id: int, captured_at: datetime
+) -> Path:
+    """Write-once path for one cup/Europe fixtures snapshot."""
+    stamp = captured_at.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return (
+        root
+        / "api_football"
+        / f"season={season}"
+        / "fixtures"
+        / f"league={league_id}"
+        / f"captured_at={stamp}"
+        / "fixtures.json.gz"
     )
 
 
@@ -150,6 +209,35 @@ def iter_raw_injuries(
     return found
 
 
+def iter_raw_fixtures(
+    raw_root: Path, seasons: list[str] | None = None
+) -> list[tuple[Path, str, int]]:
+    """List write-once cup/Europe fixtures snapshots.
+
+    Args:
+        raw_root: Directory that corresponds to ``$FPLT_DATA_DIR/raw``.
+        seasons: Optional season labels to include; ``None`` means all.
+
+    Returns:
+        ``(path, season, league_id)`` triples sorted by path.
+    """
+    base = raw_root / "api_football"
+    if not base.exists():
+        return []
+    found: list[tuple[Path, str, int]] = []
+    pattern = "season=*/fixtures/league=*/captured_at=*/fixtures.json.gz"
+    for path in sorted(base.glob(pattern)):
+        # .../season=S/fixtures/league=L/captured_at=T/fixtures.json.gz
+        season = path.parents[3].name.removeprefix("season=")
+        league_part = path.parents[1].name
+        if not league_part.startswith("league="):
+            continue
+        if seasons is not None and season not in seasons:
+            continue
+        found.append((path, season, int(league_part.removeprefix("league="))))
+    return found
+
+
 def ingest_api_football(
     store: DataStore,
     raw_root: Path,
@@ -157,8 +245,9 @@ def ingest_api_football(
     team_keys: dict[int, int],
     *,
     seasons: list[str] | None = None,
+    competitions: list[tuple[int, str]] | None = None,
 ) -> int:
-    """Stage raw API-Football injuries snapshots into ``player_injuries``.
+    """Stage injuries and cup/Europe fixtures from write-once raw JSON.
 
     Args:
         store: Destination ``DataStore``.
@@ -166,9 +255,11 @@ def ingest_api_football(
         player_keys: API-Football player id → ``player_key``.
         team_keys: API-Football team id → ``team_key``.
         seasons: Optional season filter.
+        competitions: Optional ``(league_id, name)`` list; defaults to the
+            repo competitions config.
 
     Returns:
-        Number of snapshot files consumed.
+        Number of snapshot files consumed (injuries + fixtures).
     """
     count = 0
     unmapped_players: set[int] = set()
@@ -185,6 +276,27 @@ def ingest_api_football(
             team_keys,
         )
         unmapped_players.update(players)
+        unmapped_teams.update(teams)
+        count += 1
+    names = {
+        league_id: name
+        for league_id, name in (
+            competitions if competitions is not None else load_competitions()
+        )
+    }
+    for path, season, league_id in iter_raw_fixtures(raw_root, seasons):
+        payload = cast(dict[str, Any], read_json_gz(path))
+        available_at = available_at_from_path(path)
+        competition = names.get(league_id, f"league_{league_id}")
+        _, teams = stage_competition_fixtures(
+            store,
+            payload,
+            season,
+            available_at,
+            team_keys,
+            competition=competition,
+            league_id=league_id,
+        )
         unmapped_teams.update(teams)
         count += 1
     if unmapped_players:
@@ -312,13 +424,135 @@ def rows_from_injuries_payload(
     return rows, unmapped_players, unmapped_teams
 
 
+def stage_competition_fixtures(
+    store: DataStore,
+    payload: dict[str, Any],
+    season: str,
+    available_at: datetime,
+    team_keys: dict[int, int],
+    *,
+    competition: str,
+    league_id: int,
+) -> tuple[pl.DataFrame, set[int]]:
+    """Append one cup/Europe fixtures snapshot to ``competition_fixtures``.
+
+    Only fixtures with at least one mapped EPL ``team_key`` are kept — pure
+    non-EPL ties are dropped so the table stays minutes-relevant.
+
+    Args:
+        store: Destination for ``competition_fixtures``.
+        payload: Raw ``/fixtures`` JSON (``response`` list) or a bare list.
+        season: Season label stored on every row.
+        available_at: Capture time — PIT visibility stamp.
+        team_keys: API team id → ``team_key``.
+        competition: Stable competition label (e.g. ``ucl``).
+        league_id: API-Football league id.
+
+    Returns:
+        ``(staged_frame, unmapped_team_ids)``.
+    """
+    rows, unmapped_teams = rows_from_fixtures_payload(
+        payload,
+        season=season,
+        available_at=available_at,
+        team_keys=team_keys,
+        competition=competition,
+        league_id=league_id,
+    )
+    frame = pl.DataFrame(rows) if rows else _empty_competition_fixtures()
+    if not rows:
+        return store.write("competition_fixtures", frame), unmapped_teams
+    typed = frame.with_columns(
+        pl.col("team_h_key").cast(pl.Int64()),
+        pl.col("team_a_key").cast(pl.Int64()),
+    )
+    return store.write("competition_fixtures", typed), unmapped_teams
+
+
+def rows_from_fixtures_payload(
+    payload: dict[str, Any] | list[Any],
+    *,
+    season: str,
+    available_at: datetime,
+    team_keys: dict[int, int],
+    competition: str,
+    league_id: int,
+) -> tuple[list[dict[str, object]], set[int]]:
+    """Normalise an ``/fixtures`` payload into staged row dicts.
+
+    Args:
+        payload: Full API envelope or a bare ``response`` list.
+        season: FPL season label.
+        available_at: Capture UTC timestamp.
+        team_keys: API→FPL team map.
+        competition: Stable competition label.
+        league_id: API-Football league id stored on each row.
+
+    Returns:
+        Row dicts (EPL-involved only) plus unmapped API team ids seen.
+    """
+    entries = _response_entries(payload)
+    rows: list[dict[str, object]] = []
+    unmapped_teams: set[int] = set()
+    for raw_entry in entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = cast(dict[str, Any], raw_entry)
+        fixture = cast(dict[str, Any], entry.get("fixture") or {})
+        teams = cast(dict[str, Any], entry.get("teams") or {})
+        home = cast(dict[str, Any], teams.get("home") or {})
+        away = cast(dict[str, Any], teams.get("away") or {})
+        if fixture.get("id") is None:
+            continue
+        api_fixture_id = int(fixture["id"])
+        kickoff_raw = fixture.get("date")
+        if kickoff_raw is None:
+            continue
+        kickoff = _parse_kickoff(kickoff_raw)
+        api_team_h_id = int(home["id"]) if home.get("id") is not None else 0
+        api_team_a_id = int(away["id"]) if away.get("id") is not None else 0
+        team_h_key = team_keys.get(api_team_h_id) if api_team_h_id else None
+        team_a_key = team_keys.get(api_team_a_id) if api_team_a_id else None
+        if api_team_h_id and team_h_key is None:
+            unmapped_teams.add(api_team_h_id)
+        if api_team_a_id and team_a_key is None:
+            unmapped_teams.add(api_team_a_id)
+        if team_h_key is None and team_a_key is None:
+            continue
+        rows.append(
+            {
+                "season": season,
+                "api_fixture_id": api_fixture_id,
+                "competition": competition,
+                "league_id": league_id,
+                "team_h_key": team_h_key,
+                "team_a_key": team_a_key,
+                "api_team_h_id": api_team_h_id,
+                "api_team_a_id": api_team_a_id,
+                "kickoff_time": kickoff,
+                "available_at": available_at,
+                "source": _SOURCE,
+            }
+        )
+    return rows, unmapped_teams
+
+
+def _parse_kickoff(value: object) -> datetime:
+    """Parse an API-Football fixture ``date`` string as UTC."""
+    text = str(value)
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _response_entries(payload: dict[str, Any] | list[Any]) -> list[object]:
     if isinstance(payload, list):
         return cast(list[object], payload)
     response = payload.get("response", [])
     if isinstance(response, list):
         return cast(list[object], response)
-    raise ValueError("injuries payload response must be a list")
+    raise ValueError("API-Football payload response must be a list")
 
 
 def _int_map(value: object, label: str) -> dict[int, int]:
@@ -335,3 +569,7 @@ def _int_map(value: object, label: str) -> dict[int, int]:
 
 def _empty() -> pl.DataFrame:
     return pl.DataFrame(schema=POLARS_SCHEMAS["player_injuries"])
+
+
+def _empty_competition_fixtures() -> pl.DataFrame:
+    return pl.DataFrame(schema=POLARS_SCHEMAS["competition_fixtures"])

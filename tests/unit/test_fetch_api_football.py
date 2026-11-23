@@ -11,7 +11,10 @@ import pytest
 
 from scripts.fetch_api_football import (
     capture,
+    capture_fixtures,
+    fixtures_path,
     injuries_path,
+    load_competitions,
     resolve_api_key,
     should_fetch,
     write_once,
@@ -110,3 +113,35 @@ def test_main_exits_without_key(
     for name in ("FPLT_API_FOOTBALL_KEY", "API_FOOTBALL_KEY", "APISPORTS_KEY"):
         monkeypatch.delenv(name, raising=False)
     assert mod.main(["--out", str(tmp_path), "--season", "2024-25"]) == 2
+
+
+def test_load_competitions_includes_cups_not_epl() -> None:
+    pairs = load_competitions()
+    assert (2, "ucl") in pairs
+    assert all(league_id != 39 for league_id, _ in pairs)
+
+
+def test_capture_fixtures_writes_from_mock_http(tmp_path: Path) -> None:
+    season = "2024-25"
+    moment = datetime(2024, 8, 15, 12, 0, tzinfo=UTC)
+    payload = {"response": [{"fixture": {"id": 1}}]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/fixtures")
+        assert "league=2" in str(request.url)
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport) as client:
+        result = capture_fixtures(
+            client,
+            tmp_path,
+            season,
+            2,
+            now=moment,
+            min_interval_hours=0.0,
+        )
+    assert result.wrote is True
+    assert result.kind == "fixtures"
+    assert result.path == fixtures_path(tmp_path, season, 2, moment)
+    assert result.path is not None and result.path.exists()

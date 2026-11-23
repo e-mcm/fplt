@@ -12,7 +12,8 @@ off-fork ``dc_layered_noavail_v1``). Optional ``use_injury_overlay`` applies
 staged ``player_injuries``. Optional ``predicted_xi`` mixes P(start) toward
 staged ``predicted_lineups`` near kickoff. Production ``dc_layered_v3`` keeps
 injury/XI overlays off — enable via ``dc_layered_injuries_v1`` /
-``dc_layered_predicted_xi_v1``.
+``dc_layered_predicted_xi_v1``. Rest / congestion use all-comp kickoffs
+(API-Football cups + Europe) when ``competition_fixtures`` is staged.
 """
 
 from __future__ import annotations
@@ -48,13 +49,17 @@ from fplt.models.components.minutes.common import (
     resolve_injury,
     shrunk,
 )
+from fplt.models.components.minutes.congestion import (
+    competition_team_kickoffs,
+    team_schedule_features,
+)
 from fplt.models.components.minutes.predicted_xi import apply_predicted_xi
 from fplt.models.distributions import MINUTE_BINS, MinutesDist
 from fplt.models.spec import ModelSpec, register_component
 from fplt.types import Position
 
 _LONG = MINUTE_BINS >= 60
-_START_DIM = 12
+_START_DIM = 13
 _LONG_DIM = 5
 _DEFAULT_WINDOWS = (3, 5, 10)
 _DEFAULT_RETURN_RAMP_GAMES = 2.0
@@ -64,20 +69,21 @@ class EmpiricalMinutesV2:
     """Logistic P(start) and P(≥60|start) with histogram residuals.
 
     Rolling start shares over ``windows``, minutes volatility, home/away,
-    rest days, DGW, price, opponent strength, and return-from-absence
-    features feed two small logistics fit on appearances visible at the
-    deadline. Injury / suspension zeros are excluded from rolling shares and
-    empirical rates (P4). Conditional minute shapes still come from shrunk
-    start/sub histograms. ``logistic_blend`` weights the logistic P(start)
-    against the multi-window empirical rate (default 0.5).
-    ``return_ramp_games`` dampens blended P(start) for the first games back
-    after an absence. Availability (status / chance_of_playing) gates both
-    rates after the logits, with ``availability_recovery_games`` recovering
-    the gate toward 1.0 for horizon steps after the next-round FPL anchor
-    (P3). Optional ``use_injury_overlay`` also applies staged
-    ``player_injuries`` (default off — production stays FPL-tags-only until
-    eval); player-level injury tags use the same recovery curve. When
-    ``predicted_xi`` is true, near-deadline predicted lineup roles mix into
+    all-comp rest days, games in the last 7 days, DGW, price, opponent
+    strength, and return-from-absence features feed two small logistics fit
+    on appearances visible at the deadline. Injury / suspension zeros are
+    excluded from rolling shares and empirical rates (P4). Conditional minute
+    shapes still come from shrunk start/sub histograms. ``logistic_blend``
+    weights the logistic P(start) against the multi-window empirical rate
+    (default 0.5). ``return_ramp_games`` dampens blended P(start) for the
+    first games back after an absence. Availability (status /
+    chance_of_playing) gates both rates after the logits, with
+    ``availability_recovery_games`` recovering the gate toward 1.0 for
+    horizon steps after the next-round FPL anchor (P3). Optional
+    ``use_injury_overlay`` also applies staged ``player_injuries`` (default
+    off — production stays FPL-tags-only until eval); player-level injury
+    tags use the same recovery curve. When ``predicted_xi`` is true,
+    near-deadline predicted lineup roles mix into
     P(start) before soft-squad projection.
     """
 
@@ -386,6 +392,7 @@ _START_FEATURE_COLS = [
     "minutes_std_5",
     "was_home",
     "rest_days",
+    "games_last_7d",
     "is_dgw",
     "price",
     "opp_strength",
@@ -531,6 +538,10 @@ def _training_rows(
             .otherwise(pl.col("rest_away"))
             .alias("rest_days"),
             pl.when(pl.col("team_key") == pl.col("team_h_key"))
+            .then(pl.col("games_home"))
+            .otherwise(pl.col("games_away"))
+            .alias("games_last_7d"),
+            pl.when(pl.col("team_key") == pl.col("team_h_key"))
             .then(pl.col("dgw_home"))
             .otherwise(pl.col("dgw_away"))
             .alias("is_dgw"),
@@ -555,6 +566,7 @@ def _training_rows(
             pl.col("opp_strength").fill_null(1.0),
             pl.col("was_home").fill_null(0.0),
             pl.col("rest_days").fill_null(1.0),
+            pl.col("games_last_7d").fill_null(0.0),
             pl.col("is_dgw").fill_null(0.0),
         )
         .select(
@@ -566,6 +578,7 @@ def _training_rows(
             "minutes_std_5",
             "was_home",
             "rest_days",
+            "games_last_7d",
             "is_dgw",
             "price",
             "opp_strength",
@@ -641,6 +654,8 @@ def _fixture_context(view: PITView) -> pl.DataFrame:
                 "team_a_key": pl.Int64(),
                 "rest_home": pl.Float64(),
                 "rest_away": pl.Float64(),
+                "games_home": pl.Float64(),
+                "games_away": pl.Float64(),
                 "dgw_home": pl.Float64(),
                 "dgw_away": pl.Float64(),
             }
@@ -659,18 +674,30 @@ def _fixture_context(view: PITView) -> pl.DataFrame:
         .filter(pl.col("len") > 1)
         .select("season", "gw", "team_key", pl.lit(1.0).alias("is_dgw_team"))
     )
-    rest_by_team = _team_rest_days(fixtures)
+    schedule = team_schedule_features(fixtures, competition_team_kickoffs(view))
     rest = (
         fixtures.select(
             "season", "fixture_id", "gw", "team_h_key", "team_a_key", "kickoff_time"
         )
         .join(
-            rest_by_team.rename({"team_key": "team_h_key", "rest_days": "rest_home"}),
+            schedule.rename(
+                {
+                    "team_key": "team_h_key",
+                    "rest_days": "rest_home",
+                    "games_last_7d": "games_home",
+                }
+            ),
             on=["season", "fixture_id", "team_h_key"],
             how="left",
         )
         .join(
-            rest_by_team.rename({"team_key": "team_a_key", "rest_days": "rest_away"}),
+            schedule.rename(
+                {
+                    "team_key": "team_a_key",
+                    "rest_days": "rest_away",
+                    "games_last_7d": "games_away",
+                }
+            ),
             on=["season", "fixture_id", "team_a_key"],
             how="left",
         )
@@ -681,6 +708,8 @@ def _fixture_context(view: PITView) -> pl.DataFrame:
             "team_a_key",
             "rest_home",
             "rest_away",
+            "games_home",
+            "games_away",
             "gw",
         )
     )
@@ -700,31 +729,9 @@ def _fixture_context(view: PITView) -> pl.DataFrame:
             pl.col("dgw_away").fill_null(0.0),
             pl.col("rest_home").fill_null(1.0),
             pl.col("rest_away").fill_null(1.0),
+            pl.col("games_home").fill_null(0.0),
+            pl.col("games_away").fill_null(0.0),
         )
-    )
-
-
-def _team_rest_days(fixtures: pl.DataFrame) -> pl.DataFrame:
-    """Rest weeks since each team's previous kickoff, clipped to ``[0, 3]``."""
-    home = fixtures.select(
-        "season",
-        "fixture_id",
-        pl.col("team_h_key").alias("team_key"),
-        "kickoff_time",
-    )
-    away = fixtures.select(
-        "season",
-        "fixture_id",
-        pl.col("team_a_key").alias("team_key"),
-        "kickoff_time",
-    )
-    ordered = pl.concat([home, away]).sort(["season", "team_key", "kickoff_time"])
-    prev = pl.col("kickoff_time").shift(1).over(["season", "team_key"])
-    rest = ((pl.col("kickoff_time") - prev).dt.total_hours() / 24.0 / 7.0).clip(
-        0.0, 3.0
-    )
-    return ordered.with_columns(rest.fill_null(1.0).alias("rest_days")).select(
-        "season", "fixture_id", "team_key", "rest_days"
     )
 
 
@@ -784,6 +791,10 @@ def _predict_context(view: PITView, keys: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.col("rest_away"))
             .alias("side_rest"),
             pl.when(pl.col("team_key") == pl.col("team_h_key"))
+            .then(pl.col("games_home"))
+            .otherwise(pl.col("games_away"))
+            .alias("side_games"),
+            pl.when(pl.col("team_key") == pl.col("team_h_key"))
             .then(pl.col("dgw_home"))
             .otherwise(pl.col("dgw_away"))
             .alias("side_dgw"),
@@ -792,6 +803,7 @@ def _predict_context(view: PITView, keys: pl.DataFrame) -> pl.DataFrame:
         .with_columns(
             pl.col("is_home").cast(pl.Float64).fill_null(0.0).alias("was_home"),
             pl.col("side_rest").fill_null(1.0).alias("rest_days"),
+            pl.col("side_games").fill_null(0.0).alias("games_last_7d"),
             pl.col("side_dgw").fill_null(0.0).alias("is_dgw"),
             (pl.col("price").cast(pl.Float64) / 100.0).fill_null(0.5).alias("price"),
             pl.col("opp_strength").fill_null(1.0),
@@ -810,6 +822,7 @@ def _predict_context(view: PITView, keys: pl.DataFrame) -> pl.DataFrame:
             "team_key",
             "was_home",
             "rest_days",
+            "games_last_7d",
             "is_dgw",
             "price",
             "opp_strength",
@@ -829,6 +842,7 @@ def _start_vector(features: dict[str, float], row: dict[str, object]) -> np.ndar
             features.get("minutes_std_5", 0.0) / 90.0,
             _as_float(row["was_home"]),
             _as_float(row["rest_days"]),
+            _as_float(row["games_last_7d"]),
             _as_float(row["is_dgw"]),
             _as_float(row["price"]),
             _as_float(row["opp_strength"]),

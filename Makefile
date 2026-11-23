@@ -11,7 +11,7 @@ fetch-understat:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-understat SEASON=2024-25"; exit 1; fi
 	uv run python scripts/fetch_understat.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON)
 
-# ── API-Football injuries (API-Sports) ────────────────────────────────────────
+# ── API-Football injuries + cup/Europe fixtures (API-Sports) ──────────────────
 # Usage: make fetch-api-football SEASON=2024-25
 # Needs FPLT_API_FOOTBALL_KEY (or API_FOOTBALL_KEY / APISPORTS_KEY) in the env.
 # Writes write-once gzipped JSON under $$FPLT_DATA_DIR/raw/api_football/...

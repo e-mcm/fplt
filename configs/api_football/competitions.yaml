@@ -1,0 +1,20 @@
+# Cup / Europe leagues whose fixtures feed all-comp rest + congestion
+# features for minutes (FDB-252). Premier League (39) is omitted — FPL
+# fixtures already cover domestic league kickoffs.
+#
+# Ids are API-Football (API-Sports) league ids. Names are stable labels
+# stored on staged ``competition_fixtures.competition``.
+
+competitions:
+  - id: 45
+    name: fa_cup
+  - id: 48
+    name: efl_cup
+  - id: 528
+    name: community_shield
+  - id: 2
+    name: ucl
+  - id: 3
+    name: uel
+  - id: 848
+    name: uecl

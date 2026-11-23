@@ -1,8 +1,8 @@
-"""Capture API-Football (API-Sports) Premier League injuries.
+"""Capture API-Football injuries and cup/Europe fixtures.
 
-This file imports only the standard library and httpx so it can run in a
-minimal GitHub Actions job. Raw responses are written once as gzipped JSON
-under ``data/raw/api_football/...``.
+This file imports only the standard library, httpx, and PyYAML so it can run
+in a minimal GitHub Actions job. Raw responses are written once as gzipped
+JSON under ``data/raw/api_football/...``.
 
 The API key is read from the environment only — never from argv:
 
@@ -11,8 +11,10 @@ The API key is read from the environment only — never from argv:
 - ``APISPORTS_KEY``
 
 Free tier is ~100 requests/day. Default capture skips when a snapshot for the
-same season already exists within ``--min-interval-hours`` (default 4, matching
-upstream injury refresh cadence).
+same path already exists within ``--min-interval-hours`` (default 4, matching
+upstream injury refresh cadence). Cup / Europe leagues come from
+``configs/api_football/competitions.yaml`` (Premier League omitted — FPL
+fixtures already cover it).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import yaml
 
 API_ROOT = "https://v3.football.api-sports.io"
 EPL_LEAGUE_ID = 39
@@ -40,6 +43,12 @@ _KEY_ENV_NAMES = (
     "APISPORTS_KEY",
 )
 _CAPTURED_RE = re.compile(r"captured_at=(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)")
+_COMPETITIONS = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "api_football"
+    / "competitions.yaml"
+)
 
 
 def season_label(moment: datetime) -> str:
@@ -70,6 +79,21 @@ def injuries_path(root: Path, season: str, captured_at: datetime) -> Path:
     )
 
 
+def fixtures_path(
+    root: Path, season: str, league_id: int, captured_at: datetime
+) -> Path:
+    """Write-once path for one cup/Europe fixtures snapshot."""
+    return (
+        root
+        / "api_football"
+        / f"season={season}"
+        / "fixtures"
+        / f"league={league_id}"
+        / f"captured_at={stamp(captured_at)}"
+        / "fixtures.json.gz"
+    )
+
+
 def write_once(path: Path, payload: Any) -> bool:
     """Write gzipped JSON if ``path`` does not exist. Return whether it wrote."""
     if path.exists():
@@ -91,7 +115,7 @@ def resolve_api_key(environ: dict[str, str] | None = None) -> str | None:
 
 
 def parse_captured_at(path: Path) -> datetime | None:
-    """Parse ``captured_at=...`` from an injuries snapshot path."""
+    """Parse ``captured_at=...`` from a snapshot path."""
     match = _CAPTURED_RE.search(path.as_posix())
     if match is None:
         return None
@@ -100,13 +124,32 @@ def parse_captured_at(path: Path) -> datetime | None:
     return datetime.fromisoformat(iso).astimezone(UTC)
 
 
-def latest_capture(root: Path, season: str) -> datetime | None:
-    """Newest ``captured_at`` already on disk for ``season``, if any."""
-    base = root / "api_football" / f"season={season}" / "injuries"
+def latest_capture(
+    root: Path,
+    season: str,
+    *,
+    kind: str,
+    league_id: int | None = None,
+) -> datetime | None:
+    """Newest ``captured_at`` already on disk for ``season`` / kind."""
+    if kind == "injuries":
+        base = root / "api_football" / f"season={season}" / "injuries"
+        pattern = "captured_at=*/injuries.json.gz"
+    else:
+        if league_id is None:
+            raise ValueError("league_id required for fixtures latest_capture")
+        base = (
+            root
+            / "api_football"
+            / f"season={season}"
+            / "fixtures"
+            / f"league={league_id}"
+        )
+        pattern = "captured_at=*/fixtures.json.gz"
     if not base.exists():
         return None
     newest: datetime | None = None
-    for path in base.glob("captured_at=*/injuries.json.gz"):
+    for path in base.glob(pattern):
         when = parse_captured_at(path)
         if when is None:
             continue
@@ -121,12 +164,37 @@ def should_fetch(
     now: datetime,
     *,
     min_interval: timedelta,
+    kind: str = "injuries",
+    league_id: int | None = None,
 ) -> bool:
-    """True when no recent write-once snapshot exists for ``season``."""
-    previous = latest_capture(root, season)
+    """True when no recent write-once snapshot exists for the path."""
+    previous = latest_capture(root, season, kind=kind, league_id=league_id)
     if previous is None:
         return True
     return now - previous >= min_interval
+
+
+def load_competitions(path: Path | None = None) -> list[tuple[int, str]]:
+    """Load ``(league_id, name)`` pairs from competitions YAML."""
+    target = path if path is not None else _COMPETITIONS
+    if not target.exists():
+        return []
+    parsed: object = yaml.safe_load(target.read_text(encoding="utf-8"))
+    if parsed is None:
+        return []
+    if not isinstance(parsed, dict):
+        raise ValueError(f"competitions at {target} must be a mapping")
+    loaded = cast(dict[str, Any], parsed)
+    raw = loaded.get("competitions", [])
+    if not isinstance(raw, list):
+        raise ValueError("competitions must be a list")
+    out: list[tuple[int, str]] = []
+    for entry in cast(list[Any], raw):
+        if not isinstance(entry, dict):
+            raise ValueError("each competition entry must be a mapping")
+        item = cast(dict[str, Any], entry)
+        out.append((int(item["id"]), str(item["name"])))
+    return out
 
 
 def fetch_injuries(
@@ -147,6 +215,24 @@ def fetch_injuries(
     return cast(dict[str, Any], payload)
 
 
+def fetch_fixtures(
+    client: httpx.Client,
+    *,
+    league: int,
+    season_year: int,
+) -> dict[str, Any]:
+    """GET ``/fixtures`` for one league-season and return the JSON body."""
+    response = client.get(
+        f"{API_ROOT}/fixtures",
+        params={"league": league, "season": season_year},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("/fixtures must return a JSON object")
+    return cast(dict[str, Any], payload)
+
+
 @dataclass(frozen=True)
 class CaptureResult:
     """Outcome of one capture attempt."""
@@ -154,6 +240,8 @@ class CaptureResult:
     wrote: bool
     skipped: bool
     path: Path | None
+    kind: str = "injuries"
+    league_id: int | None = None
 
 
 def capture(
@@ -184,19 +272,73 @@ def capture(
     moment = now or datetime.now(UTC)
     interval = timedelta(hours=min_interval_hours)
     path = injuries_path(root, season, moment)
-    if not should_fetch(root, season, moment, min_interval=interval):
-        return CaptureResult(wrote=False, skipped=True, path=None)
+    if not should_fetch(root, season, moment, min_interval=interval, kind="injuries"):
+        return CaptureResult(wrote=False, skipped=True, path=None, kind="injuries")
     if path.exists():
-        return CaptureResult(wrote=False, skipped=True, path=path)
+        return CaptureResult(wrote=False, skipped=True, path=path, kind="injuries")
     payload = fetch_injuries(client, league=league, season_year=api_season_year(season))
     wrote = write_once(path, payload)
     if wrote and delay > 0:
         time.sleep(delay)
-    return CaptureResult(wrote=wrote, skipped=not wrote, path=path if wrote else None)
+    return CaptureResult(
+        wrote=wrote, skipped=not wrote, path=path if wrote else None, kind="injuries"
+    )
+
+
+def capture_fixtures(
+    client: httpx.Client,
+    root: Path,
+    season: str,
+    league_id: int,
+    *,
+    now: datetime | None = None,
+    min_interval_hours: float = 4.0,
+    delay: float = 0.0,
+) -> CaptureResult:
+    """Fetch one cup/Europe league season of fixtures when the window allows."""
+    moment = now or datetime.now(UTC)
+    interval = timedelta(hours=min_interval_hours)
+    path = fixtures_path(root, season, league_id, moment)
+    if not should_fetch(
+        root,
+        season,
+        moment,
+        min_interval=interval,
+        kind="fixtures",
+        league_id=league_id,
+    ):
+        return CaptureResult(
+            wrote=False,
+            skipped=True,
+            path=None,
+            kind="fixtures",
+            league_id=league_id,
+        )
+    if path.exists():
+        return CaptureResult(
+            wrote=False,
+            skipped=True,
+            path=path,
+            kind="fixtures",
+            league_id=league_id,
+        )
+    payload = fetch_fixtures(
+        client, league=league_id, season_year=api_season_year(season)
+    )
+    wrote = write_once(path, payload)
+    if wrote and delay > 0:
+        time.sleep(delay)
+    return CaptureResult(
+        wrote=wrote,
+        skipped=not wrote,
+        path=path if wrote else None,
+        kind="fixtures",
+        league_id=league_id,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Capture into ``--out`` (default ``./data/raw``)."""
+    """Capture injuries + cup/Europe fixtures into ``--out``."""
     parser = argparse.ArgumentParser(prog="fetch_api_football")
     parser.add_argument("--out", type=Path, default=Path("data/raw"))
     parser.add_argument(
@@ -215,13 +357,18 @@ def main(argv: list[str] | None = None) -> int:
         "--league",
         type=int,
         default=EPL_LEAGUE_ID,
-        help="API-Football league id (default: 39 Premier League).",
+        help="API-Football league id for injuries (default: 39 Premier League).",
     )
     parser.add_argument(
         "--delay",
         type=float,
-        default=0.0,
-        help="Seconds to sleep after a successful write.",
+        default=0.25,
+        help="Seconds to sleep between successful writes (default 0.25).",
+    )
+    parser.add_argument(
+        "--skip-fixtures",
+        action="store_true",
+        help="Only capture injuries (skip cup/Europe fixtures).",
     )
     args = parser.parse_args(argv)
     key = resolve_api_key()
@@ -251,10 +398,27 @@ def main(argv: list[str] | None = None) -> int:
             league=args.league,
             delay=args.delay,
         )
-    if result.skipped and not result.wrote:
-        print(f"season={season} injuries=skipped")
-    else:
-        print(f"season={season} injuries={'wrote' if result.wrote else 'exists'}")
+        if result.skipped and not result.wrote:
+            print(f"season={season} injuries=skipped")
+        else:
+            print(f"season={season} injuries={'wrote' if result.wrote else 'exists'}")
+        if not args.skip_fixtures:
+            for league_id, name in load_competitions():
+                fixture_result = capture_fixtures(
+                    client,
+                    args.out,
+                    season,
+                    league_id,
+                    now=moment,
+                    min_interval_hours=args.min_interval_hours,
+                    delay=args.delay,
+                )
+                status = (
+                    "wrote"
+                    if fixture_result.wrote
+                    else ("skipped" if fixture_result.skipped else "exists")
+                )
+                print(f"season={season} fixtures={name} league={league_id} {status}")
     return 0
 
 
