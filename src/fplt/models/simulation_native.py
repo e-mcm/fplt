@@ -8,6 +8,7 @@ fallback if ``fplt_mc`` is missing.
 
 from __future__ import annotations
 
+import importlib
 import os
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -51,23 +52,27 @@ def resolve_mc_backend(
 def require_native_kernel() -> Any:
     """Import ``fplt_mc`` or raise (no silent fallback).
 
+    Uses ``importlib`` so lint/pyright does not require the optional wheel on
+    the type-check path (``fplt-mc`` is not yet a locked root dependency).
+
     Raises:
         ImportError: The wheel is not installed.
         RuntimeError: ``KERNEL_API`` is older than this fplt expects.
     """
     try:
-        import fplt_mc
+        module = importlib.import_module("fplt_mc")
     except ImportError as exc:
         raise ImportError(
             "mc_backend=native requires the fplt-mc wheel "
             "(https://e-mcm.github.io/fplt/simple/); install via uv sync / CI artifact"
         ) from exc
-    if int(fplt_mc.KERNEL_API) < _EXPECTED_KERNEL_API:
+    api = int(getattr(module, "KERNEL_API"))
+    if api < _EXPECTED_KERNEL_API:
         raise RuntimeError(
-            f"fplt-mc KERNEL_API={fplt_mc.KERNEL_API} < {_EXPECTED_KERNEL_API}; "
+            f"fplt-mc KERNEL_API={api} < {_EXPECTED_KERNEL_API}; "
             "upgrade the pinned wheel"
         )
-    return fplt_mc
+    return module
 
 
 def native_provenance() -> dict[str, Any]:
