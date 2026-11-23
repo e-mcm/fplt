@@ -12,6 +12,7 @@ from fplt.models.distributions import (
     MINUTE_BINS,
     MinutesDist,
     ScorelineDist,
+    _inverse_cdf_index,
 )
 
 _GOALS = MAX_GOALS + 1
@@ -176,3 +177,23 @@ def test_minutes_rows_sum_to_one_and_samples_are_bins(weights: np.ndarray) -> No
     np.testing.assert_allclose(dist.pmf.sum(axis=1), np.ones(2))
     drawn = dist.sample(np.random.default_rng(0), 6)
     assert set(np.unique(drawn)).issubset(set(MINUTE_BINS.tolist()))
+
+
+def test_inverse_cdf_index_at_cdf_knots() -> None:
+    """``u`` landing on a CDF knot uses searchsorted right (same as sum<=u)."""
+    cdf = np.array([[0.25, 0.5, 0.75, 1.0]], dtype=np.float64)
+    uniforms = np.array([[0.0, 0.25, 0.5, 0.75, 0.999999, 1.0]], dtype=np.float64)
+    np.testing.assert_array_equal(
+        _inverse_cdf_index(cdf, uniforms),
+        np.array([[0, 1, 2, 3, 3, 3]], dtype=np.int64),
+    )
+
+
+def test_scoreline_sample_is_deterministic_for_seed() -> None:
+    rng_pmf = np.random.default_rng(11)
+    raw = rng_pmf.random((2, _GOALS, _GOALS))
+    raw /= raw.sum(axis=(1, 2), keepdims=True)
+    dist = ScorelineDist(np.array([1, 2]), raw)
+    a = dist.sample(np.random.default_rng(13), 50)
+    b = dist.sample(np.random.default_rng(13), 50)
+    np.testing.assert_array_equal(a, b)
