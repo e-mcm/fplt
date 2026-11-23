@@ -16,6 +16,7 @@ using fplt_mc::MatchSamples;
 using fplt_mc::MatchUniforms;
 using fplt_mc::RulesPOD;
 using fplt_mc::SimParams;
+using fplt_mc::simulate_fixture;
 using fplt_mc::simulate_match_with_uniforms;
 
 TEST(MatchDelta, ZeroMinutesIsZero) {
@@ -139,6 +140,41 @@ TEST(SimulateMatch, ConservesGoalsWithInjectedUniforms) {
     EXPECT_TRUE(std::isfinite(xpts[i]));
     EXPECT_GE(pp[i], 0.0);
     EXPECT_LE(pp[i], 1.0);
+  }
+}
+
+TEST(SimulateFixture, PhiloxDeterministic) {
+  RulesPOD rules;
+  const std::size_t players = 2;
+  const std::size_t n = 4;
+  const std::uint8_t side[] = {0, 1};
+  const std::uint8_t position[] = {1, 3};
+  const double minutes[] = {90, 90, 90, 90, 90, 90, 90, 90};
+  const double gw[] = {1.0, 1.0};
+  const double aw[] = {1.0, 1.0};
+  const double other[] = {0, 0, 0, 0, 0, 0};
+  const std::int64_t home_g[] = {1, 0, 2, 1};
+  const std::int64_t away_g[] = {0, 1, 0, 0};
+  SimParams params;
+  params.own_goal_weight = 0.0;
+  params.p_assist = 0.0;
+  params.sample_other = false;
+
+  std::vector<double> pts_a(players * n), pts_b(players * n);
+  std::vector<std::int64_t> goals_a(players * n), goals_b(players * n);
+  MatchSamples sa{};
+  sa.points = pts_a.data();
+  sa.goals = goals_a.data();
+  MatchSamples sb{};
+  sb.points = pts_b.data();
+  sb.goals = goals_b.data();
+  simulate_fixture(home_g, away_g, side, position, minutes, gw, aw, other, rules,
+                   params, nullptr, /*kernel_seed=*/99, players, n, &sa, nullptr);
+  simulate_fixture(home_g, away_g, side, position, minutes, gw, aw, other, rules,
+                   params, nullptr, /*kernel_seed=*/99, players, n, &sb, nullptr);
+  for (std::size_t k = 0; k < players * n; ++k) {
+    EXPECT_EQ(goals_a[k], goals_b[k]);
+    EXPECT_DOUBLE_EQ(pts_a[k], pts_b[k]);
   }
 }
 

@@ -3518,6 +3518,12 @@ def _write_audit(
         },
         "force_inconclusive": preflight.force_inconclusive,
     }
+    try:
+        from fplt.models.simulation_native import native_provenance
+
+        payload["mc"] = native_provenance()
+    except Exception as exc:  # pragma: no cover - provenance must not fail the eval
+        payload["mc"] = {"error": str(exc)}
     (out / "audit.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",

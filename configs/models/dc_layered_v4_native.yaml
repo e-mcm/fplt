@@ -1,0 +1,8 @@
+# Native MC fork of production dc_layered_v4 (FDB-286 / PR6).
+# Same components and fidelity knobs; mc_backend=native changes model_id.
+# Equivalence / L6 EvalSpec arm — not a silent production flip.
+name: dc_layered_v4_native
+extends: dc_layered_v4
+overrides:
+  params:
+    mc_backend: native

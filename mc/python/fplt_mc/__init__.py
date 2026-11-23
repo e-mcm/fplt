@@ -10,7 +10,7 @@ from typing import Any
 
 from fplt_mc._core import KERNEL_API as _KERNEL_API
 from fplt_mc._core import build_info as _build_info
-from fplt_mc._core import mathx_exp, philox_u01
+from fplt_mc._core import mathx_exp, philox_u01, simulate_fixture
 
 KERNEL_API: int = int(_KERNEL_API)
 
@@ -19,6 +19,7 @@ __all__ = [
     "build_info",
     "mathx_exp",
     "philox_u01",
+    "simulate_fixture",
 ]
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 from importlib.metadata import version
 from pathlib import Path
@@ -327,7 +328,11 @@ def artifact_dir(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
 
 
 def write_identity(dest: Path, spec: ModelSpec) -> None:
-    """Write ``spec.json`` and ``git_sha.txt`` into ``dest``.
+    """Write ``spec.json``, ``git_sha.txt``, and optional MC provenance.
+
+    When the spec (or ``FPLT_MC_BACKEND``) selects the native Monte Carlo
+    backend, also writes ``mc_provenance.json`` with ``fplt_mc.build_info()``
+    and the env override, matching audit.json provenance fields.
 
     Args:
         dest: Artifact directory for one spec and gameweek.
@@ -344,6 +349,16 @@ def write_identity(dest: Path, spec: ModelSpec) -> None:
     payload = json.dumps(spec.model_dump(mode="json"), sort_keys=True, indent=2)
     spec_path.write_text(payload + "\n", encoding="utf-8")
     sha_path.write_text(git_sha() + "\n", encoding="utf-8")
+    backend = str(spec.params.get("mc_backend", "python")).strip().lower()
+    env_override = os.environ.get("FPLT_MC_BACKEND", "").strip()
+    if backend == "native" or env_override.lower() == "native":
+        from fplt.models.simulation_native import native_provenance
+
+        prov_path = dest / "mc_provenance.json"
+        prov_path.write_text(
+            json.dumps(native_provenance(), sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def save_spec(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
