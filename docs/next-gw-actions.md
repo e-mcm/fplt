@@ -9,7 +9,7 @@ This is the logged-in squad. An empty fifteen / wildcard-from-scratch is [`blank
 | Phrase | Do this | Do not |
 |---|---|---|
 | “gw actions”, “what should I do this week” | `fplt plan` for the next deadline. The **week-1** block of `report.md` is the action: transfers, hit, XI, captain / vice, bench, chip. Later weeks are look-ahead only. | Treat optimiser “week-1 actions” tests, or a bakeoff, as the live plan. |
-| “prod model” / “production predictions” | First name in `configs/ops/production.yaml` (`models:`). Today **`dc_layered_v4`**. Env `FPLT_PRODUCTION_MODELS` wins over the file. | `openfpl_v1`, `rolling_mean_v1`, or a promote fork (`dc_layered_cs_v1`, injuries, match-other, …). |
+| “prod model” / “production predictions” | First name in `configs/ops/production.yaml` (`models:`). Today **`dc_layered_v4_native`**. Env `FPLT_PRODUCTION_MODELS` wins over the file. Requires the `fplt-mc` wheel (Pages index); missing wheel fails loud. | `openfpl_v1`, `rolling_mean_v1`, python parent `dc_layered_v4`, or a promote fork (`dc_layered_cs_v1`, injuries, match-other, …). |
 | “next gw” | Earliest staged gameweek whose `deadline_time` is still in the future (`resolve_as_of`). | Reuse a season or GW from an old command or from a README example (`2025-26`, `GW=10`). |
 | “run” / “recommend” | Predict (if this model has no rows for that deadline), then plan. Print the report. | `fplt apply --confirm` / `make apply CONFIRM=1`. That **POSTs** the team. Apply is a separate ask. Dry-run apply does not submit either. |
 
@@ -53,7 +53,7 @@ Use those four values below. Horizon stays at ops `plan_horizon` (today **3**) u
 `fplt plan` reads the ledger. It errors with `has no predictions for this deadline` when this `model_id` has no rows for that as-of. Predict at least as many steps as the plan horizon (`--horizon` on predict defaults to **10**; plan defaults to **3**). A second predict for the same model and deadline raises `FileExistsError` (artifacts are not overwritten).
 
 ```bash
-MODEL=dc_layered_v4   # from the snippet, not from memory
+MODEL=dc_layered_v4_native   # from the snippet, not from memory
 SEASON=2026-27        # from the snippet
 GW=12                 # from the snippet
 HORIZON=3

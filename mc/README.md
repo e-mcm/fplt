@@ -30,8 +30,12 @@ make mc-bench    # §1.1 per-step timing harness (stub until kernels land)
 PR0 vectorised NumPy hard starters: **~205 ms → ~5.6 ms**. Native K1 is
 lower priority. **K2–K5** landed through 0.4.0; **0.5.0** exposes production
 ``fplt_mc.simulate_fixture`` (Philox streams + fuse). Wire via
-``mc_backend: native`` on a ModelSpec (`simulation_native.py`). Native K1
-hard starters remain deferred (Python applies them before the kernel call).
+``mc_backend: native`` on a ModelSpec (`simulation_native.py`). Live ops
+production is ``dc_layered_v4_native`` (FDB-293): Mac arm64 and Linux x86_64
+must install the published wheel via ``uv sync --frozen`` from the Pages
+index below. Missing ``fplt_mc`` **raises** — there is no silent Python MC
+fallback when the spec asks for native. Native K1 hard starters remain
+deferred (Python applies them before the kernel call).
 
 ## Wheel targets (CI)
 

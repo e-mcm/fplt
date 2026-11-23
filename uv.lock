@@ -1,6 +1,10 @@
 version = 1
 revision = 5
 requires-python = "==3.13.*"
+required-markers = [
+    "platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
 
 [[package]]
 name = "alembic"
@@ -566,6 +570,7 @@ dependencies = [
     { name = "arch" },
     { name = "chromium-reader" },
     { name = "dagster" },
+    { name = "fplt-mc" },
     { name = "highspy" },
     { name = "httpx" },
     { name = "lightgbm" },
@@ -597,6 +602,7 @@ requires-dist = [
     { name = "arch", specifier = ">=9.0.0" },
     { name = "chromium-reader", specifier = ">=0.1.1" },
     { name = "dagster", specifier = ">=1.13.30" },
+    { name = "fplt-mc", specifier = "==0.5.0", index = "https://e-mcm.github.io/fplt/simple/" },
     { name = "highspy", specifier = ">=1.16.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lightgbm", specifier = ">=4.6.0" },
@@ -621,6 +627,15 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.7" },
     { name = "streamlit", specifier = ">=1.67.0" },
+]
+
+[[package]]
+name = "fplt-mc"
+version = "0.5.0"
+source = { registry = "https://e-mcm.github.io/fplt/simple/" }
+wheels = [
+    { url = "https://e-mcm.github.io/fplt/wheels/fplt_mc-0.5.0-cp312-abi3-macosx_13_0_arm64.whl", hash = "sha256:60ed2669edb4fd1e9d966da2db37ac6d382c9e3def75cc56969aad2f9c5a6edd" },
+    { url = "https://e-mcm.github.io/fplt/wheels/fplt_mc-0.5.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ae2423216ff1166bd95cfc4d26381903114be5cd873328365f9d42411d74d9ee" },
 ]
 
 [[package]]
