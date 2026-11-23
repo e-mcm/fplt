@@ -65,3 +65,21 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+# fplt-mc (native kernel under mc/): pin + private index land once R2/S3 is
+# provisioned. Until then CI uploads wheel artifacts; do not add fplt-mc as a
+# required dependency (that would force agents to compile). Intended shape:
+#
+#   dependencies = [..., "fplt-mc==X.Y.Z"]
+#   [[tool.uv.index]]
+#   name = "fplt-mc"
+#   url = "https://<private-index-host>/simple/"
+#   explicit = true
+#   [tool.uv.sources]
+#   fplt-mc = { index = "fplt-mc" }
+#   [tool.uv]
+#   no-build-package = ["fplt-mc"]
+#   required-environments = [
+#     "sys_platform == 'darwin' and platform_machine == 'arm64'",
+#     "sys_platform == 'linux' and platform_machine == 'x86_64'",
+#   ]

@@ -1,0 +1,46 @@
+[project]
+name = "fplt-mc"
+version = "0.1.0"
+description = "Native C++ Monte Carlo kernel for fplt (Philox RNG + portable math)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Eamon McMurray" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: C++",
+]
+
+[build-system]
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.0",
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.packages = ["python/fplt_mc"]
+wheel.install-dir = "fplt_mc"
+# nanobind STABLE_ABI → abi3 (cp312); works on the repo's 3.13 pin.
+wheel.py-api = "cp312"
+cmake.build-type = "Release"
+cmake.args = [
+    "-DFPLT_MC_BUILD_TESTS=OFF",
+]
+build.verbose = true
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+FPLT_MC_BUILD_PYTHON = "ON"
+
+[tool.cibuildwheel]
+build = "cp312-abi3-*"
+skip = ["*-musllinux_*", "pp*", "*-win*"]
+
+[tool.cibuildwheel.linux]
+before-all = "yum install -y ninja-build || true"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]

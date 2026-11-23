@@ -58,4 +58,4 @@ Plans that drove those boards: [`promote-plans/`](promote-plans/).
 
 - Start from [`AGENTS.md`](../AGENTS.md) + the design sections named by the issue.
 - Prefer updating these files over inventing parallel docs under `src/` or Project store.
-- Repo layout cheat-sheet: root [`README.md`](../README.md). Per-directory maps: `configs/`, `scripts/`, `src/fplt/`, `tests/`, `deploy/`, `external/`.
+- Repo layout cheat-sheet: root [`README.md`](../README.md). Per-directory maps: `configs/`, `scripts/`, `src/fplt/`, `tests/`, `deploy/`, `external/`, `mc/` ([`mc/README.md`](../mc/README.md) — `fplt-mc` native kernel; agents must not compile).

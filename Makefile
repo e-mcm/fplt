@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank
+.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -354,6 +354,42 @@ ops-catchup:
 dagster-dev:
 	uv run dagster dev -m fplt.orchestration
 
+# ── fplt-mc native kernel (tree: mc/; never compile on experiment VMs) ───────
+# Cloud agents / board VMs: uv sync --frozen only (no-build-package once pinned).
+# C++ editors: make mc-dev. Prefer GHA for release wheels.
+mc-dev: ## editable C++ build into the venv (needs cmake, ninja, C++20)
+	uv sync --frozen
+	uv pip install --no-deps -e ./mc
+
+mc-test: ## ctest L0 + fplt-mc Python smoke
+	cmake -S mc -B mc/build -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DFPLT_MC_BUILD_PYTHON=OFF \
+		-DFPLT_MC_BUILD_TESTS=ON
+	cmake --build mc/build
+	ctest --test-dir mc/build --output-on-failure
+	uv run pytest mc/tests -q
+
+mc-format: ## clang-format -i on mc C++ sources
+	find mc \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' -o -name '*.cc' \) \
+		-print0 | xargs -0 clang-format -i
+
+mc-bench: ## §1.1 per-step MC timing (stub in PR1; safe, no compile)
+	uv run python scripts/mc_bench.py $(ARGS)
+
+mc-golden: ## regenerate tests/fixtures/mc_golden (deliberate; review in PR)
+	@echo "mc-golden: golden fixtures land with L5 (PR5); nothing to regenerate yet."
+
+mc-ci: ## CI: L0 ctest + wheel into dist/ (manylinux/macOS runners)
+	cmake -S mc -B mc/build-ci -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_CXX_COMPILER="$${CMAKE_CXX_COMPILER:-g++}" \
+		-DFPLT_MC_BUILD_PYTHON=OFF \
+		-DFPLT_MC_BUILD_TESTS=ON
+	cmake --build mc/build-ci
+	ctest --test-dir mc/build-ci --output-on-failure
+	bash mc/scripts/build_wheel.sh
+
 # ── Clean generated artefacts ─────────────────────────────────────────────────
 clean:
-	rm -rf data/features/ outputs/ .pytest_cache/
+	rm -rf data/features/ outputs/ .pytest_cache/ mc/build mc/build-ci mc/build-san dist/
