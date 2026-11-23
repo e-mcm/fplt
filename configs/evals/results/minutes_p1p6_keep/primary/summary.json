@@ -1,0 +1,21 @@
+{
+  "eval_name": "minutes_p1p6_keep_ab",
+  "verdict": "drop",
+  "control": "dc_layered_minutes_pre_p1p6_v1",
+  "treatment": "dc_layered_v3",
+  "coverage": {
+    "metric": "fpl_api_status_share",
+    "numerator": 0,
+    "denominator": 13454,
+    "rate": 0.0,
+    "min_coverage": 0.01,
+    "passed": false,
+    "extras": {
+      "source_fpl_api_share": 0.0
+    }
+  },
+  "deltas": null,
+  "component_deltas": null,
+  "failures": [],
+  "warnings": []
+}
