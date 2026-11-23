@@ -32,6 +32,25 @@ def test_spec_registers_as_component() -> None:
     assert specs["other_player_v1"].params["bps_bonus_weight"] == 0.5
 
 
+def test_expected_total_sums_bucket_channels(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        [_row(1, "GK", 1, minutes=90, saves=6, bonus=1)],
+    )
+    view = PITData(store).view(GWKey(_SEASON, 3))
+    model = OtherPlayerPriors(_spec())
+    model.fit(view)
+    frame = model.predict(view, pl.DataFrame({"player_key": [1], "fixture_id": [9]}))
+    row = _cell(frame, 1, "60+")
+    assert model.expected_total(1, "GK", "60+") == pytest.approx(
+        float(row["bonus"])
+        + float(row["saves"])
+        + float(row["cards"])
+        + float(row["defensive_contribution"])
+        + float(row["other"])
+    )
+
+
 def test_a_high_save_keeper_keeps_his_own_rate(tmp_path: Path) -> None:
     store = _store(
         tmp_path,

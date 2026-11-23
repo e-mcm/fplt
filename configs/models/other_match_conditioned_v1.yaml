@@ -1,0 +1,13 @@
+# Rank-3 match-conditioned other (FDB-266). Minutes-bucket baseline is the
+# production rate wire; additive deltas for team goals / CS / player scored.
+# Does not change released other_player_defcon_rate_v1.
+name: other_match_conditioned_v1
+kind: other_match_conditioned
+params:
+  window: 10
+  shrinkage: 5
+  bps_bonus_weight: 0.5
+  defcon_mode: rate
+  match_shrinkage: 20
+refit: every_gw
+seed: 0

@@ -1,0 +1,59 @@
+# FDB-266: match-conditioned other (goals/CS/scored deltas) vs minutes-bucket.
+# Plumbing only until a written keep — does not flip PRODUCTION_MODELS.
+name: match_conditioned_other_ab
+kind: component
+question: >
+  Do additive other-points offsets conditioned on simulated team goals,
+  clean sheet, and player scored beat minutes-bucket other on haul Brier
+  and top-decile haul calibration (RMSE secondary)?
+description: >
+  Rank-3 match-conditioned other vs production minutes-bucket other
+  (FDB-266 / FDB-240). Forecast claim only.
+
+change:
+  lever: component_swap
+  orientation: opt_in
+  slot: other
+  control_kind: other_player
+  treatment_kind: other_match_conditioned
+  tables: [player_fixture_stats, fixtures]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.other.kind: other_player → other_match_conditioned"
+  notes: >
+    Control dc_layered_v3 (other_player_defcon_rate_v1). Treatment
+    dc_layered_match_other_v1. Development window per eval-protocol §1
+    (2025-26 GW1–19). Confirmation on a pre-declared disjoint window
+    (prefer 2024-25 GW21–38 or sealed). No dose arms. No production flip.
+
+control: dc_layered_v3
+treatment: dc_layered_match_other_v1
+
+window:
+  seasons: ["2025-26"]
+  from_gw: 1
+  to_gw: 19
+  seasons_back: 4
+  modes: [walk_forward]
+  note: >
+    Development = GW1–19 (default map). Confirmation via --from-gw/--to-gw
+    on a non-overlapping window; do not retune match_shrinkage there.
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Match-conditioned other vs minutes-bucket (2025-26)"
+  store_doc: match-conditioned-other-promote.md

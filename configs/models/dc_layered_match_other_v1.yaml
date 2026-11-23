@@ -1,0 +1,15 @@
+# Treatment fork for match-conditioned other (FDB-266). Control stays
+# production dc_layered_v3. No PRODUCTION flip from this file alone.
+name: dc_layered_match_other_v1
+extends: dc_layered_v3
+overrides:
+  components:
+    other:
+      name: other_match_conditioned_v1
+      kind: other_match_conditioned
+      params:
+        window: 10
+        shrinkage: 5
+        bps_bonus_weight: 0.5
+        defcon_mode: rate
+        match_shrinkage: 20
