@@ -10,7 +10,7 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 | [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Ops / agents | GHA capture cadence, sensors, always-on setup |
 | [`feature-eval-pipeline.md`](feature-eval-pipeline.md) | Modelling / agents | Promote-eval, bakeoffs, control vs treatment, keep/drop |
 | [`eval-protocol.md`](eval-protocol.md) | Modelling / agents | Operator protocol; decisions-suite gate (`claim: squad_points`) |
-| [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; **2400** decision-sim bar |
+| [`evaluation-north-star.md`](evaluation-north-star.md) | Eval / agents | Forecast / decision / live aims; RMSE headline; points-at-rank decision-sim bars (2400 / 2235) |
 | [`benchmark-archives.md`](benchmark-archives.md) | Eval / agents | `benchmark_projections` table (ep_next / OpenFPL / FPL Review) |
 | [`openfpl.md`](openfpl.md) | Ops / agents | OpenFPL subprocess setup and season floor |
 | [`fpl_review.md`](fpl_review.md) | Ops | Manual FPL Review CSV ingest (no scrape) |
@@ -24,7 +24,7 @@ Written promote calls, plans, and decision inventory. Board parquet/logs stay in
 | [`promote-pipeline-unified.md`](promote-pipeline-unified.md) | End-to-end promote pipeline / process |
 | [`promo-evals-consolidated.md`](promo-evals-consolidated.md) | One-page W7–W9 + Wave B + A3 + rate-model rollup |
 | [`unpromoted-improvements.md`](unpromoted-improvements.md) | Backlog of levers (kept / dropped / in flight) |
-| [`stacked-prod-2400-board.md`](stacked-prod-2400-board.md) | Stacked production board vs **2400** north-star |
+| [`stacked-prod-2400-board.md`](stacked-prod-2400-board.md) | Stacked production board vs points-at-rank bars (2400 / 2235) |
 | [`live-prediction-regen.md`](live-prediction-regen.md) | Live prediction regen notes |
 | [`price-within-horizon-design.md`](price-within-horizon-design.md) | Within-horizon list-price forecast design |
 | [`promote-archives.md`](promote-archives.md) | Where bulky `internal/` board archives live |
