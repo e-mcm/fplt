@@ -80,29 +80,21 @@ jobs:
       - name: Require version bump when mc/ changes
         run: bash mc/scripts/version_guard.sh origin/${{ github.base_ref || 'main' }}
 
-  mc-build:
-    name: mc-build (${{ matrix.plat }})
+  mc-build-linux:
+    name: mc-build (linux-x86_64)
     needs: [changes, version-guard]
     if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-24.04, plat: linux-x86_64, container: quay.io/pypa/manylinux_2_28_x86_64 }
-          - { os: macos-15, plat: macos-arm64 }
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
+    runs-on: ubuntu-24.04
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/cache@v4
         id: wheel-cache
         with:
           path: dist
-          key: fplt-mc-${{ matrix.plat }}-${{ hashFiles('mc/**') }}
-
+          key: fplt-mc-linux-x86_64-${{ hashFiles('mc/**') }}
       - name: Install toolchain (manylinux)
-        if: steps.wheel-cache.outputs.cache-hit != 'true' && matrix.plat == 'linux-x86_64'
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
         run: |
           yum install -y ninja-build git make cmake || true
           if [ -f /opt/rh/gcc-toolset-13/enable ]; then
@@ -112,39 +104,57 @@ jobs:
           fi
           echo "/opt/python/cp313-cp313/bin" >> "${GITHUB_PATH}"
           /opt/python/cp313-cp313/bin/python -m pip install -U pip build scikit-build-core nanobind
-          cmake --version
-          ninja --version
-          make --version
-
-      - name: Install toolchain (macOS)
-        if: steps.wheel-cache.outputs.cache-hit != 'true' && matrix.plat == 'macos-arm64'
-        run: |
-          brew install ninja ccache || true
-          echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "${GITHUB_ENV}"
-
       - uses: hendrikmuhs/ccache-action@v1
         if: steps.wheel-cache.outputs.cache-hit != 'true'
         with:
-          key: ${{ matrix.plat }}
-
-      - uses: actions/setup-python@v5
-        if: steps.wheel-cache.outputs.cache-hit != 'true' && matrix.plat == 'macos-arm64'
-        with:
-          python-version: "3.13"
-
-      - name: Install build frontend (macOS)
-        if: steps.wheel-cache.outputs.cache-hit != 'true' && matrix.plat == 'macos-arm64'
-        run: python -m pip install -U pip build scikit-build-core nanobind
-
+          key: linux-x86_64
       - name: Build + L0 ctest + wheel
         if: steps.wheel-cache.outputs.cache-hit != 'true'
         env:
           CMAKE_CXX_COMPILER: g++
         run: make mc-ci
-
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.plat }}
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  mc-build-macos:
+    name: mc-build (macos-arm64)
+    needs: [changes, version-guard]
+    if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: wheel-cache
+        with:
+          path: dist
+          key: fplt-mc-macos-arm64-${{ hashFiles('mc/**') }}
+      - name: Install toolchain (macOS)
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install ninja ccache || true
+          echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "${GITHUB_ENV}"
+      - uses: hendrikmuhs/ccache-action@v1
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        with:
+          key: macos-arm64
+      - uses: actions/setup-python@v5
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.13"
+      - name: Install build frontend (macOS)
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        run: python -m pip install -U pip build scikit-build-core nanobind
+      - name: Build + L0 ctest + wheel
+        if: steps.wheel-cache.outputs.cache-hit != 'true'
+        env:
+          CMAKE_CXX_COMPILER: c++
+        run: make mc-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-macos-arm64
           path: dist/*.whl
           if-no-files-found: error
 
@@ -173,8 +183,8 @@ jobs:
 
   test-linux:
     name: test (linux-x86_64)
-    needs: [changes, mc-build]
-    if: ${{ !cancelled() && needs.mc-build.result != 'failure' }}
+    needs: [changes, mc-build-linux]
+    if: ${{ !cancelled() && needs.mc-build-linux.result != 'failure' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -202,9 +212,9 @@ jobs:
 
   test-macos:
     name: test (macos-arm64)
-    needs: [changes, mc-build]
+    needs: [changes, mc-build-macos]
     # macOS is 10× billable; only on mc/ PRs (fresh wheel + smoke).
-    if: ${{ !cancelled() && needs.changes.outputs.mc == 'true' && needs.mc-build.result != 'failure' }}
+    if: ${{ !cancelled() && needs.changes.outputs.mc == 'true' && needs.mc-build-macos.result != 'failure' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -227,7 +237,7 @@ jobs:
           uv run pytest mc/tests -q
 
   gate:
-    needs: [changes, lint, version-guard, mc-build, sanitizers, test-linux, test-macos]
+    needs: [changes, lint, version-guard, mc-build-linux, mc-build-macos, sanitizers, test-linux, test-macos]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -236,7 +246,8 @@ jobs:
           echo "changes=${{ needs.changes.result }}"
           echo "lint=${{ needs.lint.result }}"
           echo "version-guard=${{ needs.version-guard.result }}"
-          echo "mc-build=${{ needs.mc-build.result }}"
+          echo "mc-build-linux=${{ needs.mc-build-linux.result }}"
+          echo "mc-build-macos=${{ needs.mc-build-macos.result }}"
           echo "sanitizers=${{ needs.sanitizers.result }}"
           echo "test-linux=${{ needs.test-linux.result }}"
           echo "test-macos=${{ needs.test-macos.result }}"

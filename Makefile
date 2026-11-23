@@ -47,6 +47,11 @@ check:
 	uv run pyright
 	uv run pytest -m "not slow"
 
+# ── Monte Carlo micro-bench (native-mc-build-spec §1.1 / §5.5) ─────────────────
+# Synthetic 40-player fixture, n_sims=10000 by default. Best-of-3 wall times.
+mc-bench:
+	uv run python scripts/mc_bench.py $(ARGS)
+
 # ── Lint + type-check ─────────────────────────────────────────────────────────
 lint:
 	uv run ruff check src tests scripts
@@ -373,9 +378,6 @@ mc-test: ## ctest L0 + fplt-mc Python smoke
 mc-format: ## clang-format -i on mc C++ sources
 	find mc \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' -o -name '*.cc' \) \
 		-print0 | xargs -0 clang-format -i
-
-mc-bench: ## §1.1 per-step MC timing (stub in PR1; safe, no compile)
-	uv run python scripts/mc_bench.py $(ARGS)
 
 mc-golden: ## regenerate tests/fixtures/mc_golden (deliberate; review in PR)
 	@echo "mc-golden: golden fixtures land with L5 (PR5); nothing to regenerate yet."

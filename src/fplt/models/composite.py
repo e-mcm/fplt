@@ -309,7 +309,7 @@ def _sample_minutes_crn(
         cdf = np.cumsum(minutes.pmf[index])
         cdf[-1] = 1.0
         uniforms = rng.random(n_sims)
-        choice = np.sum(cdf[None, :] <= uniforms[:, None], axis=-1)
+        choice = np.searchsorted(cdf, uniforms, side="right")
         choice = np.minimum(choice, width - 1)
         drawn[index] = bins[choice]
     return drawn
