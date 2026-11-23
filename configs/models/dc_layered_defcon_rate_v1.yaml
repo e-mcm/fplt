@@ -1,0 +1,15 @@
+# dc_layered_v2 with other_player DC channel via Poisson rate → P(award).
+# Opt-in treatment vs production wire (FDB-211); not a production default
+# until promote-eval keeps.
+name: dc_layered_defcon_rate_v1
+extends: dc_layered_v2
+overrides:
+  components:
+    other:
+      name: other_player_defcon_rate_v1
+      params:
+        defcon_mode: rate
+        defcon_bucket_minutes:
+          "0": 0
+          "1-59": 45
+          "60+": 75

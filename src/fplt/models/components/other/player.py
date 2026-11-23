@@ -7,6 +7,10 @@ use staged ``defensive_contribution`` action counts when the season's
 scoring rules award them; older seasons stay at zero. Set
 ``use_defensive_contribution: false`` to force that channel to zero for
 A/B evals (default ``true``).
+
+``defcon_mode: rate`` (default ``mean``) replaces the shrunk 0/2 DC prior
+with ``P(award | minutes, position, rate)`` via a Poisson action-rate model
+(``other_player_defcon_rate_v1``). Released ``other_player_v1`` keeps ``mean``.
 """
 
 from __future__ import annotations
@@ -16,6 +20,15 @@ from typing import Any
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.components.other.defcon_rate import (
+    action_count,
+    award_rule,
+    expected_defcon_points,
+    fit_player_rates,
+    fit_position_rates,
+    parse_bucket_minutes,
+    parse_defcon_mode,
+)
 from fplt.models.spec import ModelSpec, register_component
 from fplt.schemas.components import (
     MINUTE_BUCKETS,
@@ -40,6 +53,8 @@ class OtherPlayerPriors:
     when samples are scarce (weight decays as ``n / (n + shrinkage)`` grows).
     ``use_defensive_contribution`` (default true) scores staged defensive
     action counts when the season rules award them; false zeros that channel.
+    ``defcon_mode`` is ``mean`` (shrunk realised awards) or ``rate``
+    (Poisson P(award) from actions-per-90).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -48,6 +63,8 @@ class OtherPlayerPriors:
         shrinkage = spec.params.get("shrinkage", 5.0)
         bps_weight = spec.params.get("bps_bonus_weight", 0.5)
         use_defensive = spec.params.get("use_defensive_contribution", True)
+        defcon_mode = parse_defcon_mode(spec.params.get("defcon_mode", "mean"))
+        bucket_minutes = parse_bucket_minutes(spec.params.get("defcon_bucket_minutes"))
         if isinstance(window, bool) or not isinstance(window, int) or window < 1:
             raise ValueError(f"window must be a positive int, got {window!r}")
         shrinkage_value = float(shrinkage)
@@ -64,10 +81,15 @@ class OtherPlayerPriors:
         self._shrinkage = shrinkage_value
         self._bps_weight = bps_value
         self._use_defensive = use_defensive
+        self._defcon_mode = defcon_mode
+        self._bucket_minutes = bucket_minutes
         self._fitted = False
         self._prior: dict[_PosKey, _Points] = {}
         self._player: dict[_Key, _Points] = {}
         self._bps_bonus: dict[int, float] = {}
+        self._defcon_pos_rate: dict[str, float] = {}
+        self._defcon_player_rate: dict[int, float] = {}
+        self._defcon_rule_by_pos: dict[str, tuple[int, int]] = {}
 
     def fit(self, view: PITView) -> None:
         """Estimate player and position priors from appearances on ``view``."""
@@ -75,6 +97,9 @@ class OtherPlayerPriors:
         self._prior = {}
         self._player = {}
         self._bps_bonus = {}
+        self._defcon_pos_rate = {}
+        self._defcon_player_rate = {}
+        self._defcon_rule_by_pos = {}
         history = _scored_history(view, use_defensive=self._use_defensive)
         if history.is_empty():
             return
@@ -82,17 +107,19 @@ class OtherPlayerPriors:
         samples: dict[_PosKey, list[_Points]] = {}
         player_rows: dict[_Key, list[tuple[_Points, float]]] = {}
         player_position: dict[int, str] = {}
+        zero_dc_in_mean = self._defcon_mode == "rate"
         for row in history.iter_rows(named=True):
             position = str(row["position"])
             if position not in _POSITIONS:
                 continue
             player = int(row["player_key"])
             bucket = str(row["minutes_bucket"])
+            defensive = 0.0 if zero_dc_in_mean else float(row["defensive_contribution"])
             points = (
                 float(row["bonus"]),
                 float(row["saves"]),
                 float(row["cards"]),
-                float(row["defensive_contribution"]),
+                defensive,
                 float(row["other"]),
             )
             samples.setdefault((position, bucket), []).append(points)
@@ -113,6 +140,8 @@ class OtherPlayerPriors:
                 self._bps_weight,
                 self._bps_bonus,
             )
+        if self._defcon_mode == "rate" and self._use_defensive:
+            self._fit_defcon_rates(view)
 
     def predict(self, view: PITView, player_fixtures: pl.DataFrame) -> pl.DataFrame:
         """Three bucket rows for each player-fixture.
@@ -150,8 +179,85 @@ class OtherPlayerPriors:
             points = self._player.get((player_key, bucket_name))
             if points is None:
                 points = self._prior.get((str(position), bucket_name), _ZERO)
+            if self._defcon_mode == "rate":
+                points = self._with_rate_defcon(
+                    points, player_key, str(position), bucket_name
+                )
             rows.append(_row(player_key, int(fixture), bucket_name, points))
         return _validated(pl.DataFrame(rows, schema=OTHER_POINTS_COLUMNS))
+
+    def _fit_defcon_rates(self, view: PITView) -> None:
+        """Fit position/player actions-per-90 from DC-awarding seasons."""
+        stats = view.latest(
+            "player_fixture_stats", ["season", "player_key", "fixture_id"]
+        ).collect()
+        if stats.is_empty():
+            return
+        roster = (
+            view.latest("players", ["season", "player_key"])
+            .select("season", "player_key", "position")
+            .collect()
+        )
+        history = stats.join(roster, on=["season", "player_key"], how="inner").sort(
+            ["player_key", "season", "gw", "fixture_id"]
+        )
+        rules_cache: dict[str, Rules] = {}
+        rate_samples: list[tuple[str, float, float]] = []
+        player_samples: list[tuple[int, str, float, float]] = []
+        for row in history.iter_rows(named=True):
+            season = str(row["season"])
+            if season not in rules_cache:
+                rules_cache[season] = Rules.for_season(season)
+            rules = rules_cache[season]
+            if not rules.defensive_contributions:
+                continue
+            position = str(row["position"])
+            if position not in _POSITIONS:
+                continue
+            minutes = int(row["minutes"])
+            if minutes <= 0:
+                continue
+            rule = award_rule(rules, position)
+            if rule is None:
+                continue
+            self._defcon_rule_by_pos[position] = rule
+            actions = float(action_count(row, position, rules))
+            nineties = minutes / 90.0
+            rate_samples.append((position, actions, nineties))
+            player_samples.append((int(row["player_key"]), position, actions, nineties))
+        self._defcon_pos_rate = fit_position_rates(rate_samples)
+        self._defcon_player_rate = fit_player_rates(
+            player_samples,
+            self._defcon_pos_rate,
+            window=self._window,
+            shrinkage=self._shrinkage,
+        )
+
+    def _with_rate_defcon(
+        self,
+        points: _Points,
+        player_key: int,
+        position: str,
+        bucket: str,
+    ) -> _Points:
+        """Replace the DC channel with the Poisson rate expectation."""
+        if not self._use_defensive:
+            return (points[0], points[1], points[2], 0.0, points[4])
+        rule = self._defcon_rule_by_pos.get(position)
+        if rule is None:
+            return (points[0], points[1], points[2], 0.0, points[4])
+        threshold, award_points = rule
+        rate = self._defcon_player_rate.get(
+            player_key, self._defcon_pos_rate.get(position, 0.0)
+        )
+        minutes = self._bucket_minutes.get(bucket, 0.0)
+        expected = expected_defcon_points(
+            rate_per_90=rate,
+            minutes=minutes,
+            threshold=threshold,
+            points=award_points,
+        )
+        return (points[0], points[1], points[2], expected, points[4])
 
 
 def _scored_history(view: PITView, *, use_defensive: bool = True) -> pl.DataFrame:

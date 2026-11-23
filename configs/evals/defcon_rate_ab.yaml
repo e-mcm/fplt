@@ -1,0 +1,51 @@
+# FDB-211: Poisson P(DC award) other_points vs production shrunk 0/2 wire.
+name: defcon_rate_ab
+kind: config
+question: >
+  Does a Poisson P(award)|minutes,position,rate defensive-contribution
+  prior beat the production shrunk 0/2 wire on RMSE for 2025-26?
+description: "defcon rate model vs other_player mean wire (FDB-211). Opt-in."
+
+change:
+  lever: hyperparam
+  orientation: opt_in
+  slot: other
+  control_kind: other_player
+  treatment_kind: other_player
+  tables: [player_fixture_stats]
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "components.other.params.defcon_mode: mean → rate"
+  notes: >
+    Control dc_layered_v2 (other_player_v1 mean wire). Treatment
+    dc_layered_defcon_rate_v1 (other_player_defcon_rate_v1). Primary window
+    2025-26 GW1–38; confirmation GW20–38. RMSE headline.
+
+control: dc_layered_v2
+treatment: dc_layered_defcon_rate_v1
+
+window:
+  seasons: ["2025-26"]
+  from_gw: 1
+  to_gw: 38
+  seasons_back: 4
+  modes: [walk_forward]
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  keep_if:
+    prediction_any: [rmse]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+report:
+  title: "Defcon rate P(award) vs mean wire (2025-26)"
+  store_doc: defcon-rate-promote.md
