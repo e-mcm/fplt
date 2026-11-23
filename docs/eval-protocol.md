@@ -142,12 +142,13 @@ Live `fplt plan` keeps `HighsSolveOptions.open_fpl_defaults()` (600s, gap `1e-3`
 
 ## 7. Checklist (operator card)
 
+0. **Plumbing is not done.** Every feature that lands measurement or forecast plumbing (new EvalSpec, ModelSpec fork, staged table consumer, coverage gate, etc.) **must kick off this promote pipeline** — development → confirmation → written keep/drop/tune. Do **not** stop at the plumbing PR. The board that the EvalSpec defines is the next required step; a merged EvalSpec without a written call is incomplete work.
 1. Name one lever; fork YAML / policy flag; production unchanged until flip PR.
 2. Declare development / confirmation / sealed windows (§1).
-3. Run primary suite; record SPA budget use (§3).
-4. Run confirmation on a non-overlapping window.
+3. Run primary / development suite; record SPA budget use (§3).
+4. Run confirmation on a non-overlapping window (**fresh `FPLT_DATA_DIR` / empty ledger** — reusing the development data root contaminates prediction summary and HAC via the shared ledger cache).
 5. Written call under §2; mark **provisional** if confirmation is weak or nested.
-6. Flip PR only after keep; update defaults + prefs + design; never chat-only.
+6. Flip PR only after keep; update defaults + prefs + design; never chat-only. Registry keep ≠ production flip.
 7. Decision boards: reference config (§4) + deterministic HiGHS (§5); tip + run-twice check.
 8. ModelSpec season/squad-points claims: `claim: squad_points` + `suites.decisions: true` (§8).
 

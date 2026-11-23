@@ -1,7 +1,9 @@
 # Promote plan: CS-only λ — player/RMSE revisit (FDB-239)
 
-**Eval status:** components-only **evaluated** → do not promote; this plan
-opens the **prediction** suite under eval-protocol windows.  
+**Eval status:** player/RMSE board **keep** —
+[cs-only-player-rmse-promote.md](../cs-only-player-rmse-promote.md).
+Components-only prior remains do-not-promote-alone. PRODUCTION flip pending
+(`dc_layered_v4+`).  
 **Path:** ModelSpec · primary **RMSE** (CS Brier secondary; RPS sanity).  
 **Inventory:** [unpromoted-improvements.md](../unpromoted-improvements.md) ·
 [cs-only-market-lambda-eval.md](../cs-only-market-lambda-eval.md)
@@ -60,7 +62,8 @@ stands. Runner auto-verdict stays `inconclusive` until FDB-73 thresholds.
 
 ### Ordered steps
 
-1. Land EvalSpec + tests (this PR) — measurement plumbing.
-2. Run development promote-eval; archive artifacts.
-3. If RMSE + CS Brier move the right way, run confirmation (disjoint).
-4. Written call under eval protocol §2; flip PR only on keep.
+1. Land EvalSpec + tests — done (#187).
+2. Run development promote-eval; archive artifacts — done (FDB-262).
+3. Confirmation on disjoint window (fresh data_dir) — done.
+4. Written call under eval protocol §2 — **keep**; flip PR still open
+   (`dc_layered_v4+`, no silent PRODUCTION edit).

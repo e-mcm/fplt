@@ -54,6 +54,14 @@ def test_committed_registry_loads_and_links_audits() -> None:
     assert prematch.provisional is False
     assert "fixtures" in prematch.windows[0].data_sha256
 
+    cs = entry_by_id(registry, "cs_only_player_rmse")
+    assert cs.verdict == "keep"
+    assert cs.provisional is False
+    assert cs.eval_spec == "cs_only_player_rmse_ab"
+    assert cs.treatment == "dc_layered_cs_v1"
+    roles = {w.role for w in cs.windows}
+    assert roles == {"development", "confirm"}
+
 
 def test_registry_eval_specs_exist_when_named() -> None:
     """Every named EvalSpec still has a YAML under configs/evals/."""
