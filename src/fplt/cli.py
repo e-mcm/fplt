@@ -1194,6 +1194,30 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit ranked hotspots as JSON instead of text",
     )
+    data = sub.add_parser(
+        "data",
+        parents=[log_flags],
+        help="R2 / snapshots raw helpers (parity during dual-write)",
+    )
+    data_sub = data.add_subparsers(dest="data_command")
+    data_parity = data_sub.add_parser(
+        "parity",
+        parents=[log_flags],
+        help=(
+            "One-way check: snapshots branch tip → FPLT_DATA_BUCKET/raw "
+            "(rclone check; exits 1 on missing/different keys)"
+        ),
+    )
+    data_parity.add_argument(
+        "--remote",
+        default="origin",
+        help="Git remote (or local path) for the snapshots branch",
+    )
+    data_parity.add_argument(
+        "--branch",
+        default="snapshots",
+        help="Branch that holds write-once captures (default: snapshots)",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -1265,6 +1289,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "auth":
         logger.info("fplt auth")
         _auth(args)
+        return
+    if args.command == "data":
+        logger.info("fplt data")
+        _data(args)
         return
     logger.info("fplt %s (data_dir=%s)", args.command, get_settings().data_dir)
     if args.command == "ops-catchup":
@@ -1340,6 +1368,31 @@ def main(argv: list[str] | None = None) -> None:
         _perf_report(args)
         return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _data(args: argparse.Namespace) -> None:
+    command = getattr(args, "data_command", None)
+    if command == "parity":
+        _data_parity(args)
+        return
+    raise SystemExit(_not_implemented(f"data {command}"))
+
+
+def _data_parity(args: argparse.Namespace) -> None:
+    from fplt.data.parity import ParityError, check_raw_parity
+
+    try:
+        result = check_raw_parity(
+            remote=str(args.remote),
+            branch=str(args.branch),
+        )
+    except ParityError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        f"raw parity ok: {result.source_files} files on {result.branch} "
+        f"→ {result.remote_target}/raw"
+    )
 
 
 def _ops_catchup(args: argparse.Namespace) -> None:
