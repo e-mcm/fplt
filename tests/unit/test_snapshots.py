@@ -2,10 +2,18 @@
 
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from fplt.data.snapshots import SnapshotFetchError, fetch_snapshots
+from fplt.data.remote import Remote, RemoteError
+from fplt.data.snapshots import (
+    RawSource,
+    SnapshotFetchError,
+    fetch_raw,
+    fetch_snapshots,
+)
+from fplt.settings import Settings
 
 
 def _commit(repo: Path, branch: str) -> None:
@@ -86,3 +94,106 @@ def test_missing_branch_raises(tmp_path: Path) -> None:
     _commit(remote, "main")
     with pytest.raises(SnapshotFetchError):
         fetch_snapshots(tmp_path / "raw", remote=str(remote))
+
+
+def test_fetch_raw_auto_uses_branch_when_bucket_unset(tmp_path: Path) -> None:
+    remote = tmp_path / "remote"
+    raw = remote / "data" / "raw" / "fpl_api" / "season=2024-25"
+    raw.mkdir(parents=True)
+    (raw / "bootstrap_static.json.gz").write_bytes(b"branch")
+    _commit(remote, "snapshots")
+    dest = tmp_path / "raw"
+    written = fetch_raw(
+        dest,
+        Settings(),
+        source="auto",
+        remote=str(remote),
+    )
+    assert [path.name for path in written] == ["bootstrap_static.json.gz"]
+    assert written[0].read_bytes() == b"branch"
+
+
+def test_fetch_raw_auto_pulls_bucket_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dest = tmp_path / "raw"
+    expected = [dest / "fpl_api" / "a.json.gz"]
+    settings = Settings(data_bucket="fplt-data")
+    remote = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+    pull_calls: list[tuple[Remote, str, Path]] = []
+
+    def fake_from_settings(
+        _cls: type[Remote], s: Settings, bucket: str | None = None
+    ) -> Remote | None:
+        assert s is settings
+        assert bucket is None
+        return remote
+
+    def fake_pull(r: Remote, prefix: str, d: Path) -> list[Path]:
+        pull_calls.append((r, prefix, d))
+        return expected
+
+    monkeypatch.setattr(
+        Remote,
+        "from_settings",
+        classmethod(fake_from_settings),
+    )
+    monkeypatch.setattr("fplt.data.snapshots.pull", fake_pull)
+    assert fetch_raw(dest, settings, source="auto") == expected
+    assert pull_calls == [(remote, "raw", dest)]
+
+
+def test_fetch_raw_source_branch_ignores_configured_bucket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote = tmp_path / "remote"
+    raw = remote / "data" / "raw" / "fpl_api"
+    raw.mkdir(parents=True)
+    (raw / "bootstrap_static.json.gz").write_bytes(b"ok")
+    _commit(remote, "snapshots")
+
+    def boom(*_a: object, **_k: object) -> list[Path]:
+        raise AssertionError("bucket path must not run for source=branch")
+
+    monkeypatch.setattr("fplt.data.snapshots.pull", boom)
+    written = fetch_raw(
+        tmp_path / "raw",
+        Settings(data_bucket="fplt-data"),
+        source="branch",
+        remote=str(remote),
+    )
+    assert len(written) == 1
+
+
+def test_fetch_raw_source_bucket_requires_data_bucket(tmp_path: Path) -> None:
+    with pytest.raises(SnapshotFetchError, match="FPLT_DATA_BUCKET"):
+        fetch_raw(tmp_path / "raw", Settings(), source="bucket")
+
+
+def test_fetch_raw_source_bucket_propagates_remote_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(data_bucket="fplt-data")
+
+    def fake_from_settings(
+        _cls: type[Remote], _s: Settings, bucket: str | None = None
+    ) -> Remote:
+        return Remote(target="fplt:fplt-data", kind="data", env={})
+
+    monkeypatch.setattr(Remote, "from_settings", classmethod(fake_from_settings))
+
+    def boom(*_a: object, **_k: object) -> list[Path]:
+        raise RemoteError("rclone failed")
+
+    monkeypatch.setattr("fplt.data.snapshots.pull", boom)
+    with pytest.raises(RemoteError, match="rclone failed"):
+        fetch_raw(tmp_path / "raw", settings, source="bucket")
+
+
+def test_fetch_raw_rejects_unknown_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="source must be"):
+        fetch_raw(
+            tmp_path / "raw",
+            Settings(),
+            source=cast(RawSource, "other"),
+        )

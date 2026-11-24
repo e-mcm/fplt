@@ -1122,8 +1122,17 @@ def main(argv: list[str] | None = None) -> None:
         "ops-catchup",
         parents=[log_flags],
         help=(
-            "Post-downtime recovery: fetch snapshots → restage → "
+            "Post-downtime recovery: fetch raw → restage → "
             "understat/AF ingest → catch_up → status (no Dagster UI)"
+        ),
+    )
+    ops_catchup.add_argument(
+        "--source",
+        choices=("auto", "bucket", "branch"),
+        default="auto",
+        help=(
+            "Raw fetch source: auto (bucket when FPLT_DATA_BUCKET is set, "
+            "else branch), bucket, or branch (default: auto)"
         ),
     )
     ops_catchup.add_argument(
@@ -1338,16 +1347,19 @@ def _ops_catchup(args: argparse.Namespace) -> None:
         format_ops_catchup_status,
         run_ops_catchup,
     )
-    from fplt.data.snapshots import SnapshotFetchError
+    from fplt.data.remote import RemoteError
+    from fplt.data.snapshots import RawSource, SnapshotFetchError
 
+    source: RawSource = args.source
     try:
         result = run_ops_catchup(
+            source=source,
             remote=str(args.remote),
             branch=str(args.branch),
             horizon=int(args.horizon),
             notify=not bool(args.no_notify),
         )
-    except SnapshotFetchError as exc:
+    except (SnapshotFetchError, RemoteError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_ops_catchup_status(result), end="")

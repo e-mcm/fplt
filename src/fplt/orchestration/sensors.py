@@ -16,9 +16,10 @@ from fplt.automation.notify import notify
 from fplt.automation.production import load_production_ops
 from fplt.data.benchmark_projections import benchmarks_path
 from fplt.data.football_data import list_e0_csv_paths
+from fplt.data.remote import RemoteError
 from fplt.data.snapshots import (
     SnapshotFetchError,
-    fetch_snapshots,
+    fetch_raw,
     is_football_data_raw,
 )
 from fplt.data.store import DataStore
@@ -85,8 +86,8 @@ def _side_ingest_tick(
     """
     dest = get_settings().data_dir / "raw"
     try:
-        new_files = fetch_snapshots(dest)
-    except SnapshotFetchError as exc:
+        new_files = fetch_raw(dest)
+    except (SnapshotFetchError, RemoteError) as exc:
         return dg.SkipReason(str(exc))
     hits = _prefix_hits(dest, prefix, new_files)
     if hits:
@@ -106,7 +107,10 @@ def _side_ingest_tick(
 @dg.sensor(
     job=refresh_staged,
     minimum_interval_seconds=_TEN_MINUTES,
-    description="Fetch the snapshots branch and restage when new files arrive.",
+    description=(
+        "Fetch raw captures (bucket when configured, else snapshots branch) "
+        "and restage when new files arrive."
+    ),
 )
 def snapshots_sensor() -> dg.RunRequest | dg.SkipReason:
     """Copy new snapshot files into ``$FPLT_DATA_DIR/raw`` and request a restage.
@@ -116,8 +120,8 @@ def snapshots_sensor() -> dg.RunRequest | dg.SkipReason:
     """
     dest = get_settings().data_dir / "raw"
     try:
-        new_files = fetch_snapshots(dest)
-    except SnapshotFetchError as exc:
+        new_files = fetch_raw(dest)
+    except (SnapshotFetchError, RemoteError) as exc:
         return dg.SkipReason(str(exc))
     refresh_files = [path for path in new_files if not is_football_data_raw(path)]
     if not refresh_files:

@@ -1,6 +1,6 @@
 """One-shot post-downtime recovery without the Dagster UI.
 
-Runs the same library steps the Dagster jobs wrap: fetch ``snapshots`` →
+Runs the same library steps the Dagster jobs wrap: ``fetch_raw`` →
 restage FPL (+ vaastav) → Understat / API-Football ingest → ``catch_up`` →
 status summary. Prefer this after travel or long sleep when sensors have not
 drained the backlog yet.
@@ -29,7 +29,7 @@ from fplt.data.api_football import (
     load_id_maps as load_api_football_id_maps,
 )
 from fplt.data.raw import ingest_raw
-from fplt.data.snapshots import fetch_snapshots
+from fplt.data.snapshots import RawSource, fetch_raw
 from fplt.data.store import DataStore
 from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
 from fplt.data.vaastav import import_available
@@ -45,8 +45,8 @@ class OpsCatchupResult:
     """Counts and gameweeks from one ``run_ops_catchup`` call.
 
     Attributes:
-        snapshots_fetched: New ``*.json.gz`` files copied from the snapshots
-            branch.
+        snapshots_fetched: New raw files copied by ``fetch_raw`` (bucket or
+            snapshots branch).
         staged_snapshots: Bootstrap captures ingested by ``ingest_raw``.
         understat_matches: Understat match files staged.
         api_football_captures: API-Football injury captures staged.
@@ -71,12 +71,13 @@ def run_ops_catchup(
     *,
     models: list[str] | None = None,
     horizon: int = DEFAULT_PLAN_HORIZON,
+    source: RawSource = "auto",
     remote: str = "origin",
     branch: str = "snapshots",
     settings: Settings | None = None,
     notify: bool = True,
 ) -> OpsCatchupResult:
-    """Fetch snapshots, restage feeds, catch up plans, and return status counts.
+    """Fetch raw captures, restage feeds, catch up plans, and return status counts.
 
     Mirrors the Dagster ``refresh_staged``, ``understat_ingest``,
     ``api_football_ingest``, and ``catch_up`` jobs without requiring the UI or
@@ -87,10 +88,12 @@ def run_ops_catchup(
             ``Settings.data_dir``.
         models: YAML spec names for catch-up. Defaults to ``PRODUCTION_MODELS``.
         horizon: Weeks each plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
+        source: Raw fetch source: ``auto`` (bucket when configured, else branch),
+            ``bucket``, or ``branch``.
         remote: Git remote (or local path in tests) for the snapshots branch.
         branch: Branch that holds write-once captures (default ``snapshots``).
-        settings: Optional settings for recommendation notify. Defaults to
-            ``get_settings()``.
+        settings: Optional settings for recommendation notify and bucket
+            credentials. Defaults to ``get_settings()``.
         notify: When True and at least one gameweek was planned, push the
             concatenated ``report.md`` via ntfy/SMTP (same as the Dagster
             ``recommendation_report`` asset).
@@ -99,15 +102,28 @@ def run_ops_catchup(
         Counts and pending/planned gameweeks for the operator status print.
 
     Raises:
-        SnapshotFetchError: The snapshots branch could not be cloned.
+        SnapshotFetchError: The snapshots branch could not be cloned, or
+            ``source=bucket`` with no data bucket configured.
+        RemoteError: An rclone pull against the bucket failed.
     """
     cfg = get_settings() if settings is None else settings
     root = cfg.data_dir if data_dir is None else data_dir
     chosen = PRODUCTION_MODELS if models is None else models
     raw_root = root / "raw"
 
-    logger.info("ops_catchup: fetch snapshots remote=%s branch=%s", remote, branch)
-    new_files = fetch_snapshots(raw_root, remote=remote, branch=branch)
+    logger.info(
+        "ops_catchup: fetch_raw source=%s remote=%s branch=%s",
+        source,
+        remote,
+        branch,
+    )
+    new_files = fetch_raw(
+        raw_root,
+        cfg,
+        source=source,
+        remote=remote,
+        branch=branch,
+    )
 
     store = DataStore(root)
     logger.info("ops_catchup: refresh staged")

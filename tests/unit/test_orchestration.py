@@ -8,6 +8,7 @@ import dagster as dg
 import polars as pl
 import pytest
 
+from fplt.data.remote import RemoteError
 from fplt.data.snapshots import SnapshotFetchError
 from fplt.data.store import DataStore
 from fplt.orchestration import defs
@@ -113,7 +114,7 @@ def test_sensor_requests_a_run_for_new_files(
     ) -> list[Path]:
         return [target]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests[0].run_key == target.as_posix()
     get_settings.cache_clear()
@@ -137,7 +138,7 @@ def test_sensor_skips_when_only_football_data_arrives(
     ) -> list[Path]:
         return [odds]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message is not None
@@ -155,7 +156,7 @@ def test_sensor_skips_when_nothing_is_new(
     ) -> list[Path]:
         return []
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.skip_message == "no new snapshots"
     get_settings.cache_clear()
@@ -171,7 +172,7 @@ def test_sensor_skips_when_the_branch_is_missing(
     ) -> list[Path]:
         raise SnapshotFetchError("missing")
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "missing"
@@ -197,7 +198,7 @@ def test_understat_sensor_requests_a_run_for_new_files(
     ) -> list[Path]:
         return [other, target]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = understat_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests[0].run_key == target.as_posix()
     names = {sensor.name for sensor in defs.sensors}
@@ -216,7 +217,7 @@ def test_understat_sensor_skips_when_prefix_is_unchanged(
     ) -> list[Path]:
         return [fpl_only]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = understat_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "no new understat snapshots"
@@ -243,7 +244,7 @@ def test_understat_sensor_uses_cursor_when_fetch_already_copied(
     ) -> list[Path]:
         return []
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     first = understat_sensor.evaluate_tick(dg.build_sensor_context())
     assert first.run_requests[0].run_key == target.as_posix()
     again = understat_sensor.evaluate_tick(
@@ -282,7 +283,7 @@ def test_api_football_sensor_requests_a_run_for_injury_files(
     ) -> list[Path]:
         return [lineup, injury]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests[0].run_key == injury.as_posix()
     names = {sensor.name for sensor in defs.sensors}
@@ -309,7 +310,7 @@ def test_api_football_sensor_skips_lineups_only(
     ) -> list[Path]:
         return [lineup]
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "no new api_football snapshots"
@@ -326,10 +327,25 @@ def test_api_football_sensor_skips_when_the_branch_is_missing(
     ) -> list[Path]:
         raise SnapshotFetchError("missing")
 
-    monkeypatch.setattr("fplt.orchestration.sensors.fetch_snapshots", _fetch)
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
     evaluation = api_football_sensor.evaluate_tick(dg.build_sensor_context())
     assert evaluation.run_requests == []
     assert evaluation.skip_message == "missing"
+    get_settings.cache_clear()
+
+
+def test_sensor_skips_when_bucket_pull_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_data_dir(tmp_path, monkeypatch)
+
+    def _fetch(*_a: object, **_k: object) -> list[Path]:
+        raise RemoteError("rclone offline")
+
+    monkeypatch.setattr("fplt.orchestration.sensors.fetch_raw", _fetch)
+    evaluation = snapshots_sensor.evaluate_tick(dg.build_sensor_context())
+    assert evaluation.run_requests == []
+    assert evaluation.skip_message == "rclone offline"
     get_settings.cache_clear()
 
 
