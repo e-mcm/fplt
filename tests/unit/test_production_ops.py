@@ -97,5 +97,19 @@ def test_missing_or_invalid_yaml_raises(tmp_path: Path) -> None:
 
 
 def test_production_ops_rejects_blank_model_names() -> None:
+    from fplt.models.pipeline_spec import live_pipeline_defaults
+
     with pytest.raises(ValueError, match="non-empty"):
-        ProductionOps(models=["dc_layered_v4", "  "], plan_horizon=3)
+        ProductionOps(
+            models=["dc_layered_v4", "  "],
+            plan_horizon=3,
+            pipeline=live_pipeline_defaults(model="dc_layered_v4", horizon=3),
+        )
+
+
+def test_committed_production_exposes_pipeline() -> None:
+    """B11: production.yaml carries a PipelineSpec matching models/horizon."""
+    ops = load_production_ops()
+    assert ops.pipeline.model_name == ops.models[0]
+    assert ops.pipeline.planner.horizon == ops.plan_horizon
+    assert ops.pipeline.env.mc_backend == "native"

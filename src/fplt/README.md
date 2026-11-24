@@ -9,7 +9,7 @@ Library-first FPL points prediction and team selection. Dagster / CLI / apps are
 | `schemas/` | `pandera.polars` contracts at module boundaries |
 | `features/` | `@feature(...)` registry (versioned) |
 | `scoring/` | Season `Rules` + chip tables from `configs/` |
-| `models/` | `PointsPredictor`, components, simulation, specs |
+| `models/` | `PointsPredictor`, components, simulation, `ModelSpec` / `PipelineSpec` |
 | `backtest/` | Walk-forward, ledger, compare / promote-eval / bakeoff |
 | `optimise/` | Squad MILP, chips, plans, apply |
 | `orchestration/` | Thin Dagster assets / sensors / factories |

@@ -262,9 +262,17 @@ def test_materialize_attaches_the_report(
     _league(tmp_path)
     # Synthetic league has rolling-mean ledger rows only; keep the asset path
     # under that model and H=1 so the report-attachment check stays cheap.
+    from fplt.models.pipeline_spec import live_pipeline_defaults
+
     monkeypatch.setattr(
         "fplt.automation.cycle.load_production_ops",
-        lambda: ProductionOps(models=["rolling_mean_v1"], plan_horizon=1),
+        lambda: ProductionOps(
+            models=["rolling_mean_v1"],
+            plan_horizon=1,
+            pipeline=live_pipeline_defaults(
+                model="rolling_mean_v1", horizon=1, mc_backend="python"
+            ),
+        ),
     )
     result = dg.materialize([recommendation_report])
     assert result.success
