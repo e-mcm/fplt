@@ -1,0 +1,28 @@
+name: push-raw
+description: Upload new raw captures to R2 (write-once)
+inputs:
+  src:
+    description: Local directory of raw captures to upload
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+    - shell: bash
+      env:
+        RCLONE_CONFIG_FPLT_TYPE: s3
+        RCLONE_CONFIG_FPLT_PROVIDER: Cloudflare
+        RCLONE_CONFIG_FPLT_NO_CHECK_BUCKET: "true"
+      run: |
+        set -euo pipefail
+        src="${{ inputs.src }}"
+        if [ ! -d "$src" ] || [ -z "$(find "$src" -type f | head -n 1)" ]; then
+          echo "nothing new to upload"
+          exit 0
+        fi
+        export RCLONE_CONFIG_FPLT_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        export RCLONE_CONFIG_FPLT_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+        export RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+        rclone copy "$src" "fplt:${DATA_BUCKET}/raw" \
+          --immutable --fast-list --stats-one-line -v
