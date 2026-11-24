@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -53,9 +53,10 @@ class Settings(BaseSettings):
     ``fpl_session`` is the retired ``pl_profile`` cookie and is still sent
     when set. ``api_football_key`` is the API-Sports key for injuries
     ingest (``FPLT_API_FOOTBALL_KEY``); the fetch script also accepts
-    ``API_FOOTBALL_KEY`` / ``APISPORTS_KEY``. Never commit a real token,
-    cookie, or API key; store them with ``fplt auth`` / env under
-    ``~/.config/fplt/env``.
+    ``API_FOOTBALL_KEY`` / ``APISPORTS_KEY``. ``r2_*`` / ``data_bucket`` /
+    ``lab_bucket`` configure the Cloudflare R2 remotes used by
+    ``fplt.data.remote``. Never commit a real token, cookie, API key, or R2
+    secret; store them with ``fplt auth`` / env under ``~/.config/fplt/env``.
     """
 
     model_config = SettingsConfigDict(
@@ -70,6 +71,12 @@ class Settings(BaseSettings):
     fpl_api_token: str | None = None
     fpl_session: str | None = None
     api_football_key: str | None = None
+    # Cloudflare R2 (unset data_bucket ⇒ snapshots-branch fetch behaviour).
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: SecretStr | None = None
+    data_bucket: str | None = None
+    lab_bucket: str | None = None
     # Experimental Touchline Wire predicted-XI fetch (off by default).
     touchline_lineups_enabled: bool = False
     touchline_lineups_min_interval_seconds: int = 300
