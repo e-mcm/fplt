@@ -107,6 +107,8 @@ L3 index        official/ pointers, experiments/,      pointers write-once; cata
                 specs/, catalog/, status/
 ```
 
+**Schemas (Stage B2).** Pydantic manifests and pandera tables for the contracts above live under `src/fplt/schemas/`: `manifests.py` (`RunManifest`, `BuildManifest`, `OfficialPointer`, `AppliedRecord`, `InterventionRecord`), `l2.py` (L2 standard-key mixin + `schema_version`), `outcomes.py` (`player_fixture_outcomes`, `fixture_outcomes`), `squad_state_table.py` (virtual-line in/out). Experiment and batch manifests wait for Stage C. Writers and producers land in later Stage B PRs; this section names the field contracts only.
+
 **Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/`, `predictions/`, `plans/`, `ledger/` and `artifacts/` remain the working paths until curated builds and the run writer land; then those become views over `curated/` and `runs/` (see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
 
 ```
