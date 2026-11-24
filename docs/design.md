@@ -26,7 +26,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 1. **Point-in-time (PIT) everything.** Every `fit` and `predict` takes an `as_of` gameweek and may only see information available at that gameweek's deadline. This is enforced by the data access layer (§4.4), not by convention.
 2. **Two-level model interface.** `PointsPredictor` at the top (what the backtester and optimiser see); typed component protocols underneath (what composite predictors are built from). See §5.
 3. **Simulation is the composition glue.** Layered predictors combine components by Monte Carlo simulation of match scenarios, not by hand-derived closed-form integrals. See §5.6.
-4. **Raw data is immutable.** Raw API responses are written once and never edited. Everything downstream is derived and can be rebuilt.
+4. **Every durable object is written once.** Raw API responses, curated builds, runs, specs and official pointers are immutable after write — never edited or overwritten in place. Object storage has no append and no locks across writers, so mutable shared files lose rows under concurrency. Derived indexes (`catalog/`, `status/`) are the only rewritten prefixes and can be rebuilt. See §4.3.
 5. **Schemas are contracts.** Every table crossing a module boundary has a `pandera.polars` schema. No bare DataFrames between stages.
 6. **Scoring rules are data, keyed by season.** FPL rules change between seasons; backtests must apply the rules of the season being tested.
 7. **Library first, orchestrator second.** All logic lives in plain Python functions in the `fplt` package and runs without Dagster (tests, notebooks, CLI). Dagster assets are thin wrappers that call library functions and record metadata.
@@ -40,7 +40,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 |---|---|---|
 | Environment & deps | `uv` | `pyproject.toml` + committed `uv.lock` |
 | Dataframe engine | `polars` | pandas only inside external adapters if a dependency forces it |
-| Storage | Parquet (derived), gzipped JSON (raw API responses) | DuckDB for ad hoc SQL over parquet |
+| Storage | Parquet (derived), gzipped JSON (raw API responses); durable mirror on Cloudflare R2 (`fplt-data` / `fplt-lab`) | DuckDB for ad hoc SQL over parquet; local `$FPLT_DATA_DIR` remains what library code reads (§4.3) |
 | Schemas / validation | `pandera.polars` | Wired into Dagster asset checks via a small factory (§8.4) |
 | Configs | `pydantic` models, loaded from YAML | `pydantic-settings` for environment settings. No Hydra. |
 | Orchestration, lineage, validation UI | Dagster (OSS, run locally) | Webserver + daemon as launchd services (§8.6) |
@@ -83,11 +83,35 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 
 ### 4.3 Storage layout
 
-All data lives under `$FPLT_DATA_DIR` (default `./data`, gitignored).
+**Principle: every object is written once.** Object storage has no append and no cross-writer locks, so a file modified in place loses rows when two machines write it. Every durable table is therefore an immutable partition (one file per capture, build or run). Readers scan the prefix. Keep forever — no lifecycle or expiry rules. Full contract: [`proposals/fplt-data-model.md`](proposals/fplt-data-model.md); bucket ops: [`proposals/r2-data-bucket-plan.md`](proposals/r2-data-bucket-plan.md). Owner approved the run-partitioned storage contract and ledger-as-view on **2026-11-24** (AGENTS.md §7).
+
+**Durable store (Cloudflare R2).** Three buckets (tokens are scoped per bucket, not per prefix):
+
+| Bucket | Prefixes | Who writes | Locked (indefinite) |
+|---|---|---|---|
+| `fplt-data` | `raw/`, `curated/`, `specs/`, `runs/` (official only), `official/`, `catalog/`, `status/` | GHA capture (`raw/`); GHA ops / owner token (official runs, pointers, `status/`) | `raw/`, `curated/`, `specs/`, `runs/`, `official/` |
+| `fplt-lab` | `runs/` (adhoc, experiment, benchmark, legacy), `experiments/`, `batches/`, `specs/`, `catalog/` | owner, cloud agents, Modal | `runs/`, `experiments/`, `batches/`, `specs/` |
+| `fplt-public` (later) | whitelisted JSON for the website | publish step only | none (regenerable from official runs) |
+
+- `catalog/` and `status/` are the only rewritten prefixes; both are derived and rebuildable.
+- `fplt-lab` exists so agent tokens can never write official data. Agents **read** `fplt-data` (read-only token) and **write** only `fplt-lab` (AGENTS.md §4).
+- Key paths mirror the local layout (`fplt-data/raw/fpl_api/season=…/captured_at=…/bootstrap_static.json.gz`), so a pull is a plain `rclone copy` into `$FPLT_DATA_DIR`.
+
+**Layers (target):**
+
+```
+L0 raw/         external payloads as received          write-once, keyed by source + captured_at
+L1 curated/     typed tables + outcomes from raw       content-addressed builds, never overwritten
+L2 runs/        analytic outputs of one invocation     write-once per run_id (predictions, plans, metrics)
+L3 index        official/ pointers, experiments/,      pointers write-once; catalog/ derived
+                specs/, catalog/, status/
+```
+
+**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/`, `predictions/`, `plans/`, `ledger/` and `artifacts/` remain the working paths until curated builds and the run writer land; then those become views over `curated/` and `runs/` (see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
 
 ```
 data/
-├── raw/                         # immutable, write-once
+├── raw/                         # immutable, write-once (mirror of fplt-data/raw/)
 │   ├── fpl_api/season=2026-27/
 │   │   └── captured_at=2026-11-21T08-00-00Z/
 │   │       ├── bootstrap_static.json.gz
@@ -106,7 +130,7 @@ data/
 │       ├── injuries/captured_at=.../injuries.json.gz
 │       ├── fixtures/league=<id>/captured_at=…/fixtures.json.gz  # cups / Europe
 │       └── lineups/captured_at=…/   # optional predicted XIs (separate from injuries)
-├── staged/                      # typed parquet, one table per entity, derived from raw
+├── staged/                      # typed parquet (migration: → curated builds)
 │   ├── players/  teams/  fixtures/  gameweeks/
 │   ├── player_status/           # status/news/news_added/price/ep_next/chance this+next/penalties_order/set-piece orders per snapshot
 │   ├── player_fixture_stats/    # actuals from event_live (+ Opta expected_*)
@@ -118,21 +142,21 @@ data/
 │   └── predicted_lineups/       # near-deadline XI/bench/out overrides (PIT)
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
-├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet
+├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet  # migration: → runs/
 ├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── archive_compare/<stamp>/     # N2 paired board vs archives (§7.5)
-├── ledger/                      # backtest ledger (§7.2)
-├── plans/<model_id>/as_of=.../  # optimiser outputs
+├── ledger/                      # transitional mutating store; target is a view (§7.2)
+├── plans/<model_id>/as_of=.../  # optimiser outputs (migration: → runs/)
 └── timing/*.json                # wall-clock phase timings (`fplt.utils.timing`; `fplt perf-report`)
 ```
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet. football-data E0 files are plain CSV (write-once) as published upstream.
 
-Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON plus league `teamsData` onto the `snapshots` branch; the Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
+Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) write match JSON plus league `teamsData` under `raw/understat/...` (dual-write to R2 `fplt-data` and the `snapshots` branch during migration; bucket is source of truth after cut-over — §4.5); the Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
 
-football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` (and monthly `.github/workflows/football_data.yml`, 1st of month 06:00 UTC + manual) writes write-once E0 CSVs onto the `snapshots` branch under `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` (local `make fetch-football-data` may still use the legacy `season=…/E0.csv` path). The Dagster `match_odds_sensor` (30 min) requests `match_odds_ingest` when a new E0 CSV appears under raw after `snapshots_sensor` copies it. Staging writes `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist; later `captured_at` files win on key collision. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
+football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` (and monthly `.github/workflows/football_data.yml`, 1st of month 06:00 UTC + manual) writes write-once E0 CSVs under `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` (same dual-write → bucket SoT; local `make fetch-football-data` may still use the legacy `season=…/E0.csv` path). The Dagster `match_odds_sensor` (30 min) requests `match_odds_ingest` when a new E0 CSV appears under raw after the raw-pull sensor copies it. Staging writes `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist; later `captured_at` files win on key collision. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
 
-API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON plus cup/Europe `/fixtures` (leagues in `configs/api_football/competitions.yaml`) onto the `snapshots` branch under `raw/api_football/...`; the Dagster `api_football_ingest` asset stages `player_injuries` and `competition_fixtures` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Only fixtures involving a mapped EPL `team_key` are staged. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v4` is unchanged until eval. All-comp rest / `games_last_7d` always merge PIT-visible `competition_fixtures` when present (PL-only fallback when empty).
+API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON plus cup/Europe `/fixtures` (leagues in `configs/api_football/competitions.yaml`) under `raw/api_football/...` (same dual-write → bucket SoT); the Dagster `api_football_ingest` asset stages `player_injuries` and `competition_fixtures` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Only fixtures involving a mapped EPL `team_key` are staged. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v4` is unchanged until eval. All-comp rest / `games_last_7d` always merge PIT-visible `competition_fixtures` when present (PL-only fallback when empty).
 
 ### 4.4 Point-in-time access (`PITData`)
 
@@ -173,9 +197,10 @@ Models receive a `PITView`, never a `DataStore`. The leakage test (§9.2) verifi
 
 Availability and news cannot be recovered after the fact, so capture runs independently of the local Dagster instance:
 
-- A standalone script `scripts/snapshot.py` (stdlib + `httpx` only) runs every **15 minutes** on **GitHub Actions cron**, throttling writes: every 15 minutes in the last 3 hours before a deadline, every hour in the 3–6 hour window, otherwise when the last snapshot is more than 12 hours old. After a GW is `data_checked` it also captures `event/{gw}/live`.
-- Snapshots are committed to an orphan branch `snapshots` of this repo (path layout as `data/raw/fpl_api/...`).
-- Local Dagster has a sensor that fetches the `snapshots` branch and ingests new files into `data/raw`.
+- A standalone script `scripts/snapshot.py` (stdlib + `httpx` only) runs every **15 minutes** on **GitHub Actions cron**, throttling writes: every 15 minutes in the last 3 hours before a deadline, every hour in the 3–6 hour window, otherwise when the last snapshot is more than 12 hours old. After a GW is `data_checked` it also captures `event/{gw}/live`. Sibling workflows (`understat.yml`, `api_football.yml`, `football_data.yml`) follow the same publish pattern for their sources.
+- **Dual-write (migration):** each capture job uploads new objects to R2 `fplt-data/raw/` (write-once, `--immutable`) **and** publishes onto the orphan `snapshots` git branch (path layout as `data/raw/...`). Both sinks run even if the other fails, so a single R2 outage never loses a capture.
+- **Cut-over:** after clean parity, branch publish stops; the bucket is the only sink. The `snapshots` branch is kept forever as a **read-only archive** — never deleted (it is raw data). Local pull switches from the branch to `rclone` from `fplt-data` (see rollout Stage A).
+- Local Dagster / `ops-catchup` pulls new raw into `$FPLT_DATA_DIR/raw` (branch today; bucket when configured) and restages.
 
 Historical seasons (vaastav) lack per-deadline status/news/`news_added`/chance/`penalties_order`/set-piece-order snapshots. Mark their provenance (`source = "vaastav"`) and treat availability features for those seasons as degraded; component backtests of the minutes model should report results separately for snapshot-backed seasons (`make minutes-brier` / `fplt eval-components --minutes-only`, read `slice=source=fpl_api`). Fixture schedules are still staged at `season_start` so long-horizon planning works without inventing near-kickoff visibility. Per-gameweek prices are staged from vaastav `merged_gw.csv` `value` into `player_status.price` with `available_at` at that gameweek's deadline so historical transfer budgets bind. `penalties_order`, set-piece orders, both chance fields, and `news_added` are null for vaastav rows.
 
@@ -422,6 +447,20 @@ Fair multi-model compare (`fplt compare` / `make compare-models`) runs the same 
 
 ### 7.2 Ledger
 
+**Target (approved 2026-11-24): the ledger is a view, not a stored table.** Actuals live in their own curated outcomes tables and are joined to predictions at read time — never written into prediction rows. That removes `append_predictions` / `fill_actuals` mutation and the shared rewritten `part.parquet` (which loses rows under concurrent writers). Contract: [`proposals/fplt-data-model.md`](proposals/fplt-data-model.md) §3.6.
+
+```
+ledger = runs/*/predictions/player_fixture  ⋈  curated outcomes (latest build)
+         on (target_season, fixture_id, player_key)
+```
+
+- A backtest or live **run** *is* its ledger contribution (immutable under `runs/run=<run_id>/`).
+- Scoring uses the latest outcomes build by default; pass `outcomes_build=` to pin one (e.g. to reproduce an audit).
+- Decision and chip-window rows live on the plan run the same way (`plans/decisions.parquet`, etc.), not as rewritten partitions.
+- Metric readers (`compare`, decision boards, leaderboard) switch to `Store.ledger()` once Stage B lands; until then the transitional local `ledger/` parquet below remains what code reads and writes.
+
+**Transitional local store (until outcomes + run writer cut over):**
+
 `ledger/predictions` — every backtest and live prediction, joined later to actuals:
 
 | Column | |
@@ -518,12 +557,12 @@ Season rank alone is a noisy live check (evaluation north star §3). Cache Overa
 
 | Asset | Partitioned | Description |
 |---|---|---|
-| `raw_snapshots` | no (observable source) | Files fetched from the `snapshots` branch |
-| `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats, player_injuries, competition_fixtures) | season-gw | Typed parquet from raw |
+| `raw_snapshots` | no (observable source) | Files pulled into `$FPLT_DATA_DIR/raw` (from R2 `fplt-data` when configured; else the `snapshots` branch during dual-write) |
+| `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats, player_injuries, competition_fixtures) | season-gw | Typed parquet from raw (migration: content-addressed curated builds) |
 | `feature__<name>__v<version>` | no (as-of via run config / `resolve_as_of`) | One asset per registered feature version (`orchestration/factories.py`) |
 | `model__<name>` | no (same) | Fitted artifact per points-predictor `ModelSpec` (component YAML skipped) |
 | `predictions__<name>` | no (same) | Predictions for horizon 1..H (default 10 via `DEFAULT_PROJECTION_HORIZON`); CLI/catch-up stay authoritative |
-| `ledger_predictions` | season-gw | Appends predictions; joins actuals when available |
+| `ledger_predictions` | season-gw | Transitional: appends predictions and joins actuals; target is the ledger view over runs ⋈ outcomes (§7.2) |
 | `squad_plan` | season-gw | Optimiser output for the chosen production model |
 | `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
 | `benchmark_archive` | no (due GW via `due_gameweek`) | Write-once `benchmark_projections` for `ep_next` + OpenFPL (§7.5) |
@@ -540,12 +579,12 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 
 | Trigger | Type | Action |
 |---|---|---|
-| New files on `snapshots` branch | sensor (every 10 min) | Ingest into `data/raw`, materialise `staged_*` (football-data CSVs are copied but restage is skipped — odds sensor handles them) |
-| New Understat raw under `raw/understat/` | sensor (every 10 min) | Materialise `understat_ingest` (fetch + prefix filter; cursor fallback if `snapshots_sensor` already copied) |
+| New raw under `fplt-data/raw/` (or `snapshots` branch during dual-write) | sensor (every 10 min) | Pull into `data/raw`, materialise `staged_*` (football-data CSVs are copied but restage is skipped — odds sensor handles them) |
+| New Understat raw under `raw/understat/` | sensor (every 10 min) | Materialise `understat_ingest` (fetch + prefix filter; cursor fallback if the raw-pull sensor already copied) |
 | New API-Football injury / cup-fixture raw under `raw/api_football/` (excludes `lineups/`) | sensor (every 10 min) | Materialise `api_football_ingest` (`player_injuries` + `competition_fixtures`) |
 | New football-data `E0.csv` under raw | sensor (every 30 min) | Materialise `match_odds_ingest` |
-| Monthly / manual football-data capture | GHA `football_data.yml` | Current-season E0 → `snapshots` under `captured_at=YYYY-MM-DD` |
-| GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger; refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
+| Monthly / manual football-data capture | GHA `football_data.yml` | Current-season E0 → R2 `fplt-data/raw/` (and `snapshots` during dual-write) under `captured_at=YYYY-MM-DD` |
+| GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger (transitional mutate; target: outcomes build + ledger view); refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
 | Next deadline within 3 h and plan missing **or** stale vs late availability signals | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report. Stale = plan parquet mtime older than newest `player_status` / `predicted_lineups` / `player_injuries` `available_at` at or before the deadline — retired under `plans/<model_id>/superseded/` then rebuilt (`fplt.automation.late_refresh`). |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
 
@@ -701,7 +740,7 @@ Milestones map to GitHub milestones; each bullet becomes one or more issues.
 These are settled. Change them here before changing the code.
 
 1. **Training window.** Train from the 2021-22 season onward.
-2. **Snapshot storage.** An orphan git branch named `snapshots`. Object storage (for example Cloudflare R2) is only worth revisiting if that branch grows unwieldy.
+2. **Snapshot / durable storage.** Cloudflare R2 buckets `fplt-data` (official: raw, curated, official runs, pointers) and `fplt-lab` (adhoc / experiment / benchmark runs). Every object is written once and kept forever (no lifecycle expiry). The orphan `snapshots` git branch remains as a read-only archive after cut-over; during dual-write, capture jobs write both R2 and the branch. Details: §4.3, §4.5; rollout: [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md).
 3. **Leaderboard.** Streamlit (`apps/leaderboard.py`).
 4. **Experiment tracking.** No MLflow, Deepchecks, Giskard, Evidently, Feast, or TFX as the promote-eval runner. Reconsidered against a "use it at ~90%" bar: those APIs score one fitted model on one static frame. The walk-forward and the parquet ledger stay the implementation. Paired intervals use `statsmodels` and `arch`; they are not the runner (§7.6).
 5. **Minutes model.** v1 draws each player's minutes independently. v2 may soft-project expected starters toward ~11 in the distribution. `logistic_blend` (default 0.5) weights logistic P(start) vs the multi-window empirical rate. Rolling shares skip injury/suspension zeros (PIT status at deadline); `return_ramp_games` (default 2) recovers minutes after injury absences (suspension-only streaks skip the ramp); logistic `games_since_return` / `absence_length` still apply. All-comp rest / `games_last_7d` merge PIT `competition_fixtures` (API-Football cups/Europe) with FPL fixtures when staged. `dc_layered_v4` also applies a hard 11-starter draw constraint per team-fixture via `enforce_hard_starters`, keeping exactly one GK when any GK is eligible. FPL availability gating stays on in production (`use_availability_gate`; board-only off-fork `dc_layered_noavail_v1`) and is horizon-aware: this-round chance at step 0, next-round at step ≥1, then `availability_recovery_games` (default 3) recovers toward 1.0. `calibrate_chance_flags` (default on) replaces face-value chance with snapshot-fitted play rates and scales P(≥60|start) for flagged players. Optional `use_injury_overlay` (forks `empirical_minutes_v2_injuries` / `dc_layered_injuries_v1`) soft/hard-downgrades from staged `player_injuries` (player-level tags recover on the same curve; fixture-scoped bans stay hard). Optional near-deadline predicted-XI override (`predicted_xi`; fork `dc_layered_predicted_xi_v1`) mixes P(start) toward staged `predicted_lineups` inside a kickoff window. Injury and predicted-XI overlays stay off in production — neither changes `PRODUCTION_MODELS`.
