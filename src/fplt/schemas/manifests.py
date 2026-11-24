@@ -33,9 +33,9 @@ class RunManifest(BaseModel):
     """Immutable identity and provenance for one analytic run.
 
     Written as ``runs/run=<run_id>/manifest.json``. Identity for reuse is
-    ``(spec_hash, code_sha, lockfile_hash, build_id, seeds)``. Until curated
-    builds exist (B6), ``build_id`` may be null and ``raw_manifest_hash`` /
-    ``staged_digests`` record the staged inputs the eval code already hashes.
+    ``(spec_hash, code_sha, lockfile_hash, build_id, seeds)``. ``build_id``
+    names the curated build the PITView was made from when one exists;
+    ``raw_manifest_hash`` / ``staged_digests`` remain for migration / debug.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

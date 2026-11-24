@@ -1,7 +1,9 @@
-"""Push finished runs to R2 (official → ``fplt-data``, else ``fplt-lab``).
+"""Push finished runs and curated builds to R2.
 
-Stage B4 PR2. Only runs with ``_SUCCESS`` are pushable. Routing follows
-``docs/proposals/fplt-data-model.md`` §5 / ``r2-data-bucket-plan.md``.
+Runs (B4): official → ``fplt-data``, else ``fplt-lab``. Only runs with
+``_SUCCESS`` are pushable. Curated builds (B6): always ``fplt-data/curated/``.
+Routing follows ``docs/proposals/fplt-data-model.md`` §5 /
+``r2-data-bucket-plan.md``.
 """
 
 from __future__ import annotations
@@ -12,6 +14,11 @@ from pathlib import Path
 from fplt.data.remote import Remote, push
 from fplt.schemas.manifests import RunKind, RunManifest
 from fplt.settings import Settings, get_settings
+from fplt.store.builds import (
+    build_manifest_path,
+    load_build_manifest,
+    table_sha_path,
+)
 from fplt.store.runs import run_dir
 
 logger = logging.getLogger(__name__)
@@ -138,6 +145,84 @@ def maybe_push_run(
         )
         return None
     return push_run(data_dir, run_id, settings=cfg)
+
+
+def push_build(
+    data_dir: Path,
+    build_id: str,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> Remote:
+    """Upload one curated build (manifest + table shas) to ``fplt-data``.
+
+    Pushes each referenced ``curated/tables/<table>/sha=…`` file and the
+    ``curated/builds/build=<build_id>.json`` manifest. Content-addressed
+    table files already present remotely are left untouched (``--immutable``).
+
+    Args:
+        data_dir: Local data root holding ``curated/``.
+        build_id: Build to push.
+        settings: Process settings (defaults to ``get_settings()``). Ignored
+            when ``remote`` is provided.
+        remote: Optional pre-built data-bucket remote (tests).
+
+    Returns:
+        The remote that received the build.
+
+    Raises:
+        FileNotFoundError: Manifest or a referenced table file is missing.
+        ValueError: The data bucket is unset, or ``remote.kind`` is not
+            ``\"data\"``.
+        RemoteError: rclone failed (including immutable overwrite).
+    """
+    manifest = load_build_manifest(data_dir, build_id)
+    target = remote if remote is not None else _remote_for("data", settings)
+    if target.kind != "data":
+        raise ValueError(
+            f"curated builds require the data bucket; got remote kind={target.kind!r}"
+        )
+    for name, entry in sorted(manifest.tables.items()):
+        local = table_sha_path(data_dir, name, entry.sha)
+        if not local.is_file():
+            raise FileNotFoundError(local)
+        # Push the single-file parent so the remote path is
+        # curated/tables/<name>/sha=<sha>.parquet.
+        push(target, local.parent, f"curated/tables/{name}")
+    builds_dir = build_manifest_path(data_dir, build_id).parent
+    logger.info(
+        "pushing curated build_id=%s tables=%s → %s/curated/",
+        build_id,
+        sorted(manifest.tables),
+        target.target,
+    )
+    push(target, builds_dir, "curated/builds")
+    return target
+
+
+def maybe_push_build(
+    data_dir: Path,
+    build_id: str,
+    *,
+    settings: Settings | None = None,
+) -> Remote | None:
+    """Push a curated build when ``FPLT_DATA_BUCKET`` is configured.
+
+    No-op (returns ``None``) when the data bucket is unset.
+
+    Args:
+        data_dir: Local data root.
+        build_id: Build to push.
+        settings: Process settings; defaults to ``get_settings()``.
+
+    Returns:
+        The remote used, or ``None`` when the data bucket is not configured.
+    """
+    cfg = settings if settings is not None else get_settings()
+    if not cfg.data_bucket:
+        logger.debug("skip push build_id=%s: data bucket unset", build_id)
+        return None
+    return push_build(data_dir, build_id, settings=cfg)
 
 
 def _remote_for(wanted: str, settings: Settings | None) -> Remote:

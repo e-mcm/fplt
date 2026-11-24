@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from fplt.models.spec import git_sha
 from fplt.schemas.manifests import BuildManifest, BuildTableEntry
 from fplt.schemas.staged import POLARS_SCHEMAS, STAGED_SCHEMAS
 from fplt.store.runs import hash_raw_manifest
+from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,83 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 class BuildExistsError(FileExistsError):
     """Raised when a build manifest path already exists (write-once)."""
+
+
+@dataclass(frozen=True)
+class CuratedBuildSource:
+    """``TableSource`` over one content-addressed curated build.
+
+    Missing tables (not present in the build manifest) return an empty typed
+    frame, matching ``DataStore.table`` behaviour for absent staged files.
+    """
+
+    data_dir: Path
+    build_id: str
+    _tables: Mapping[str, str]
+
+    @classmethod
+    def load(cls, data_dir: Path, build_id: str) -> CuratedBuildSource:
+        """Load table digests from ``curated/builds/build=<build_id>.json``.
+
+        Args:
+            data_dir: Local data root.
+            build_id: Curated build id.
+
+        Returns:
+            A source ready for ``PITData`` / ``PITView``.
+
+        Raises:
+            FileNotFoundError: Manifest is missing.
+        """
+        manifest = load_build_manifest(data_dir, build_id)
+        tables = {name: entry.sha for name, entry in manifest.tables.items()}
+        return cls(data_dir=data_dir, build_id=build_id, _tables=tables)
+
+    def table(self, name: str) -> pl.LazyFrame:
+        """Lazy scan of a curated table; empty typed frame when absent."""
+        wanted = POLARS_SCHEMAS[name]
+        sha = self._tables.get(name)
+        if sha is None:
+            return pl.DataFrame(schema=wanted).lazy()
+        path = table_sha_path(self.data_dir, name, sha)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        frame = pl.scan_parquet(path)
+        # Parquet round-trips drop the UTC zone; restore before PIT compare.
+        exprs: list[pl.Expr] = []
+        for col, dtype in frame.collect_schema().items():
+            if isinstance(dtype, pl.Datetime) and dtype.time_zone is None:
+                exprs.append(pl.col(col).dt.replace_time_zone("UTC"))
+        if exprs:
+            frame = frame.with_columns(exprs)
+        present = set(frame.collect_schema().names())
+        extras = [
+            pl.lit(None).cast(dtype).alias(column)
+            for column, dtype in wanted.items()
+            if column not in present
+        ]
+        if extras:
+            frame = frame.with_columns(extras)
+        return frame.select(list(wanted))
+
+    def deadline(self, gw: GWKey) -> datetime:
+        """Deadline of ``gw`` from the build's ``gameweeks`` table."""
+        frame = (
+            self.table("gameweeks")
+            .filter((pl.col("season") == gw.season) & (pl.col("gw") == gw.gw))
+            .sort("available_at")
+            .collect()
+        )
+        if frame.is_empty():
+            raise KeyError(
+                f"no gameweek {gw.season} gw{gw.gw} in build {self.build_id}"
+            )
+        value = frame["deadline_time"][-1]
+        if not isinstance(value, datetime):
+            raise TypeError(f"deadline_time for {gw} is {type(value)}")
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 def curated_root(data_dir: Path) -> Path:
@@ -208,6 +288,39 @@ def write_build_manifest(data_dir: Path, manifest: BuildManifest) -> Path:
     return path
 
 
+def list_build_ids(data_dir: Path) -> list[str]:
+    """Sorted build ids present under ``curated/builds/``."""
+    root = curated_root(data_dir) / "builds"
+    if not root.is_dir():
+        return []
+    ids: list[str] = []
+    for path in sorted(root.glob("build=*.json")):
+        ids.append(path.name.removeprefix("build=").removesuffix(".json"))
+    return ids
+
+
+def latest_build_id(data_dir: Path) -> str | None:
+    """Most recently created local build id, or ``None`` when none exist.
+
+    Orders by ``BuildManifest.created_at``, then by ``build_id`` for ties.
+    """
+    best_id: str | None = None
+    best_at: datetime | None = None
+    for build_id in list_build_ids(data_dir):
+        manifest = load_build_manifest(data_dir, build_id)
+        created = manifest.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        if (
+            best_at is None
+            or created > best_at
+            or (created == best_at and build_id > (best_id or ""))
+        ):
+            best_at = created
+            best_id = build_id
+    return best_id
+
+
 def load_build_manifest(data_dir: Path, build_id: str) -> BuildManifest:
     """Load a curated build manifest by id.
 
@@ -280,6 +393,7 @@ def build_from_staged(
             build_id,
             existing_path,
         )
+        _push_if_configured(data_dir, build_id)
         return existing
     moment = created_at if created_at is not None else datetime.now(UTC)
     if moment.tzinfo is None:
@@ -303,4 +417,12 @@ def build_from_staged(
         sorted(tables),
         path,
     )
+    _push_if_configured(data_dir, build_id)
     return manifest
+
+
+def _push_if_configured(data_dir: Path, build_id: str) -> None:
+    """Push when the data bucket is set; keep build writes offline-safe."""
+    from fplt.store.push import maybe_push_build
+
+    maybe_push_build(data_dir, build_id)
