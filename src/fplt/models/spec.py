@@ -152,6 +152,9 @@ def load_model_specs(directory: Path | None = None) -> dict[str, ModelSpec]:
     raw_by_path: list[tuple[Path, dict[str, Any]]] = []
     raw_by_name: dict[str, dict[str, Any]] = {}
     for path in sorted(folder.glob("*.yaml")):
+        # Identity lock lives beside ModelSpec YAMLs; it is not a spec.
+        if path.name == "registry.lock.yaml" or path.name.endswith(".lock.yaml"):
+            continue
         loaded_raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(loaded_raw, dict):
             raise ValueError(f"{path.name} must contain a mapping")

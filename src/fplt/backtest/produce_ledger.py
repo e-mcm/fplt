@@ -146,11 +146,14 @@ def uv_lock_sha256(*, root: Path | None = None) -> str:
 
 
 def resolved_spec_sha256(spec: ModelSpec) -> str:
-    """Full SHA-256 of the resolved ModelSpec JSON dump."""
-    raw = json.dumps(
-        spec.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    )
-    return hashlib.sha256(raw.encode()).hexdigest()
+    """Identity hash of a ModelSpec (alias of ``spec_hash`` since B8).
+
+    Fills typed component defaults and excludes ``name``. Prefer importing
+    ``fplt.models.spec_identity.spec_hash`` at new call sites.
+    """
+    from fplt.models.spec_identity import spec_hash
+
+    return spec_hash(spec)
 
 
 def hash_staged_data(data_dir: Path) -> dict[str, str]:
