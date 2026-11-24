@@ -4,9 +4,10 @@ This file imports only the standard library and httpx so it can run in a
 minimal GitHub Actions job. Raw responses are written once as gzipped JSON
 under ``data/raw/understat/...``.
 
-Team Deep / PPDA come from the league-page ``teamsData`` history (not
-``getMatchData``). Dates fall back to embedded ``datesData`` when the AJAX
-endpoint is unavailable.
+League dates and team Deep / PPDA come from the AJAX ``getLeagueData``
+payload (``dates`` / ``teams``). Older league pages that still embed
+``datesData`` / ``teamsData`` remain a fallback. Match rosters still use
+``getMatchData``.
 """
 
 from __future__ import annotations
@@ -32,6 +33,10 @@ _USER_AGENT = (
     "Mozilla/5.0 (compatible; fplt-understat-fetch/1.0; +https://github.com/e-mcm/fplt)"
 )
 _JSON_PARSE = re.compile(r"(\w+)\s*=\s*JSON\.parse\('(.+?)'\)", re.DOTALL)
+
+
+class UnderstatUnavailable(RuntimeError):
+    """Understat returned maintenance HTML or otherwise no league JSON."""
 
 
 def season_label(moment: datetime) -> str:
@@ -104,6 +109,12 @@ def finished_match_ids(dates: list[dict[str, Any]]) -> list[int]:
     return ids
 
 
+def is_maintenance_html(text: str) -> bool:
+    """Return whether ``text`` looks like Understat's maintenance page."""
+    lowered = text.lower()
+    return "come back soon" in lowered or "/css/errors.css" in lowered
+
+
 def parse_embedded_json(html: str, name: str) -> Any:
     """Parse ``name = JSON.parse('...')`` from an Understat HTML page."""
     for match in _JSON_PARSE.finditer(html):
@@ -112,6 +123,35 @@ def parse_embedded_json(html: str, name: str) -> Any:
         raw = match.group(2).encode("utf-8").decode("unicode_escape")
         return json.loads(raw)
     raise KeyError(f"{name} not found in Understat HTML")
+
+
+def dates_from_league_data(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the ``dates`` list from a ``getLeagueData`` JSON object.
+
+    Args:
+        payload: Decoded AJAX body with a ``dates`` key (the post-2025 shape).
+
+    Returns:
+        League match rows (finished and unfinished).
+
+    Raises:
+        KeyError: ``dates`` is missing.
+        ValueError: ``dates`` is present but not a list.
+    """
+    if "dates" not in payload:
+        raise KeyError("dates not found in getLeagueData payload")
+    dates = payload["dates"]
+    if not isinstance(dates, list):
+        raise ValueError("getLeagueData.dates must be a list")
+    return cast(list[dict[str, Any]], dates)
+
+
+def teams_from_league_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract the ``teams`` object from a ``getLeagueData`` JSON object."""
+    teams = payload.get("teams", {})
+    if not isinstance(teams, dict):
+        raise ValueError("getLeagueData.teams must be an object")
+    return cast(dict[str, Any], teams)
 
 
 @dataclass(frozen=True)
@@ -134,31 +174,76 @@ def fetch_league_page(client: httpx.Client, year: str) -> str:
     return _seed_session(client, year)
 
 
+def fetch_league_data(
+    client: httpx.Client, year: str, html: str | None = None
+) -> dict[str, Any]:
+    """Return the ``getLeagueData`` object for EPL ``year``.
+
+    Raises:
+        UnderstatUnavailable: The site is on maintenance or returns non-JSON.
+        httpx.HTTPError: The AJAX request fails with a non-success status.
+    """
+    page = html if html is not None else fetch_league_page(client, year)
+    if is_maintenance_html(page):
+        raise UnderstatUnavailable(
+            "Understat league page is a maintenance HTML response"
+        )
+    response = client.get(
+        f"{API_ROOT}/getLeagueData/EPL/{year}",
+        headers={**_AJAX, "Referer": f"{API_ROOT}/league/EPL/{year}"},
+    )
+    response.raise_for_status()
+    body = response.text
+    if is_maintenance_html(body):
+        raise UnderstatUnavailable(
+            "Understat getLeagueData is a maintenance HTML response"
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise UnderstatUnavailable(
+            "getLeagueData returned non-JSON; dates are no longer embedded in HTML"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise UnderstatUnavailable("getLeagueData must return a JSON object")
+    return cast(dict[str, Any], payload)
+
+
 def fetch_league_dates(
     client: httpx.Client, year: str, html: str | None = None
 ) -> list[dict[str, Any]]:
     """Return the ``dates`` list for EPL ``year`` (AJAX, else HTML ``datesData``)."""
     page = html if html is not None else fetch_league_page(client, year)
-    response = client.get(
-        f"{API_ROOT}/getLeagueData/EPL/{year}",
-        headers={**_AJAX, "Referer": f"{API_ROOT}/league/EPL/{year}"},
-    )
-    if response.status_code == 200:
-        try:
-            payload = cast(dict[str, Any], response.json())
-            dates = payload.get("dates", [])
-            if isinstance(dates, list):
-                return cast(list[dict[str, Any]], dates)
-        except json.JSONDecodeError:
-            pass
-    dates = parse_embedded_json(page, "datesData")
-    if not isinstance(dates, list):
-        raise ValueError("datesData must be a list")
-    return cast(list[dict[str, Any]], dates)
+    try:
+        payload = fetch_league_data(client, year, page)
+        return dates_from_league_data(payload)
+    except UnderstatUnavailable:
+        if is_maintenance_html(page):
+            raise
+        # Legacy pages still embed datesData; keep that fallback for fixtures.
+        dates = parse_embedded_json(page, "datesData")
+        if not isinstance(dates, list):
+            raise ValueError("datesData must be a list") from None
+        return cast(list[dict[str, Any]], dates)
+    except httpx.HTTPError:
+        if is_maintenance_html(page):
+            raise UnderstatUnavailable(
+                "Understat league page is a maintenance HTML response"
+            ) from None
+        dates = parse_embedded_json(page, "datesData")
+        if not isinstance(dates, list):
+            raise ValueError("datesData must be a list") from None
+        return cast(list[dict[str, Any]], dates)
 
 
-def fetch_league_teams(html: str) -> dict[str, Any]:
-    """Return league-page ``teamsData`` (per-team Deep / PPDA history)."""
+def fetch_league_teams(
+    html: str, league_data: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Return league ``teams`` from AJAX payload, else HTML ``teamsData``."""
+    if league_data is not None:
+        teams = teams_from_league_data(league_data)
+        if teams:
+            return teams
     teams = parse_embedded_json(html, "teamsData")
     if not isinstance(teams, dict):
         raise ValueError("teamsData must be an object")
@@ -186,18 +271,33 @@ def capture(
     now: datetime | None = None,
     delay: float = 0.2,
 ) -> CaptureResult:
-    """Fetch finished EPL matches and league team stats for ``season``."""
+    """Fetch finished EPL matches and league team stats for ``season``.
+
+    Raises:
+        UnderstatUnavailable: The site serves maintenance HTML / no league JSON.
+    """
     moment = now or datetime.now(UTC)
     year = understat_year(season)
     html = fetch_league_page(client, year)
-    dates = fetch_league_dates(client, year, html)
+    league_data: dict[str, Any] | None = None
+    try:
+        league_data = fetch_league_data(client, year, html)
+        dates = dates_from_league_data(league_data)
+    except UnderstatUnavailable:
+        if is_maintenance_html(html):
+            raise
+        # Legacy HTML still embeds datesData (pre-AJAX pages / recorded fixtures).
+        dates = parse_embedded_json(html, "datesData")
+        if not isinstance(dates, list):
+            raise ValueError("datesData must be a list") from None
+        dates = cast(list[dict[str, Any]], dates)
     wrote_dates = write_once(dates_path(root, season, moment), dates)
     wrote_teams = False
     try:
-        teams = fetch_league_teams(html)
+        teams = fetch_league_teams(html, league_data)
         wrote_teams = write_once(teams_path(root, season, moment), teams)
-    except KeyError:
-        # Maintenance / blocked pages omit teamsData; dates-only still useful.
+    except (KeyError, ValueError):
+        # Maintenance / blocked pages omit teams; dates-only still useful.
         wrote_teams = False
     written: list[int] = []
     for match_id in finished_match_ids(dates):
@@ -217,8 +317,8 @@ def capture(
     )
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Capture into ``--out`` (default ``./data/raw``)."""
+def main(argv: list[str] | None = None) -> int:
+    """Capture into ``--out`` (default ``./data/raw``). Exit 0 when unavailable."""
     parser = argparse.ArgumentParser(prog="fetch_understat")
     parser.add_argument("--out", type=Path, default=Path("data/raw"))
     parser.add_argument(
@@ -241,13 +341,18 @@ def main(argv: list[str] | None = None) -> None:
         headers={"User-Agent": _USER_AGENT},
         follow_redirects=True,
     ) as client:
-        result = capture(client, args.out, season, now=moment, delay=args.delay)
+        try:
+            result = capture(client, args.out, season, now=moment, delay=args.delay)
+        except UnderstatUnavailable as exc:
+            print(f"season={season} unavailable: {exc}")
+            return 0
     print(
         f"season={season} dates={'wrote' if result.wrote_dates else 'skipped'} "
         f"teams={'wrote' if result.wrote_teams else 'skipped'} "
         f"matches={result.match_ids}"
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
