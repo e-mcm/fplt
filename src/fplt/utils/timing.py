@@ -56,6 +56,7 @@ KIND_TOP_LEVEL: Mapping[str, tuple[str, ...]] = {
     "decisions": ("plan/chips", "optimise/milp", "plan/lineup"),
     "eval_board": ("board/core", "board/openfpl"),
     "ingest": ("ingest",),
+    "remote": ("remote/pull", "remote/push", "remote/check"),
 }
 
 _SAFE_META = re.compile(r"[^A-Za-z0-9._-]+")
@@ -410,6 +411,17 @@ class Hotspot:
     category: str
 
 
+def _format_remote_meta(meta: Mapping[str, Any]) -> str:
+    """Compact ``op=pull prefix=raw objects=3 bytes=1200`` for hotspot briefs."""
+    bits: list[str] = []
+    for key in ("op", "prefix", "bucket_kind", "n_objects", "bytes"):
+        if key not in meta or meta[key] is None:
+            continue
+        label = "objects" if key == "n_objects" else key
+        bits.append(f"{label}={meta[key]}")
+    return " ".join(bits)
+
+
 def classify_phase(phase: str) -> str:
     """Map a phase name to a coarse hotspot category.
 
@@ -438,6 +450,8 @@ def classify_phase(phase: str) -> str:
         or lower.endswith("/setup")
         or lower.endswith("/write")
         or lower.startswith("ingest")
+        or lower.startswith("remote/")
+        or lower == "remote"
     ):
         return "io"
     if lower.startswith("plan/chips") or "chip" in lower:
@@ -567,15 +581,19 @@ def format_hotspot_report(
         total = float(total_obj) if isinstance(total_obj, (int, float)) else 0.0
         meta_obj: object = record.get("meta")
         model = ""
+        remote_bits = ""
         if isinstance(meta_obj, dict):
             meta_map = cast(dict[str, Any], meta_obj)
             raw_model: object = meta_map.get("model", "")
             model = str(raw_model) if raw_model is not None else ""
+            if kind == "remote":
+                remote_bits = _format_remote_meta(meta_map)
         path_obj: object = record.get("_path", "")
         path = str(path_obj or "")
         lines.append(
             f"  - kind={kind} total={total:.{digits}f}s"
             + (f" model={model}" if model else "")
+            + (f" {remote_bits}" if remote_bits else "")
             + (f" path={path}" if path else "")
         )
     hotspots = rank_hotspots(records)

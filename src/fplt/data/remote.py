@@ -3,22 +3,39 @@
 Credentials travel only in the process environment (``RCLONE_CONFIG_FPLT_*``),
 never on the argv. Library and feature code still read a local
 ``$FPLT_DATA_DIR``; this module is the edge that pulls and pushes.
+
+Each successful ``pull`` / ``push`` / ``check_one_way`` records wall-clock
+seconds (and bytes / object counts when known) into the active timing
+session when one is bound, and writes a ``kind=remote`` JSON artifact under
+``$FPLT_DATA_DIR/timing/`` for ``fplt perf-report``.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from fplt.settings import Settings
+from fplt.settings import Settings, get_settings
+from fplt.utils.timing import (
+    TimingSession,
+    active_timing_dir,
+    timed_phase,
+    write_timing_record,
+)
+
+logger = logging.getLogger(__name__)
 
 _RCLONE_INSTALL_HINT = (
     "rclone is not installed; install with "
     "`brew install rclone` or `sudo apt-get install -y rclone`"
 )
+
+_RemoteOp = Literal["pull", "push", "check"]
 
 PUSHABLE: dict[str, frozenset[str]] = {
     "data": frozenset(
@@ -107,20 +124,33 @@ def pull(remote: Remote, prefix: str, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     before = _file_set(dest)
     source = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
-    _rclone(
-        [
-            "copy",
-            source,
-            str(dest),
-            "--immutable",
-            "--fast-list",
-            "--transfers",
-            "16",
-        ],
-        env=remote.env,
-    )
+    start = time.perf_counter()
+    with timed_phase("remote/pull"):
+        _rclone(
+            [
+                "copy",
+                source,
+                str(dest),
+                "--immutable",
+                "--fast-list",
+                "--transfers",
+                "16",
+            ],
+            env=remote.env,
+        )
+    elapsed = time.perf_counter() - start
     after = _file_set(dest)
-    return sorted(after - before)
+    written = sorted(after - before)
+    nbytes = _total_size(written)
+    _emit_remote_timing(
+        "pull",
+        remote=remote,
+        prefix=prefix,
+        elapsed=elapsed,
+        n_objects=len(written),
+        nbytes=nbytes,
+    )
+    return written
 
 
 def push(remote: Remote, src: Path, prefix: str) -> None:
@@ -143,9 +173,22 @@ def push(remote: Remote, src: Path, prefix: str) -> None:
             f"allowed roots: {sorted(allowed)}"
         )
     dest = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
-    _rclone(
-        ["copy", str(src), dest, "--immutable", "--fast-list"],
-        env=remote.env,
+    files = sorted(_file_set(src))
+    nbytes = _total_size(files)
+    start = time.perf_counter()
+    with timed_phase("remote/push"):
+        _rclone(
+            ["copy", str(src), dest, "--immutable", "--fast-list"],
+            env=remote.env,
+        )
+    elapsed = time.perf_counter() - start
+    _emit_remote_timing(
+        "push",
+        remote=remote,
+        prefix=prefix,
+        elapsed=elapsed,
+        n_objects=len(files),
+        nbytes=nbytes,
     )
 
 
@@ -165,9 +208,22 @@ def check_one_way(src: Path, remote: Remote, prefix: str) -> None:
         RemoteError: rclone reported missing or different files, or failed.
     """
     dest = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
-    _rclone(
-        ["check", "--one-way", "--fast-list", str(src), dest],
-        env=remote.env,
+    files = sorted(_file_set(src))
+    nbytes = _total_size(files)
+    start = time.perf_counter()
+    with timed_phase("remote/check"):
+        _rclone(
+            ["check", "--one-way", "--fast-list", str(src), dest],
+            env=remote.env,
+        )
+    elapsed = time.perf_counter() - start
+    _emit_remote_timing(
+        "check",
+        remote=remote,
+        prefix=prefix,
+        elapsed=elapsed,
+        n_objects=len(files),
+        nbytes=nbytes,
     )
 
 
@@ -175,6 +231,71 @@ def _file_set(root: Path) -> set[Path]:
     if not root.exists():
         return set()
     return {path for path in root.rglob("*") if path.is_file()}
+
+
+def _total_size(paths: list[Path]) -> int:
+    """Sum on-disk sizes; missing paths contribute 0."""
+    total = 0
+    for path in paths:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _timing_data_dir() -> Path | None:
+    """Prefer the active timing ContextVar; else ``Settings.data_dir``.
+
+    Under pytest, skip the implicit ``./data`` default unless the test set
+    ``FPLT_DATA_DIR`` (or installed ``timing_artifacts``), so unit suites do
+    not litter the checkout.
+    """
+    active = active_timing_dir()
+    if active is not None:
+        return active
+    if os.environ.get("PYTEST_CURRENT_TEST") and "FPLT_DATA_DIR" not in os.environ:
+        return None
+    return get_settings().data_dir
+
+
+def _emit_remote_timing(
+    op: _RemoteOp,
+    *,
+    remote: Remote,
+    prefix: str,
+    elapsed: float,
+    n_objects: int,
+    nbytes: int,
+) -> None:
+    """Log and persist a ``kind=remote`` timing artifact for one rclone call.
+
+    ``n_objects`` / ``nbytes`` are newly written files for pull, and the local
+    source tree for push/check (rclone may skip identical remote objects).
+    """
+    # Floor so near-instant mocks still produce a positive phase for reports.
+    seconds = elapsed if elapsed > 0 else 1e-6
+    phase = f"remote/{op}"
+    meta = {
+        "op": op,
+        "prefix": prefix.strip("/"),
+        "bucket_kind": remote.kind,
+        "target": remote.target,
+        "n_objects": n_objects,
+        "bytes": nbytes,
+    }
+    logger.info(
+        "remote %s prefix=%s kind=%s objects=%d bytes=%d elapsed=%.3fs",
+        op,
+        meta["prefix"],
+        remote.kind,
+        n_objects,
+        nbytes,
+        seconds,
+    )
+    session = TimingSession()
+    session.add(phase, seconds)
+    write_timing_record("remote", session, meta=meta, data_dir=_timing_data_dir())
 
 
 def _rclone(args: list[str], *, env: dict[str, str]) -> None:
