@@ -16,6 +16,10 @@ import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import (
+    OtherMatchConditionedParams,
+    parse_component_params,
+)
 from fplt.models.components.other.player import OtherPlayerPriors
 from fplt.models.spec import ModelSpec, register_component
 from fplt.scoring.rules import MatchStats, Rules
@@ -39,22 +43,10 @@ class OtherMatchConditioned:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        match_shrinkage = spec.params.get("match_shrinkage", 20.0)
-        shrinkage_value = float(match_shrinkage)
-        if shrinkage_value < 0:
-            raise ValueError(
-                f"match_shrinkage must be non-negative, got {shrinkage_value}"
-            )
-        use_defensive = spec.params.get("use_defensive_contribution", True)
-        if not isinstance(use_defensive, bool):
-            raise ValueError(
-                f"use_defensive_contribution must be a bool, got {use_defensive!r}"
-            )
-        self._match_shrinkage = shrinkage_value
-        self._use_defensive = use_defensive
-        base_params = {
-            key: value for key, value in spec.params.items() if key != "match_shrinkage"
-        }
+        params = parse_component_params(OtherMatchConditionedParams, spec.params)
+        self._match_shrinkage = params.match_shrinkage
+        self._use_defensive = params.use_defensive_contribution
+        base_params = params.model_dump(exclude={"match_shrinkage"})
         self._base = OtherPlayerPriors(
             ModelSpec(
                 name=f"{spec.name}__base",

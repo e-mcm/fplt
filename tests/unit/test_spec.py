@@ -132,6 +132,42 @@ def test_deep_merge_nested_dicts_and_replaces_lists() -> None:
     assert override == {"nested": {"y": 0}}
 
 
+def test_deep_merge_replaces_when_kind_changes() -> None:
+    """Swapping a component kind must not leak the parent's params."""
+    merged = deep_merge(
+        {
+            "components": {
+                "involvement": {
+                    "name": "involvement_xg_v1",
+                    "kind": "involvement_xg",
+                    "params": {"window": 10, "xg_blend": 0.7},
+                }
+            }
+        },
+        {
+            "components": {
+                "involvement": {
+                    "name": "involvement_shares_v1",
+                    "kind": "involvement_shares",
+                    "params": {"window": 10, "shrinkage": 5},
+                }
+            }
+        },
+    )
+    assert merged["components"]["involvement"] == {
+        "name": "involvement_shares_v1",
+        "kind": "involvement_shares",
+        "params": {"window": 10, "shrinkage": 5},
+    }
+
+
+def test_shares_fork_does_not_keep_xg_blend() -> None:
+    """``dc_layered_shares_v2`` swaps kind; parent ``xg_blend`` must not remain."""
+    shares = load_model_specs()["dc_layered_shares_v2"].components["involvement"]
+    assert shares.kind == "involvement_shares"
+    assert "xg_blend" not in shares.params
+
+
 def test_extends_forks_preserve_pre_migration_model_ids() -> None:
     specs = load_model_specs()
     for name, expected in _FORK_MODEL_IDS.items():

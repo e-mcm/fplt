@@ -14,6 +14,7 @@ from typing import Any
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import OtherPriorsParams, parse_component_params
 from fplt.models.spec import ModelSpec, register_component
 from fplt.schemas.components import (
     MINUTE_BUCKETS,
@@ -37,6 +38,7 @@ class OtherPointsPriors:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
+        parse_component_params(OtherPriorsParams, spec.params)
         self._fitted = False
         self._prior: dict[tuple[str, str], _Points] = {}
 

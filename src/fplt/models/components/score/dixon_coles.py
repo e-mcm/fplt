@@ -46,6 +46,7 @@ from scipy.optimize import minimize
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import DixonColesParams, parse_component_params
 from fplt.models.components.score.covariates import (
     form_rating_multipliers,
     schedule_rate_multipliers,
@@ -187,55 +188,27 @@ class MatchScoreModel:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        self._xi = float(spec.params.get("xi", 0.0))
-        self._home = float(spec.params.get("home_advantage", 1.0))
-        self._rho = float(spec.params.get("rho", 0.0))
-        self._fit_rho = bool(spec.params.get("fit_rho", False))
-        self._fit_home = bool(spec.params.get("fit_home_advantage", False))
-        self._new_prior = float(spec.params.get("new_team_prior_strength", 0.0))
-        self._promoted_prior = float(spec.params.get("promoted_prior_strength", 0.0))
-        self._market_prior = float(spec.params.get("market_prior_strength", 0.0))
-        self._market_1x2 = float(spec.params.get("market_1x2_strength", 0.0))
-        self._market_cs = float(spec.params.get("market_cs_strength", 0.0))
-        self._rest_coef = float(spec.params.get("rest_coef", 0.0))
-        self._congestion_coef = float(spec.params.get("congestion_coef", 0.0))
-        self._form_window = int(spec.params.get("form_window", 0))
-        self._form_strength = float(spec.params.get("form_strength", 0.0))
-        raw_source = spec.params.get("market_prior_source")
-        if raw_source is None or raw_source == "":
-            self._market_source: str | None = None
-        else:
-            self._market_source = str(raw_source)
-        if self._market_prior < 0:
-            raise ValueError(
-                f"market_prior_strength must be >= 0, got {self._market_prior}"
-            )
-        if self._market_1x2 < 0:
-            raise ValueError(
-                f"market_1x2_strength must be >= 0, got {self._market_1x2}"
-            )
-        if self._market_cs < 0:
-            raise ValueError(f"market_cs_strength must be >= 0, got {self._market_cs}")
-        if self._rest_coef < 0:
-            raise ValueError(f"rest_coef must be >= 0, got {self._rest_coef}")
-        if self._congestion_coef < 0:
-            raise ValueError(
-                f"congestion_coef must be >= 0, got {self._congestion_coef}"
-            )
-        if self._form_strength < 0:
-            raise ValueError(f"form_strength must be >= 0, got {self._form_strength}")
-        if self._form_window < 0:
-            raise ValueError(f"form_window must be >= 0, got {self._form_window}")
-        if self._market_source is not None and self._market_source != "history":
-            raise ValueError(
-                "market_prior_source must be absent or 'history', "
-                f"got {self._market_source!r}"
-            )
+        params = parse_component_params(DixonColesParams, spec.params)
+        self._xi = params.xi
+        self._home = params.home_advantage
+        self._rho = params.rho
+        self._fit_rho = params.fit_rho
+        self._fit_home = params.fit_home_advantage
+        self._new_prior = params.new_team_prior_strength
+        self._promoted_prior = params.promoted_prior_strength
+        self._market_prior = params.market_prior_strength
+        self._market_1x2 = params.market_1x2_strength
+        self._market_cs = params.market_cs_strength
+        self._rest_coef = params.rest_coef
+        self._congestion_coef = params.congestion_coef
+        self._form_window = params.form_window
+        self._form_strength = params.form_strength
+        self._market_source = params.market_prior_source
         # 1X2 blend defaults to closing-proxy; CS-only prefers strict PIT.
-        default_proxy = self._market_1x2 > 0
-        self._use_closing_proxy = bool(
-            spec.params.get("use_closing_proxy", default_proxy)
-        )
+        if params.use_closing_proxy is None:
+            self._use_closing_proxy = self._market_1x2 > 0
+        else:
+            self._use_closing_proxy = params.use_closing_proxy
         self._history_prior = self._market_source == "history"
         self._teams: list[int] = []
         self._attack: dict[int, float] = {}

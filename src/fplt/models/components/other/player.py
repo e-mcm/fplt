@@ -20,6 +20,7 @@ from typing import Any
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import OtherPlayerParams, parse_component_params
 from fplt.models.components.other.defcon_rate import (
     action_count,
     award_rule,
@@ -27,7 +28,6 @@ from fplt.models.components.other.defcon_rate import (
     fit_player_rates,
     fit_position_rates,
     parse_bucket_minutes,
-    parse_defcon_mode,
 )
 from fplt.models.spec import ModelSpec, register_component
 from fplt.schemas.components import (
@@ -59,30 +59,13 @@ class OtherPlayerPriors:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        window = spec.params.get("window", 10)
-        shrinkage = spec.params.get("shrinkage", 5.0)
-        bps_weight = spec.params.get("bps_bonus_weight", 0.5)
-        use_defensive = spec.params.get("use_defensive_contribution", True)
-        defcon_mode = parse_defcon_mode(spec.params.get("defcon_mode", "mean"))
-        bucket_minutes = parse_bucket_minutes(spec.params.get("defcon_bucket_minutes"))
-        if isinstance(window, bool) or not isinstance(window, int) or window < 1:
-            raise ValueError(f"window must be a positive int, got {window!r}")
-        shrinkage_value = float(shrinkage)
-        bps_value = float(bps_weight)
-        if shrinkage_value < 0:
-            raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
-        if not 0.0 <= bps_value <= 1.0:
-            raise ValueError(f"bps_bonus_weight must be in [0, 1], got {bps_value}")
-        if not isinstance(use_defensive, bool):
-            raise ValueError(
-                f"use_defensive_contribution must be a bool, got {use_defensive!r}"
-            )
-        self._window = window
-        self._shrinkage = shrinkage_value
-        self._bps_weight = bps_value
-        self._use_defensive = use_defensive
-        self._defcon_mode = defcon_mode
-        self._bucket_minutes = bucket_minutes
+        params = parse_component_params(OtherPlayerParams, spec.params)
+        self._window = params.window
+        self._shrinkage = params.shrinkage
+        self._bps_weight = params.bps_bonus_weight
+        self._use_defensive = params.use_defensive_contribution
+        self._defcon_mode = params.defcon_mode
+        self._bucket_minutes = parse_bucket_minutes(params.defcon_bucket_minutes)
         self._fitted = False
         self._prior: dict[_PosKey, _Points] = {}
         self._player: dict[_Key, _Points] = {}

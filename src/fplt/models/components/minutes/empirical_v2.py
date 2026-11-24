@@ -25,6 +25,10 @@ import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import (
+    EmpiricalMinutesV2Params,
+    parse_component_params,
+)
 from fplt.models.components.minutes.absence import (
     annotate_absences,
     available_rate,
@@ -40,7 +44,6 @@ from fplt.models.components.minutes.calibrate import (
     fit_chance_calibration,
 )
 from fplt.models.components.minutes.common import (
-    DEFAULT_AVAILABILITY_RECOVERY_GAMES,
     START_FALLBACK,
     SUB_FALLBACK,
     WIDTH,
@@ -67,9 +70,6 @@ from fplt.types import Position
 _LONG = MINUTE_BINS >= 60
 _START_DIM = 13
 _LONG_DIM = 5
-_DEFAULT_WINDOWS = (3, 5, 10)
-_DEFAULT_RETURN_RAMP_GAMES = 2.0
-_DEFAULT_CHANCE_CAL_MIN_COUNT = 20
 
 
 class EmpiricalMinutesV2:
@@ -98,102 +98,25 @@ class EmpiricalMinutesV2:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        windows = spec.params.get("windows", list(_DEFAULT_WINDOWS))
-        shrinkage = spec.params.get("shrinkage", 5.0)
-        doubtful = spec.params.get("doubtful_chance", 0.5)
-        soft = spec.params.get("soft_squad", True)
-        target = spec.params.get("target_starters", 11.0)
-        strength = spec.params.get("soft_squad_strength", 0.5)
-        # Weight on logistic P(start) vs multi-window empirical rate.
-        logistic_blend = spec.params.get("logistic_blend", 0.5)
-        l2 = spec.params.get("l2", 1.0)
-        ramp = spec.params.get("return_ramp_games", _DEFAULT_RETURN_RAMP_GAMES)
-        recovery = spec.params.get(
-            "availability_recovery_games", DEFAULT_AVAILABILITY_RECOVERY_GAMES
-        )
-        overlay = spec.params.get("use_injury_overlay", False)
-        avail_gate = spec.params.get("use_availability_gate", True)
-        calibrate_flags = spec.params.get("calibrate_chance_flags", True)
-        cal_min = spec.params.get("chance_cal_min_count", _DEFAULT_CHANCE_CAL_MIN_COUNT)
-        predicted_xi = spec.params.get("predicted_xi", False)
-        xi_window = spec.params.get("predicted_xi_window_hours", 72.0)
-        xi_strength = spec.params.get("predicted_xi_strength", 0.75)
-        parsed = _parse_windows(windows)
-        shrinkage_value = _as_float(shrinkage)
-        doubtful_value = _as_float(doubtful)
-        target_value = _as_float(target)
-        strength_value = _as_float(strength)
-        blend_value = _as_float(logistic_blend)
-        l2_value = _as_float(l2)
-        ramp_value = _as_float(ramp)
-        recovery_value = _as_float(recovery)
-        cal_min_value = _as_float(cal_min)
-        xi_window_value = _as_float(xi_window)
-        xi_strength_value = _as_float(xi_strength)
-        if shrinkage_value < 0:
-            raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
-        if not 0.0 <= doubtful_value <= 1.0:
-            raise ValueError(f"doubtful_chance must be in [0, 1], got {doubtful_value}")
-        if target_value <= 0:
-            raise ValueError(f"target_starters must be positive, got {target_value}")
-        if not 0.0 <= strength_value <= 1.0:
-            raise ValueError(
-                f"soft_squad_strength must be in [0, 1], got {strength_value}"
-            )
-        if not 0.0 <= blend_value <= 1.0:
-            raise ValueError(f"logistic_blend must be in [0, 1], got {blend_value}")
-        if l2_value < 0:
-            raise ValueError(f"l2 must be non-negative, got {l2_value}")
-        if ramp_value < 0:
-            raise ValueError(
-                f"return_ramp_games must be non-negative, got {ramp_value}"
-            )
-        if recovery_value < 0:
-            raise ValueError(
-                "availability_recovery_games must be non-negative, "
-                f"got {recovery_value}"
-            )
-        if cal_min_value < 1:
-            raise ValueError(f"chance_cal_min_count must be >= 1, got {cal_min_value}")
-        if not isinstance(soft, bool):
-            raise ValueError(f"soft_squad must be a bool, got {soft!r}")
-        if not isinstance(overlay, bool):
-            raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
-        if not isinstance(avail_gate, bool):
-            raise ValueError(
-                f"use_availability_gate must be a bool, got {avail_gate!r}"
-            )
-        if not isinstance(calibrate_flags, bool):
-            raise ValueError(
-                f"calibrate_chance_flags must be a bool, got {calibrate_flags!r}"
-            )
-        if not isinstance(predicted_xi, bool):
-            raise ValueError(f"predicted_xi must be a bool, got {predicted_xi!r}")
-        if xi_window_value < 0:
-            raise ValueError(
-                f"predicted_xi_window_hours must be non-negative, got {xi_window_value}"
-            )
-        if not 0.0 <= xi_strength_value <= 1.0:
-            raise ValueError(
-                f"predicted_xi_strength must be in [0, 1], got {xi_strength_value}"
-            )
+        params = parse_component_params(EmpiricalMinutesV2Params, spec.params)
+        parsed = _parse_windows(params.windows)
         self._windows = tuple(sorted(set(parsed)))
-        self._shrinkage = shrinkage_value
-        self._doubtful = doubtful_value
-        self._soft_squad = soft
-        self._target_starters = target_value
-        self._soft_strength = strength_value
-        self._logistic_blend = blend_value
-        self._l2 = l2_value
-        self._return_ramp_games = ramp_value
-        self._availability_recovery_games = recovery_value
-        self._use_injury_overlay = overlay
-        self._use_availability_gate = avail_gate
-        self._calibrate_chance_flags = calibrate_flags
-        self._chance_cal_min_count = int(cal_min_value)
-        self._predicted_xi = predicted_xi
-        self._xi_window_hours = xi_window_value
-        self._xi_strength = xi_strength_value
+        self._shrinkage = params.shrinkage
+        self._doubtful = params.doubtful_chance
+        self._soft_squad = params.soft_squad
+        self._target_starters = params.target_starters
+        self._soft_strength = params.soft_squad_strength
+        self._logistic_blend = params.logistic_blend
+        self._l2 = params.l2
+        self._return_ramp_games = params.return_ramp_games
+        self._availability_recovery_games = params.availability_recovery_games
+        self._use_injury_overlay = params.use_injury_overlay
+        self._use_availability_gate = params.use_availability_gate
+        self._calibrate_chance_flags = params.calibrate_chance_flags
+        self._chance_cal_min_count = params.chance_cal_min_count
+        self._predicted_xi = params.predicted_xi
+        self._xi_window_hours = params.predicted_xi_window_hours
+        self._xi_strength = params.predicted_xi_strength
         self._fitted = False
         self._calibration = ChanceCalibration.identity()
         self._position: dict[int, str] = {}
