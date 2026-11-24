@@ -25,7 +25,19 @@ jobs:
       - name: Capture snapshots
         run: python scripts/snapshot.py --out "$RUNNER_TEMP/raw"
 
+      - name: Upload to R2
+        if: always()
+        uses: ./.github/actions/push-raw
+        with:
+          src: ${{ runner.temp }}/raw
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+
       - name: Publish to the snapshots branch
+        if: always()
         run: |
           set -euo pipefail
           if [ -z "$(find "$RUNNER_TEMP/raw" -type f -name '*.json.gz' | head -n 1)" ]; then
