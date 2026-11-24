@@ -56,6 +56,19 @@ Written promote calls, plans, and decision inventory. Board parquet/logs stay in
 
 Plans that drove those boards: [`promote-plans/`](promote-plans/).
 
+## Proposals (`proposals/`)
+
+Specs-only plans committed from the Project store. Not yet design-canonical — implement via follow-on issues/PRs.
+
+| Doc | Use when |
+|---|---|
+| [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) | Staged data rollout / promotion sequence |
+| [`proposals/r2-data-bucket-plan.md`](proposals/r2-data-bucket-plan.md) | R2 data bucket layout and sync |
+| [`proposals/fplt-data-model.md`](proposals/fplt-data-model.md) | Proposed data model / table contracts |
+| [`proposals/ops-hardening-issues.md`](proposals/ops-hardening-issues.md) | Live ops hardening issue list (GHA-first) |
+| [`proposals/fplt-experiments.md`](proposals/fplt-experiments.md) | Experiments platform / harness design |
+| [`proposals/fplt-ui-design.md`](proposals/fplt-ui-design.md) | UI / dashboard design proposal |
+
 ## Standing rules (agents)
 
 - Start from [`AGENTS.md`](../AGENTS.md) + the design sections named by the issue.
