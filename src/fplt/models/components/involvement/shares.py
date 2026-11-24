@@ -9,6 +9,10 @@ from __future__ import annotations
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import (
+    InvolvementSharesParams,
+    parse_component_params,
+)
 from fplt.models.components.involvement.rates import (
     POSITIONS,
     appearance_history,
@@ -23,8 +27,6 @@ from fplt.models.components.involvement.rates import (
 )
 from fplt.models.spec import ModelSpec, register_component
 from fplt.schemas.components import INVOLVEMENT_COLUMNS
-
-_DEFAULT_P_PENALTY = 0.12
 
 
 class InvolvementShares:
@@ -46,44 +48,15 @@ class InvolvementShares:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        window = spec.params.get("window", 10)
-        shrinkage = spec.params.get("shrinkage", 5.0)
-        penalty = spec.params.get("penalty_bonus", 0.3)
-        use_order = spec.params.get("use_penalties_order", True)
-        use_event = spec.params.get("use_penalty_event", False)
-        p_pen = spec.params.get("p_penalty", _DEFAULT_P_PENALTY)
-        use_set = spec.params.get("use_set_piece_orders", False)
-        set_bonus = spec.params.get("set_piece_bonus", 0.1)
-        if isinstance(window, bool) or not isinstance(window, int) or window < 1:
-            raise ValueError(f"window must be a positive int, got {window!r}")
-        shrinkage_value = float(shrinkage)
-        penalty_value = float(penalty)
-        p_pen_value = float(p_pen)
-        set_bonus_value = float(set_bonus)
-        if shrinkage_value < 0:
-            raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
-        if penalty_value < 0:
-            raise ValueError(f"penalty_bonus must be non-negative, got {penalty_value}")
-        if not isinstance(use_order, bool):
-            raise ValueError(f"use_penalties_order must be a bool, got {use_order!r}")
-        if not isinstance(use_event, bool):
-            raise ValueError(f"use_penalty_event must be a bool, got {use_event!r}")
-        if not 0.0 <= p_pen_value <= 1.0:
-            raise ValueError(f"p_penalty must be in [0, 1], got {p_pen_value}")
-        if not isinstance(use_set, bool):
-            raise ValueError(f"use_set_piece_orders must be a bool, got {use_set!r}")
-        if set_bonus_value < 0:
-            raise ValueError(
-                f"set_piece_bonus must be non-negative, got {set_bonus_value}"
-            )
-        self._window = window
-        self._shrinkage = shrinkage_value
-        self._penalty = penalty_value
-        self._use_penalties_order = use_order
-        self._use_penalty_event = use_event
-        self._p_penalty_param = p_pen_value
-        self._use_set_piece_orders = use_set
-        self._set_piece_bonus = set_bonus_value
+        params = parse_component_params(InvolvementSharesParams, spec.params)
+        self._window = params.window
+        self._shrinkage = params.shrinkage
+        self._penalty = params.penalty_bonus
+        self._use_penalties_order = params.use_penalties_order
+        self._use_penalty_event = params.use_penalty_event
+        self._p_penalty_param = params.p_penalty
+        self._use_set_piece_orders = params.use_set_piece_orders
+        self._set_piece_bonus = params.set_piece_bonus
         self.p_penalty = 0.0
         self.penalty_taker_keys: set[int] = set()
         self._fitted = False

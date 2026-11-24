@@ -19,13 +19,12 @@ import polars as pl
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import OddsPoissonParams, parse_component_params
 from fplt.models.components.score.odds_lambda import odds_to_lambda
 from fplt.models.distributions import MAX_GOALS, ScorelineDist
 from fplt.models.spec import ModelSpec, register_component
 
 _LOG = logging.getLogger(__name__)
-_FALLBACK_HOME = 1.35
-_FALLBACK_AWAY = 1.1
 _ODDS_KEYS = ["season", "team_h_key", "team_a_key", "kickoff_time"]
 # Match Dixon–Coles: keep 0..MAX_GOALS and a few extra bins for the tail.
 _GRID = MAX_GOALS + 9
@@ -47,14 +46,11 @@ class OddsPoissonScore:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        self._use_closing_proxy = bool(spec.params.get("use_closing_proxy", True))
-        self._use_ou = bool(spec.params.get("use_over_under", True))
-        self._fallback_home = float(
-            spec.params.get("fallback_lambda_home", _FALLBACK_HOME)
-        )
-        self._fallback_away = float(
-            spec.params.get("fallback_lambda_away", _FALLBACK_AWAY)
-        )
+        params = parse_component_params(OddsPoissonParams, spec.params)
+        self._use_closing_proxy = params.use_closing_proxy
+        self._use_ou = params.use_over_under
+        self._fallback_home = params.fallback_lambda_home
+        self._fallback_away = params.fallback_lambda_away
 
     def fit(self, view: PITView) -> None:
         """No-op: market odds are read at predict time."""

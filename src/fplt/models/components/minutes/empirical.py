@@ -10,8 +10,11 @@ import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import (
+    EmpiricalMinutesParams,
+    parse_component_params,
+)
 from fplt.models.components.minutes.common import (
-    DEFAULT_AVAILABILITY_RECOVERY_GAMES,
     START_FALLBACK,
     SUB_FALLBACK,
     WIDTH,
@@ -49,40 +52,13 @@ class EmpiricalMinutes:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        window = spec.params.get("window", 5)
-        shrinkage = spec.params.get("shrinkage", 5.0)
-        doubtful = spec.params.get("doubtful_chance", 0.5)
-        overlay = spec.params.get("use_injury_overlay", False)
-        avail_gate = spec.params.get("use_availability_gate", True)
-        recovery = spec.params.get(
-            "availability_recovery_games", DEFAULT_AVAILABILITY_RECOVERY_GAMES
-        )
-        if isinstance(window, bool) or not isinstance(window, int) or window < 1:
-            raise ValueError(f"window must be a positive int, got {window!r}")
-        shrinkage_value = float(shrinkage)
-        doubtful_value = float(doubtful)
-        recovery_value = float(recovery)
-        if shrinkage_value < 0:
-            raise ValueError(f"shrinkage must be non-negative, got {shrinkage_value}")
-        if not 0.0 <= doubtful_value <= 1.0:
-            raise ValueError(f"doubtful_chance must be in [0, 1], got {doubtful_value}")
-        if recovery_value < 0:
-            raise ValueError(
-                "availability_recovery_games must be non-negative, "
-                f"got {recovery_value}"
-            )
-        if not isinstance(overlay, bool):
-            raise ValueError(f"use_injury_overlay must be a bool, got {overlay!r}")
-        if not isinstance(avail_gate, bool):
-            raise ValueError(
-                f"use_availability_gate must be a bool, got {avail_gate!r}"
-            )
-        self._window = window
-        self._shrinkage = shrinkage_value
-        self._doubtful = doubtful_value
-        self._availability_recovery_games = recovery_value
-        self._use_injury_overlay = overlay
-        self._use_availability_gate = avail_gate
+        params = parse_component_params(EmpiricalMinutesParams, spec.params)
+        self._window = params.window
+        self._shrinkage = params.shrinkage
+        self._doubtful = params.doubtful_chance
+        self._availability_recovery_games = params.availability_recovery_games
+        self._use_injury_overlay = params.use_injury_overlay
+        self._use_availability_gate = params.use_availability_gate
         self._fitted = False
         self._position: dict[int, str] = {}
         self._player_rate: dict[int, tuple[float, float]] = {}

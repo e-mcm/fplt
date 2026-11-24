@@ -19,6 +19,7 @@ import polars as pl
 from scipy.stats import poisson
 
 from fplt.data.pit import PITView
+from fplt.models.component_params import Odds1X2Params, parse_component_params
 from fplt.models.components.score.odds_lambda import (
     de_vig,
     rescale_joint_to_1x2,
@@ -30,7 +31,6 @@ from fplt.models.spec import ModelSpec, register_component
 _GRID = MAX_GOALS + 9
 _SHAPE_HOME = 1.35
 _SHAPE_AWAY = 1.1
-_FALLBACK: tuple[float, float, float] = (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
 
 
 def _neutral_shape() -> np.ndarray:
@@ -57,11 +57,12 @@ class Odds1X2Score:
 
     def __init__(self, spec: ModelSpec) -> None:
         self.spec = spec
-        self._use_closing_proxy = bool(spec.params.get("use_closing_proxy", True))
+        params = parse_component_params(Odds1X2Params, spec.params)
+        self._use_closing_proxy = params.use_closing_proxy
         fallback = (
-            float(spec.params.get("fallback_p_home", _FALLBACK[0])),
-            float(spec.params.get("fallback_p_draw", _FALLBACK[1])),
-            float(spec.params.get("fallback_p_away", _FALLBACK[2])),
+            params.fallback_p_home,
+            params.fallback_p_draw,
+            params.fallback_p_away,
         )
         total = sum(fallback)
         if total <= 0:

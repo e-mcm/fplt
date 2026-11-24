@@ -237,8 +237,10 @@ def deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any
     """Deep-merge ``overrides`` onto a copy of ``base``.
 
     Nested dicts merge recursively. Non-dict values (including lists) in
-    ``overrides`` replace the base value. Used by the ModelSpec ``extends``
-    loader; not OmegaConf.
+    ``overrides`` replace the base value. A nested mapping that sets a
+    different ``kind`` than the base replaces that node wholesale so component
+    params do not leak across kinds. Used by the ModelSpec ``extends`` loader;
+    not OmegaConf.
 
     Args:
         base: Parent mapping (not mutated).
@@ -254,7 +256,17 @@ def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, An
     for key, value in overrides.items():
         existing = base.get(key)
         if isinstance(existing, dict) and isinstance(value, dict):
-            _deep_merge(cast(dict[str, Any], existing), cast(dict[str, Any], value))
+            existing_map = cast(dict[str, Any], existing)
+            value_map = cast(dict[str, Any], value)
+            if "kind" in value_map and existing_map.get("kind") != value_map.get(
+                "kind"
+            ):
+                # Replacing a ModelSpec-shaped node (different ``kind``) must not
+                # deep-merge params: parent keys like ``xg_blend`` would otherwise
+                # leak onto ``involvement_shares`` and break ``extra="forbid"``.
+                base[key] = copy.deepcopy(value_map)
+            else:
+                _deep_merge(existing_map, value_map)
         else:
             base[key] = copy.deepcopy(value)
     return base
