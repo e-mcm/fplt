@@ -125,6 +125,51 @@ def test_sample_returns_joint_player_fixture_sims(tmp_path: Path) -> None:
         CompositePredictor(spec).sample(view, [GWKey("2024-25", 1)], n=5)
 
 
+def test_native_predict_requests_summary_not_samples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Normal native predict must use K5 summaries (return_samples=False)."""
+    pytest.importorskip("fplt_mc")
+    from fplt.models.simulation_native import FixtureSummary
+
+    calls: list[bool] = []
+
+    def fake_native(*_args: object, **kwargs: object) -> FixtureSummary:
+        flag = bool(kwargs.get("return_samples", True))
+        calls.append(flag)
+        n_players = 2
+        zeros = np.zeros(n_players, dtype=np.float64)
+        return FixtureSummary(
+            player_key=np.arange(n_players, dtype=np.int64),
+            xpts=zeros + 1.0,
+            xpts_sd=zeros + 0.5,
+            p_played=zeros + 0.9,
+            p_60=zeros + 0.8,
+            p_goal=zeros + 0.2,
+            p_assist=zeros + 0.1,
+            p_cs=zeros + 0.3,
+            p_haul=zeros + 0.05,
+        )
+
+    monkeypatch.setattr("fplt.models.composite.simulate_match_native", fake_native)
+    base = load_model_specs()["dc_layered_v4"]
+    spec = base.model_copy(
+        update={
+            "params": {**base.params, "n_sims": 40, "mc_backend": "native"},
+            "name": "dc_layered_v4_summary_probe",
+        }
+    )
+    store = build_league(DataStore(tmp_path / "league"))
+    view = PITData(store).view(GWKey("2024-25", 1))
+    model = CompositePredictor(spec)
+    model.fit(view)
+    frame = model.predict(view, [GWKey("2024-25", 1)])
+    assert calls
+    assert all(flag is False for flag in calls)
+    checked = PredictionSchema.validate(frame)
+    assert checked["xpts"].to_list() == [1.0, 1.0]
+
+
 def test_a_gameweek_is_scored_and_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

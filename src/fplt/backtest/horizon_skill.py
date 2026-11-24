@@ -31,6 +31,45 @@ class HorizonSkillResult:
     output_dir: Path
 
 
+def skill_curve_from_ledger(
+    ledger: pl.DataFrame,
+    *,
+    model_name: str | None = None,
+) -> pl.DataFrame:
+    """Build a skill-by-horizon curve from a scored prediction ledger.
+
+    Convenience for measuring RMSE/MAE vs lead time without re-running
+    ``compare_models``. Filter to the decision-relevant pool first when
+    comparing to ``fplt horizon-skill`` / promote boards.
+
+    Args:
+        ledger: Rows with ``horizon``, ``xpts``, ``actual_pts``, and
+            ``model_id`` (optional ``model_name``).
+        model_name: Optional label written onto every row when the ledger
+            lacks ``model_name`` (defaults to ``model_id``).
+
+    Returns:
+        Validated ``HorizonSkillSchema`` frame.
+
+    Raises:
+        ValueError: Required columns are missing.
+    """
+    from fplt.backtest.metrics import overall_summary
+
+    if ledger.is_empty():
+        return _empty_curve()
+    frame = ledger
+    if "model_name" not in frame.columns:
+        label = model_name
+        if label is None:
+            if "model_id" not in frame.columns:
+                raise ValueError("ledger needs model_name or model_id")
+            label = str(frame["model_id"][0])
+        frame = frame.with_columns(pl.lit(label).alias("model_name"))
+    summary = overall_summary(frame)
+    return skill_curve_from_summary(summary)
+
+
 def skill_curve_from_summary(summary: pl.DataFrame) -> pl.DataFrame:
     """Build a validated MAE/RMSE-by-horizon curve from a compare summary.
 
@@ -252,6 +291,7 @@ __all__ = [
     "HorizonSkillResult",
     "format_skill_curve",
     "run_horizon_skill",
+    "skill_curve_from_ledger",
     "skill_curve_from_summary",
     "skill_rows_for_component_eval",
 ]

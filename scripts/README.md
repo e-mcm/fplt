@@ -11,6 +11,7 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `fetch_overall_rank.py` | Overall-league points-at-rank | `make fetch-overall-rank` |
 | `bootstrap_vaastav.py` | Historical seasons from vaastav | `make bootstrap-vaastav` |
 | `eval_board.py` | Multi-model ledger helper | `make eval-board SEASON=…` |
+| `perf_report.py` | Rank `$FPLT_DATA_DIR/timing` hotspots | `make perf-report` |
 | `mc_bench.py` | Per-step MC micro-bench (§1.1) | `make mc-bench` |
 
 ## Invariants

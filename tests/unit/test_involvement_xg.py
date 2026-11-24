@@ -234,6 +234,61 @@ def test_rejects_non_bool_use_penalties_order_on_xg() -> None:
         InvolvementXg(_xg_spec(use_penalties_order="no"))
 
 
+def test_set_piece_order_boosts_goal_weight(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "MID", 1), _row(2, "MID", 1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[
+            _status(1, corners_order=1),
+            _status(2, freekick_order=2),
+        ],
+    )
+    frame = _predict(
+        store, xg_blend=1.0, use_set_piece_orders=True, set_piece_bonus=0.5
+    )
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[1] == pytest.approx(1.0)
+    assert weights[2] == pytest.approx(0.0)
+
+
+def test_set_piece_orders_default_off(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "MID", 1), _row(2, "MID", 1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[_status(1, corners_order=1), _status(2)],
+    )
+    frame = _predict(store, xg_blend=1.0)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[1] == pytest.approx(0.5)
+    assert weights[2] == pytest.approx(0.5)
+
+
+def test_penalty_event_skips_rate_bump_and_exposes_sim_knobs(tmp_path: Path) -> None:
+    store = _store(
+        tmp_path,
+        fpl=[_row(1, "FWD", 1), _row(2, "FWD", 1)],
+        understat=[_ust(1, 1, xg=0.0), _ust(2, 1, xg=0.0)],
+        status=[_status(1, order=1), _status(2, order=2)],
+    )
+    view = PITData(store).view(GWKey(_SEASON, 3))
+    model = InvolvementXg(_xg_spec(xg_blend=1.0, use_penalty_event=True, p_penalty=0.2))
+    model.fit(view)
+    frame = model.predict(view, _ASK)
+    weights = dict(
+        zip(frame["player_key"].to_list(), frame["goal_weight"].to_list(), strict=True)
+    )
+    assert weights[1] == pytest.approx(0.5)
+    assert weights[2] == pytest.approx(0.5)
+    assert model.p_penalty == pytest.approx(0.2)
+    assert model.penalty_taker_keys == {1}
+
+
 def test_nopens_xg_and_layered_specs_load() -> None:
     specs = load_model_specs()
     assert specs["involvement_xg_nopens_v1"].params["use_penalties_order"] is False
@@ -246,6 +301,30 @@ def test_nopens_xg_and_layered_specs_load() -> None:
     shares = specs["dc_layered_shares_v2"].components["involvement"]
     assert shares.kind == "involvement_shares"
     assert shares.name == "involvement_shares_v1"
+    assert (
+        specs["dc_layered_xg_blend_1_v1"].components["involvement"].name
+        == "involvement_xg_blend_1_v1"
+    )
+    assert (
+        specs["dc_layered_xg_blend_1_v1"].components["involvement"].params["xg_blend"]
+        == 1.0
+    )
+    assert (
+        specs["dc_layered_xg_blend_05_v1"].components["involvement"].params["xg_blend"]
+        == 0.5
+    )
+    assert (
+        specs["dc_layered_setpieces_v1"]
+        .components["involvement"]
+        .params["use_set_piece_orders"]
+        is True
+    )
+    assert (
+        specs["dc_layered_penalty_event_v1"]
+        .components["involvement"]
+        .params["use_penalty_event"]
+        is True
+    )
 
 
 def test_sim_params_come_from_history(tmp_path: Path) -> None:
@@ -307,6 +386,12 @@ def test_xg_params_are_checked() -> None:
         InvolvementXg(_xg_spec(shrinkage=-1))
     with pytest.raises(ValueError, match="penalty_bonus"):
         InvolvementXg(_xg_spec(penalty_bonus=-0.1))
+    with pytest.raises(ValueError, match="use_set_piece_orders"):
+        InvolvementXg(_xg_spec(use_set_piece_orders="yes"))
+    with pytest.raises(ValueError, match="use_penalty_event"):
+        InvolvementXg(_xg_spec(use_penalty_event="yes"))
+    with pytest.raises(ValueError, match="p_penalty"):
+        InvolvementXg(_xg_spec(p_penalty=1.5))
 
 
 def test_rejects_predict_before_fit(tmp_path: Path) -> None:
@@ -459,8 +544,19 @@ def _ust(
     }
 
 
-def _status(player: int, *, order: int | None) -> dict[str, object]:
-    return {"player": player, "order": order}
+def _status(
+    player: int,
+    *,
+    order: int | None = None,
+    corners_order: int | None = None,
+    freekick_order: int | None = None,
+) -> dict[str, object]:
+    return {
+        "player": player,
+        "order": order,
+        "corners_order": corners_order,
+        "freekick_order": freekick_order,
+    }
 
 
 def _store(
@@ -577,6 +673,12 @@ def _store(
                         "ep_next": [4.0] * len(status),
                         "chance_of_playing": [100.0] * len(status),
                         "penalties_order": [row["order"] for row in status],
+                        "corners_and_indirect_freekicks_order": [
+                            row.get("corners_order") for row in status
+                        ],
+                        "direct_freekicks_order": [
+                            row.get("freekick_order") for row in status
+                        ],
                         "available_at": [_START] * len(status),
                         "source": ["fpl_api"] * len(status),
                     }

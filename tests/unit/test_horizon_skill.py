@@ -14,6 +14,7 @@ from fplt.backtest.component_eval import run_component_eval
 from fplt.backtest.horizon_skill import (
     format_skill_curve,
     run_horizon_skill,
+    skill_curve_from_ledger,
     skill_curve_from_summary,
     skill_rows_for_component_eval,
 )
@@ -88,6 +89,7 @@ def test_skill_curve_empty_and_missing_columns() -> None:
     assert skill_curve_from_summary(pl.DataFrame()).is_empty()
     with pytest.raises(ValueError, match="missing"):
         skill_curve_from_summary(pl.DataFrame({"horizon": [1], "mae": [1.0]}))
+    assert skill_curve_from_ledger(pl.DataFrame()).is_empty()
 
 
 def test_run_horizon_skill_writes_curve(tmp_path: Path) -> None:

@@ -18,11 +18,13 @@ from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.types import GWKey
+from fplt.utils.timing import binds_timing_artifacts
 
 Refit = Literal["every_gw", "every_n_gw", "never"]
 logger = logging.getLogger(__name__)
 
 
+@binds_timing_artifacts()
 def run_backtest(
     data_dir: Path,
     season: str,

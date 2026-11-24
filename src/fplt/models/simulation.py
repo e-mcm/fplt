@@ -116,6 +116,8 @@ def simulate_match(
     sample_other: bool = False,
     match_other: MatchOtherOffsets | None = None,
     uniforms: MatchSimUniforms | None = None,
+    p_penalty: float = 0.0,
+    penalty_taker: np.ndarray | None = None,
 ) -> MatchSimulation:
     """Simulate points for every player across the sampled scorelines.
 
@@ -145,6 +147,11 @@ def simulate_match(
             minutes-bucket mean (team goals / CS / player goals).
         uniforms: Optional injected U(0,1) arrays for L2 logic tests. ``None``
             keeps the production RNG path (bit-identical to pre-PR2).
+        p_penalty: Probability that a team goal is treated as a penalty
+            (no assist; awarded to a playing designated taker). ``0`` keeps
+            open-play allocation only (production default).
+        penalty_taker: Boolean mask aligned with ``players`` rows. Ignored
+            when ``p_penalty`` is 0.
 
     Returns:
         Points, goals, and assists per player, plus the unattributed goals.
@@ -163,10 +170,13 @@ def simulate_match(
         raise ValueError(f"p_assist must be in [0, 1], got {p_assist}")
     if not 0.0 <= cs_red_void_prob <= 1.0:
         raise ValueError(f"cs_red_void_prob must be in [0, 1], got {cs_red_void_prob}")
+    if not 0.0 <= p_penalty <= 1.0:
+        raise ValueError(f"p_penalty must be in [0, 1], got {p_penalty}")
     if conceded_mode not in ("scaled", "played"):
         raise ValueError(
             f"conceded_mode must be 'scaled' or 'played', got {conceded_mode!r}"
         )
+    taker_mask = _penalty_taker_mask(penalty_taker, keys.shape[0], p_penalty)
     goals = np.zeros((keys.shape[0], n), dtype=np.int64)
     assists = np.zeros_like(goals)
     unattributed = np.zeros((2, n), dtype=np.int64)
@@ -184,6 +194,8 @@ def simulate_match(
             p_assist,
             rng,
             uniforms=side_uniforms,
+            p_penalty=p_penalty,
+            penalty_taker=taker_mask[mask],
         )
         goals[mask] = side_goals_out
         assists[mask] = side_assists
@@ -227,6 +239,8 @@ def _allocate_side(
     rng: np.random.Generator,
     *,
     uniforms: SideAllocateUniforms | None = None,
+    p_penalty: float = 0.0,
+    penalty_taker: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Allocate goals and assists for one side across simulations.
 
@@ -239,6 +253,8 @@ def _allocate_side(
         p_assist: Probability a claimed goal also gets an assist.
         rng: Source for uniforms when ``uniforms`` is ``None``.
         uniforms: Optional injected scorer / assist-flag / assister draws.
+        p_penalty: Probability a goal is a penalty (taker, no assist).
+        penalty_taker: Boolean mask of designated takers, shape ``(players,)``.
 
     Returns:
         ``(scored, assisted, missed)`` with shapes ``(players, n)``,
@@ -257,6 +273,14 @@ def _allocate_side(
     assist_rates = np.where(playing, assist_weight[:, None] * minutes / 90.0, 0.0)
     if players == 0:
         return scored, assisted, team_goals.copy()
+    use_pens = (
+        p_penalty > 0.0 and penalty_taker is not None and bool(np.any(penalty_taker))
+    )
+    taker_flags = (
+        np.asarray(penalty_taker, dtype=bool)
+        if use_pens
+        else np.zeros(players, dtype=bool)
+    )
     injected: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
     if uniforms is not None:
         injected = (
@@ -277,10 +301,24 @@ def _allocate_side(
             draw = injected[0][goal_index]
             assist_draw = injected[1][goal_index]
             second = injected[2][goal_index]
-        scorer = _pick(goal_rates, draw, own_goal_weight)
-        claimed = active & (scorer >= 0)
-        missed += active & (scorer < 0)
+        pen_draw = rng.random(n) if use_pens else None
+        is_pen = (
+            active & (pen_draw < p_penalty)
+            if use_pens and pen_draw is not None
+            else np.zeros(n, dtype=bool)
+        )
         column = np.arange(n)
+        if np.any(is_pen):
+            pen_scorer = _penalty_scorer(playing, taker_flags, is_pen)
+            pen_claimed = is_pen & (pen_scorer >= 0)
+            missed += is_pen & (pen_scorer < 0)
+            np.add.at(scored, (np.maximum(pen_scorer, 0), column), pen_claimed)
+        open_play = active & ~is_pen
+        if not np.any(open_play):
+            continue
+        scorer = _pick(goal_rates, draw, own_goal_weight)
+        claimed = open_play & (scorer >= 0)
+        missed += open_play & (scorer < 0)
         np.add.at(scored, (np.maximum(scorer, 0), column), claimed)
         want_assist = claimed & (assist_draw < p_assist)
         blocked = assist_rates.copy()
@@ -292,6 +330,35 @@ def _allocate_side(
         given = want_assist & (assister >= 0)
         np.add.at(assisted, (np.maximum(assister, 0), column), given)
     return scored, assisted, missed
+
+
+def _penalty_taker_mask(
+    penalty_taker: np.ndarray | None, n_players: int, p_penalty: float
+) -> np.ndarray:
+    if p_penalty <= 0.0 or penalty_taker is None:
+        return np.zeros(n_players, dtype=bool)
+    mask = np.asarray(penalty_taker, dtype=bool)
+    if mask.shape != (n_players,):
+        raise ValueError(
+            f"penalty_taker must have shape ({n_players},), got {mask.shape}"
+        )
+    return mask
+
+
+def _penalty_scorer(
+    playing: np.ndarray, taker_flags: np.ndarray, is_pen: np.ndarray
+) -> np.ndarray:
+    """Index of the playing penalty taker per sim, or ``-1`` when none."""
+    n = int(is_pen.shape[0])
+    out = np.full(n, -1, dtype=np.int64)
+    if not np.any(taker_flags):
+        return out
+    eligible = playing & taker_flags[:, None]
+    for sim in np.flatnonzero(is_pen):
+        choices = np.flatnonzero(eligible[:, sim])
+        if choices.size:
+            out[sim] = int(choices[0])
+    return out
 
 
 def _require_uniform_grid(

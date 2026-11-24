@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -43,6 +43,10 @@ from fplt.optimise.highs_options import (
     DEFAULT_HIGHS_OPTIONS,
     HighsSolveOptions,
     log_solve_status,
+)
+from fplt.optimise.horizon_decay import (
+    geometric_step_weights,
+    validate_step_weights,
 )
 from fplt.optimise.lineup import (
     DEFAULT_HAUL_WEIGHT,
@@ -84,6 +88,7 @@ from fplt.schemas.plan import (
     PriceForecastSchema,
 )
 from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
+from fplt.utils.timing import timed_phase
 
 _Schema = (
     type[CandidateSchema]
@@ -151,6 +156,7 @@ def plan_squad(
     p_haul: pl.DataFrame | None = None,
     haul_weight: float = DEFAULT_HAUL_WEIGHT,
     price_forecast: pl.DataFrame | None = None,
+    step_weights: Sequence[float] | None = None,
 ) -> GameweekPlan:
     """Solve one squad over ``horizon`` gameweeks.
 
@@ -205,6 +211,10 @@ def plan_squad(
         price_forecast: Optional ``PriceForecastSchema`` list prices per
             ``player_key`` × ``step``. ``None`` keeps as-of prices for
             every step (default). Step 0 must match candidate prices.
+        step_weights: Optional per-step objective weights (0-indexed).
+            ``None`` keeps geometric ``state.decay ** step`` (live
+            control). Skill-by-horizon treatment passes measured weights
+            from ``fplt.optimise.horizon_decay`` (FDB-242).
 
     Returns:
         Squad members and sales at every step.
@@ -216,6 +226,7 @@ def plan_squad(
     """
     if horizon < 1:
         raise ValueError("horizon must be at least 1")
+    weights = _resolve_plan_weights(state, horizon, step_weights)
     targets = _chip_gameweeks(season, gameweeks, horizon)
     rules_season = chip_rules_season if chip_rules_season is not None else season
     if chip_windows is not None and targets is None:
@@ -242,6 +253,7 @@ def plan_squad(
             owned_keys=[player.player_key for player in owned],
             policy=policy,
             decay=state.decay,
+            step_weights=weights,
         )
         _log.info(
             "candidate prune horizon=%s raw=%s kept=%s (%.0f%%)",
@@ -294,7 +306,14 @@ def plan_squad(
         sorted(coarse_steps),
         lineup_reopt,
     )
-    columns = _columns(expected, state, horizon, initial, coarsen_steps=coarse_steps)
+    columns = _columns(
+        expected,
+        state,
+        horizon,
+        initial,
+        coarsen_steps=coarse_steps,
+        step_weights=weights,
+    )
     solver = _solver(columns.costs, options)
     _constrain(
         solver,
@@ -321,13 +340,14 @@ def plan_squad(
         )
     solver.setMaximize()
     started = time.perf_counter()
-    status = _run_solver(
-        solver,
-        columns=columns,
-        options=options,
-        horizon=horizon,
-        long_horizon=lh_policy,
-    )
+    with timed_phase("optimise/milp"):
+        status = _run_solver(
+            solver,
+            columns=columns,
+            options=options,
+            horizon=horizon,
+            long_horizon=lh_policy,
+        )
     elapsed = time.perf_counter() - started
     _log.info(
         "plan_squad solve horizon=%s pool=%s binaries≈%s status=%s elapsed=%.2fs",
@@ -340,7 +360,17 @@ def plan_squad(
     if not options.accepts_status(status):
         raise ValueError("no plan satisfies the budget, positions, and club limits")
     log_solve_status(status, options=options)
-    plan = _read(solver, pool, expected, columns, state, initial, horizon, rules)
+    plan = _read(
+        solver,
+        pool,
+        expected,
+        columns,
+        state,
+        initial,
+        horizon,
+        rules,
+        step_weights=weights,
+    )
     integrity = inspect_horizon_picks(plan.picks, plan.chips)
     log_horizon_integrity(integrity, binary_steps=locked_steps)
     # Executable week must be a legal fifteen. Far continuous steps may fail
@@ -351,13 +381,14 @@ def plan_squad(
         context="plan_squad after solve (actionable step 0)",
     )
     if lineup_reopt:
-        refreshed = reoptimize_plan_lineups(
-            plan.picks,
-            scenarios=scenarios,
-            p_haul=p_haul,
-            haul_weight=haul_weight,
-            scenario_step=0,
-        )
+        with timed_phase("plan/lineup"):
+            refreshed = reoptimize_plan_lineups(
+                plan.picks,
+                scenarios=scenarios,
+                p_haul=p_haul,
+                haul_weight=haul_weight,
+                scenario_step=0,
+            )
         plan = replace(plan, picks=_frame(refreshed, HorizonPickSchema))
     return replace(
         plan,
@@ -676,13 +707,15 @@ def _columns(
     initial: bool,
     *,
     coarsen_steps: frozenset[int] | None = None,
+    step_weights: Sequence[float] | None = None,
 ) -> _Columns:
     count = expected.shape[0]
     columns = _Columns(count, horizon)
     zeros = np.zeros(count, dtype=np.float64)
     coarse: frozenset[int] = coarsen_steps if coarsen_steps is not None else frozenset()
+    weights = _resolve_plan_weights(state, horizon, step_weights)
     for step in range(horizon):
-        weight = state.decay**step
+        weight = weights[step]
         points = np.asarray(expected[:, step], dtype=np.float64)
         bench = _scaled(points, weight * state.bench_weight)
         played = _scaled(points, weight * (1.0 - state.bench_weight))
@@ -1349,6 +1382,8 @@ def _read(
     initial: bool,
     horizon: int,
     rules: ChipRules | None,
+    *,
+    step_weights: Sequence[float] | None = None,
 ) -> GameweekPlan:
     values = np.asarray(solver.getSolution().col_value)
     priced = _priced(horizon, initial)
@@ -1360,6 +1395,7 @@ def _read(
     free = state.free_transfers
     keep_fh_ft = True if rules is None else rules.free_hit_keeps_free_transfers
     keys = pool["player_key"].to_list()
+    weights = _resolve_plan_weights(state, horizon, step_weights)
     for step in range(horizon):
         chip = _chip_played(values, columns, step)
         chips.append(chip)
@@ -1380,7 +1416,7 @@ def _read(
                 free = _next_free(free, 0, state.ft_bank_cap)
             else:
                 free = _next_free(free, moves, state.ft_bank_cap)
-        weight = state.decay**step
+        weight = weights[step]
         if chip == "freehit":
             playing = _on(values, columns.fh_xi[step])
             armband = _on(values, columns.fh_captain[step])
@@ -1812,6 +1848,17 @@ def _append_chip_start(
     elif chip == "3xc":
         indices.append(columns.tc[step])
         values.append(1.0)
+
+
+def _resolve_plan_weights(
+    state: SquadState,
+    horizon: int,
+    step_weights: Sequence[float] | None,
+) -> tuple[float, ...]:
+    """Return per-step objective weights (geometric decay or explicit)."""
+    if step_weights is None:
+        return geometric_step_weights(float(state.decay), horizon)
+    return validate_step_weights(step_weights, horizon=horizon)
 
 
 def _solver(cost: np.ndarray, options: HighsSolveOptions) -> highspy.Highs:

@@ -57,7 +57,7 @@ Code defaults, absent key included:
 | `market_prior_strength` | `0` | off |
 | `market_cs_strength` | `0` | on (`0.5`) |
 
-Live unattended planning reads `configs/ops/production.yaml` via `load_production_ops` (`dc_layered_v4` / horizon 3 by default; env `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` override). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML default for docs/imports. It is not the arm check. The arm check reads the layered spec under test.
+Live unattended planning reads `configs/ops/production.yaml` via `load_production_ops` (`dc_layered_v4_native` / horizon 3 by default; env `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` override). `PRODUCTION_MODELS` in `fplt.automation.cycle` mirrors the committed YAML default for docs/imports. It is not the arm check. The arm check reads the layered spec under test (python parent `dc_layered_v4` for most component A/Bs).
 
 Other hard rules, unchanged:
 

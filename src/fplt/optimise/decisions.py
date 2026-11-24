@@ -78,6 +78,14 @@ from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
+from fplt.utils.timing import (
+    TimingSession,
+    binds_timing_artifacts,
+    format_kind_summary,
+    timed_phase,
+    timing_session,
+    write_timing_record,
+)
 
 TeamLoader = Callable[..., CurrentTeam]
 logger = logging.getLogger(__name__)
@@ -242,6 +250,7 @@ def simulate_decisions(
     price_forecast_method: PriceForecastMethod | None = None,
     store: DataStore | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
     scenario_for_gw: Callable[[int], ScenarioBundle] | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
@@ -278,6 +287,8 @@ def simulate_decisions(
             ``price_forecast_method`` is ``mean_gw_delta``.
         highs_options: HiGHS knobs forwarded to ``plan_squad``. Chip boards
             pass ``HighsSolveOptions.board_deterministic()`` (FDB-228).
+        step_weights: Optional per-step objective weights for ``plan_squad``
+            (skill shrink). ``None`` keeps geometric ``state.decay ** step``.
         scenario_for_gw: Optional ``gw -> ScenarioBundle`` for step-0 lineup
             SAA (FDB-241). When set, ``plan_squad`` receives joint samples
             instead of EV-only reopt on the actionable week.
@@ -324,18 +335,19 @@ def simulate_decisions(
         active_windows = static_windows
         if schedule_each_week:
             assert rules is not None
-            active_windows = _scheduled_windows(
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                as_of_gw=gameweek,
-                short_horizon=len(window),
-                predictions=predictions,
-                pool=pool,
-                state=current,
-                gameweeks=gameweeks,
-                force_play=force_play,
-            )
+            with timed_phase("plan/chips"):
+                active_windows = _scheduled_windows(
+                    fixtures=fixtures,
+                    season=season,
+                    rules=rules,
+                    as_of_gw=gameweek,
+                    short_horizon=len(window),
+                    predictions=predictions,
+                    pool=pool,
+                    state=current,
+                    gameweeks=gameweeks,
+                    force_play=force_play,
+                )
         if active_windows is not None:
             logger.info(
                 "chip windows gw=%s %s",
@@ -369,6 +381,7 @@ def simulate_decisions(
             scenarios=scenarios,
             price_forecast=forecast,
             highs_options=highs_options,
+            step_weights=None if step_weights is None else step_weights[: len(window)],
         )
         logger.info(
             "simulate gw=%s arm=%s horizon=%s pool=%s elapsed=%.2fs points=%.1f",
@@ -551,6 +564,7 @@ def resolve_squad_state(
     return state
 
 
+@binds_timing_artifacts()
 def run_plan(
     data_dir: Path,
     model_name: str,
@@ -566,6 +580,7 @@ def run_plan(
     price_forecast_method: PriceForecastMethod | None = (
         DEFAULT_LIVE_PRICE_FORECAST_METHOD
     ),
+    step_weights: Sequence[float] | None = None,
     joint_scenarios: bool = False,
     n_scenario_sims: int | None = None,
 ) -> tuple[GameweekPlan, Path, str]:
@@ -599,6 +614,8 @@ def run_plan(
         price_forecast_method: Within-horizon list-price forecast. Defaults to
             ``DEFAULT_LIVE_PRICE_FORECAST_METHOD`` (``mean_gw_delta`` after
             the FDB-218 keep). Pass ``None`` / ``flat`` for as-of-only prices.
+        step_weights: Optional per-step objective weights (skill shrink
+            ablation). ``None`` keeps geometric ``SquadState.decay``.
         joint_scenarios: When true, fit the model and pass joint MC samples
             into step-0 lineup SAA (FDB-241; opt-in until a keep flip).
         n_scenario_sims: Draw count for joint SAA.
@@ -621,7 +638,7 @@ def run_plan(
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
         "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s "
-        "joint_scenarios=%s price_forecast=%s",
+        "joint_scenarios=%s price_forecast=%s skill_shrink=%s",
         model_name,
         season,
         gameweek,
@@ -630,140 +647,165 @@ def run_plan(
         force_play,
         joint_scenarios,
         price_forecast_method,
+        step_weights is not None,
     )
-    spec = load_model_specs()[model_name]
-    store = DataStore(data_dir)
-    view = PITData(store).view(GWKey(season, gameweek))
-    if squad is not None:
-        state = squad
-        logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
-    else:
-        state = resolve_squad_state(
-            view,
-            entry_json=entry_json,
-            event=gameweek,
-        )
-    window = [gameweek + offset for offset in range(horizon) if gameweek + offset <= 38]
-    candidates = candidates_as_of(view)
-    ledger = read_predictions(data_dir)
-    points = points_from_ledger(ledger, spec.model_id, season, gameweek, window)
-    logger.info(
-        "optimiser inputs: candidates=%s prediction_rows=%s window=%s initial=%s",
-        candidates.height,
-        points.height,
-        window,
-        not state.owned,
-    )
-    _require_usable_points(points, candidates, window, model_name)
-    state = apply_market_prices(state, market_prices_from_candidates(candidates))
-    rules_season = chip_rules_season if chip_rules_season is not None else season
-    plan_season: str | None = None
-    plan_gameweeks: list[int] | None = None
-    plan_windows: ChipUseWindows | None = None
-    plan_rules_season: str | None = None
-    if chip_arm != "off":
-        rules = ChipRules.for_season(rules_season)
-        state = _ensure_chip_inventory(state, rules)
-        fixtures = store.read("fixtures").filter(pl.col("season") == season)
-        predictions = _prediction_rows(ledger, spec.model_id, season)
-        rest_of_season = list(range(gameweek, 39))
-        if chip_arm == "optimised":
-            plan_windows = _scheduled_windows(
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                as_of_gw=gameweek,
-                short_horizon=len(window),
-                predictions=predictions,
-                pool=candidates,
-                state=state,
-                gameweeks=rest_of_season,
-                force_play=force_play,
+    plan_timings = TimingSession()
+    with timing_session(plan_timings):
+        with timed_phase("plan/setup"):
+            spec = load_model_specs()[model_name]
+            store = DataStore(data_dir)
+            view = PITData(store).view(GWKey(season, gameweek))
+            if squad is not None:
+                state = squad
+                logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
+            else:
+                state = resolve_squad_state(
+                    view,
+                    entry_json=entry_json,
+                    event=gameweek,
+                )
+            window = [
+                gameweek + offset
+                for offset in range(horizon)
+                if gameweek + offset <= 38
+            ]
+            candidates = candidates_as_of(view)
+            ledger = read_predictions(data_dir)
+            points = points_from_ledger(ledger, spec.model_id, season, gameweek, window)
+            logger.info(
+                "optimiser inputs: candidates=%s prediction_rows=%s "
+                "window=%s initial=%s",
+                candidates.height,
+                points.height,
+                window,
+                not state.owned,
             )
-        else:
-            plan_windows = _static_windows_for_arm(
-                chip_arm,
-                fixtures=fixtures,
-                season=season,
-                rules=rules,
-                predictions=predictions,
-                gameweeks=rest_of_season,
-                chip_windows=None,
+            _require_usable_points(points, candidates, window, model_name)
+            state = apply_market_prices(
+                state, market_prices_from_candidates(candidates)
             )
-        plan_season = season
-        plan_gameweeks = window
-        plan_rules_season = rules_season
-    if plan_windows is not None:
-        logger.info(
-            "chip windows gw=%s %s",
-            gameweek,
-            format_chip_use_windows(plan_windows),
-        )
-        write_chip_windows(
-            data_dir,
-            model_id=chip_arm_model_id(spec.model_id, chip_arm)
-            if chip_arm != "off"
-            else spec.model_id,
+            rules_season = (
+                chip_rules_season if chip_rules_season is not None else season
+            )
+            plan_season: str | None = None
+            plan_gameweeks: list[int] | None = None
+            plan_windows: ChipUseWindows | None = None
+            plan_rules_season: str | None = None
+        if chip_arm != "off":
+            with timed_phase("plan/chips"):
+                rules = ChipRules.for_season(rules_season)
+                state = _ensure_chip_inventory(state, rules)
+                fixtures = store.read("fixtures").filter(pl.col("season") == season)
+                predictions = _prediction_rows(ledger, spec.model_id, season)
+                rest_of_season = list(range(gameweek, 39))
+                if chip_arm == "optimised":
+                    plan_windows = _scheduled_windows(
+                        fixtures=fixtures,
+                        season=season,
+                        rules=rules,
+                        as_of_gw=gameweek,
+                        short_horizon=len(window),
+                        predictions=predictions,
+                        pool=candidates,
+                        state=state,
+                        gameweeks=rest_of_season,
+                        force_play=force_play,
+                    )
+                else:
+                    plan_windows = _static_windows_for_arm(
+                        chip_arm,
+                        fixtures=fixtures,
+                        season=season,
+                        rules=rules,
+                        predictions=predictions,
+                        gameweeks=rest_of_season,
+                        chip_windows=None,
+                    )
+                plan_season = season
+                plan_gameweeks = window
+                plan_rules_season = rules_season
+        if plan_windows is not None:
+            logger.info(
+                "chip windows gw=%s %s",
+                gameweek,
+                format_chip_use_windows(plan_windows),
+            )
+            write_chip_windows(
+                data_dir,
+                model_id=chip_arm_model_id(spec.model_id, chip_arm)
+                if chip_arm != "off"
+                else spec.model_id,
+                season=season,
+                windows_by_gw={gameweek: plan_windows},
+            )
+        forecast = _price_forecast_for_deadline(
+            method=_normalize_price_forecast_method(price_forecast_method),
+            store=store,
             season=season,
-            windows_by_gw={gameweek: plan_windows},
+            gameweek=gameweek,
+            pool=candidates,
+            horizon=len(window),
         )
-    forecast = _price_forecast_for_deadline(
-        method=_normalize_price_forecast_method(price_forecast_method),
-        store=store,
-        season=season,
-        gameweek=gameweek,
-        pool=candidates,
-        horizon=len(window),
-    )
-    scenarios = None
-    if joint_scenarios:
-        from fplt.optimise.scenarios import (
-            DEFAULT_SAA_SIMS,
-            joint_scenarios_for_deadline,
-        )
+        scenarios = None
+        if joint_scenarios:
+            from fplt.optimise.scenarios import (
+                DEFAULT_SAA_SIMS,
+                joint_scenarios_for_deadline,
+            )
 
-        scenarios = joint_scenarios_for_deadline(
-            spec,
-            data_dir,
-            season,
-            gameweek,
-            n_sims=DEFAULT_SAA_SIMS if n_scenario_sims is None else n_scenario_sims,
+            scenarios = joint_scenarios_for_deadline(
+                spec,
+                data_dir,
+                season,
+                gameweek,
+                n_sims=DEFAULT_SAA_SIMS if n_scenario_sims is None else n_scenario_sims,
+            )
+        solved = plan_squad(
+            candidates,
+            points,
+            state,
+            initial=not state.owned,
+            horizon=len(window),
+            season=plan_season,
+            gameweeks=plan_gameweeks,
+            chip_windows=plan_windows,
+            chip_rules_season=plan_rules_season,
+            scenarios=scenarios,
+            price_forecast=forecast,
+            step_weights=None if step_weights is None else step_weights[: len(window)],
         )
-    solved = plan_squad(
-        candidates,
-        points,
-        state,
-        initial=not state.owned,
-        horizon=len(window),
-        season=plan_season,
-        gameweeks=plan_gameweeks,
-        chip_windows=plan_windows,
-        chip_rules_season=plan_rules_season,
-        scenarios=scenarios,
-        price_forecast=forecast,
-    )
-    table = plan_table(solved, spec.model_id, season, gameweek, window)
-    names = _player_names(view)
-    report = render_report(solved, season, window, names=names)
-    if plan_windows is not None:
-        windows_line = format_chip_use_windows(plan_windows)
-        report = f"{report}\n\n## Chip windows\n\n{windows_line}\n"
-    report = _with_explain_sections(
-        report,
-        solved=solved,
-        state=state,
-        candidates=candidates,
-        data_dir=data_dir,
-        model_id=spec.model_id,
-        season=season,
-        gameweek=gameweek,
-        names=names,
-    )
-    try:
-        path = write_plan(data_dir, table)
-    except FileExistsError as exc:
-        raise PlanExistsError(Path(str(exc)), report) from exc
-    (path.parent / "report.md").write_text(report, encoding="utf-8")
+        with timed_phase("plan/write"):
+            table = plan_table(solved, spec.model_id, season, gameweek, window)
+            names = _player_names(view)
+            report = render_report(solved, season, window, names=names)
+            if plan_windows is not None:
+                windows_line = format_chip_use_windows(plan_windows)
+                report = f"{report}\n\n## Chip windows\n\n{windows_line}\n"
+            report = _with_explain_sections(
+                report,
+                solved=solved,
+                state=state,
+                candidates=candidates,
+                data_dir=data_dir,
+                model_id=spec.model_id,
+                season=season,
+                gameweek=gameweek,
+                names=names,
+            )
+            try:
+                path = write_plan(data_dir, table)
+            except FileExistsError as exc:
+                raise PlanExistsError(Path(str(exc)), report) from exc
+            (path.parent / "report.md").write_text(report, encoding="utf-8")
+    meta = {
+        "model": model_name,
+        "season": season,
+        "gw": gameweek,
+        "horizon": horizon,
+        "chip_arm": chip_arm,
+    }
+    logger.info(format_kind_summary("plan", plan_timings, meta=meta))
+    write_timing_record("plan", plan_timings, meta=meta)
     logger.info(
         "plan written path=%s hits=%s points=%.2f chips=%s",
         path,
@@ -864,6 +906,7 @@ def _require_usable_points(
             )
 
 
+@binds_timing_artifacts()
 def run_decisions(
     data_dir: Path,
     model_name: str,
@@ -878,6 +921,7 @@ def run_decisions(
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
     joint_scenarios: bool = False,
     n_scenario_sims: int | None = None,
 ) -> Path:
@@ -902,6 +946,7 @@ def run_decisions(
         price_forecast_method: Within-horizon list-price forecast method
             (default off / as-of flat).
         highs_options: Forwarded to ``simulate_decisions`` / ``plan_squad``.
+        step_weights: Optional per-step objective weights (skill shrink).
         joint_scenarios: When true, fit the model each deadline and pass
             joint MC samples into step-0 lineup SAA (FDB-241; opt-in).
         n_scenario_sims: Draw count for joint SAA (default
@@ -961,34 +1006,46 @@ def run_decisions(
             season,
             n_sims=DEFAULT_SAA_SIMS if n_scenario_sims is None else n_scenario_sims,
         )
-    frame = simulate_decisions(
-        pl.concat(pools),
-        predictions,
-        actuals,
-        draft,
-        model_id=ledger_id,
-        season=season,
-        gameweeks=gameweeks,
-        horizon=horizon,
-        chip_arm=chip_arm,
-        chip_rules_season=chip_rules_season,
-        fixtures=fixtures,
-        force_play=force_play,
-        lineup_reopt=lineup_reopt,
-        chip_windows_log=windows_log,
-        price_forecast_method=price_forecast_method,
-        store=store,
-        highs_options=highs_options,
-        scenario_for_gw=scenario_for_gw,
-    )
-    path = write_decisions(data_dir, frame)
-    if windows_log:
-        write_chip_windows(
-            data_dir,
+    decision_timings = TimingSession()
+    with timing_session(decision_timings):
+        frame = simulate_decisions(
+            pl.concat(pools),
+            predictions,
+            actuals,
+            draft,
             model_id=ledger_id,
             season=season,
-            windows_by_gw=windows_log,
+            gameweeks=gameweeks,
+            horizon=horizon,
+            chip_arm=chip_arm,
+            chip_rules_season=chip_rules_season,
+            fixtures=fixtures,
+            force_play=force_play,
+            lineup_reopt=lineup_reopt,
+            chip_windows_log=windows_log,
+            price_forecast_method=price_forecast_method,
+            store=store,
+            highs_options=highs_options,
+            step_weights=step_weights,
+            scenario_for_gw=scenario_for_gw,
         )
+        path = write_decisions(data_dir, frame)
+        if windows_log:
+            write_chip_windows(
+                data_dir,
+                model_id=ledger_id,
+                season=season,
+                windows_by_gw=windows_log,
+            )
+    meta = {
+        "model": model_name,
+        "season": season,
+        "n_gw": len(gameweeks),
+        "horizon": horizon,
+        "chip_arm": chip_arm,
+    }
+    logger.info(format_kind_summary("decisions", decision_timings, meta=meta))
+    write_timing_record("decisions", decision_timings, meta=meta)
     return path
 
 
@@ -1008,6 +1065,7 @@ def run_chip_decision_board(
     lineup_reopt: bool = True,
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
+    step_weights: Sequence[float] | None = None,
     joint_scenarios: bool = False,
     n_scenario_sims: int | None = None,
 ) -> pl.DataFrame:
@@ -1039,6 +1097,7 @@ def run_chip_decision_board(
             ``HighsSolveOptions.board_deterministic()`` (no time limit,
             ``threads=1``, fixed seed) so identical tip + data → identical
             totals.
+        step_weights: Optional per-step objective weights (skill shrink).
         joint_scenarios: Opt-in joint MC samples for step-0 SAA (FDB-241).
         n_scenario_sims: Draw count when ``joint_scenarios`` is on.
 
@@ -1064,7 +1123,8 @@ def run_chip_decision_board(
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
                     "force_play=%s lineup_reopt=%s joint_scenarios=%s "
-                    "price_forecast=%s highs_seed=%s highs_threads=%s",
+                    "price_forecast=%s skill_shrink=%s highs_seed=%s "
+                    "highs_threads=%s",
                     name,
                     arm,
                     season,
@@ -1073,6 +1133,7 @@ def run_chip_decision_board(
                     lineup_reopt,
                     joint_scenarios,
                     price_forecast_method,
+                    step_weights is not None,
                     board_highs.random_seed,
                     board_highs.threads,
                 )
@@ -1089,6 +1150,7 @@ def run_chip_decision_board(
                     lineup_reopt=lineup_reopt,
                     price_forecast_method=price_forecast_method,
                     highs_options=board_highs,
+                    step_weights=step_weights,
                     joint_scenarios=joint_scenarios,
                     n_scenario_sims=n_scenario_sims,
                 )

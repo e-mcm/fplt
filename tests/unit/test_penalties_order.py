@@ -36,6 +36,8 @@ _BOOTSTRAP = {
             "chance_of_playing_this_round": 75,
             "news_added": "2024-08-09T12:00:00Z",
             "penalties_order": 1,
+            "corners_and_indirect_freekicks_order": 1,
+            "direct_freekicks_order": 2,
         },
         {
             "id": 11,
@@ -51,6 +53,8 @@ _BOOTSTRAP = {
             "chance_of_playing_this_round": None,
             "news_added": None,
             "penalties_order": None,
+            "corners_and_indirect_freekicks_order": None,
+            "direct_freekicks_order": 1,
         },
         {
             "id": 12,
@@ -97,6 +101,15 @@ def test_stage_bootstrap_reads_penalties_order() -> None:
     assert status["penalties_order"].to_list() == [1, None, None]
 
 
+def test_stage_bootstrap_reads_set_piece_orders() -> None:
+    status = stage_bootstrap(_BOOTSTRAP, _FIXTURES, _CAPTURED, "2024-25")[
+        "player_status"
+    ].sort("player_key")
+    PlayerStatusSchema.validate(status)
+    assert status["corners_and_indirect_freekicks_order"].to_list() == [1, None, None]
+    assert status["direct_freekicks_order"].to_list() == [2, 1, None]
+
+
 def test_stage_bootstrap_reads_news_added_and_this_round_chance() -> None:
     status = stage_bootstrap(_BOOTSTRAP, _FIXTURES, _CAPTURED, "2024-25")[
         "player_status"
@@ -120,6 +133,8 @@ def test_player_status_schema_rejects_zero_order() -> None:
             "chance_of_playing_this_round": [None],
             "news_added": [None],
             "penalties_order": [0],
+            "corners_and_indirect_freekicks_order": [None],
+            "direct_freekicks_order": [None],
             "available_at": [when],
             "source": ["fpl_api"],
         }

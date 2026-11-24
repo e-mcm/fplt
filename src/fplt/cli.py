@@ -103,6 +103,7 @@ from fplt.optimise.decisions import (
     run_plan,
 )
 from fplt.optimise.explain import run_explain
+from fplt.optimise.horizon_decay import HorizonDecayMethod, resolve_step_weights
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.regret_board import run_regret_board, write_regret_board
@@ -294,6 +295,15 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Draw count for --joint-scenarios (default: 500)",
     )
+    plan.add_argument(
+        "--horizon-decay",
+        choices=["geometric", "skill"],
+        default="geometric",
+        help=(
+            "Planner step weights: geometric decay (live default) or "
+            "measured skill-by-horizon shrink (FDB-242 ablation)"
+        ),
+    )
     explain = sub.add_parser(
         "explain",
         parents=[log_flags],
@@ -466,6 +476,16 @@ def main(argv: list[str] | None = None) -> None:
             "Within-horizon list-price forecast for plan_squad "
             "(default: off / as-of flat). mean_gw_delta uses PIT deadline "
             "price history; flat matches omitting the flag"
+        ),
+    )
+    decisions.add_argument(
+        "--horizon-decay",
+        choices=["geometric", "skill"],
+        default="geometric",
+        help=(
+            "Planner step weights: geometric SquadState.decay (live control) "
+            "or measured skill-by-horizon RMSE shrink (FDB-242 treatment; "
+            "configs/optimise/horizon_skill_weights.yaml)"
         ),
     )
     regret_board = sub.add_parser(
@@ -1127,6 +1147,44 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    perf = sub.add_parser(
+        "perf-report",
+        parents=[log_flags],
+        help="Rank wall-clock timing hotspots from data_dir/timing/*.json",
+    )
+    perf.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    perf.add_argument(
+        "--kind",
+        choices=(
+            "walk_forward",
+            "plan",
+            "decisions",
+            "eval_board",
+            "ingest",
+        ),
+        help="Only include this timing kind",
+    )
+    perf.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max timing records to load (newest first; default 10)",
+    )
+    perf.add_argument(
+        "--hotspots",
+        type=int,
+        default=20,
+        help="Max hotspot rows to print (default 20)",
+    )
+    perf.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit ranked hotspots as JSON instead of text",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -1268,6 +1326,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "archive-compare":
         _archive_compare(args)
+        return
+    if args.command == "perf-report":
+        _perf_report(args)
         return
     raise SystemExit(_not_implemented(args.command))
 
@@ -1507,6 +1568,9 @@ def _plan(args: argparse.Namespace) -> None:
                 args.horizon,
                 joint_scenarios=bool(args.joint_scenarios),
                 n_scenario_sims=args.n_scenario_sims,
+                step_weights=_step_weights_for_decay(
+                    str(args.horizon_decay), int(args.horizon)
+                ),
             )
             print(path)
             return
@@ -1559,6 +1623,9 @@ def _plan(args: argparse.Namespace) -> None:
             force_play=not bool(args.no_force_play),
             joint_scenarios=bool(args.joint_scenarios),
             n_scenario_sims=args.n_scenario_sims,
+            step_weights=_step_weights_for_decay(
+                str(args.horizon_decay), int(args.horizon)
+            ),
         )
     except PlanExistsError as exc:
         print(exc.report, end="")
@@ -2009,6 +2076,9 @@ def _decisions(args: argparse.Namespace) -> None:
                 price_forecast_method=args.price_forecast,
                 joint_scenarios=bool(args.joint_scenarios),
                 n_scenario_sims=args.n_scenario_sims,
+                step_weights=_step_weights_for_decay(
+                    str(args.horizon_decay), int(args.horizon)
+                ),
             )
             print(format_chip_decision_scoreboard(summary))
         else:
@@ -2048,6 +2118,56 @@ def _decisions(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     path = data_dir / "ledger" / "decisions" / "part.parquet"
     print(path)
+
+
+def _perf_report(args: argparse.Namespace) -> None:
+    """Print a hotspot ranking from ``data_dir/timing/*.json``."""
+    import json
+
+    from fplt.utils.timing import (
+        format_hotspot_report,
+        load_timing_records,
+        rank_hotspots,
+    )
+
+    data_dir = Path(args.data_dir) if args.data_dir else get_settings().data_dir
+    records = load_timing_records(
+        data_dir,
+        kind=args.kind,
+        limit=int(args.limit),
+    )
+    if bool(args.json):
+        hotspots = rank_hotspots(records)[: int(args.hotspots)]
+        payload = {
+            "data_dir": str(data_dir),
+            "n_records": len(records),
+            "records": [
+                {
+                    "kind": record.get("kind"),
+                    "total_s": record.get("total_s"),
+                    "meta": record.get("meta"),
+                    "path": record.get("_path"),
+                }
+                for record in records
+            ],
+            "hotspots": [
+                {
+                    "phase": spot.phase,
+                    "seconds": spot.seconds,
+                    "share_pct": spot.share_pct,
+                    "category": spot.category,
+                }
+                for spot in hotspots
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    print(
+        format_hotspot_report(
+            records,
+            limit=int(args.hotspots),
+        )
+    )
 
 
 def _archive_benchmarks(args: argparse.Namespace) -> None:
@@ -2177,6 +2297,27 @@ def _auth(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     raise SystemExit(_not_implemented(f"auth {command}"))
+
+
+def _step_weights_for_decay(
+    method: str,
+    horizon: int,
+) -> tuple[float, ...] | None:
+    """Resolve CLI ``--horizon-decay`` into ``plan_squad`` step weights.
+
+    Geometric (live control) returns ``None`` so ``SquadState.decay`` applies.
+    Skill loads measured RMSE ratios from
+    ``configs/optimise/horizon_skill_weights.yaml``.
+    """
+    chosen: HorizonDecayMethod
+    if method == "geometric":
+        return None
+    if method == "skill":
+        chosen = "skill"
+    else:
+        raise ValueError(f"unknown horizon decay method {method!r}")
+    # decay unused on the skill path; pass 1.0 as a placeholder.
+    return resolve_step_weights(horizon, decay=1.0, method=chosen)
 
 
 def _read_auth_token(raw: str | None) -> str:

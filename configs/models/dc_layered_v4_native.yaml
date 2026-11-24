@@ -1,0 +1,9 @@
+# PRODUCTION Monte Carlo after FDB-293 (native keep / L6 prediction-PASS).
+# Same components and fidelity knobs as dc_layered_v4; mc_backend=native
+# changes model_id. Requires the fplt-mc wheel — missing import raises
+# (no silent Python fallback). Python parent remains dc_layered_v4.
+name: dc_layered_v4_native
+extends: dc_layered_v4
+overrides:
+  params:
+    mc_backend: native

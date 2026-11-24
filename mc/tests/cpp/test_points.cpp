@@ -82,7 +82,7 @@ TEST(Points, AppearanceAndCleanSheet) {
   std::uint8_t cs[3] = {};
   points(rules, position, side, minutes, goals, assists, home, away, other,
          /*cs_red_void_prob=*/0.0, /*conceded_scaled=*/true,
-         /*sample_other=*/false, nullptr, nullptr, 1, 3, pts, cs);
+         /*sample_other=*/false, nullptr, nullptr, nullptr, 1, 3, pts, cs);
   // CS + long appearance = 4+2=6; short app only = 1; long app no CS + conceded
   // for 1 goal: 2 + (-1)*(1//2)*1 = 2.
   EXPECT_DOUBLE_EQ(pts[0], 6.0);
@@ -107,7 +107,7 @@ TEST(Points, CsVoidWithInjectedUniform) {
   double pts[1] = {};
   std::uint8_t cs[1] = {};
   points(rules, position, side, minutes, goals, assists, home, away, other, 0.25, true,
-         false, void_u, nullptr, 1, 1, pts, cs);
+         false, void_u, nullptr, nullptr, 1, 1, pts, cs);
   EXPECT_EQ(cs[0], 0);
   EXPECT_DOUBLE_EQ(pts[0], 2.0);  // appearance only
 }
@@ -127,9 +127,9 @@ TEST(Points, ConcededScaledVsPlayed) {
   double pts_played[1] = {};
   std::uint8_t cs[1] = {};
   points(rules, position, side, minutes, z, z, home, away_g, other, 0.0, true, false,
-         nullptr, nullptr, 1, 1, pts_scaled, cs);
+         nullptr, nullptr, nullptr, 1, 1, pts_scaled, cs);
   points(rules, position, side, minutes, z, z, home, away_g, other, 0.0, false, false,
-         nullptr, nullptr, 1, 1, pts_played, cs);
+         nullptr, nullptr, nullptr, 1, 1, pts_played, cs);
   // scaled: 1 (short) + (-1)*1*(45/90) = 0.5
   // played: 1 + (-1)*1*1 = 0
   EXPECT_DOUBLE_EQ(pts_scaled[0], 0.5);
