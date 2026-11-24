@@ -3,21 +3,30 @@
 Wave D1 (M2/M3): the transfer MILP still sees expected points, but lineup
 selection can maximise *mean realised points* across joint scenarios with
 autosub and captain/vice fallback applied per draw. Predictors that emit
-samples feed ``ScenarioOutcomeSchema``; tests may build independent draws
-from marginals via :func:`independent_scenarios`.
+samples feed ``PredictionSampleSchema`` / ``ScenarioOutcomeSchema``; tests
+may build independent draws from marginals via :func:`independent_scenarios`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
+from fplt.data.pit import PITData
+from fplt.data.store import DataStore
+from fplt.models.spec import ModelSpec, get_model
 from fplt.optimise.realised import score_gameweek
-from fplt.schemas.scenarios import ScenarioOutcomeSchema
+from fplt.schemas.scenarios import PredictionSampleSchema, ScenarioOutcomeSchema
+from fplt.types import GWKey
 
 _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+# Default SAA draw count when the caller does not override (full predict
+# ``n_sims`` is often 5k–10k; lineup enumeration needs far fewer).
+DEFAULT_SAA_SIMS = 500
 
 
 @dataclass(frozen=True)
@@ -96,6 +105,151 @@ def scenario_bundle_from_frame(frame: pl.DataFrame) -> ScenarioBundle:
         points=points,
         minutes=minutes,
     )
+
+
+def scenario_outcomes_from_samples(
+    samples: pl.DataFrame,
+    *,
+    season: str,
+    gw: int,
+) -> pl.DataFrame:
+    """Aggregate fixture-level joint samples to player–gameweek outcomes.
+
+    Double gameweeks sum ``points`` and ``minutes`` across fixtures that
+    share the same ``sim`` index (CRN key). Blank weeks yield an empty frame.
+
+    Args:
+        samples: Rows matching ``PredictionSampleSchema``.
+        season: Season label to keep.
+        gw: Gameweek to keep.
+
+    Returns:
+        A frame matching ``ScenarioOutcomeSchema``.
+
+    Raises:
+        ValueError: Validation fails.
+    """
+    checked = PredictionSampleSchema.validate(samples)
+    assert isinstance(checked, pl.DataFrame)
+    chosen = checked.filter(
+        (pl.col("target_season") == season) & (pl.col("target_gw") == gw)
+    )
+    if chosen.is_empty():
+        return ScenarioOutcomeSchema.validate(
+            pl.DataFrame(
+                schema={
+                    "player_key": pl.Int64(),
+                    "sim": pl.Int64(),
+                    "points": pl.Float64(),
+                    "minutes": pl.Int64(),
+                }
+            )
+        )
+    aggregated = chosen.group_by("player_key", "sim").agg(
+        pl.col("points").sum(),
+        pl.col("minutes").sum(),
+    )
+    return ScenarioOutcomeSchema.validate(aggregated)
+
+
+def scenario_bundle_from_samples(
+    samples: pl.DataFrame,
+    *,
+    season: str,
+    gw: int,
+) -> ScenarioBundle:
+    """Build a :class:`ScenarioBundle` from joint predictor samples.
+
+    Args:
+        samples: Rows matching ``PredictionSampleSchema``.
+        season: Season label to keep.
+        gw: Gameweek to keep.
+
+    Returns:
+        Dense player × sim matrices for lineup SAA.
+
+    Raises:
+        ValueError: Validation fails or the player×sim grid is incomplete.
+    """
+    return scenario_bundle_from_frame(
+        scenario_outcomes_from_samples(samples, season=season, gw=gw)
+    )
+
+
+def make_joint_scenario_provider(
+    spec: ModelSpec,
+    store: DataStore,
+    season: str,
+    *,
+    n_sims: int = DEFAULT_SAA_SIMS,
+) -> Callable[[int], ScenarioBundle]:
+    """Fit the layered model at each deadline and emit step-0 joint scenarios.
+
+    Used by ``simulate_decisions`` / ``run_plan`` when ``joint_scenarios`` is
+    on. Re-fits at every ``gw`` so samples honour PIT. ``n_sims`` defaults to
+    :data:`DEFAULT_SAA_SIMS` (not the ModelSpec predict ``n_sims``).
+
+    Args:
+        spec: Layered ``dc_layered`` ModelSpec (must implement ``sample``).
+        store: Staged tables for PIT views.
+        season: Fixture season.
+        n_sims: Draws per fixture.
+
+    Returns:
+        ``provider(gw) -> ScenarioBundle`` for that deadline's gameweek.
+
+    Raises:
+        ValueError: ``n_sims`` is invalid or the model kind cannot sample.
+        TypeError: The constructed model has no ``sample`` method.
+    """
+    if n_sims < 1:
+        raise ValueError(f"n_sims must be a positive int, got {n_sims!r}")
+    import fplt.models.composite as _composite  # noqa: F401
+
+    _ = _composite  # register dc_layered for get_model
+    cls = get_model(spec.kind)
+    probe = cls(spec)
+    if not callable(getattr(probe, "sample", None)):
+        raise TypeError(
+            f"model kind {spec.kind!r} does not implement sample(); "
+            "joint scenarios require a SampledPointsPredictor"
+        )
+    pit = PITData(store)
+
+    def provider(gw: int) -> ScenarioBundle:
+        view = pit.view(GWKey(season, int(gw)))
+        model = cls(spec)
+        model.fit(view)
+        samples = model.sample(view, [GWKey(season, int(gw))], int(n_sims))
+        return scenario_bundle_from_samples(samples, season=season, gw=int(gw))
+
+    return provider
+
+
+def joint_scenarios_for_deadline(
+    spec: ModelSpec,
+    data_dir: Path,
+    season: str,
+    gameweek: int,
+    *,
+    n_sims: int = DEFAULT_SAA_SIMS,
+) -> ScenarioBundle:
+    """Fit once at ``gameweek`` and return joint scenarios for that GW.
+
+    Args:
+        spec: Layered model spec.
+        data_dir: Root with ``staged/``.
+        season: Season label.
+        gameweek: Deadline / target gameweek.
+        n_sims: Draws per fixture.
+
+    Returns:
+        A :class:`ScenarioBundle` covering the sampled player pool.
+    """
+    provider = make_joint_scenario_provider(
+        spec, DataStore(data_dir), season, n_sims=n_sims
+    )
+    return provider(gameweek)
 
 
 def independent_scenarios(

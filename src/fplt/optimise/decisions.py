@@ -65,6 +65,7 @@ from fplt.optimise.realised import (
     model_board_label,
     summarise_decisions,
 )
+from fplt.optimise.scenarios import ScenarioBundle
 from fplt.optimise.state import (
     ChipInventory,
     ChipPlay,
@@ -250,6 +251,7 @@ def simulate_decisions(
     store: DataStore | None = None,
     highs_options: HighsSolveOptions | None = None,
     step_weights: Sequence[float] | None = None,
+    scenario_for_gw: Callable[[int], ScenarioBundle] | None = None,
 ) -> pl.DataFrame:
     """Play ``gameweeks`` from ``state``, acting only on each plan's first step.
 
@@ -287,6 +289,9 @@ def simulate_decisions(
             pass ``HighsSolveOptions.board_deterministic()`` (FDB-228).
         step_weights: Optional per-step objective weights for ``plan_squad``
             (skill shrink). ``None`` keeps geometric ``state.decay ** step``.
+        scenario_for_gw: Optional ``gw -> ScenarioBundle`` for step-0 lineup
+            SAA (FDB-241). When set, ``plan_squad`` receives joint samples
+            instead of EV-only reopt on the actionable week.
 
     Returns:
         A frame matching ``DecisionSchema``.
@@ -360,6 +365,7 @@ def simulate_decisions(
             horizon=len(window),
         )
         started = time.perf_counter()
+        scenarios = scenario_for_gw(gameweek) if scenario_for_gw is not None else None
         solved = plan_squad(
             pool,
             _window_points(predictions, gameweek, window),
@@ -372,6 +378,7 @@ def simulate_decisions(
             chip_rules_season=rules_season if chip_arm != "off" else None,
             warm_start=prior_plan,
             lineup_reopt=lineup_reopt,
+            scenarios=scenarios,
             price_forecast=forecast,
             highs_options=highs_options,
             step_weights=None if step_weights is None else step_weights[: len(window)],
@@ -574,6 +581,8 @@ def run_plan(
         DEFAULT_LIVE_PRICE_FORECAST_METHOD
     ),
     step_weights: Sequence[float] | None = None,
+    joint_scenarios: bool = False,
+    n_scenario_sims: int | None = None,
 ) -> tuple[GameweekPlan, Path, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -607,6 +616,9 @@ def run_plan(
             the FDB-218 keep). Pass ``None`` / ``flat`` for as-of-only prices.
         step_weights: Optional per-step objective weights (skill shrink
             ablation). ``None`` keeps geometric ``SquadState.decay``.
+        joint_scenarios: When true, fit the model and pass joint MC samples
+            into step-0 lineup SAA (FDB-241; opt-in until a keep flip).
+        n_scenario_sims: Draw count for joint SAA.
 
     Returns:
         The plan, the parquet path, and the markdown report.
@@ -626,13 +638,14 @@ def run_plan(
         raise ValueError(f"unknown chip_arm {chip_arm!r}")
     logger.info(
         "run_plan model=%s season=%s gw=%s horizon=%s chip_arm=%s force_play=%s "
-        "price_forecast=%s skill_shrink=%s",
+        "joint_scenarios=%s price_forecast=%s skill_shrink=%s",
         model_name,
         season,
         gameweek,
         horizon,
         chip_arm,
         force_play,
+        joint_scenarios,
         price_forecast_method,
         step_weights is not None,
     )
@@ -733,6 +746,20 @@ def run_plan(
             pool=candidates,
             horizon=len(window),
         )
+        scenarios = None
+        if joint_scenarios:
+            from fplt.optimise.scenarios import (
+                DEFAULT_SAA_SIMS,
+                joint_scenarios_for_deadline,
+            )
+
+            scenarios = joint_scenarios_for_deadline(
+                spec,
+                data_dir,
+                season,
+                gameweek,
+                n_sims=DEFAULT_SAA_SIMS if n_scenario_sims is None else n_scenario_sims,
+            )
         solved = plan_squad(
             candidates,
             points,
@@ -743,6 +770,7 @@ def run_plan(
             gameweeks=plan_gameweeks,
             chip_windows=plan_windows,
             chip_rules_season=plan_rules_season,
+            scenarios=scenarios,
             price_forecast=forecast,
             step_weights=None if step_weights is None else step_weights[: len(window)],
         )
@@ -894,6 +922,8 @@ def run_decisions(
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
     step_weights: Sequence[float] | None = None,
+    joint_scenarios: bool = False,
+    n_scenario_sims: int | None = None,
 ) -> Path:
     """Simulate an optimal GW1 squad across a season and append the ledger.
 
@@ -917,6 +947,10 @@ def run_decisions(
             (default off / as-of flat).
         highs_options: Forwarded to ``simulate_decisions`` / ``plan_squad``.
         step_weights: Optional per-step objective weights (skill shrink).
+        joint_scenarios: When true, fit the model each deadline and pass
+            joint MC samples into step-0 lineup SAA (FDB-241; opt-in).
+        n_scenario_sims: Draw count for joint SAA (default
+            ``DEFAULT_SAA_SIMS``).
 
     Returns:
         The decision parquet path.
@@ -959,6 +993,19 @@ def run_decisions(
         else chip_arm_model_id(spec.model_id, chip_arm)
     )
     windows_log: dict[int, ChipUseWindows] = {}
+    scenario_for_gw = None
+    if joint_scenarios:
+        from fplt.optimise.scenarios import (
+            DEFAULT_SAA_SIMS,
+            make_joint_scenario_provider,
+        )
+
+        scenario_for_gw = make_joint_scenario_provider(
+            spec,
+            store,
+            season,
+            n_sims=DEFAULT_SAA_SIMS if n_scenario_sims is None else n_scenario_sims,
+        )
     decision_timings = TimingSession()
     with timing_session(decision_timings):
         frame = simulate_decisions(
@@ -980,6 +1027,7 @@ def run_decisions(
             store=store,
             highs_options=highs_options,
             step_weights=step_weights,
+            scenario_for_gw=scenario_for_gw,
         )
         path = write_decisions(data_dir, frame)
         if windows_log:
@@ -1018,6 +1066,8 @@ def run_chip_decision_board(
     price_forecast_method: PriceForecastMethod | None = None,
     highs_options: HighsSolveOptions | None = None,
     step_weights: Sequence[float] | None = None,
+    joint_scenarios: bool = False,
+    n_scenario_sims: int | None = None,
 ) -> pl.DataFrame:
     """Run the three-arm chip decision board and return a season scoreboard.
 
@@ -1048,6 +1098,8 @@ def run_chip_decision_board(
             ``threads=1``, fixed seed) so identical tip + data → identical
             totals.
         step_weights: Optional per-step objective weights (skill shrink).
+        joint_scenarios: Opt-in joint MC samples for step-0 SAA (FDB-241).
+        n_scenario_sims: Draw count when ``joint_scenarios`` is on.
 
     Returns:
         Scoreboard from ``summarise_chip_decisions``.
@@ -1070,14 +1122,16 @@ def run_chip_decision_board(
             for arm in arms:
                 logger.info(
                     "chip board simulate model=%s arm=%s season=%s rules=%s "
-                    "force_play=%s lineup_reopt=%s price_forecast=%s "
-                    "skill_shrink=%s highs_seed=%s highs_threads=%s",
+                    "force_play=%s lineup_reopt=%s joint_scenarios=%s "
+                    "price_forecast=%s skill_shrink=%s highs_seed=%s "
+                    "highs_threads=%s",
                     name,
                     arm,
                     season,
                     rules_season,
                     force_play,
                     lineup_reopt,
+                    joint_scenarios,
                     price_forecast_method,
                     step_weights is not None,
                     board_highs.random_seed,
@@ -1097,6 +1151,8 @@ def run_chip_decision_board(
                     price_forecast_method=price_forecast_method,
                     highs_options=board_highs,
                     step_weights=step_weights,
+                    joint_scenarios=joint_scenarios,
+                    n_scenario_sims=n_scenario_sims,
                 )
     specs = load_model_specs()
     id_to_name = {specs[name].model_id: name for name in models}

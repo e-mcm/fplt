@@ -249,15 +249,18 @@ Optionally, predictors that can produce scenario samples implement:
 
 ```python
     def sample(self, view: PITView, horizon: Sequence[GWKey], n: int) -> pl.DataFrame:
-        """Long frame: player_key, fixture_id, sim, points. Used by the optimiser
-        for captaincy and risk-aware choices."""
+        """Long frame matching PredictionSampleSchema (player_key, fixture_id,
+        target_season, target_gw, sim, points, minutes). Used by the optimiser
+        for step-0 lineup SAA (correlated stacks / bench / captain)."""
 ```
+
+`SampledPointsPredictor` is the optional protocol. `CompositePredictor.sample` emits joint draws (scoreline-correlated within a fixture). Aggregate to a `ScenarioBundle` via `fplt.optimise.scenarios.scenario_bundle_from_samples` (DGW sums by shared `sim`). Live / decision boards pass `joint_scenarios=True` (CLI `--joint-scenarios`) to feed SAA; default remains EV reopt until a keep flip (FDB-241). Metric helper: `compare_ev_vs_saa_lineup` (scenario lineup points vs EV under the same bundle).
 
 Implementations:
 
 | Kind | Examples |
 |---|---|
-| `CompositePredictor` | Dixon-Coles + minutes + involvement + other-points, combined by simulation |
+| `CompositePredictor` | Dixon-Coles + minutes + involvement + other-points, combined by simulation; implements `sample` |
 | Direct predictors | LightGBM on total points per player-fixture. Optional `params.emit_probs` (`lgbm_probs_v1`) adds binary heads for `p_haul` / `p_60` / `p_played` (single-class labels → constant prior); `xpts_sd` stays null. |
 | Forecast combination | `forecast_combine`: convex blend of member PointsPredictors (`params.members` expanded into `components` at load). Equal weights or fixed per-position weights. Equal-weight promote **dropped**; position + `lgbm_probs_v1` revisit is `forecast_combine_probs_v1` (FDB-245). OpenFPL omitted until Deep/PPDA. |
 | Baselines | Rolling mean points; FPL `ep_next` (from snapshots) |
@@ -609,7 +612,7 @@ Library entry point: `fplt.optimise.optimize_transfers(candidates, expected_poin
 
 v1: single-GW XI + captain. v2: multi-period transfers. v3: chips in MILP (BB/TC/WC/FH) plus chip-use windows, the season-level chip scheduler, and the three-arm decision board. Captaincy can use `p_haul` / samples as a tiebreak.
 
-**Scenario lineup (Wave D1).** For a locked fifteen, `fplt.optimise.lineup.select_lineup_scenarios` maximises *mean realised points* across a shared `ScenarioBundle` (`player_key × sim` points and minutes), applying autosub and captain/vice-on-blank per draw and returning explicit `bench_slot` order. This is the sample-average approximation for the single-GW lineup problem; it does not use `bench_weight`. When joint samples are unavailable, `select_lineup_expected` uses a one-sim EV bundle and optional `p_haul` as a captaincy tie-break. **`plan_squad` defaults to `lineup_reopt=True`**: after the transfer MILP, each *locked* fifteen is re-lined via EV (+ optional `p_haul`); pass `scenarios=` to use SAA on step 0. Set `lineup_reopt=False` to keep the raw MILP lineup. Under H≥6 relax-and-fix, far steps stay continuous — 0.5-thresholded pick rows may not be a legal formation; that is look-ahead only. `lineup_reopt` skips those steps (keeps the MILP XI) and **requires** step 0 to be a legal fifteen (`fplt.optimise.squad_integrity`). `select_squad` also tilts captaincy by `p_haul` when that column is present.
+**Scenario lineup (Wave D1 + FDB-241).** For a locked fifteen, `fplt.optimise.lineup.select_lineup_scenarios` maximises *mean realised points* across a shared `ScenarioBundle` (`player_key × sim` points and minutes), applying autosub and captain/vice-on-blank per draw and returning explicit `bench_slot` order. This is the sample-average approximation for the single-GW lineup problem; it does not use `bench_weight`. When joint samples are unavailable, `select_lineup_expected` uses a one-sim EV bundle and optional `p_haul` as a captaincy tie-break. **`plan_squad` defaults to `lineup_reopt=True`**: after the transfer MILP, each *locked* fifteen is re-lined via EV (+ optional `p_haul`); pass `scenarios=` (from `CompositePredictor.sample` → `scenario_bundle_from_samples`) to use SAA on step 0. `run_plan` / `fplt decisions --chip-board` accept `--joint-scenarios` (opt-in; default off until keep). Primary metric for the SAA vs EV promote: `compare_ev_vs_saa_lineup` (scenario-mean points) then season-points board. Set `lineup_reopt=False` to keep the raw MILP lineup. Under H≥6 relax-and-fix, far steps stay continuous — 0.5-thresholded pick rows may not be a legal formation; that is look-ahead only. `lineup_reopt` skips those steps (keeps the MILP XI) and **requires** step 0 to be a legal fifteen (`fplt.optimise.squad_integrity`). `select_squad` also tilts captaincy by `p_haul` when that column is present.
 
 ### 10.3 Output
 

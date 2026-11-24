@@ -48,6 +48,22 @@ class PointsPredictor(Protocol):
         ...
 
 
+@runtime_checkable
+class SampledPointsPredictor(Protocol):
+    """Optional extension: joint Monte Carlo draws for lineup SAA.
+
+    Predictors that can emit scenario samples implement ``sample`` in
+    addition to :class:`PointsPredictor`. The optimiser consumes the long
+    frame via ``fplt.optimise.scenarios.scenario_bundle_from_samples``.
+    """
+
+    spec: ModelSpec
+
+    def sample(self, view: PITView, horizon: list[GWKey], n: int) -> pl.DataFrame:
+        """Joint draws matching ``PredictionSampleSchema`` (player × fixture × sim)."""
+        ...
+
+
 class TeamScoreModel(Protocol):
     """Joint scoreline distribution for a set of fixtures."""
 

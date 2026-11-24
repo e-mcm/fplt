@@ -27,6 +27,8 @@ _POS = ("GK", "DEF", "MID", "FWD")
 _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 _log = logging.getLogger(__name__)
 
+DEFAULT_HAUL_WEIGHT = 0.05
+
 
 @dataclass(frozen=True)
 class LineupSelection:
@@ -373,7 +375,69 @@ def verify_lineup_mean(
     return mean_realised_lineup(selection.players, bundle, chip=chip)
 
 
-DEFAULT_HAUL_WEIGHT = 0.05
+@dataclass(frozen=True)
+class EvVsSaaLineup:
+    """Scenario-mean points for EV vs SAA lineups on one locked fifteen.
+
+    ``delta`` is ``saa_mean - ev_mean`` (positive ⇒ SAA wins under the joint
+    samples). Primary FDB-241 metric: scenario lineup points vs EV.
+    """
+
+    ev_mean: float
+    saa_mean: float
+    delta: float
+    ev: LineupSelection
+    saa: LineupSelection
+
+
+def compare_ev_vs_saa_lineup(
+    squad: pl.DataFrame,
+    bundle: ScenarioBundle,
+    *,
+    chip: str | None = None,
+    haul_weight: float = DEFAULT_HAUL_WEIGHT,
+) -> EvVsSaaLineup:
+    """Score EV and SAA lineups under the same joint scenario bundle.
+
+    Both selections are evaluated with :func:`mean_realised_lineup` on
+    ``bundle`` so the comparison is scenario lineup points vs EV — not
+    season points (that gate lives on the promote board).
+
+    Args:
+        squad: Locked fifteen with ``player_key``, ``position``, ``xpts``,
+            and optionally ``p_haul``.
+        bundle: Joint Monte Carlo scenarios covering every squad player.
+        chip: Optional chip applied in every scenario.
+        haul_weight: Captaincy tilt weight for the EV path.
+
+    Returns:
+        Means, delta (SAA − EV), and both selections.
+
+    Raises:
+        ValueError: Squad or bundle is invalid.
+    """
+    ev = select_lineup_expected(squad, haul_weight=haul_weight)
+    haul = {
+        int(row["player_key"]): float(row["p_haul"])
+        for row in squad.iter_rows(named=True)
+        if "p_haul" in squad.columns and row.get("p_haul") is not None
+    }
+    saa = select_lineup_scenarios(
+        squad,
+        bundle,
+        chip=chip,
+        p_haul=haul or None,
+        haul_tiebreak=haul_weight,
+    )
+    ev_mean = mean_realised_lineup(ev.players, bundle, chip=chip)
+    saa_mean = float(saa.mean_points)
+    return EvVsSaaLineup(
+        ev_mean=float(ev_mean),
+        saa_mean=saa_mean,
+        delta=float(saa_mean - ev_mean),
+        ev=ev,
+        saa=saa,
+    )
 
 
 def reoptimize_plan_lineups(

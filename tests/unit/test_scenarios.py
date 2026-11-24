@@ -14,6 +14,8 @@ from fplt.optimise.scenarios import (
     mean_realised_lineup,
     realised_lineup_scores,
     scenario_bundle_from_frame,
+    scenario_bundle_from_samples,
+    scenario_outcomes_from_samples,
 )
 
 
@@ -31,6 +33,28 @@ def test_scenario_bundle_from_frame_pivots_grid() -> None:
     assert bundle.n_sims == 2
     np.testing.assert_allclose(bundle.points, [[2.0, 4.0], [3.0, 5.0]])
     np.testing.assert_array_equal(bundle.minutes, [[90, 90], [0, 90]])
+
+
+def test_scenario_bundle_from_samples_sums_dgw() -> None:
+    """DGW fixtures that share sim indices aggregate to player–GW SAA grain."""
+    samples = pl.DataFrame(
+        {
+            "player_key": [1, 1, 1, 1, 2, 2],
+            "fixture_id": [10, 10, 11, 11, 10, 10],
+            "target_season": ["2024-25"] * 6,
+            "target_gw": [1] * 6,
+            "sim": [0, 1, 0, 1, 0, 1],
+            "points": [3.0, 4.0, 2.0, 1.0, 5.0, 6.0],
+            "minutes": [90, 0, 45, 90, 90, 90],
+        }
+    )
+    outcomes = scenario_outcomes_from_samples(samples, season="2024-25", gw=1)
+    assert outcomes.height == 4  # 2 players × 2 sims
+    bundle = scenario_bundle_from_samples(samples, season="2024-25", gw=1)
+    assert bundle.player_keys.tolist() == [1, 2]
+    # Player 1 sim0: 3+2; sim1: 4+1. Player 2: 5 / 6.
+    np.testing.assert_allclose(bundle.points, [[5.0, 5.0], [5.0, 6.0]])
+    np.testing.assert_array_equal(bundle.minutes, [[135, 90], [90, 90]])
 
 
 def test_incomplete_scenario_grid_is_rejected() -> None:

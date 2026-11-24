@@ -100,6 +100,31 @@ def test_dc_layered_v4_scores_a_gameweek(tmp_path: Path) -> None:
         assert checked[col].max() <= 1.0
 
 
+def test_sample_returns_joint_player_fixture_sims(tmp_path: Path) -> None:
+    """Regression: optimiser SAA needs joint draws, not only EV means (FDB-241)."""
+    from fplt.schemas.scenarios import PredictionSampleSchema
+
+    spec = load_model_specs()["dc_layered_v1"].model_copy(
+        update={"params": {"n_sims": 40, "own_goal_weight": 0.05, "p_assist": 0.75}}
+    )
+    store = build_league(DataStore(tmp_path / "league"))
+    view = PITData(store).view(GWKey("2024-25", 1))
+    model = CompositePredictor(spec)
+    model.fit(view)
+    samples = model.sample(view, [GWKey("2024-25", 1)], n=30)
+    checked = PredictionSampleSchema.validate(samples)
+    assert checked.height == 2 * 30  # two players, one fixture
+    assert set(checked["sim"].to_list()) == set(range(30))
+    assert checked["minutes"].min() >= 0
+    # Teammates / opponents share sim indices (joint within fixture).
+    by_sim = checked.group_by("sim").len()
+    assert by_sim["len"].min() == 2
+    with pytest.raises(ValueError, match="positive"):
+        model.sample(view, [GWKey("2024-25", 1)], n=0)
+    with pytest.raises(RuntimeError, match="fit"):
+        CompositePredictor(spec).sample(view, [GWKey("2024-25", 1)], n=5)
+
+
 def test_native_predict_requests_summary_not_samples(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

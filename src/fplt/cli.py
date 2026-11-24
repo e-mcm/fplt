@@ -281,6 +281,21 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     plan.add_argument(
+        "--joint-scenarios",
+        action="store_true",
+        help=(
+            "Fit the layered model and pass joint MC samples into step-0 "
+            "lineup SAA (FDB-241; opt-in until a keep flip). Ignored with "
+            "--decisions"
+        ),
+    )
+    plan.add_argument(
+        "--n-scenario-sims",
+        type=int,
+        default=None,
+        help="Draw count for --joint-scenarios (default: 500)",
+    )
+    plan.add_argument(
         "--horizon-decay",
         choices=["geometric", "skill"],
         default="geometric",
@@ -438,6 +453,20 @@ def main(argv: list[str] | None = None) -> None:
             "Keep the raw MILP XI / captain / vice (ablation; default re-opts "
             "lineups via EV after the transfer solve)"
         ),
+    )
+    decisions.add_argument(
+        "--joint-scenarios",
+        action="store_true",
+        help=(
+            "Pass joint MC samples into step-0 lineup SAA (FDB-241; treatment "
+            "arm vs default EV reopt). Requires a sample()-capable model"
+        ),
+    )
+    decisions.add_argument(
+        "--n-scenario-sims",
+        type=int,
+        default=None,
+        help="Draw count for --joint-scenarios (default: 500)",
     )
     decisions.add_argument(
         "--price-forecast",
@@ -1537,6 +1566,8 @@ def _plan(args: argparse.Namespace) -> None:
                 args.from_gw,
                 args.to_gw,
                 args.horizon,
+                joint_scenarios=bool(args.joint_scenarios),
+                n_scenario_sims=args.n_scenario_sims,
                 step_weights=_step_weights_for_decay(
                     str(args.horizon_decay), int(args.horizon)
                 ),
@@ -1590,6 +1621,8 @@ def _plan(args: argparse.Namespace) -> None:
             chip_arm=args.chip_arm,
             chip_rules_season=args.chip_rules_season,
             force_play=not bool(args.no_force_play),
+            joint_scenarios=bool(args.joint_scenarios),
+            n_scenario_sims=args.n_scenario_sims,
             step_weights=_step_weights_for_decay(
                 str(args.horizon_decay), int(args.horizon)
             ),
@@ -2041,6 +2074,8 @@ def _decisions(args: argparse.Namespace) -> None:
                 force_play=not bool(args.no_force_play),
                 lineup_reopt=not bool(args.no_lineup_reopt),
                 price_forecast_method=args.price_forecast,
+                joint_scenarios=bool(args.joint_scenarios),
+                n_scenario_sims=args.n_scenario_sims,
                 step_weights=_step_weights_for_decay(
                     str(args.horizon_decay), int(args.horizon)
                 ),

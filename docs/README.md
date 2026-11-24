@@ -30,6 +30,7 @@ Written promote calls, plans, and decision inventory. Board parquet/logs stay in
 | [`stacked-prod-2400-board.md`](stacked-prod-2400-board.md) | Stacked production board vs points-at-rank bars (2400 / 2235) |
 | [`live-prediction-regen.md`](live-prediction-regen.md) | Live prediction regen notes |
 | [`price-within-horizon-design.md`](price-within-horizon-design.md) | Within-horizon list-price forecast design |
+| [`joint-samples-optimiser-design.md`](joint-samples-optimiser-design.md) | Joint MC samples → optimiser SAA (FDB-241) |
 | [`promote-archives.md`](promote-archives.md) | Where bulky `internal/` board archives live |
 
 ### Promote write-ups (`*-promote.md`)
