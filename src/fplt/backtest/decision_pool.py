@@ -54,7 +54,8 @@ def filter_decision_pool(
     """Keep ledger rows in the decision-relevant player pool.
 
     Args:
-        ledger: Prediction ledger rows (usually after ``fill_actuals``).
+        ledger: Prediction ledger rows from ``Store.ledger()`` (predictions ⋈
+            outcomes), or an equivalent ``LedgerSchema`` frame.
         store: Staged tables with ``gameweeks``, ``player_status``, and
             ``player_fixture_stats``.
         min_price: Floor price in FPL tenths (default 45 = £4.5m).

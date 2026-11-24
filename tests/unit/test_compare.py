@@ -63,7 +63,8 @@ def test_compare_runs_both_modes_and_writes_summary(
     )
     assert "walk_forward rolling_mean_v1 starting refit=every_gw" in caplog.text
     assert "fixed rolling_mean_v1 starting refit=never" in caplog.text
-    assert "filling actuals" in caplog.text
+    assert "staging outcomes for checked gameweeks" in caplog.text
+    assert "joining ledger view" in caplog.text
     assert "writing" in caplog.text
     assert [run.mode for run in result.runs] == ["walk_forward", "fixed"]
     assert {run.spec.refit for run in result.runs} == {"every_gw", "never"}
@@ -345,13 +346,18 @@ def test_compare_delegates_model_resolution(
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "fplt.backtest.compare.fill_actuals",
-        lambda *a, **k: None,
+        "fplt.backtest.compare.stage_outcomes",
+        lambda *_: {},
     )
-    monkeypatch.setattr(
-        "fplt.backtest.compare.read_predictions",
-        lambda *_: empty,
-    )
+
+    class _FakeStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def ledger(self, *_args: object, **_kwargs: object) -> pl.DataFrame:
+            return empty
+
+    monkeypatch.setattr("fplt.backtest.compare.Store", _FakeStore)
     monkeypatch.setattr(
         "fplt.backtest.compare.load_model_specs",
         lambda: {

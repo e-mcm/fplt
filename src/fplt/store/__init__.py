@@ -1,10 +1,11 @@
 """Immutable analytic-output store (runs, curated builds; later catalog).
 
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
-builds under ``fplt.store.builds``. The full ``Store`` read API arrives later
-(data-model migration step 8).
+builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
+outcomes). The rest of the ``Store`` read API arrives in migration step 8.
 """
 
+from fplt.store.api import Store
 from fplt.store.builds import (
     STAGING_VERSION,
     BuildExistsError,
@@ -28,6 +29,7 @@ __all__ = [
     "IncompleteRunError",
     "RunWriter",
     "STAGING_VERSION",
+    "Store",
     "build_from_staged",
     "latest_build_id",
     "load_build_manifest",

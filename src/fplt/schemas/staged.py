@@ -7,6 +7,8 @@ from datetime import datetime
 import pandera.polars as pa
 import polars as pl
 
+from fplt.schemas.outcomes import FixtureOutcomesSchema, PlayerFixtureOutcomesSchema
+
 
 class PlayersSchema(pa.DataFrameModel):
     """One row per player per season, from the first snapshot that contained them."""
@@ -321,6 +323,8 @@ STAGED_SCHEMAS: dict[str, type[pa.DataFrameModel]] = {
     "match_odds": MatchOddsSchema,
     "predicted_lineups": PredictedLineupsSchema,
     "competition_fixtures": CompetitionFixturesSchema,
+    "player_fixture_outcomes": PlayerFixtureOutcomesSchema,
+    "fixture_outcomes": FixtureOutcomesSchema,
 }
 
 TABLE_KEYS: dict[str, list[str]] = {
@@ -362,6 +366,9 @@ TABLE_KEYS: dict[str, list[str]] = {
         "api_fixture_id",
         "available_at",
     ],
+    # Outcomes replace on natural key (corrections → new curated build).
+    "player_fixture_outcomes": ["season", "fixture_id", "player_key"],
+    "fixture_outcomes": ["season", "fixture_id"],
 }
 
 POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
@@ -538,6 +545,33 @@ POLARS_SCHEMAS: dict[str, dict[str, pl.DataType]] = {
         "api_team_a_id": pl.Int64(),
         "kickoff_time": pl.Datetime(time_zone="UTC"),
         "available_at": pl.Datetime(time_zone="UTC"),
+        "source": pl.Utf8(),
+    },
+    "player_fixture_outcomes": {
+        "season": pl.Utf8(),
+        "gw": pl.Int64(),
+        "fixture_id": pl.Int64(),
+        "player_key": pl.Int64(),
+        "team_key": pl.Int64(),
+        "pts": pl.Int64(),
+        "minutes": pl.Int64(),
+        "goals": pl.Int64(),
+        "assists": pl.Int64(),
+        "clean_sheets": pl.Int64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "schema_version": pl.Int64(),
+        "source": pl.Utf8(),
+    },
+    "fixture_outcomes": {
+        "season": pl.Utf8(),
+        "gw": pl.Int64(),
+        "fixture_id": pl.Int64(),
+        "team_h_key": pl.Int64(),
+        "team_a_key": pl.Int64(),
+        "team_h_score": pl.Int64(),
+        "team_a_score": pl.Int64(),
+        "available_at": pl.Datetime(time_zone="UTC"),
+        "schema_version": pl.Int64(),
         "source": pl.Utf8(),
     },
 }
