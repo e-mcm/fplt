@@ -147,10 +147,33 @@ def test_rank_hotspots_and_classify() -> None:
     assert classify_phase("optimise/milp") == "solver"
     assert classify_phase("fit/minutes") == "fit"
     assert classify_phase("plan/write") == "io"
+    assert classify_phase("remote/pull") == "io"
+    assert classify_phase("remote/push") == "io"
     report = format_hotspot_report(records)
     assert "predict/fixtures=" in report
     assert "[python_loop]" in report
     assert format_hotspot_report([]) == "No timing artifacts found."
+    remote_report = format_hotspot_report(
+        [
+            {
+                "kind": "remote",
+                "total_s": 1.5,
+                "meta": {
+                    "op": "pull",
+                    "prefix": "raw",
+                    "bucket_kind": "data",
+                    "n_objects": 3,
+                    "bytes": 1200,
+                },
+                "phases": {"remote/pull": 1.5},
+            }
+        ]
+    )
+    assert "kind=remote" in remote_report
+    assert "op=pull" in remote_report
+    assert "objects=3" in remote_report
+    assert "bytes=1200" in remote_report
+    assert "[io]" in remote_report
 
 
 def test_perf_report_cli_json(

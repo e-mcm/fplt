@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,9 +12,27 @@ from pydantic import SecretStr
 
 from fplt.data import remote as remote_mod
 from fplt.data.remote import PUSHABLE, Remote, RemoteError, pull, push
-from fplt.settings import Settings
+from fplt.settings import Settings, get_settings
+from fplt.utils.timing import (
+    TimingSession,
+    classify_phase,
+    load_timing_records,
+    timed_phase,
+    timing_artifacts,
+    timing_root,
+    timing_session,
+)
 
 _HAS_RCLONE = shutil.which("rclone") is not None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_timing_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep remote timing artifacts out of the repo ``./data`` tree."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path / "timing-root"))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def test_rclone_env_maps_settings_without_putting_secret_in_argv() -> None:
@@ -160,6 +179,71 @@ def test_pull_propagates_rclone_failure(
     remote = Remote(target="fplt:fplt-data", kind="data", env={})
     with pytest.raises(RemoteError, match="failed"):
         pull(remote, "raw", tmp_path / "dest")
+
+
+def test_pull_emits_remote_timing_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fake_rclone(args: list[str], *, env: dict[str, str]) -> None:
+        dest = Path(args[2])
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "a.bin").write_bytes(b"hello")
+
+    monkeypatch.setattr(remote_mod, "_rclone", fake_rclone)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    dest = tmp_path / "dest"
+    with caplog.at_level(logging.INFO, logger="fplt.data.remote"):
+        written = pull(remote, "raw", dest)
+    assert [path.name for path in written] == ["a.bin"]
+    records = load_timing_records(get_settings().data_dir, kind="remote")
+    assert len(records) == 1
+    record = records[0]
+    assert record["kind"] == "remote"
+    assert "remote/pull" in record["phases"]
+    assert record["meta"]["op"] == "pull"
+    assert record["meta"]["prefix"] == "raw"
+    assert record["meta"]["n_objects"] == 1
+    assert record["meta"]["bytes"] == 5
+    assert "remote pull prefix=raw" in caplog.text
+    assert classify_phase("remote/pull") == "io"
+
+
+def test_pull_records_into_active_timing_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_rclone(args: list[str], *, env: dict[str, str]) -> None:
+        return None
+
+    monkeypatch.setattr(remote_mod, "_rclone", fake_rclone)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    bag = TimingSession()
+    with timing_artifacts(tmp_path / "run-root"):
+        with timing_session(bag):
+            with timed_phase("setup"):
+                pull(remote, "raw", tmp_path / "empty-dest")
+    assert bag.get("remote/pull") > 0
+    assert bag.get("setup") >= bag.get("remote/pull")
+    nested = list((timing_root(tmp_path / "run-root")).glob("remote_*.json"))
+    assert len(nested) == 1
+
+
+def test_push_emits_remote_timing_with_source_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(remote_mod, "_rclone", lambda args, *, env: None)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.txt").write_text("abcd", encoding="utf-8")
+    remote = Remote(target="fplt:fplt-lab", kind="lab", env={})
+    push(remote, src, "runs/adhoc")
+    records = load_timing_records(get_settings().data_dir, kind="remote")
+    assert len(records) == 1
+    assert records[0]["meta"]["op"] == "push"
+    assert records[0]["meta"]["bytes"] == 4
+    assert records[0]["meta"]["n_objects"] == 1
+    assert "remote/push" in records[0]["phases"]
 
 
 @pytest.mark.skipif(not _HAS_RCLONE, reason="rclone binary not installed")

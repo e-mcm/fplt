@@ -1174,6 +1174,7 @@ def main(argv: list[str] | None = None) -> None:
             "decisions",
             "eval_board",
             "ingest",
+            "remote",
         ),
         help="Only include this timing kind",
     )
