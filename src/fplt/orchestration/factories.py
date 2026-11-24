@@ -47,6 +47,7 @@ from fplt.models.spec import (
     ModelSpec,
     artifact_dir,
     get_model,
+    git_sha,
     load_model_specs,
 )
 from fplt.orchestration.assets import staged_ingest, understat_ingest
@@ -164,20 +165,66 @@ def write_feature_or_existing(
         return path
 
 
+def predictions_code_sha_path(predictions_parquet: Path) -> Path:
+    """Sidecar path that records the git sha that wrote ``part.parquet``."""
+    return predictions_parquet.parent / "code_sha.txt"
+
+
+def _require_matching_predictions_code_sha(
+    path: Path,
+    *,
+    current_sha: str,
+) -> None:
+    """Refuse reuse when the sidecar is missing or does not match ``current_sha``.
+
+    Args:
+        path: Existing ``part.parquet`` under ``predictions/``.
+        current_sha: ``git_sha()`` for this process.
+
+    Raises:
+        FileExistsError: Sidecar missing or sha differs from ``current_sha``.
+    """
+    sidecar = predictions_code_sha_path(path)
+    if not sidecar.exists():
+        raise FileExistsError(
+            f"predictions at {path} have no code_sha.txt sidecar; "
+            f"refusing reuse under code_sha={current_sha!r}. "
+            f"Delete {path.parent} to refit."
+        )
+    stored = sidecar.read_text(encoding="utf-8").strip()
+    if stored != current_sha:
+        raise FileExistsError(
+            f"predictions at {path} were written by code_sha={stored!r}; "
+            f"current is {current_sha!r}. Delete {path.parent} to refit."
+        )
+
+
 def write_predictions_or_existing(
     data_dir: Path,
     spec: ModelSpec,
     as_of: GWKey,
     frame: pl.DataFrame,
 ) -> Path:
-    """Write predictions once, or return the existing parquet path."""
+    """Write predictions once, or return the existing parquet path.
+
+    Interim ``model_id`` collision guard (data-rollout B1): ``model_id`` does
+    not include the git sha, so the same path can hold predictions from older
+    code. A ``code_sha.txt`` sidecar is written next to ``part.parquet``; reuse
+    is allowed only when that sidecar matches the current ``git_sha()``.
+    """
     path = predictions_path(data_dir, spec, as_of)
+    current_sha = git_sha()
     if path.exists():
+        _require_matching_predictions_code_sha(path, current_sha=current_sha)
         return path
     try:
-        return write_predictions(data_dir, spec, as_of, frame)
+        written = write_predictions(data_dir, spec, as_of, frame)
     except FileExistsError:
+        _require_matching_predictions_code_sha(path, current_sha=current_sha)
         return path
+    sidecar = predictions_code_sha_path(written)
+    sidecar.write_text(current_sha + "\n", encoding="utf-8")
+    return written
 
 
 def _pit_view(data_dir: Path, as_of: GWKey, spec: ModelSpec | None = None) -> PITView:
