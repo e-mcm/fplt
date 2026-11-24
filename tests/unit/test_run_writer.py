@@ -77,6 +77,7 @@ def test_run_writer_manifest_first_success_last(tmp_path: Path) -> None:
         )
         assert running.status == "running"
         assert running.finished_at is None
+        assert running.build_id is None
         assert not (writer.path / "_SUCCESS").exists()
         writer.write_parquet(
             "predictions/player_fixture.parquet",
@@ -89,6 +90,34 @@ def test_run_writer_manifest_first_success_last(tmp_path: Path) -> None:
     assert final.finished_at is not None
     assert (writer.path / "_SUCCESS").exists()
     assert final.raw_manifest_hash == "c" * 64
+    assert final.build_id is None
+
+
+def test_run_writer_records_explicit_build_id(tmp_path: Path) -> None:
+    build_id = "cafe" * 8
+    with _writer(tmp_path, build_id=build_id, run_id="r_20261124T125601Z_bld001"):
+        pass
+    path = run_dir(tmp_path, "r_20261124T125601Z_bld001")
+    manifest = RunManifest.model_validate_json(
+        (path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest.build_id == build_id
+
+
+def test_run_writer_auto_detects_latest_build_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "fplt.store.builds.latest_build_id",
+        lambda _data_dir: "auto" * 16,
+    )
+    with _writer(tmp_path, run_id="r_20261124T125601Z_bldaut"):
+        pass
+    path = run_dir(tmp_path, "r_20261124T125601Z_bldaut")
+    manifest = RunManifest.model_validate_json(
+        (path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest.build_id == "auto" * 16
 
 
 def test_run_writer_refuses_existing_run(tmp_path: Path) -> None:

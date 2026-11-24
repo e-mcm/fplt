@@ -2,9 +2,9 @@
 
 ``RunWriter`` mints a sortable ``run_id``, writes ``manifest.json`` first with
 ``status=running``, accepts parquet tables, then finishes with the final
-manifest and ``_SUCCESS`` (or ``status=failed`` without the marker). Until
-curated builds exist (B6), manifests record ``raw_manifest_hash`` plus the
-staged-table digests from ``hash_staged_data``.
+manifest and ``_SUCCESS`` (or ``status=failed`` without the marker). When a
+curated build is present locally, the manifest records its ``build_id``;
+``raw_manifest_hash`` and staged digests remain for migration / debug.
 """
 
 from __future__ import annotations
@@ -162,6 +162,7 @@ class RunWriter:
         host: str | None = None,
         raw_manifest_hash: str | None = None,
         staged_digests: dict[str, str] | None = None,
+        build_id: str | None = None,
         started_at: datetime | None = None,
     ) -> None:
         """Build a writer; the folder is created only on ``__enter__``.
@@ -189,6 +190,8 @@ class RunWriter:
             host: Manifest host label; defaults to ``detect_host()``.
             raw_manifest_hash: Override; defaults to ``hash_raw_manifest``.
             staged_digests: Override; defaults to ``hash_staged_data``.
+            build_id: Curated build id. Defaults to ``latest_build_id`` when
+                curated builds exist locally; otherwise ``None``.
             started_at: Manifest start time; defaults to now (UTC).
         """
         self.data_dir = data_dir
@@ -223,6 +226,14 @@ class RunWriter:
             if staged_digests is not None
             else hash_staged_data(data_dir)
         )
+        if build_id is not None:
+            self._build_id: str | None = build_id
+        else:
+            # Lazy import avoids a circular import at module load
+            # (builds → runs.hash_raw_manifest).
+            from fplt.store.builds import latest_build_id
+
+            self._build_id = latest_build_id(data_dir)
         self._started_at = _aware(
             started_at if started_at is not None else datetime.now(UTC)
         )
@@ -368,7 +379,7 @@ class RunWriter:
             code_dirty=self._code_dirty,
             fplt_mc_version=self._fplt_mc_version,
             lockfile_hash=self._lockfile_hash,
-            build_id=None,
+            build_id=self._build_id,
             raw_manifest_hash=self._raw_manifest_hash,
             staged_digests=self._staged_digests,
             as_of=self._as_of,

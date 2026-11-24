@@ -175,17 +175,20 @@ Every staged table carries an `available_at` timestamp (UTC):
 - API-Football injuries (`player_injuries`): `available_at = captured_at` of the raw snapshot.
 - API-Football cup/Europe fixtures (`competition_fixtures`): `available_at = captured_at` of the raw snapshot.
 
-`PITData` is the only way models read data:
+`PITData` is the only way models read data. Stage B6 also constructs a view from a curated build: `PITData.from_build(data_dir, build_id)` / `PITView.from_build(data_dir, build_id, deadline=…, as_of=…)`.
 
 ```python
 class PITData:
     def __init__(self, store: DataStore) -> None: ...
+    @classmethod
+    def from_build(cls, data_dir: Path, build_id: str) -> "PITData": ...
     def deadline(self, gw: GWKey) -> datetime: ...
     def view(self, as_of: GWKey) -> "PITView": ...
 
 class PITView:
     as_of: GWKey
     cutoff: datetime                       # deadline of as_of
+    build_id: str | None                   # curated build when reading curated/
     def table(self, name: str) -> pl.LazyFrame:
         """Rows with available_at <= cutoff only. For time-series tables,
         also offers latest-as-of semantics via latest(name, by=...)."""
