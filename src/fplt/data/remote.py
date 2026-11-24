@@ -149,6 +149,28 @@ def push(remote: Remote, src: Path, prefix: str) -> None:
     )
 
 
+def check_one_way(src: Path, remote: Remote, prefix: str) -> None:
+    """Assert every file under ``src`` exists under ``prefix`` with the same size.
+
+    Uses ``rclone check --one-way`` (source → dest). Extra objects under the
+    prefix are ignored — the dual-write parity gate only requires the branch tip
+    to be present in the bucket.
+
+    Args:
+        src: Local directory to treat as the source of truth for the check.
+        remote: rclone target (R2 or a local directory in tests).
+        prefix: Object prefix under the bucket (e.g. ``raw``).
+
+    Raises:
+        RemoteError: rclone reported missing or different files, or failed.
+    """
+    dest = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
+    _rclone(
+        ["check", "--one-way", "--fast-list", str(src), dest],
+        env=remote.env,
+    )
+
+
 def _file_set(root: Path) -> set[Path]:
     if not root.exists():
         return set()
