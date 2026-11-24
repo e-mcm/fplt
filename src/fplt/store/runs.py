@@ -22,12 +22,9 @@ from typing import Self
 
 import polars as pl
 
-from fplt.backtest.produce_ledger import (
-    hash_staged_data,
-    resolved_spec_sha256,
-    uv_lock_sha256,
-)
+from fplt.backtest.produce_ledger import hash_staged_data, uv_lock_sha256
 from fplt.models.spec import ModelSpec, git_sha
+from fplt.models.spec_identity import spec_hash, write_resolved_spec
 from fplt.schemas.manifests import (
     AsOfDeadline,
     RunKind,
@@ -174,7 +171,7 @@ class RunWriter:
             kind: Official / adhoc / experiment / benchmark.
             mode: Live or backtest.
             run_type: Predict, plan, or eval.
-            spec_hash: ``resolved_spec_sha256`` until B8.
+            spec_hash: ``fplt.models.spec_identity.spec_hash`` digest.
             spec_label: Human label (usually the ModelSpec name).
             model_id: Existing model id (compatibility).
             as_of: Deadlines this run covers.
@@ -430,7 +427,7 @@ def write_predict_run(
     """Dual-write a live predict table into a new run folder.
 
     Legacy ``predictions/<model_id>/…`` paths stay the caller's responsibility.
-    Manifest uses ``resolved_spec_sha256`` as ``spec_hash`` until B8.
+    Persists the resolved spec under ``specs/sha=<spec_hash>.json``.
 
     Args:
         data_dir: Local data root.
@@ -445,6 +442,8 @@ def write_predict_run(
     Returns:
         The succeeded ``RunManifest``.
     """
+    digest = spec_hash(spec)
+    write_resolved_spec(data_dir, spec)
     deadline = AsOfDeadline(
         season=as_of.season, gw=as_of.gw, deadline_utc=_aware(deadline_utc)
     )
@@ -453,7 +452,7 @@ def write_predict_run(
         kind=kind,
         mode="live",
         run_type="predict",
-        spec_hash=resolved_spec_sha256(spec),
+        spec_hash=digest,
         spec_label=spec.name,
         model_id=spec.model_id,
         as_of=[deadline],
@@ -493,6 +492,8 @@ def write_plan_run(
     Returns:
         The succeeded ``RunManifest``.
     """
+    digest = spec_hash(spec)
+    write_resolved_spec(data_dir, spec)
     deadline = AsOfDeadline(
         season=as_of.season, gw=as_of.gw, deadline_utc=_aware(deadline_utc)
     )
@@ -501,7 +502,7 @@ def write_plan_run(
         kind=kind,
         mode="live",
         run_type="plan",
-        spec_hash=resolved_spec_sha256(spec),
+        spec_hash=digest,
         spec_label=spec.name,
         model_id=spec.model_id,
         as_of=[deadline],
@@ -544,6 +545,8 @@ def write_backtest_run(
     """
     if not as_ofs:
         raise ValueError("backtest runs require at least one as_of deadline")
+    digest = spec_hash(spec)
+    write_resolved_spec(data_dir, spec)
     deadlines = [
         AsOfDeadline(season=key.season, gw=key.gw, deadline_utc=_aware(deadline))
         for key, deadline in as_ofs
@@ -554,7 +557,7 @@ def write_backtest_run(
         kind=kind,
         mode="backtest",
         run_type="predict",
-        spec_hash=resolved_spec_sha256(spec),
+        spec_hash=digest,
         spec_label=spec.name,
         model_id=spec.model_id,
         as_of=deadlines,

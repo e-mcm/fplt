@@ -5,6 +5,7 @@ YAML that drives models, scoring, chips, evals, and live ops. **No hyperparamete
 | Path | Purpose | Entrypoint / loader |
 |---|---|---|
 | `models/*.yaml` | `ModelSpec` per registered kind | `fplt.models.spec` / `@register_model` |
+| `models/registry.lock.yaml` | `name → spec_hash` pin (B8) | `fplt.models.spec_identity.check_registry_lock` |
 | `scoring/<season>.yaml` | FPL points rules for that season | `fplt.scoring.Rules.for_season` |
 | `chips/<season>.yaml` | Chip grants / windows | `fplt.scoring.chips` |
 | `ops/production.yaml` | Live unattended models + plan horizon | `fplt.automation.production.load_production_ops` |
