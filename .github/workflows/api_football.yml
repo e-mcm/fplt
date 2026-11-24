@@ -5,6 +5,11 @@ on:
     # Every 6h UTC — free tier ~100 req/day; fetch also skips if <4h old.
     - cron: "15 */6 * * *"
   workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force a failure to test the ntfy alert (ops-03 / A7)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,6 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
 
       - uses: actions/setup-python@v5
         with:
@@ -74,3 +85,23 @@ jobs:
           fi
           git commit -m "Capture API-Football injuries + cup/Europe fixtures"
           git push origin HEAD:snapshots
+
+  # Separate job: publish may check out the snapshots branch and drop .github/actions.
+  alerts:
+    needs: capture
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Heartbeat
+        if: needs.capture.result == 'success'
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_API_FOOTBALL }}
+
+      - name: Notify failure
+        if: needs.capture.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}

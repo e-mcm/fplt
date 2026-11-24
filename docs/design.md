@@ -589,6 +589,10 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger (transitional mutate; target: outcomes build + ledger view); refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
 | Next deadline within 3 h and plan missing **or** stale vs late availability signals | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report. Stale = plan parquet mtime older than newest `player_status` / `predicted_lineups` / `player_injuries` `available_at` at or before the deadline — retired under `plans/<model_id>/superseded/` then rebuilt (`fplt.automation.late_refresh`). |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
+| Capture GHA success (`snapshot`, `understat`, `api_football`, `football_data`) | workflow step | Ping healthchecks.io URL from `HC_PING_URL_*` secrets (ops-03 / A7; no-op until configured) |
+| Capture GHA failure | workflow step `if: failure()` | Short ntfy POST via `NTFY_URL` (workflow, job, run URL; no logs). `simulate_failure` workflow_dispatch input forces one alert |
+
+Missed capture heartbeats are the dead-man's switch for silent cron disable (including GitHub's ~60-day inactivity gate on public scheduled workflows). Fix: re-enable the workflow; see `deploy/README.md`. Ops-tick and other live schedules get the same pattern in the rest of ops-03.
 
 The pre-deadline run can always be launched manually from the UI.
 

@@ -1,0 +1,25 @@
+name: heartbeat
+description: Ping a healthchecks.io (or compatible) URL on job success
+inputs:
+  ping_url:
+    description: Full heartbeat ping URL (store as a repo secret; never log it)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Ping heartbeat
+      shell: bash
+      env:
+        PING_URL: ${{ inputs.ping_url }}
+      run: |
+        set -euo pipefail
+        if [ -z "${PING_URL:-}" ]; then
+          echo "heartbeat ping URL unset; skipping (configure secret for A8)"
+          exit 0
+        fi
+        # Never echo PING_URL — curl errors can embed it; swallow stderr.
+        if curl -fsS -o /dev/null -m 10 -- "$PING_URL" 2>/dev/null; then
+          echo "heartbeat ping ok"
+        else
+          echo "heartbeat ping failed (non-fatal)"
+        fi

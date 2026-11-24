@@ -1,0 +1,39 @@
+name: notify-failure
+description: POST a short ntfy alert on job failure (no log excerpts)
+inputs:
+  ntfy_url:
+    description: ntfy topic URL (store as a repo secret; never log it)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: POST ntfy failure alert
+      shell: bash
+      env:
+        NTFY_URL: ${{ inputs.ntfy_url }}
+        WORKFLOW: ${{ github.workflow }}
+        JOB: ${{ github.job }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        if [ -z "${NTFY_URL:-}" ]; then
+          echo "NTFY_URL unset; skipping failure alert"
+          exit 0
+        fi
+        title="fplt ${WORKFLOW} failed"
+        body="job=${JOB}
+        run=${RUN_URL}"
+        # Never echo NTFY_URL. Report only the HTTP status so secrets stay out of logs.
+        code="$(
+          curl -sS -o /dev/null -w "%{http_code}" -m 10 \
+            -H "Title: ${title}" \
+            -H "Priority: high" \
+            -H "Tags: warning" \
+            -d "${body}" \
+            -- "$NTFY_URL" 2>/dev/null || echo "000"
+        )"
+        if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "202" ]; then
+          echo "ntfy failure alert sent (http ${code})"
+        else
+          echo "ntfy failure alert failed (http ${code}; non-fatal)"
+        fi
