@@ -7,12 +7,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fplt.backtest.ledger import (
-    append_predictions,
-    fill_actuals,
-    ledger_path,
-    read_predictions,
-)
+from fplt.backtest.ledger import empty_ledger, read_predictions
 from fplt.backtest.metrics import summarise
 from fplt.backtest.walk_forward import (
     allowed_seasons,
@@ -20,10 +15,13 @@ from fplt.backtest.walk_forward import (
     should_refit,
     walk_forward,
 )
+from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.baselines import RollingMeanPredictor
 from fplt.models.spec import ModelSpec, TrainWindow
+from fplt.store import Store
+from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from tests.builders import build_league
 
@@ -60,8 +58,7 @@ def test_empty_horizon_is_an_empty_ledger(tmp_path: Path) -> None:
         steps=0,
     )
     assert frame.is_empty()
-    append_predictions(tmp_path, frame)
-    assert not ledger_path(tmp_path).exists()
+    assert empty_ledger().is_empty()
 
 
 def test_walk_forward_logs_each_deadline(
@@ -88,9 +85,6 @@ def test_walk_forward_refits_and_leaves_actuals_null(tmp_path: Path) -> None:
     assert model.fits == 2
     assert frame["actual_pts"].null_count() == frame.height
     assert set(frame["position"].to_list()) == {"MID", "FWD"}
-    append_predictions(tmp_path, frame)
-    append_predictions(tmp_path, frame)
-    assert read_predictions(tmp_path).height == frame.height * 2
 
 
 def test_never_refits_only_once(tmp_path: Path) -> None:
@@ -149,7 +143,7 @@ def test_training_window_hides_an_older_season(tmp_path: Path) -> None:
     assert wide_x == 12.0
 
 
-def test_fill_actuals_waits_until_the_gameweek_is_checked(tmp_path: Path) -> None:
+def test_ledger_view_waits_until_the_gameweek_is_checked(tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path))
     spec = ModelSpec(name="rolling_mean", kind="rolling_mean", params={"window": 5})
     frame = walk_forward(
@@ -158,9 +152,18 @@ def test_fill_actuals_waits_until_the_gameweek_is_checked(tmp_path: Path) -> Non
         [GWKey("2024-25", 1), GWKey("2024-25", 2)],
         steps=1,
     )
-    append_predictions(tmp_path, frame)
-    fill_actuals(tmp_path, store)
-    filled = read_predictions(tmp_path)
+    write_backtest_run(
+        tmp_path,
+        spec=spec,
+        as_ofs=[
+            (GWKey("2024-25", 1), store.deadline(GWKey("2024-25", 1))),
+            (GWKey("2024-25", 2), store.deadline(GWKey("2024-25", 2))),
+        ],
+        horizon=1,
+        frame=frame,
+    )
+    stage_outcomes(store)
+    filled = Store(tmp_path).ledger()
     gw1 = filled.filter(pl.col("target_gw") == 1)
     gw2 = filled.filter(pl.col("target_gw") == 2)
     assert gw2["actual_pts"].null_count() == gw2.height
@@ -171,7 +174,6 @@ def test_fill_actuals_waits_until_the_gameweek_is_checked(tmp_path: Path) -> Non
     assert "actual_assists" in filled.columns
     assert "actual_cs" in filled.columns
     assert gw1["actual_goals"].null_count() == 0
-    fill_actuals(tmp_path / "missing", store)
 
 
 def test_summarise_skips_rows_without_actuals() -> None:

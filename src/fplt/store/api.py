@@ -1,8 +1,8 @@
 """Store read API: ledger view over predictions ⋈ outcomes.
 
 Full catalog / official / experiment helpers land in a later Stage B PR
-(data-model migration step 8). B9 adds ``Store.ledger`` so metric readers can
-leave ``fill_actuals`` mutation.
+(data-model migration step 8). B9: ``Store.ledger`` is the only path to
+scored prediction rows (``append_predictions`` / ``fill_actuals`` removed).
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from pathlib import Path
 
 import polars as pl
 
-from fplt.backtest.ledger import align_ledger_columns, empty_ledger, read_predictions
+from fplt.backtest.ledger import align_ledger_columns, empty_ledger, ledger_path
 from fplt.data.store import DataStore
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
 from fplt.settings import get_settings
 from fplt.store.builds import CuratedBuildSource, latest_build_id
-from fplt.store.runs import run_dir
+from fplt.store.runs import list_succeeded_predict_run_ids, run_dir
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class Store:
 
         Args:
             data_dir: Directory with ``staged/``, ``runs/``, ``curated/``, and
-                the transitional ``ledger/`` tree.
+                the optional legacy ``ledger/`` archive.
         """
         self.data_dir = data_dir
 
@@ -61,15 +61,15 @@ class Store:
 
         Join key: ``(target_season, target_gw, player_key, fixture_id)`` ↔
         ``(season, gw, player_key, fixture_id)``. Unchecked gameweeks have no
-        outcomes rows, so actuals stay null — same semantics as ``fill_actuals``.
+        outcomes rows, so actuals stay null.
 
-        When ``runs`` is omitted, predictions come from the transitional
-        ``ledger/predictions`` parquet (actual columns stripped) so compare /
-        backtest can move onto the view before every writer dual-writes runs.
+        When ``runs`` is omitted, every succeeded predict run under ``runs/``
+        is included. If none exist, a legacy ``ledger/predictions`` parquet
+        (B10 archive) is read when present.
 
         Args:
             runs: Optional run ids whose ``predictions/player_fixture.parquet``
-                frames are concatenated. ``None`` uses the transitional ledger.
+                frames are concatenated. ``None`` discovers local predict runs.
             outcomes_build: Curated build id to pin; ``None`` uses the latest
                 build that contains outcomes, else staged
                 ``player_fixture_outcomes``.
@@ -105,11 +105,15 @@ class Store:
         return checked
 
     def _predictions(self, runs: Sequence[str] | None) -> pl.DataFrame:
+        run_ids: Sequence[str]
         if runs is None:
-            frame = read_predictions(self.data_dir)
-            return _strip_actuals(frame)
+            run_ids = list_succeeded_predict_run_ids(self.data_dir)
+            if not run_ids:
+                return _legacy_predictions(self.data_dir)
+        else:
+            run_ids = runs
         frames: list[pl.DataFrame] = []
-        for run_id in runs:
+        for run_id in run_ids:
             path = (
                 run_dir(self.data_dir, run_id)
                 / "predictions"
@@ -141,6 +145,14 @@ class Store:
         if staged.is_empty():
             return staged
         return _latest_outcomes(staged)
+
+
+def _legacy_predictions(data_dir: Path) -> pl.DataFrame:
+    """Read the pre-B9 ledger parquet when no runs exist (archive only)."""
+    path = ledger_path(data_dir)
+    if not path.is_file():
+        return empty_ledger()
+    return _strip_actuals(align_ledger_columns(pl.read_parquet(path)))
 
 
 def _latest_outcomes(frame: pl.DataFrame) -> pl.DataFrame:

@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fplt.backtest.ledger import append_predictions, ledger_path
+from fplt.backtest.ledger import align_ledger_columns, ledger_path
 from fplt.cli import main
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -38,6 +38,7 @@ from fplt.optimise.state import (
     apply_entry_picks,
     load_squad_state,
 )
+from fplt.schemas.ledger import LedgerSchema
 from fplt.schemas.manifests import RunManifest
 from fplt.settings import get_settings
 
@@ -932,7 +933,10 @@ def _score(root: Path, *, scores: dict[int, float] | None = None) -> None:
         pl.col("actual_pts").cast(pl.Int64()),
         pl.col("actual_minutes").cast(pl.Int64()),
     )
-    append_predictions(root, frame)
+    checked = LedgerSchema.validate(align_ledger_columns(frame))
+    assert isinstance(checked, pl.DataFrame)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    checked.write_parquet(path)
 
 
 def _stage(root: Path) -> None:

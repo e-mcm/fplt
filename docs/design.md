@@ -467,7 +467,7 @@ ledger = runs/*/predictions/player_fixture  ⋈  curated outcomes (latest build)
 - A backtest or live **run** *is* its ledger contribution (immutable under `runs/run=<run_id>/`).
 - Scoring uses the latest outcomes build by default; pass `outcomes_build=` to pin one (e.g. to reproduce an audit).
 - Decision and chip-window rows live on the plan run the same way (`plans/decisions.parquet`, etc.), not as rewritten partitions.
-- Metric readers (`compare`, `run_backtest`, decision pool) use `Store.ledger()` (B9): predictions ⋈ staged/curated `player_fixture_outcomes`. The transitional local `ledger/predictions` parquet is still written for dual-write / legacy import; `fill_actuals` remains only for equivalence and older callers until the mutation-removal PR.
+- Metric readers use `Store.ledger()` (B9): predictions under `runs/` ⋈ staged/curated `player_fixture_outcomes`. `append_predictions` / `fill_actuals` are removed. `read_predictions` is a thin alias for `Store.ledger()`. A legacy `ledger/predictions` parquet is read only when no local runs exist (B10 archive).
 
 **Transitional local store (until outcomes + run writer cut over):**
 

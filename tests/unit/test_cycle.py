@@ -17,7 +17,7 @@ from fplt.automation.cycle import (
     reports,
 )
 from fplt.automation.production import ProductionOps, load_production_ops
-from fplt.backtest.ledger import append_predictions
+from fplt.backtest.ledger import align_ledger_columns
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -26,7 +26,9 @@ from fplt.optimise.state import SquadState
 from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
 from fplt.orchestration.sensors import catchup_sensor, pre_deadline_sensor
+from fplt.schemas.ledger import LedgerSchema
 from fplt.settings import get_settings
+from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
@@ -410,14 +412,18 @@ def _league(root: Path) -> DataStore:
 
 
 def _predictions(root: Path, players: list[dict[str, object]]) -> None:
-    """Give each checked week a non-zero score so catch-up can plan."""
-    model_id = load_model_specs()["rolling_mean_v1"].model_id
+    """Seed non-zero scores as a predict run so catch-up can plan.
+
+    The synthetic league has no ``player_fixture_stats``, so walk-forward
+    rolling-mean xPts are zero; this run supplies usable rows for ``run_plan``.
+    """
+    spec = load_model_specs()["rolling_mean_v1"]
     records: list[dict[str, object]] = []
     for gameweek in (1, 2, 3):
         for row in players:
             records.append(
                 {
-                    "model_id": model_id,
+                    "model_id": spec.model_id,
                     "run_kind": "live",
                     "as_of_season": "2024-25",
                     "as_of_gw": gameweek,
@@ -442,4 +448,17 @@ def _predictions(root: Path, players: list[dict[str, object]]) -> None:
         pl.col("actual_pts").cast(pl.Int64()),
         pl.col("actual_minutes").cast(pl.Int64()),
     )
-    append_predictions(root, frame)
+    checked = LedgerSchema.validate(align_ledger_columns(frame))
+    assert isinstance(checked, pl.DataFrame)
+    store = DataStore(root)
+    as_ofs = [
+        (GWKey("2024-25", gw), store.deadline(GWKey("2024-25", gw))) for gw in (1, 2, 3)
+    ]
+    write_backtest_run(
+        root,
+        spec=spec,
+        as_ofs=as_ofs,
+        horizon=1,
+        frame=checked,
+        purpose="cycle test seed",
+    )

@@ -23,8 +23,9 @@ def build_player_fixture_outcomes(store: DataStore) -> pl.DataFrame:
     """Build ``player_fixture_outcomes`` for data-checked gameweeks.
 
     Uses the latest ``player_fixture_stats`` row per
-    ``(season, gw, player_key, fixture_id)``, matching ``fill_actuals``.
-    ``team_key`` comes from the latest ``players`` row for that season.
+    ``(season, gw, player_key, fixture_id)`` (same semantics the old
+    ``fill_actuals`` join used). ``team_key`` comes from the latest
+    ``players`` row for that season.
 
     Args:
         store: Staged tables including stats, gameweeks, and players.

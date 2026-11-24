@@ -183,7 +183,7 @@ def test_run_eval_board_patches_openfpl_model_dir(
 
     monkeypatch.setattr("fplt.orchestration.eval_job.run_backtest", fake_backtest)
     monkeypatch.setattr("fplt.orchestration.eval_job._run_openfpl", fake_openfpl)
-    monkeypatch.setattr("fplt.orchestration.eval_job.fill_actuals", lambda *_: None)
+    monkeypatch.setattr("fplt.orchestration.eval_job.stage_outcomes", lambda *_: {})
     result = run_eval_board(
         tmp_path,
         "2024-25",
@@ -460,16 +460,27 @@ def test_run_openfpl_walks_forward(
         "fplt.orchestration.eval_job.walk_forward",
         lambda *_a, **_k: pl.DataFrame({"xpts": [1.0]}),
     )
-    appended: list[Path] = []
+    written: list[Path] = []
 
-    def fake_append(data_dir: Path, frame: pl.DataFrame) -> None:
-        del frame
-        appended.append(data_dir)
+    def fake_write(data_dir: Path, **_kwargs: object) -> object:
+        written.append(data_dir)
+        return type("M", (), {"run_id": "r_test"})()
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.append_predictions", fake_append)
-    monkeypatch.setattr("fplt.orchestration.eval_job.fill_actuals", lambda *_: None)
+    monkeypatch.setattr("fplt.orchestration.eval_job.write_backtest_run", fake_write)
+    monkeypatch.setattr("fplt.orchestration.eval_job.stage_outcomes", lambda *_: {})
     monkeypatch.setattr("fplt.orchestration.eval_job.PITData", lambda store: store)
-    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", lambda root: root)
+
+    class _FakeStore:
+        def __init__(self, root: Path) -> None:
+            self.root = root
+
+        def deadline(self, key: object) -> object:
+            del key
+            from datetime import UTC, datetime
+
+            return datetime(2024, 8, 16, 17, tzinfo=UTC)
+
+    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", _FakeStore)
 
     result = run_eval_board(
         tmp_path,
@@ -481,7 +492,7 @@ def test_run_openfpl_walks_forward(
         refit="never",
         seasons_back=2,
     )
-    assert appended == [tmp_path]
+    assert written == [tmp_path]
     assert result.specs[0].params["model_dir"] == "/ensembles"
     assert result.specs[0].train_window.seasons_back == 2
 
@@ -509,10 +520,22 @@ def test_run_openfpl_warns_on_empty_dir(
         lambda *_a, **_k: pl.DataFrame(),
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.append_predictions", lambda *_: None
+        "fplt.orchestration.eval_job.write_backtest_run",
+        lambda *a, **k: type("M", (), {"run_id": "r_test"})(),
     )
     monkeypatch.setattr("fplt.orchestration.eval_job.PITData", lambda store: store)
-    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", lambda root: root)
+
+    class _FakeStore:
+        def __init__(self, root: Path) -> None:
+            self.root = root
+
+        def deadline(self, key: object) -> object:
+            del key
+            from datetime import UTC, datetime
+
+            return datetime(2024, 8, 16, 17, tzinfo=UTC)
+
+    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", _FakeStore)
     with caplog.at_level("WARNING"):
         _run_openfpl(
             tmp_path,

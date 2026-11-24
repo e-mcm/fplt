@@ -12,7 +12,6 @@ import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from fplt.backtest.ledger import append_predictions
 from fplt.backtest.walk_forward import allowed_seasons, horizon_for, ledger_rows
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
@@ -97,9 +96,9 @@ def run_predict(
 
     Loads an existing artifact for the resolved as-of deadline when present;
     otherwise fits on the PIT view and saves the artifact. Predictions are
-    written under ``predictions/<model_id>/as_of=.../part.parquet``. When
-    ``append_ledger`` is true, the same rows are appended to the ledger with
-    ``run_kind="live"``.
+    written under ``predictions/<model_id>/as_of=.../part.parquet`` and as a
+    ledger-shaped ``runs/…/predictions/player_fixture.parquet`` for
+    ``Store.ledger()``.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``predictions/``.
@@ -108,7 +107,8 @@ def run_predict(
         season: Optional season override for the as-of deadline.
         gw: Optional gameweek override. Must be set with ``season``.
         now: Clock used when resolving the as-of automatically.
-        append_ledger: Also append ``LedgerSchema`` rows for this run.
+        append_ledger: Ignored (CLI compatibility). Ledger rows always go
+            through the run folder; there is no mutable ledger.
 
     Returns:
         The parquet path written under ``predictions/``.
@@ -142,17 +142,17 @@ def run_predict(
     require_scored_predictions(predicted, model_name)
     path = write_predictions(data_dir, spec, as_of, predicted)
     logger.info("wrote %s prediction rows to %s", predicted.height, path)
+    _ = append_ledger  # CLI flag retained; mutation path removed in B9.
+    rows = ledger_rows(predicted, view, as_of, "live")
     run = write_predict_run(
         data_dir,
         spec=spec,
         as_of=as_of,
         deadline_utc=store.deadline(as_of),
         horizon=horizon,
-        frame=predicted,
+        frame=rows,
     )
-    logger.info("dual-wrote predict run_id=%s", run.run_id)
-    if append_ledger:
-        append_predictions(data_dir, ledger_rows(predicted, view, as_of, "live"))
+    logger.info("wrote predict run_id=%s", run.run_id)
     return path
 
 

@@ -21,7 +21,12 @@ from fplt.store.push import (
     push_build,
     push_run,
 )
-from fplt.store.runs import RunWriter, mint_run_id, run_dir
+from fplt.store.runs import (
+    RunWriter,
+    list_succeeded_predict_run_ids,
+    mint_run_id,
+    run_dir,
+)
 
 __all__ = [
     "BuildExistsError",
@@ -32,6 +37,7 @@ __all__ = [
     "Store",
     "build_from_staged",
     "latest_build_id",
+    "list_succeeded_predict_run_ids",
     "load_build_manifest",
     "maybe_push_build",
     "maybe_push_run",
