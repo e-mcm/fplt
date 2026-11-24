@@ -37,8 +37,12 @@ jobs:
             fi
           fi
           echo "Comparing ${BASE}...${{ github.sha }}"
+          # Only mc/ sources and the mc-release workflow force a native rebuild.
+          # Edits to ci.yml alone (e.g. apt install rclone) must not queue the
+          # 10×-billable macOS mc path — that left runners cancelled and broke
+          # test-macos on a missing wheel artifact.
           if git diff --name-only "$BASE" "${{ github.sha }}" \
-            | grep -qE '^(mc/|\.github/workflows/ci\.yml|\.github/workflows/mc-release\.yml)'; then
+            | grep -qE '^(mc/|\.github/workflows/mc-release\.yml)'; then
             echo "mc=true" >> "$GITHUB_OUTPUT"
             echo "mc changes detected"
           else
@@ -230,7 +234,9 @@ jobs:
     name: test (macos-arm64)
     needs: [changes, mc-build-macos]
     # macOS is 10× billable; only on mc/ PRs (fresh wheel + smoke).
-    if: ${{ !cancelled() && needs.changes.outputs.mc == 'true' && needs.mc-build-macos.result != 'failure' }}
+    # Require success so a cancelled/skipped mc-build does not fail on a
+    # missing wheel-macos-arm64 artifact.
+    if: ${{ !cancelled() && needs.changes.outputs.mc == 'true' && needs.mc-build-macos.result == 'success' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
