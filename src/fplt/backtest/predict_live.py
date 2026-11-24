@@ -19,6 +19,7 @@ from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
 from fplt.models.predictions import require_scored_predictions, write_predictions
 from fplt.models.spec import ModelSpec, artifact_dir, get_model, load_model_specs
+from fplt.store.runs import write_predict_run
 from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,15 @@ def run_predict(
     require_scored_predictions(predicted, model_name)
     path = write_predictions(data_dir, spec, as_of, predicted)
     logger.info("wrote %s prediction rows to %s", predicted.height, path)
+    run = write_predict_run(
+        data_dir,
+        spec=spec,
+        as_of=as_of,
+        deadline_utc=store.deadline(as_of),
+        horizon=horizon,
+        frame=predicted,
+    )
+    logger.info("dual-wrote predict run_id=%s", run.run_id)
     if append_ledger:
         append_predictions(data_dir, ledger_rows(predicted, view, as_of, "live"))
     return path
