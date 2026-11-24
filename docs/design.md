@@ -93,6 +93,8 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | `fplt-lab` | `runs/` (adhoc, experiment, benchmark, legacy), `experiments/`, `batches/`, `specs/`, `catalog/` | owner, cloud agents, Modal | `runs/`, `experiments/`, `batches/`, `specs/` |
 | `fplt-public` (later) | whitelisted JSON for the website | publish step only | none (regenerable from official runs) |
 
+`RunKind` includes `legacy` for B10 imports (`run_id = legacy-<model_id>-<as_of>`; best-effort `code_sha=unknown`).
+
 - `catalog/` and `status/` are the only rewritten prefixes; both are derived and rebuildable.
 - `fplt-lab` exists so agent tokens can never write official data. Agents **read** `fplt-data` (read-only token) and **write** only `fplt-lab` (AGENTS.md §4).
 - Key paths mirror the local layout (`fplt-data/raw/fpl_api/season=…/captured_at=…/bootstrap_static.json.gz`), so a pull is a plain `rclone copy` into `$FPLT_DATA_DIR`.
@@ -109,7 +111,7 @@ L3 index        official/ pointers, experiments/,      pointers write-once; cata
 
 **Schemas (Stage B2).** Pydantic manifests and pandera tables for the contracts above live under `src/fplt/schemas/`: `manifests.py` (`RunManifest`, `BuildManifest`, `OfficialPointer`, `AppliedRecord`, `InterventionRecord`), `l2.py` (L2 standard-key mixin + `schema_version`), `outcomes.py` (`player_fixture_outcomes`, `fixture_outcomes`), `squad_state_table.py` (virtual-line in/out). Experiment and batch manifests wait for Stage C. Writers and producers land in later Stage B PRs; this section names the field contracts only.
 
-**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/` remains the working ingest target; `fplt.store.builds.build_from_staged` snapshots non-empty staged tables into content-addressed `curated/` builds (`STAGING_VERSION` + golden-hash test). `predictions/`, `plans/`, `ledger/` and `artifacts/` stay until readers move fully onto `runs/` and curated outcomes (see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
+**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/` remains the working ingest target; `fplt.store.builds.build_from_staged` snapshots non-empty staged tables into content-addressed `curated/` builds (`STAGING_VERSION` + golden-hash test). `predictions/`, `plans/`, `ledger/` and `artifacts/` stay until readers move fully onto `runs/` and curated outcomes; `fplt legacy import` wraps those trees (plus eval output dirs) as `kind=legacy` runs for `fplt-lab` (B10; see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
 
 ```
 data/

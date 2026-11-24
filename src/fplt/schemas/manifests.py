@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-RunKind = Literal["official", "adhoc", "experiment", "benchmark"]
+RunKind = Literal["official", "adhoc", "experiment", "benchmark", "legacy"]
 RunMode = Literal["live", "backtest"]
 RunType = Literal["predict", "plan", "eval"]
 RunStatus = Literal["running", "succeeded", "failed"]

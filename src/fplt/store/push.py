@@ -64,8 +64,9 @@ def push_run(
 ) -> Remote:
     """Upload a finished run to the bucket for its kind.
 
-    Official runs go to the data bucket; adhoc, experiment, and benchmark
-    runs go to the lab bucket. The local folder must contain ``_SUCCESS``.
+    Official runs go to the data bucket; adhoc, experiment, benchmark, and
+    legacy runs go to the lab bucket. The local folder must contain
+    ``_SUCCESS``.
 
     Args:
         data_dir: Local data root holding ``runs/``.
