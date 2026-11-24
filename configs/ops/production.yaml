@@ -16,7 +16,42 @@
 # Python parent remains dc_layered_v4; frozen pre-CS parent dc_layered_v3.
 # Do not edit a released production ModelSpec in place — bump the versioned
 # YAML instead.
+#
+# B11: `pipeline:` is the typed PipelineSpec (data / model / planner /
+# policy / env). `models` / `plan_horizon` stay as the short form; they
+# must match pipeline.model / pipeline.planner.horizon. Official lines
+# (B12) will expand this into named lines that share the same shape.
 
 models:
   - dc_layered_v4_native
 plan_horizon: 3
+
+pipeline:
+  data:
+    sources:
+      odds_capture: false
+      fplcache: false
+      api_football_injuries: true
+    capture_checkpoint: T-90m
+  model: dc_layered_v4_native
+  planner:
+    horizon: 3
+    decay: 0.9
+    pool:
+      target: 130
+    mip_gap: 0.001
+    time_limit_s: 600
+    objective: mean
+  policy:
+    max_hits: 1
+    hit_min_gain: 4.0
+    chips:
+      scheduler: season_v1
+      arm: optimised
+      force_play: true
+    captain: max_xpts
+    lineup_reopt: true
+    price_forecast: mean_gw_delta
+    bench_weight: 0.0
+  env:
+    mc_backend: native
