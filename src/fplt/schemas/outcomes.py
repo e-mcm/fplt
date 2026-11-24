@@ -2,7 +2,7 @@
 
 Outcomes live in content-addressed curated builds and are joined to run
 predictions at read time — never written into prediction rows
-(``docs/design.md`` §7.2; data model §3.6). Staging producers land in B9.
+(``docs/design.md`` §7.2; data model §3.6). Producers: ``fplt.data.outcomes``.
 """
 
 from __future__ import annotations

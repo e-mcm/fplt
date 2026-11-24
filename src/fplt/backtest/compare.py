@@ -42,7 +42,7 @@ from fplt.backtest.eval_set import (
     openfpl_skip_note,
     resolve_eval_models,
 )
-from fplt.backtest.ledger import append_predictions, fill_actuals, read_predictions
+from fplt.backtest.ledger import append_predictions
 from fplt.backtest.metrics import (
     calibration_tables,
     format_calibration_markdown,
@@ -50,8 +50,10 @@ from fplt.backtest.metrics import (
     summarise,
 )
 from fplt.backtest.produce_ledger import produce_ledger
+from fplt.data.outcomes import stage_outcomes
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, load_model_specs
+from fplt.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,10 @@ def compare_models(
         raise ValueError(f"unknown model spec {missing[0]!r}")
 
     store = DataStore(data_dir)
+    # Stage outcomes before produce so ledger_cache data_hashes stay stable
+    # across compares that re-read the same staged root.
+    logger.info("staging outcomes for checked gameweeks")
+    stage_outcomes(store)
     out = output_dir or _default_output_dir(data_dir, season, test_from_gw, test_to_gw)
     out.mkdir(parents=True, exist_ok=True)
     logger.info(
@@ -253,9 +259,8 @@ def compare_models(
                 )
             )
 
-    logger.info("filling actuals and writing summary under %s", out)
-    fill_actuals(data_dir, store)
-    ledger = read_predictions(data_dir)
+    logger.info("joining ledger view and writing summary under %s", out)
+    ledger = Store(data_dir).ledger()
     model_ids = {run.spec.model_id for run in runs}
     scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
     pool = filter_decision_pool(scored, store)

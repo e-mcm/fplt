@@ -12,8 +12,9 @@ import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from fplt.backtest.ledger import append_predictions, fill_actuals
+from fplt.backtest.ledger import append_predictions
 from fplt.backtest.walk_forward import walk_forward
+from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
@@ -38,12 +39,14 @@ def run_backtest(
     time_decay: float | None = None,
     steps: int = 1,
 ) -> list[ModelSpec]:
-    """Fit and score ``models`` across one season, then fill checked actuals.
+    """Fit and score ``models`` across one season, then stage checked outcomes.
 
     A copied spec is used when ``refit``, ``seasons_back``, or ``time_decay`` is
     set, so the ledger id differs from the YAML spec. ``refit="never"`` fits at
     the first requested deadline and reuses that fit. ``steps`` is the horizon
     length passed to ``walk_forward``; the library default of 5 is left unchanged.
+    Actuals are read via ``Store.ledger()`` (predictions ⋈ outcomes), not by
+    mutating the transitional ledger parquet.
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``ledger/``.
@@ -122,8 +125,8 @@ def run_backtest(
         )
         logger.info("dual-wrote backtest run_id=%s model=%s", run.run_id, spec.name)
         ran.append(spec)
-    logger.info("filling actuals for checked gameweeks")
-    fill_actuals(data_dir, store)
+    logger.info("staging outcomes for checked gameweeks")
+    stage_outcomes(store)
     return ran
 
 

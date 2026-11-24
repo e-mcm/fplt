@@ -13,6 +13,7 @@ from fplt.data.store import DataStore
 from fplt.models.direct import LGBMDirectPredictor
 from fplt.models.spec import get_model, load_model_specs
 from fplt.settings import get_settings
+from fplt.store import Store
 
 _PRIOR = "2023-24"
 _TEST = "2024-25"
@@ -57,8 +58,7 @@ def test_frozen_fit_ignores_the_test_season(tmp_path: Path) -> None:
     assert points[1] == pytest.approx(2.0)
     assert points[2] == pytest.approx(2.0)
     assert (
-        read_predictions(tmp_path).filter(pl.col("target_gw") == 1)["actual_pts"][0]
-        == 10
+        Store(tmp_path).ledger().filter(pl.col("target_gw") == 1)["actual_pts"][0] == 10
     )
 
 
@@ -106,7 +106,7 @@ def test_command_fills_checked_actuals(
         "rolling_mean_v1 refit=never seasons_back=2 time_decay=None model_id="
         in printed
     )
-    actual = read_predictions(tmp_path).filter(pl.col("target_gw") == 1)
+    actual = Store(tmp_path).ledger().filter(pl.col("target_gw") == 1)
     assert actual["actual_pts"][0] == 10
     get_settings.cache_clear()
 
