@@ -5,6 +5,7 @@ Library-first FPL points prediction and team selection. Dagster / CLI / apps are
 | Module | Role |
 |---|---|
 | `data/` | Clients, raw/staging, `DataStore`, **`PITView`** |
+| `store/` | Write-once analytic runs (`RunWriter`); catalog / Store readers later |
 | `schemas/` | `pandera.polars` contracts at module boundaries |
 | `features/` | `@feature(...)` registry (versioned) |
 | `scoring/` | Season `Rules` + chip tables from `configs/` |

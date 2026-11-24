@@ -38,6 +38,7 @@ from fplt.optimise.state import (
     apply_entry_picks,
     load_squad_state,
 )
+from fplt.schemas.manifests import RunManifest
 from fplt.settings import get_settings
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
@@ -656,6 +657,13 @@ def test_run_plan_chip_arm_off_skips_chip_wiring(
     assert seen["season"] is None
     assert seen["gameweeks"] is None
     assert seen["chip_windows"] is None
+    plan_runs = [
+        RunManifest.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "runs").glob("run=*/manifest.json")
+    ]
+    assert len(plan_runs) == 1
+    assert plan_runs[0].run_type == "plan"
+    assert (tmp_path / "runs" / f"run={plan_runs[0].run_id}" / "_SUCCESS").exists()
 
 
 def test_run_plan_forwards_force_play_to_scheduler(

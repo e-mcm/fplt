@@ -77,6 +77,7 @@ from fplt.optimise.state import (
 from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
+from fplt.store.runs import write_plan_run
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
@@ -797,6 +798,15 @@ def run_plan(
             except FileExistsError as exc:
                 raise PlanExistsError(Path(str(exc)), report) from exc
             (path.parent / "report.md").write_text(report, encoding="utf-8")
+            plan_run = write_plan_run(
+                data_dir,
+                spec=spec,
+                as_of=GWKey(season, gameweek),
+                deadline_utc=store.deadline(GWKey(season, gameweek)),
+                horizon=len(window),
+                frame=table,
+            )
+            logger.info("dual-wrote plan run_id=%s", plan_run.run_id)
     meta = {
         "model": model_name,
         "season": season,

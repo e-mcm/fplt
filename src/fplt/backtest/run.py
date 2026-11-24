@@ -17,6 +17,7 @@ from fplt.backtest.walk_forward import walk_forward
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
+from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from fplt.utils.timing import binds_timing_artifacts
 
@@ -111,6 +112,15 @@ def run_backtest(
             frame.height,
         )
         append_predictions(data_dir, frame)
+        deadlines = [(key, store.deadline(key)) for key in as_ofs]
+        run = write_backtest_run(
+            data_dir,
+            spec=spec,
+            as_ofs=deadlines,
+            horizon=steps,
+            frame=frame,
+        )
+        logger.info("dual-wrote backtest run_id=%s model=%s", run.run_id, spec.name)
         ran.append(spec)
     logger.info("filling actuals for checked gameweeks")
     fill_actuals(data_dir, store)
