@@ -462,6 +462,7 @@ def write_predict_run(
         seeds=_seed_from_spec(spec),
     ) as writer:
         writer.write_parquet("predictions/player_fixture.parquet", frame)
+    _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
 
 
@@ -512,6 +513,7 @@ def write_plan_run(
         seeds=_seed_from_spec(spec),
     ) as writer:
         writer.write_parquet("plans/plan.parquet", frame)
+    _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
 
 
@@ -564,4 +566,14 @@ def write_backtest_run(
         seeds=_seed_from_spec(spec),
     ) as writer:
         writer.write_parquet("predictions/player_fixture.parquet", frame)
+    _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
+
+
+def _push_if_configured(data_dir: Path, run_id: str) -> None:
+    """Push when the destination bucket is set; keep dual-write offline-safe."""
+    # Imported lazily so ``fplt.store.runs`` stays importable without remote
+    # settings during model-only imports.
+    from fplt.store.push import maybe_push_run
+
+    maybe_push_run(data_dir, run_id)
