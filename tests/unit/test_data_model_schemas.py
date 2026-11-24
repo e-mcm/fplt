@@ -65,6 +65,14 @@ def test_run_manifest_round_trip_matches_design_example() -> None:
     assert json.loads(json.dumps(payload))["spec_label"] == "dc_layered_v4_native"
 
 
+def test_run_manifest_accepts_legacy_kind() -> None:
+    manifest = RunManifest.model_validate(
+        _run_kwargs(kind="legacy", code_sha="unknown", spec_hash="unknown")
+    )
+    assert manifest.kind == "legacy"
+    assert manifest.code_sha == "unknown"
+
+
 def test_run_manifest_allows_pre_build_staged_digests() -> None:
     manifest = RunManifest.model_validate(
         _run_kwargs(

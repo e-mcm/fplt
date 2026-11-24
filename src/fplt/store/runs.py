@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -355,6 +356,30 @@ class RunWriter:
             json.dumps(payload, sort_keys=True, indent=2, default=str) + "\n",
             encoding="utf-8",
         )
+        return dest
+
+    def copy_file(self, relative: str, source: Path) -> Path:
+        """Copy ``source`` once under the run directory.
+
+        Args:
+            relative: Path relative to the run folder.
+            source: Existing file to copy.
+
+        Returns:
+            Absolute path written.
+
+        Raises:
+            FileNotFoundError: ``source`` is missing.
+            FileExistsError: That relative path was already written.
+        """
+        self._require_open()
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        dest = self._resolve(relative)
+        if dest.exists():
+            raise FileExistsError(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
         return dest
 
     def succeed(self) -> RunManifest:

@@ -14,6 +14,7 @@ from fplt.store.builds import (
     latest_build_id,
     load_build_manifest,
 )
+from fplt.store.legacy import LegacyImportResult, import_legacy, legacy_run_id
 from fplt.store.push import (
     IncompleteRunError,
     maybe_push_build,
@@ -32,11 +33,14 @@ __all__ = [
     "BuildExistsError",
     "CuratedBuildSource",
     "IncompleteRunError",
+    "LegacyImportResult",
     "RunWriter",
     "STAGING_VERSION",
     "Store",
     "build_from_staged",
+    "import_legacy",
     "latest_build_id",
+    "legacy_run_id",
     "list_succeeded_predict_run_ids",
     "load_build_manifest",
     "maybe_push_build",

@@ -1218,6 +1218,35 @@ def main(argv: list[str] | None = None) -> None:
         default="snapshots",
         help="Branch that holds write-once captures (default: snapshots)",
     )
+    legacy = sub.add_parser(
+        "legacy",
+        parents=[log_flags],
+        help="Wrap pre-run local outputs as kind=legacy runs (B10)",
+    )
+    legacy_sub = legacy.add_subparsers(dest="legacy_command")
+    legacy_import = legacy_sub.add_parser(
+        "import",
+        parents=[log_flags],
+        help=(
+            "Import predictions/, plans/, ledger/, artifacts/, and eval "
+            "dirs as kind=legacy runs (run_id=legacy-<model_id>-<as_of>)"
+        ),
+    )
+    legacy_import.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    legacy_import.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List run ids that would be imported; write nothing",
+    )
+    legacy_import.add_argument(
+        "--push",
+        action="store_true",
+        help="Push each new run to fplt-lab when the lab bucket is configured",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -1293,6 +1322,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "data":
         logger.info("fplt data")
         _data(args)
+        return
+    if args.command == "legacy":
+        logger.info("fplt legacy")
+        _legacy(args)
         return
     logger.info("fplt %s (data_dir=%s)", args.command, get_settings().data_dir)
     if args.command == "ops-catchup":
@@ -1376,6 +1409,36 @@ def _data(args: argparse.Namespace) -> None:
         _data_parity(args)
         return
     raise SystemExit(_not_implemented(f"data {command}"))
+
+
+def _legacy(args: argparse.Namespace) -> None:
+    command = getattr(args, "legacy_command", None)
+    if command == "import":
+        _legacy_import(args)
+        return
+    raise SystemExit(_not_implemented(f"legacy {command}"))
+
+
+def _legacy_import(args: argparse.Namespace) -> None:
+    from fplt.store.legacy import import_legacy
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    result = import_legacy(
+        data_dir,
+        dry_run=bool(args.dry_run),
+        push=bool(args.push),
+    )
+    prefix = "would import" if args.dry_run else "imported"
+    print(
+        f"legacy import: {prefix}={result.n_imported} "
+        f"skipped={result.n_skipped} data_dir={data_dir}"
+    )
+    for run_id in result.imported:
+        print(f"  + {run_id}")
+    for run_id in result.skipped:
+        print(f"  = {run_id} (exists)")
 
 
 def _data_parity(args: argparse.Namespace) -> None:
