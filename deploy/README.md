@@ -110,3 +110,74 @@ one-shot recovery.
 Container `FPLT_DATA_DIR` remains `/var/lib/fplt` (volume-backed). Do not point
 compose at a host `.env` that sets `FPLT_DATA_DIR=./data` unless you also adjust
 volumes.
+
+## Capture-job heartbeats and failure alerts (ops-03 / A7)
+
+Scheduled capture workflows (`snapshot`, `understat`, `api_football`,
+`football_data`) ping a dead-man's switch on success and POST a short ntfy
+alert on failure. Ops-tick and other live workflows get the same treatment in a
+later ops-03 PR; this section covers **capture jobs only**.
+
+### Composite actions
+
+| Action | When | What |
+|---|---|---|
+| `.github/actions/heartbeat` | `alerts` job when `capture` succeeded | `curl` the check's ping URL |
+| `.github/actions/notify-failure` | `alerts` job when `capture` failed | ntfy POST with workflow, job, and run URL (no log excerpts) |
+
+`alerts` is a separate job (`needs: capture`, `if: always()`) with a fresh
+checkout. The capture job may switch to the `snapshots` branch for publish,
+which would otherwise drop `.github/actions/`.
+
+Missing ping / ntfy secrets are a no-op so the workflows stay green before A8
+configures healthchecks.io.
+
+### Repo secrets (never log these)
+
+| Secret | Purpose |
+|---|---|
+| `NTFY_URL` | ntfy topic URL for failure alerts (same topic healthchecks.io should use) |
+| `HC_PING_URL_SNAPSHOT` | healthchecks.io ping URL for `snapshot` |
+| `HC_PING_URL_UNDERSTAT` | ping URL for `understat` |
+| `HC_PING_URL_API_FOOTBALL` | ping URL for `api_football` |
+| `HC_PING_URL_FOOTBALL_DATA` | ping URL for `football_data` |
+
+### healthchecks.io check table (configure in A8)
+
+| Check name | Workflow | Period | Grace | Cron (UTC) |
+|---|---|---|---|---|
+| `fplt-snapshot` | `snapshot.yml` | 15 min | 45 min | `*/15 * * * *` |
+| `fplt-understat` | `understat.yml` | 3 days | 1 day | `30 22 * * 0,1,6` |
+| `fplt-api-football` | `api_football.yml` | 6 h | 3 h | `15 */6 * * *` |
+| `fplt-football-data` | `football_data.yml` | 35 days | 7 days | `0 6 1 * *` |
+
+Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.
+Paste each check's ping URL into the matching `HC_PING_URL_*` secret.
+
+### Forced-failure smoke test
+
+After `NTFY_URL` is set:
+
+```bash
+gh workflow run snapshot.yml -f simulate_failure=true
+```
+
+Expect exactly one ntfy alert with the Actions run URL. Heartbeat must not ping.
+
+### 60-day scheduled-workflow disable (choice: runbook, not keepalive)
+
+GitHub disables scheduled workflows on public repos after ~60 days without
+repository activity. A monthly "re-enable" keepalive does not create that
+activity and can itself be disabled, so **A7 relies on heartbeats** to notice
+silence and documents the fix here:
+
+1. healthchecks.io (or ntfy from a missed ping) alerts that a capture check is
+   down.
+2. Open the workflow in the Actions tab → **Enable workflow**, or
+   `gh workflow enable <name>.yml`.
+3. Optionally push a trivial docs commit so the 60-day inactivity clock resets.
+4. Confirm the next scheduled run pings the heartbeat (or re-run via
+   `workflow_dispatch`).
+
+Do not add a keepalive workflow in this stage. Full ops-03 may revisit this if
+ops-tick needs a different policy.
