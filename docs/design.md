@@ -109,7 +109,7 @@ L3 index        official/ pointers, experiments/,      pointers write-once; cata
 
 **Schemas (Stage B2).** Pydantic manifests and pandera tables for the contracts above live under `src/fplt/schemas/`: `manifests.py` (`RunManifest`, `BuildManifest`, `OfficialPointer`, `AppliedRecord`, `InterventionRecord`), `l2.py` (L2 standard-key mixin + `schema_version`), `outcomes.py` (`player_fixture_outcomes`, `fixture_outcomes`), `squad_state_table.py` (virtual-line in/out). Experiment and batch manifests wait for Stage C. Writers and producers land in later Stage B PRs; this section names the field contracts only.
 
-**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/`, `predictions/`, `plans/`, `ledger/` and `artifacts/` remain the working paths until curated builds and the run writer land; then those become views over `curated/` and `runs/` (see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
+**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/` remains the working ingest target; `fplt.store.builds.build_from_staged` snapshots non-empty staged tables into content-addressed `curated/` builds (`STAGING_VERSION` + golden-hash test). `predictions/`, `plans/`, `ledger/` and `artifacts/` stay until readers move fully onto `runs/` and curated outcomes (see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
 
 ```
 data/
@@ -132,7 +132,7 @@ data/
 │       ├── injuries/captured_at=.../injuries.json.gz
 │       ├── fixtures/league=<id>/captured_at=…/fixtures.json.gz  # cups / Europe
 │       └── lineups/captured_at=…/   # optional predicted XIs (separate from injuries)
-├── staged/                      # typed parquet (migration: → curated builds)
+├── staged/                      # typed parquet (migration working copy; → curated builds)
 │   ├── players/  teams/  fixtures/  gameweeks/
 │   ├── player_status/           # status/news/news_added/price/ep_next/chance this+next/penalties_order/set-piece orders per snapshot
 │   ├── player_fixture_stats/    # actuals from event_live (+ Opta expected_*)
@@ -142,6 +142,9 @@ data/
 │   ├── competition_fixtures/    # API-Football cups/Europe; available_at=captured_at
 │   ├── match_odds/              # closing_proxy (+ prematch_scheduled); see §4.4
 │   └── predicted_lineups/       # near-deadline XI/bench/out overrides (PIT)
+├── curated/                     # content-addressed builds (Stage B6; `fplt.store.builds`)
+│   ├── tables/<table>/sha=<sha256>.parquet
+│   └── builds/build=<build_id>.json   # BuildManifest; build_id = hash(raw, staging_version, schemas)
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
 ├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet  # migration: → runs/

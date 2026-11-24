@@ -1,0 +1,64 @@
+{
+  "teams": [
+    {
+      "id": 1,
+      "code": 3,
+      "name": "Arsenal",
+      "short_name": "ARS"
+    },
+    {
+      "id": 2,
+      "code": 7,
+      "name": "Spurs",
+      "short_name": "TOT"
+    }
+  ],
+  "elements": [
+    {
+      "id": 10,
+      "code": 100,
+      "team": 1,
+      "element_type": 3,
+      "web_name": "Saka",
+      "status": "a",
+      "news": "",
+      "now_cost": 100,
+      "ep_next": "6.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": 1,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 20,
+      "code": 200,
+      "team": 2,
+      "element_type": 4,
+      "web_name": "Son",
+      "status": "a",
+      "news": "",
+      "now_cost": 95,
+      "ep_next": "5.5",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": null,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": 2,
+      "direct_freekicks_order": 1
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "deadline_time": "2024-08-16T17:30:00Z",
+      "finished": true,
+      "data_checked": true
+    },
+    {
+      "id": 2,
+      "deadline_time": "2024-08-23T17:30:00Z",
+      "finished": false,
+      "data_checked": false
+    }
+  ]
+}

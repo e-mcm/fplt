@@ -1,0 +1,22 @@
+[
+  {
+    "id": 50,
+    "event": 1,
+    "team_h": 1,
+    "team_a": 2,
+    "kickoff_time": "2024-08-17T14:00:00Z",
+    "finished": true,
+    "team_h_score": 2,
+    "team_a_score": 1
+  },
+  {
+    "id": 51,
+    "event": 2,
+    "team_h": 2,
+    "team_a": 1,
+    "kickoff_time": "2024-08-24T14:00:00Z",
+    "finished": false,
+    "team_h_score": null,
+    "team_a_score": null
+  }
+]

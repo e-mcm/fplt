@@ -1,0 +1,76 @@
+{
+  "elements": [
+    {
+      "id": 10,
+      "stats": {
+        "minutes": 90,
+        "total_points": 8,
+        "goals_scored": 1,
+        "assists": 0,
+        "clean_sheets": 0,
+        "goals_conceded": 1,
+        "saves": 0,
+        "bonus": 2,
+        "yellow_cards": 0,
+        "red_cards": 0,
+        "own_goals": 0,
+        "penalties_saved": 0,
+        "penalties_missed": 0,
+        "starts": 1,
+        "influence": "20.0",
+        "creativity": "10.0",
+        "threat": "15.0",
+        "bps": "30",
+        "clearances_blocks_interceptions": 1,
+        "tackles": 2,
+        "recoveries": 3,
+        "defensive_contribution": 1,
+        "expected_goals": "0.40",
+        "expected_assists": "0.10",
+        "expected_goal_involvements": "0.50",
+        "expected_goals_conceded": "1.20"
+      },
+      "explain": [
+        {
+          "fixture": 50
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "stats": {
+        "minutes": 80,
+        "total_points": 2,
+        "goals_scored": 0,
+        "assists": 0,
+        "clean_sheets": 0,
+        "goals_conceded": 2,
+        "saves": 0,
+        "bonus": 0,
+        "yellow_cards": 1,
+        "red_cards": 0,
+        "own_goals": 0,
+        "penalties_saved": 0,
+        "penalties_missed": 0,
+        "starts": 1,
+        "influence": "5.0",
+        "creativity": "4.0",
+        "threat": "8.0",
+        "bps": "10",
+        "clearances_blocks_interceptions": 0,
+        "tackles": 0,
+        "recoveries": 1,
+        "defensive_contribution": 0,
+        "expected_goals": "0.20",
+        "expected_assists": "0.05",
+        "expected_goal_involvements": "0.25",
+        "expected_goals_conceded": "1.80"
+      },
+      "explain": [
+        {
+          "fixture": 50
+        }
+      ]
+    }
+  ]
+}
