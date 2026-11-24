@@ -1,0 +1,259 @@
+{
+  "teams": {
+    "73": {
+      "id": "73",
+      "title": "Bournemouth",
+      "history": [
+        {
+          "h_a": "a",
+          "xG": 1.57303,
+          "xGA": 2.33007,
+          "npxG": 1.57303,
+          "npxGA": 2.33007,
+          "ppda": {
+            "att": 278,
+            "def": 24
+          },
+          "ppda_allowed": {
+            "att": 149,
+            "def": 17
+          },
+          "deep": 8,
+          "deep_allowed": 9,
+          "scored": 2,
+          "missed": 4,
+          "xpts": 0.8954,
+          "result": "l",
+          "date": "2025-08-15 19:00:00",
+          "wins": 0,
+          "draws": 0,
+          "loses": 1,
+          "pts": 0,
+          "npxGD": -0.7570400000000002
+        }
+      ]
+    },
+    "244": {
+      "id": "244",
+      "title": "Brentford",
+      "history": [
+        {
+          "h_a": "a",
+          "xG": 1.32516,
+          "xGA": 1.7555,
+          "npxG": 0.563994,
+          "npxGA": 1.7555,
+          "ppda": {
+            "att": 167,
+            "def": 17
+          },
+          "ppda_allowed": {
+            "att": 234,
+            "def": 21
+          },
+          "deep": 3,
+          "deep_allowed": 6,
+          "scored": 1,
+          "missed": 3,
+          "xpts": 1.0148000000000001,
+          "result": "l",
+          "date": "2025-08-17 13:00:00",
+          "wins": 0,
+          "draws": 0,
+          "loses": 1,
+          "pts": 0,
+          "npxGD": -1.191506
+        }
+      ]
+    },
+    "80": {
+      "id": "80",
+      "title": "Chelsea",
+      "history": [
+        {
+          "h_a": "h",
+          "xG": 1.36793,
+          "xGA": 1.03414,
+          "npxG": 1.36793,
+          "npxGA": 1.03414,
+          "ppda": {
+            "att": 135,
+            "def": 23
+          },
+          "ppda_allowed": {
+            "att": 335,
+            "def": 19
+          },
+          "deep": 7,
+          "deep_allowed": 2,
+          "scored": 0,
+          "missed": 0,
+          "xpts": 1.6141,
+          "result": "d",
+          "date": "2025-08-17 13:00:00",
+          "wins": 0,
+          "draws": 1,
+          "loses": 0,
+          "pts": 1,
+          "npxGD": 0.33379000000000003
+        }
+      ]
+    },
+    "87": {
+      "id": "87",
+      "title": "Liverpool",
+      "history": [
+        {
+          "h_a": "h",
+          "xG": 2.33007,
+          "xGA": 1.57303,
+          "npxG": 2.33007,
+          "npxGA": 1.57303,
+          "ppda": {
+            "att": 149,
+            "def": 17
+          },
+          "ppda_allowed": {
+            "att": 278,
+            "def": 24
+          },
+          "deep": 9,
+          "deep_allowed": 8,
+          "scored": 4,
+          "missed": 2,
+          "xpts": 1.877,
+          "result": "w",
+          "date": "2025-08-15 19:00:00",
+          "wins": 1,
+          "draws": 0,
+          "loses": 0,
+          "pts": 3,
+          "npxGD": 0.7570400000000002
+        }
+      ]
+    }
+  },
+  "players": [
+    {
+      "id": "8260",
+      "player_name": "Erling Haaland",
+      "games": "22",
+      "time": "1928",
+      "goals": "20",
+      "xG": "20.193821497261524",
+      "assists": "4",
+      "xA": "3.155729355290532",
+      "shots": "85",
+      "key_passes": "12",
+      "yellow_cards": "0",
+      "red_cards": "0",
+      "position": "F",
+      "team_title": "Manchester City",
+      "npg": "18",
+      "npxG": "17.910314835608006",
+      "xGChain": "21.407968394458294",
+      "xGBuildup": "2.9127714168280363"
+    },
+    {
+      "id": "13222",
+      "player_name": "Thiago",
+      "games": "21",
+      "time": "1762",
+      "goals": "16",
+      "xG": "15.706132754683495",
+      "assists": "1",
+      "xA": "2.1366206761449575",
+      "shots": "50",
+      "key_passes": "11",
+      "yellow_cards": "4",
+      "red_cards": "0",
+      "position": "F S",
+      "team_title": "Brentford",
+      "npg": "11",
+      "npxG": "11.139119647443295",
+      "xGChain": "13.84080659225583",
+      "xGBuildup": "2.6555524803698063"
+    }
+  ],
+  "dates": [
+    {
+      "id": "28778",
+      "isResult": true,
+      "h": {
+        "id": "87",
+        "title": "Liverpool",
+        "short_title": "LIV"
+      },
+      "a": {
+        "id": "73",
+        "title": "Bournemouth",
+        "short_title": "BOU"
+      },
+      "goals": {
+        "h": "4",
+        "a": "2"
+      },
+      "xG": {
+        "h": "2.33007",
+        "a": "1.57303"
+      },
+      "datetime": "2025-08-15 19:00:00",
+      "forecast": {
+        "w": "0.5498",
+        "d": "0.2276",
+        "l": "0.2226"
+      }
+    },
+    {
+      "id": "28779",
+      "isResult": true,
+      "h": {
+        "id": "71",
+        "title": "Aston Villa",
+        "short_title": "AVL"
+      },
+      "a": {
+        "id": "86",
+        "title": "Newcastle United",
+        "short_title": "NEW"
+      },
+      "goals": {
+        "h": "0",
+        "a": "0"
+      },
+      "xG": {
+        "h": "0.318601",
+        "a": "1.40098"
+      },
+      "datetime": "2025-08-16 11:30:00",
+      "forecast": {
+        "w": "0.0629",
+        "d": "0.2371",
+        "l": "0.7"
+      }
+    },
+    {
+      "id": "28990",
+      "isResult": false,
+      "h": {
+        "id": "80",
+        "title": "Chelsea",
+        "short_title": "CHE"
+      },
+      "a": {
+        "id": "244",
+        "title": "Brentford",
+        "short_title": "BRE"
+      },
+      "goals": {
+        "h": null,
+        "a": null
+      },
+      "xG": {
+        "h": null,
+        "a": null
+      },
+      "datetime": "2026-01-17 15:00:00"
+    }
+  ]
+}
