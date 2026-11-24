@@ -229,10 +229,6 @@ def test_compare_models_reuses_cached_ledgers(
     )
     assert calls["n"] == 1
     assert first.runs[0].cache_hit is False
-    # Clear the shared prediction ledger so a second compare must re-append.
-    ledger_path = tmp_path / "ledger" / "predictions" / "part.parquet"
-    if ledger_path.exists():
-        ledger_path.unlink()
     second = compare_models(
         tmp_path,
         _TEST,

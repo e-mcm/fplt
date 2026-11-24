@@ -77,6 +77,31 @@ def run_dir(data_dir: Path, run_id: str) -> Path:
     return data_dir / "runs" / f"run={run_id}"
 
 
+def list_succeeded_predict_run_ids(data_dir: Path) -> list[str]:
+    """Sorted run ids with ``_SUCCESS`` and a player-fixture predictions table.
+
+    Args:
+        data_dir: Local data root containing ``runs/``.
+
+    Returns:
+        Run ids in directory order (sortable ``run_id`` ascending).
+    """
+    root = data_dir / "runs"
+    if not root.is_dir():
+        return []
+    ids: list[str] = []
+    for path in sorted(root.glob("run=*")):
+        if not path.is_dir():
+            continue
+        if not (path / _SUCCESS).is_file():
+            continue
+        pred = path / "predictions" / "player_fixture.parquet"
+        if not pred.is_file():
+            continue
+        ids.append(path.name.removeprefix("run="))
+    return ids
+
+
 def hash_raw_manifest(data_dir: Path) -> str:
     """SHA-256 of the sorted ``(relpath, size)`` list under ``data_dir/raw/``.
 

@@ -33,13 +33,14 @@ from fplt.backtest.eval_set import (
     openfpl_skip_note,
     resolve_eval_models,
 )
-from fplt.backtest.ledger import append_predictions, fill_actuals
 from fplt.backtest.run import run_backtest
 from fplt.backtest.walk_forward import walk_forward
+from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.settings import get_settings
+from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from fplt.utils.timing import (
     TimingSession,
@@ -179,7 +180,7 @@ def run_eval_board(
                         steps=steps,
                     )
                 )
-                fill_actuals(data_dir, DataStore(data_dir))
+                stage_outcomes(DataStore(data_dir))
     meta = {
         "season": season,
         "from_gw": from_gw,
@@ -233,7 +234,15 @@ def _run_openfpl(
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
     model = get_model(spec.kind)(spec)
     frame = walk_forward(model, pit, as_ofs, steps=steps)
-    append_predictions(data_dir, frame)
+    deadlines = [(key, store.deadline(key)) for key in as_ofs]
+    write_backtest_run(
+        data_dir,
+        spec=spec,
+        as_ofs=deadlines,
+        horizon=steps,
+        frame=frame,
+        purpose=f"eval_board openfpl {season}",
+    )
     return spec
 
 

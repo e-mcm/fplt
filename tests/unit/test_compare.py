@@ -342,8 +342,8 @@ def test_compare_delegates_model_resolution(
     monkeypatch.setattr("fplt.backtest.compare.resolve_eval_models", fake_resolve)
     monkeypatch.setattr("fplt.backtest.compare.produce_ledger", fake_produce)
     monkeypatch.setattr(
-        "fplt.backtest.compare.append_predictions",
-        lambda *a, **k: None,
+        "fplt.backtest.compare.write_backtest_run",
+        lambda *a, **k: type("M", (), {"run_id": "r_test"})(),
     )
     monkeypatch.setattr(
         "fplt.backtest.compare.stage_outcomes",

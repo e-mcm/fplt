@@ -4,17 +4,14 @@ from pathlib import Path
 
 import fplt.models.baselines  # noqa: F401 — runs @register_model
 from fplt.backtest.board import leaderboard, side_by_side
-from fplt.backtest.ledger import (
-    append_predictions,
-    empty_ledger,
-    fill_actuals,
-    read_predictions,
-)
+from fplt.backtest.ledger import empty_ledger, read_predictions
 from fplt.backtest.walk_forward import walk_forward
+from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.simulation_native import native_kernel_available
 from fplt.models.spec import get_model, load_model_specs, registered_kinds
+from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from tests.builders import build_league
 
@@ -31,11 +28,12 @@ def test_both_baselines_appear_for_one_season(tmp_path: Path) -> None:
             or native_ok
         )
     }
+    as_ofs = [(GWKey("2024-25", 1), store.deadline(GWKey("2024-25", 1)))]
     for spec in specs.values():
         model = get_model(spec.kind)(spec)
         frame = walk_forward(model, PITData(store), [GWKey("2024-25", 1)], steps=2)
-        append_predictions(tmp_path, frame)
-    fill_actuals(tmp_path, store)
+        write_backtest_run(tmp_path, spec=spec, as_ofs=as_ofs, horizon=2, frame=frame)
+    stage_outcomes(store)
     ledger = read_predictions(tmp_path)
     board = leaderboard(ledger, season="2024-25", horizon=1)
     expected = {spec.model_id for spec in specs.values()}

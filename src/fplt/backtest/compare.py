@@ -20,6 +20,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -42,7 +43,6 @@ from fplt.backtest.eval_set import (
     openfpl_skip_note,
     resolve_eval_models,
 )
-from fplt.backtest.ledger import append_predictions
 from fplt.backtest.metrics import (
     calibration_tables,
     format_calibration_markdown,
@@ -54,6 +54,8 @@ from fplt.data.outcomes import stage_outcomes
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.store import Store
+from fplt.store.runs import write_backtest_run
+from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,7 @@ class CompareRun:
     mode: CompareMode
     spec: ModelSpec
     cache_hit: bool = False
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -241,14 +244,27 @@ def compare_models(
                 eval_seed=eval_seed,
             )
             logger.info("%s/%s wrote %s rows", name, mode, produced.frame.height)
-            append_predictions(data_dir, produced.frame)
+            run_id: str | None = None
+            if not produced.frame.is_empty():
+                as_ofs = _as_ofs_from_frame(produced.frame, store)
+                if as_ofs:
+                    manifest = write_backtest_run(
+                        data_dir,
+                        spec=spec,
+                        as_ofs=as_ofs,
+                        horizon=steps,
+                        frame=produced.frame,
+                        purpose=f"compare {name} {mode} {season}",
+                    )
+                    run_id = manifest.run_id
             logger.info(
-                "%s %s wrote %s rows in %.1fs (cache_hit=%s)",
+                "%s %s wrote %s rows in %.1fs (cache_hit=%s run_id=%s)",
                 mode,
                 name,
                 produced.frame.height,
                 time.perf_counter() - started,
                 produced.cache_hit,
+                run_id,
             )
             runs.append(
                 CompareRun(
@@ -256,11 +272,13 @@ def compare_models(
                     mode=mode,
                     spec=spec,
                     cache_hit=produced.cache_hit,
+                    run_id=run_id,
                 )
             )
 
     logger.info("joining ledger view and writing summary under %s", out)
-    ledger = Store(data_dir).ledger()
+    run_ids = [run.run_id for run in runs if run.run_id is not None]
+    ledger = Store(data_dir).ledger(runs=run_ids or None)
     model_ids = {run.spec.model_id for run in runs}
     scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
     pool = filter_decision_pool(scored, store)
@@ -496,6 +514,22 @@ def _format_summary_markdown(result: CompareResult, calibration: pl.DataFrame) -
         "",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _as_ofs_from_frame(
+    frame: pl.DataFrame, store: DataStore
+) -> list[tuple[GWKey, datetime]]:
+    """Unique as-of deadlines from a ledger-shaped prediction frame."""
+    keys = (
+        frame.select("as_of_season", "as_of_gw")
+        .unique()
+        .sort(["as_of_season", "as_of_gw"])
+    )
+    out: list[tuple[GWKey, datetime]] = []
+    for row in keys.iter_rows(named=True):
+        key = GWKey(str(row["as_of_season"]), int(row["as_of_gw"]))
+        out.append((key, store.deadline(key)))
+    return out
 
 
 __all__ = [

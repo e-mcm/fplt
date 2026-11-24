@@ -12,7 +12,6 @@ import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport
 import fplt.models.direct  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.ensemble  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import fplt.models.external.openfpl  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from fplt.backtest.ledger import append_predictions
 from fplt.backtest.walk_forward import walk_forward
 from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
@@ -45,11 +44,11 @@ def run_backtest(
     set, so the ledger id differs from the YAML spec. ``refit="never"`` fits at
     the first requested deadline and reuses that fit. ``steps`` is the horizon
     length passed to ``walk_forward``; the library default of 5 is left unchanged.
-    Actuals are read via ``Store.ledger()`` (predictions ⋈ outcomes), not by
-    mutating the transitional ledger parquet.
+    Predictions are written as runs; actuals are read via ``Store.ledger()``
+    (predictions ⋈ outcomes).
 
     Args:
-        data_dir: Root that contains ``staged/`` and receives ``ledger/``.
+        data_dir: Root that contains ``staged/`` and receives ``runs/``.
         season: Evaluation season, such as ``"2024-25"``.
         from_gw: First as-of gameweek.
         to_gw: Last as-of gameweek, inclusive.
@@ -114,16 +113,16 @@ def run_backtest(
             spec.name,
             frame.height,
         )
-        append_predictions(data_dir, frame)
-        deadlines = [(key, store.deadline(key)) for key in as_ofs]
-        run = write_backtest_run(
-            data_dir,
-            spec=spec,
-            as_ofs=deadlines,
-            horizon=steps,
-            frame=frame,
-        )
-        logger.info("dual-wrote backtest run_id=%s model=%s", run.run_id, spec.name)
+        if not frame.is_empty():
+            deadlines = [(key, store.deadline(key)) for key in as_ofs]
+            run = write_backtest_run(
+                data_dir,
+                spec=spec,
+                as_ofs=deadlines,
+                horizon=steps,
+                frame=frame,
+            )
+            logger.info("wrote backtest run_id=%s model=%s", run.run_id, spec.name)
         ran.append(spec)
     logger.info("staging outcomes for checked gameweeks")
     stage_outcomes(store)
