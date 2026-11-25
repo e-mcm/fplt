@@ -1,4 +1,4 @@
-"""Post-downtime ops-catchup wraps fetch → stage → side ingest → catch_up."""
+"""Post-downtime ops-catchup wraps feed refresh → catch_up."""
 
 from pathlib import Path
 
@@ -9,6 +9,7 @@ from fplt.automation.ops_catchup import (
     format_ops_catchup_status,
     run_ops_catchup,
 )
+from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.cli import main
 from fplt.data.snapshots import SnapshotFetchError
 from fplt.settings import get_settings
@@ -65,36 +66,21 @@ def test_run_ops_catchup_calls_existing_library_steps(
     calls: list[str] = []
     planned = [GWKey("2024-25", 1)]
 
-    def fetch(
-        dest: Path,
-        settings: object = None,
+    def refresh(
+        data_dir: Path | None = None,
         *,
         source: str = "auto",
         remote: str = "origin",
         branch: str = "snapshots",
-    ) -> list[Path]:
-        calls.append(f"fetch:{source}:{remote}:{branch}:{dest}")
-        return [dest / "a.json.gz"]
-
-    def ingest_raw(store: object, raw_root: Path) -> int:
-        calls.append(f"ingest_raw:{raw_root}")
-        return 5
-
-    def import_available(store: object, data_dir: Path) -> list[str]:
-        calls.append(f"vaastav:{data_dir}")
-        return []
-
-    def ingest_understat(
-        store: object, raw_root: Path, players: object, teams: object
-    ) -> int:
-        calls.append("understat")
-        return 7
-
-    def ingest_api_football(
-        store: object, raw_root: Path, players: object, teams: object
-    ) -> int:
-        calls.append("api_football")
-        return 9
+        settings: object = None,
+    ) -> FeedRefreshResult:
+        calls.append(f"refresh:{source}:{remote}:{branch}:{data_dir}")
+        return FeedRefreshResult(
+            snapshots_fetched=1,
+            staged_snapshots=5,
+            understat_matches=7,
+            api_football_captures=9,
+        )
 
     def catch_up(
         data_dir: Path,
@@ -119,30 +105,7 @@ def test_run_ops_catchup_calls_existing_library_steps(
         notify_calls.append((title, message))
         return True
 
-    monkeypatch.setattr("fplt.automation.ops_catchup.fetch_raw", fetch)
-    monkeypatch.setattr("fplt.automation.ops_catchup.ingest_raw", ingest_raw)
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.import_available", import_available
-    )
-    monkeypatch.setattr("fplt.automation.ops_catchup.load_id_maps", lambda _p: ({}, {}))
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.default_id_maps_path",
-        lambda: tmp_path / "u.yaml",
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.ingest_understat", ingest_understat
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.load_api_football_id_maps",
-        lambda _p: ({}, {}),
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.api_football_id_maps_path",
-        lambda: tmp_path / "af.yaml",
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.ingest_api_football", ingest_api_football
-    )
+    monkeypatch.setattr("fplt.automation.ops_catchup.refresh_ops_feeds", refresh)
     monkeypatch.setattr("fplt.automation.ops_catchup.catch_up", catch_up)
     monkeypatch.setattr("fplt.automation.ops_catchup.pending_checked", pending)
     monkeypatch.setattr("fplt.automation.ops_catchup.reports", lambda _d: "# GW 1\nok")
@@ -163,12 +126,8 @@ def test_run_ops_catchup_calls_existing_library_steps(
     assert result.still_pending == []
     assert result.models == ["rolling_mean_v1"]
     assert result.horizon == 1
-    assert calls[0].startswith("fetch:branch:/tmp/remote:snapshots:")
-    assert "ingest_raw:" in calls[1]
-    assert calls[2].startswith("vaastav:")
-    assert calls[3:] == [
-        "understat",
-        "api_football",
+    assert calls == [
+        f"refresh:branch:/tmp/remote:snapshots:{tmp_path}",
         "catch_up:['rolling_mean_v1']:1",
         "pending",
     ]
@@ -183,27 +142,9 @@ def test_run_ops_catchup_skips_notify_when_nothing_planned_or_disabled(
     get_settings.cache_clear()
     notify_calls: list[str] = []
 
-    monkeypatch.setattr("fplt.automation.ops_catchup.fetch_raw", lambda *a, **k: [])
-    monkeypatch.setattr("fplt.automation.ops_catchup.ingest_raw", lambda *a, **k: 0)
     monkeypatch.setattr(
-        "fplt.automation.ops_catchup.import_available", lambda *a, **k: []
-    )
-    monkeypatch.setattr("fplt.automation.ops_catchup.load_id_maps", lambda _p: ({}, {}))
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.default_id_maps_path", lambda: tmp_path / "u.yaml"
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.ingest_understat", lambda *a, **k: 0
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.load_api_football_id_maps", lambda _p: ({}, {})
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.api_football_id_maps_path",
-        lambda: tmp_path / "af.yaml",
-    )
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.ingest_api_football", lambda *a, **k: 0
+        "fplt.automation.ops_catchup.refresh_ops_feeds",
+        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
     )
     monkeypatch.setattr("fplt.automation.ops_catchup.catch_up", lambda *a, **k: [])
     monkeypatch.setattr(
@@ -235,10 +176,10 @@ def test_run_ops_catchup_propagates_snapshot_fetch_error(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
 
-    def boom(*_a: object, **_k: object) -> list[Path]:
+    def boom(*_a: object, **_k: object) -> FeedRefreshResult:
         raise SnapshotFetchError("missing branch")
 
-    monkeypatch.setattr("fplt.automation.ops_catchup.fetch_raw", boom)
+    monkeypatch.setattr("fplt.automation.ops_catchup.refresh_ops_feeds", boom)
     with pytest.raises(SnapshotFetchError, match="missing branch"):
         run_ops_catchup()
     get_settings.cache_clear()
@@ -280,10 +221,9 @@ def test_cli_ops_catchup_prints_status_and_auth(
 
 
 def test_cli_ops_catchup_passes_source_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("FPLT_ENV_FILE", str(tmp_path / "env"))
     get_settings.cache_clear()
     seen: dict[str, object] = {}
 
@@ -296,7 +236,7 @@ def test_cli_ops_catchup_passes_source_flag(
             api_football_captures=0,
             planned=[],
             still_pending=[],
-            models=["dc_layered_v4"],
+            models=["rolling_mean_v1"],
             horizon=3,
         )
 
@@ -312,8 +252,8 @@ def test_cli_ops_catchup_exits_on_fetch_error(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
 
-    def boom(**_kwargs: object) -> OpsCatchupResult:
-        raise SnapshotFetchError("offline")
+    def boom(**_k: object) -> OpsCatchupResult:
+        raise SnapshotFetchError("boom")
 
     monkeypatch.setattr("fplt.automation.ops_catchup.run_ops_catchup", boom)
     with pytest.raises(SystemExit) as exc:
@@ -330,8 +270,8 @@ def test_cli_ops_catchup_exits_on_remote_error(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
 
-    def boom(**_kwargs: object) -> OpsCatchupResult:
-        raise RemoteError("rclone offline")
+    def boom(**_k: object) -> OpsCatchupResult:
+        raise RemoteError("rclone failed")
 
     monkeypatch.setattr("fplt.automation.ops_catchup.run_ops_catchup", boom)
     with pytest.raises(SystemExit) as exc:

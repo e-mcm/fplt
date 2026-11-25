@@ -19,20 +19,9 @@ from fplt.automation.cycle import (
     reports,
 )
 from fplt.automation.notify import notify_recommendation
-from fplt.data.api_football import (
-    default_id_maps_path as api_football_id_maps_path,
-)
-from fplt.data.api_football import (
-    ingest_api_football,
-)
-from fplt.data.api_football import (
-    load_id_maps as load_api_football_id_maps,
-)
-from fplt.data.raw import ingest_raw
-from fplt.data.snapshots import RawSource, fetch_raw
+from fplt.automation.ops_feeds import refresh_ops_feeds
+from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
-from fplt.data.understat import default_id_maps_path, ingest_understat, load_id_maps
-from fplt.data.vaastav import import_available
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
@@ -109,34 +98,14 @@ def run_ops_catchup(
     cfg = get_settings() if settings is None else settings
     root = cfg.data_dir if data_dir is None else data_dir
     chosen = PRODUCTION_MODELS if models is None else models
-    raw_root = root / "raw"
 
-    logger.info(
-        "ops_catchup: fetch_raw source=%s remote=%s branch=%s",
-        source,
-        remote,
-        branch,
-    )
-    new_files = fetch_raw(
-        raw_root,
-        cfg,
+    feeds = refresh_ops_feeds(
+        root,
         source=source,
         remote=remote,
         branch=branch,
+        settings=cfg,
     )
-
-    store = DataStore(root)
-    logger.info("ops_catchup: refresh staged")
-    staged = ingest_raw(store, raw_root)
-    import_available(store, root)
-
-    logger.info("ops_catchup: understat_ingest")
-    player_keys, team_keys = load_id_maps(default_id_maps_path())
-    understat_n = ingest_understat(store, raw_root, player_keys, team_keys)
-
-    logger.info("ops_catchup: api_football_ingest")
-    af_players, af_teams = load_api_football_id_maps(api_football_id_maps_path())
-    af_n = ingest_api_football(store, raw_root, af_players, af_teams)
 
     logger.info("ops_catchup: catch_up models=%s horizon=%s", chosen, horizon)
     done = catch_up(root, chosen, horizon=horizon)
@@ -144,12 +113,12 @@ def run_ops_catchup(
         text = reports(root) or "No plan yet."
         notify_recommendation(cfg, "fplt recommendation", text)
 
-    waiting = pending_checked(store, root, chosen, horizon)
+    waiting = pending_checked(DataStore(root), root, chosen, horizon)
     result = OpsCatchupResult(
-        snapshots_fetched=len(new_files),
-        staged_snapshots=staged,
-        understat_matches=understat_n,
-        api_football_captures=af_n,
+        snapshots_fetched=feeds.snapshots_fetched,
+        staged_snapshots=feeds.staged_snapshots,
+        understat_matches=feeds.understat_matches,
+        api_football_captures=feeds.api_football_captures,
         planned=done,
         still_pending=waiting,
         models=list(chosen),

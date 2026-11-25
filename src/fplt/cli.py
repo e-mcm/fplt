@@ -1156,6 +1156,46 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    ops_tick = sub.add_parser(
+        "ops-tick",
+        parents=[log_flags],
+        help=(
+            "Idempotent ops tick: fetch → restage → catch_up → "
+            "pre_deadline → status (GHA cron / no Dagster UI)"
+        ),
+    )
+    ops_tick.add_argument(
+        "--source",
+        choices=("auto", "bucket", "branch"),
+        default="auto",
+        help=(
+            "Raw fetch source: auto (bucket when FPLT_DATA_BUCKET is set, "
+            "else branch), bucket, or branch (default: auto)"
+        ),
+    )
+    ops_tick.add_argument(
+        "--remote",
+        default="origin",
+        help="Git remote (or local path) for the snapshots branch",
+    )
+    ops_tick.add_argument(
+        "--branch",
+        default="snapshots",
+        help="Branch that holds write-once captures (default: snapshots)",
+    )
+    ops_tick.add_argument(
+        "--horizon",
+        type=int,
+        default=None,
+        help=(
+            "Plan horizon (default: configs/ops/production.yaml / FPLT_PLAN_HORIZON)"
+        ),
+    )
+    ops_tick.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Skip ntfy/SMTP recommendation push even when plans were made",
+    )
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
@@ -1332,6 +1372,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "ops-catchup":
         _ops_catchup(args)
         return
+    if args.command == "ops-tick":
+        _ops_tick(args)
+        return
     if args.command == "backtest":
         _backtest(args)
         return
@@ -1480,6 +1523,28 @@ def _ops_catchup(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_ops_catchup_status(result), end="")
+    print(format_status(auth_status()), end="")
+
+
+def _ops_tick(args: argparse.Namespace) -> None:
+    from fplt.automation.ops_tick import format_ops_tick_status, run_ops_tick
+    from fplt.data.remote import RemoteError
+    from fplt.data.snapshots import RawSource, SnapshotFetchError
+
+    source: RawSource = args.source
+    horizon = None if args.horizon is None else int(args.horizon)
+    try:
+        result = run_ops_tick(
+            source=source,
+            remote=str(args.remote),
+            branch=str(args.branch),
+            horizon=horizon,
+            notify=not bool(args.no_notify),
+        )
+    except (SnapshotFetchError, RemoteError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(format_ops_tick_status(result), end="")
     print(format_status(auth_status()), end="")
 
 
