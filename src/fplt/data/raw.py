@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from fplt.data.quarantine import capture_relpath, quarantined_capture_paths
 from fplt.data.staging import stage_bootstrap, stage_event_live
 from fplt.data.store import DataStore
 from fplt.utils.timing import (
@@ -32,6 +33,11 @@ class RawSnapshot:
     captured_at: datetime
     bootstrap_path: Path
     fixtures_path: Path | None
+
+    @property
+    def capture_dir(self) -> Path:
+        """Directory holding this capture's bootstrap (and fixtures)."""
+        return self.bootstrap_path.parent
 
 
 def _stamp(value: str) -> datetime:
@@ -66,13 +72,22 @@ def read_json(path: Path) -> Any:
 
 
 def ingest_raw(store: DataStore, raw_root: Path) -> int:
-    """Stage every snapshot and checked live payload. Return files consumed."""
+    """Stage every snapshot and checked live payload. Return files consumed.
+
+    Captures listed in ``store.root/quarantine/`` (ops-06) are skipped so a
+    quarantined raw object never reaches ``staged/``.
+    """
+    skipped = quarantined_capture_paths(store.root)
     session = TimingSession()
     with timing_artifacts(store.root):
         with timing_session(session):
             with timed_phase("ingest"):
                 count = 0
                 for snap in iter_snapshots(raw_root):
+                    rel = capture_relpath(raw_root, snap.capture_dir)
+                    if rel in skipped:
+                        logger.info("skipping quarantined capture %s", rel)
+                        continue
                     bootstrap: dict[str, Any] = read_json(snap.bootstrap_path)
                     fixtures = cast(
                         list[dict[str, Any]],
@@ -107,7 +122,11 @@ def ingest_raw(store: DataStore, raw_root: Path) -> int:
                                 store.write("player_fixture_stats", stats)
                             count += 1
                     count += 1
-        meta = {"files": count, "raw_root": str(raw_root)}
+        meta = {
+            "files": count,
+            "raw_root": str(raw_root),
+            "quarantine_skipped": len(skipped),
+        }
         logger.info(format_kind_summary("ingest", session, meta=meta))
         write_timing_record("ingest", session, meta=meta)
     return count
