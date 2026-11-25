@@ -2,6 +2,7 @@
 
 Data-model contracts (Stage B2): ``manifests`` (RunManifest, BuildManifest,
 OfficialPointer, AppliedRecord, InterventionRecord), ``l2`` (L2StandardKeys,
-SCHEMA_VERSION), ``outcomes``, ``squad_state_table``. Experiment/batch
-manifests wait for Stage C.
+SCHEMA_VERSION), ``outcomes``, ``squad_state_table``. Ops-06 quarantine rows:
+``quarantine.QuarantineRecordSchema``. Experiment/batch manifests wait for
+Stage C.
 """

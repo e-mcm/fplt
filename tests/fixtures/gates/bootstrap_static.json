@@ -1,0 +1,464 @@
+{
+  "teams": [
+    {
+      "id": 1,
+      "code": 101,
+      "name": "Club 1",
+      "short_name": "C01"
+    },
+    {
+      "id": 2,
+      "code": 102,
+      "name": "Club 2",
+      "short_name": "C02"
+    },
+    {
+      "id": 3,
+      "code": 103,
+      "name": "Club 3",
+      "short_name": "C03"
+    },
+    {
+      "id": 4,
+      "code": 104,
+      "name": "Club 4",
+      "short_name": "C04"
+    },
+    {
+      "id": 5,
+      "code": 105,
+      "name": "Club 5",
+      "short_name": "C05"
+    },
+    {
+      "id": 6,
+      "code": 106,
+      "name": "Club 6",
+      "short_name": "C06"
+    },
+    {
+      "id": 7,
+      "code": 107,
+      "name": "Club 7",
+      "short_name": "C07"
+    },
+    {
+      "id": 8,
+      "code": 108,
+      "name": "Club 8",
+      "short_name": "C08"
+    },
+    {
+      "id": 9,
+      "code": 109,
+      "name": "Club 9",
+      "short_name": "C09"
+    },
+    {
+      "id": 10,
+      "code": 110,
+      "name": "Club 10",
+      "short_name": "C10"
+    },
+    {
+      "id": 11,
+      "code": 111,
+      "name": "Club 11",
+      "short_name": "C11"
+    },
+    {
+      "id": 12,
+      "code": 112,
+      "name": "Club 12",
+      "short_name": "C12"
+    },
+    {
+      "id": 13,
+      "code": 113,
+      "name": "Club 13",
+      "short_name": "C13"
+    },
+    {
+      "id": 14,
+      "code": 114,
+      "name": "Club 14",
+      "short_name": "C14"
+    },
+    {
+      "id": 15,
+      "code": 115,
+      "name": "Club 15",
+      "short_name": "C15"
+    },
+    {
+      "id": 16,
+      "code": 116,
+      "name": "Club 16",
+      "short_name": "C16"
+    },
+    {
+      "id": 17,
+      "code": 117,
+      "name": "Club 17",
+      "short_name": "C17"
+    },
+    {
+      "id": 18,
+      "code": 118,
+      "name": "Club 18",
+      "short_name": "C18"
+    },
+    {
+      "id": 19,
+      "code": 119,
+      "name": "Club 19",
+      "short_name": "C19"
+    },
+    {
+      "id": 20,
+      "code": 120,
+      "name": "Club 20",
+      "short_name": "C20"
+    }
+  ],
+  "elements": [
+    {
+      "id": 1,
+      "code": 1001,
+      "team": 1,
+      "element_type": 3,
+      "web_name": "P1",
+      "status": "a",
+      "news": "",
+      "now_cost": 51,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 2,
+      "code": 1002,
+      "team": 2,
+      "element_type": 3,
+      "web_name": "P2",
+      "status": "a",
+      "news": "",
+      "now_cost": 52,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 3,
+      "code": 1003,
+      "team": 3,
+      "element_type": 3,
+      "web_name": "P3",
+      "status": "a",
+      "news": "",
+      "now_cost": 53,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 4,
+      "code": 1004,
+      "team": 4,
+      "element_type": 3,
+      "web_name": "P4",
+      "status": "a",
+      "news": "",
+      "now_cost": 54,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 5,
+      "code": 1005,
+      "team": 5,
+      "element_type": 3,
+      "web_name": "P5",
+      "status": "a",
+      "news": "",
+      "now_cost": 55,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 6,
+      "code": 1006,
+      "team": 6,
+      "element_type": 3,
+      "web_name": "P6",
+      "status": "a",
+      "news": "",
+      "now_cost": 56,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 7,
+      "code": 1007,
+      "team": 7,
+      "element_type": 3,
+      "web_name": "P7",
+      "status": "a",
+      "news": "",
+      "now_cost": 57,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 8,
+      "code": 1008,
+      "team": 8,
+      "element_type": 3,
+      "web_name": "P8",
+      "status": "a",
+      "news": "",
+      "now_cost": 58,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 9,
+      "code": 1009,
+      "team": 9,
+      "element_type": 3,
+      "web_name": "P9",
+      "status": "a",
+      "news": "",
+      "now_cost": 59,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 10,
+      "code": 1010,
+      "team": 10,
+      "element_type": 3,
+      "web_name": "P10",
+      "status": "a",
+      "news": "",
+      "now_cost": 60,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 11,
+      "code": 1011,
+      "team": 11,
+      "element_type": 3,
+      "web_name": "P11",
+      "status": "a",
+      "news": "",
+      "now_cost": 61,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 12,
+      "code": 1012,
+      "team": 12,
+      "element_type": 3,
+      "web_name": "P12",
+      "status": "a",
+      "news": "",
+      "now_cost": 62,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 13,
+      "code": 1013,
+      "team": 13,
+      "element_type": 3,
+      "web_name": "P13",
+      "status": "a",
+      "news": "",
+      "now_cost": 63,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 14,
+      "code": 1014,
+      "team": 14,
+      "element_type": 3,
+      "web_name": "P14",
+      "status": "a",
+      "news": "",
+      "now_cost": 64,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 15,
+      "code": 1015,
+      "team": 15,
+      "element_type": 3,
+      "web_name": "P15",
+      "status": "a",
+      "news": "",
+      "now_cost": 65,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 16,
+      "code": 1016,
+      "team": 16,
+      "element_type": 3,
+      "web_name": "P16",
+      "status": "a",
+      "news": "",
+      "now_cost": 66,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 17,
+      "code": 1017,
+      "team": 17,
+      "element_type": 3,
+      "web_name": "P17",
+      "status": "a",
+      "news": "",
+      "now_cost": 67,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 18,
+      "code": 1018,
+      "team": 18,
+      "element_type": 3,
+      "web_name": "P18",
+      "status": "a",
+      "news": "",
+      "now_cost": 68,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 19,
+      "code": 1019,
+      "team": 19,
+      "element_type": 3,
+      "web_name": "P19",
+      "status": "a",
+      "news": "",
+      "now_cost": 69,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    },
+    {
+      "id": 20,
+      "code": 1020,
+      "team": 20,
+      "element_type": 3,
+      "web_name": "P20",
+      "status": "a",
+      "news": "",
+      "now_cost": 70,
+      "ep_next": "3.0",
+      "chance_of_playing_next_round": 100,
+      "chance_of_playing_this_round": 100,
+      "penalties_order": null,
+      "corners_and_indirect_freekicks_order": null,
+      "direct_freekicks_order": null
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "deadline_time": "2024-08-16T17:30:00Z",
+      "finished": true,
+      "data_checked": true,
+      "is_current": false,
+      "is_next": false
+    },
+    {
+      "id": 2,
+      "deadline_time": "2024-08-23T17:30:00Z",
+      "finished": false,
+      "data_checked": false,
+      "is_current": true,
+      "is_next": true
+    }
+  ]
+}
