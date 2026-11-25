@@ -1,0 +1,14 @@
+# Capture sanity gates (ops-06 / A10). Thresholds live here, not in code.
+# Compared against the previous good bootstrap+fixtures capture when present.
+
+# Absolute player-count delta vs previous good capture (|Δ| ≤ this).
+player_count_max_delta: 50
+
+# Max share of elements with a null / missing field (0.0 = none allowed).
+max_null_share:
+  now_cost: 0.0
+  status: 0.0
+  team: 0.0
+
+# Bootstrap must list this many teams; next GW fixtures must cover them all.
+expected_team_count: 20
