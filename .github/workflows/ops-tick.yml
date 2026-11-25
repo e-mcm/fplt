@@ -1,0 +1,128 @@
+name: ops-tick
+
+# Cheap idempotent tick (foundation for ops-02 checkpoints). Offset minutes
+# avoid top-of-hour GHA congestion. concurrency: ops so ticks never overlap.
+# Set repo variable OPS_LIVE=true before enabling real planning on runners.
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force a failure to test the ntfy alert
+        type: boolean
+        default: false
+      source:
+        description: Raw fetch source (auto / bucket / branch)
+        type: choice
+        options: [auto, bucket, branch]
+        default: auto
+      force_live:
+        description: Run planning even when OPS_LIVE is unset (manual only)
+        type: boolean
+        default: false
+
+concurrency:
+  group: ops
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
+
+      - name: Gate on OPS_LIVE
+        id: gate
+        run: |
+          set -euo pipefail
+          live="${{ vars.OPS_LIVE }}"
+          force="${{ github.event_name == 'workflow_dispatch' && inputs.force_live }}"
+          if [ "$live" = "true" ] || [ "$force" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "OPS_LIVE enabled (or force_live); running ops-tick"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "OPS_LIVE unset; scaffolding only (set repo variable OPS_LIVE=true to plan)"
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        if: steps.gate.outputs.enabled == 'true'
+        run: uv sync --frozen
+
+      - name: Install rclone
+        if: steps.gate.outputs.enabled == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+
+      - name: Restore ops state cache
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/staged
+            data/plans
+            data/ledger
+            data/predictions
+            data/artifacts
+            data/runs
+            data/curated
+          key: ops-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ops-state-${{ runner.os }}-
+
+      - name: Run ops-tick
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          FPLT_DATA_DIR: ${{ github.workspace }}/data
+          FPLT_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          FPLT_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          FPLT_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FPLT_DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+          FPLT_LAB_BUCKET: ${{ vars.LAB_BUCKET }}
+          FPLT_ENTRY_ID: ${{ secrets.FPLT_ENTRY_ID }}
+          FPLT_FPL_API_TOKEN: ${{ secrets.FPLT_FPL_API_TOKEN }}
+          FPLT_NTFY_URL: ${{ secrets.FPLT_NTFY_URL }}
+          FPLT_PRODUCTION_MODELS: ${{ vars.FPLT_PRODUCTION_MODELS }}
+          FPLT_PLAN_HORIZON: ${{ vars.FPLT_PLAN_HORIZON }}
+          OPS_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.source || 'auto' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$FPLT_DATA_DIR"
+          remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          uv run fplt ops-tick --source "$OPS_SOURCE" --remote "$remote" --branch snapshots
+
+  alerts:
+    needs: tick
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Heartbeat
+        if: needs.tick.result == 'success'
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_OPS_TICK }}
+
+      - name: Notify failure
+        if: needs.tick.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}

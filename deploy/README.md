@@ -85,6 +85,38 @@ Optional flags via `ARGS`, e.g. `make ops-catchup ARGS='--no-notify'`. Does not
 replace a running daemon for ongoing pre-deadline windows; use this as a
 one-shot recovery.
 
+## GHA ops-tick / ops-catchup (foundation)
+
+| Workflow | Trigger | Command |
+|---|---|---|
+| `.github/workflows/ops-tick.yml` | cron `7,22,37,52 * * * *` + `workflow_dispatch` | `fplt ops-tick` |
+| `.github/workflows/ops-catchup.yml` | `workflow_dispatch` | `fplt ops-catchup` |
+
+Both share `concurrency: group: ops` (no overlapping ticks). Capture dual-write
+(branch + R2) is unchanged. Deadline checkpoints and the no-plan alarm are
+ops-02 follow-ons; this foundation only runs the existing idempotent cycle.
+
+**Live gate:** repo variable `OPS_LIVE` must be `true` before a scheduled tick
+plans on GitHub-hosted runners (avoids a cold cache re-planning every checked
+GW). Manual dispatch can pass `force_live=true`. Locally, `make ops-tick` /
+`make ops-catchup` always run against `$FPLT_DATA_DIR`.
+
+**Secrets / vars (in addition to capture R2 secrets):**
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `OPS_LIVE` | variable | `true` to enable planning on GHA |
+| `DATA_BUCKET` / `LAB_BUCKET` | variable | R2 bucket names |
+| `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` | secret | live squad (optional) |
+| `FPLT_NTFY_URL` | secret | recommendation push from the tick |
+| `HC_PING_URL_OPS_TICK` / `HC_PING_URL_OPS_CATCHUP` | secret | heartbeats (ops-03) |
+| `NTFY_URL` | secret | failure alerts (same as capture) |
+
+```bash
+gh workflow run ops-tick.yml -f force_live=true
+gh workflow run ops-catchup.yml -f force_live=true -f no_notify=true
+```
+
 ## docker compose (optional VPS)
 
 1. Build or tag an image as `fplt:local` that contains this repo and its deps.
@@ -114,9 +146,8 @@ volumes.
 ## Capture-job heartbeats and failure alerts (ops-03 / A7)
 
 Scheduled capture workflows (`snapshot`, `understat`, `api_football`,
-`football_data`) ping a dead-man's switch on success and POST a short ntfy
-alert on failure. Ops-tick and other live workflows get the same treatment in a
-later ops-03 PR; this section covers **capture jobs only**.
+`football_data`) and the ops workflows (`ops-tick`, `ops-catchup`) ping a
+dead-man's switch on success and POST a short ntfy alert on failure.
 
 ### Composite actions
 
@@ -141,6 +172,8 @@ configures healthchecks.io.
 | `HC_PING_URL_UNDERSTAT` | ping URL for `understat` |
 | `HC_PING_URL_API_FOOTBALL` | ping URL for `api_football` |
 | `HC_PING_URL_FOOTBALL_DATA` | ping URL for `football_data` |
+| `HC_PING_URL_OPS_TICK` | ping URL for `ops-tick` |
+| `HC_PING_URL_OPS_CATCHUP` | ping URL for `ops-catchup` |
 
 ### healthchecks.io check table (configure in A8)
 
@@ -150,6 +183,8 @@ configures healthchecks.io.
 | `fplt-understat` | `understat.yml` | 3 days | 1 day | `30 22 * * 0,1,6` |
 | `fplt-api-football` | `api_football.yml` | 6 h | 3 h | `15 */6 * * *` |
 | `fplt-football-data` | `football_data.yml` | 35 days | 7 days | `0 6 1 * *` |
+| `fplt-ops-tick` | `ops-tick.yml` | 15 min | 45 min | `7,22,37,52 * * * *` |
+| `fplt-ops-catchup` | `ops-catchup.yml` | n/a (dispatch) | — | manual |
 
 Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.
 Paste each check's ping URL into the matching `HC_PING_URL_*` secret.
