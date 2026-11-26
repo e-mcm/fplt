@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
+.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -235,6 +235,20 @@ regret-board:
 		$(if $(FROM_GW),--from-gw $(FROM_GW),) \
 		$(if $(TO_GW),--to-gw $(TO_GW),) \
 		$(if $(OUT),--output-dir $(OUT),) \
+		$(ARGS)
+
+# Post-GW decision scoring + weekly report (ops-08). Writes
+# $$FPLT_DATA_DIR/reports/gw=<n>/weekly.md + parquet and updates
+# season_to_date.parquet. Notify once per distinct body (ntfy optional).
+# Usage: make weekly-report SEASON=2025-26 GW=12
+# Optional: MODEL_ID=… HINDSIGHT_BEST=… N_FIXTURES=… ARGS='--no-notify'
+weekly-report:
+	@if [ -z "$(SEASON)" ] || [ -z "$(GW)" ]; then \
+		echo "Usage: make weekly-report SEASON=2025-26 GW=12"; exit 1; fi
+	uv run fplt weekly-report --season $(SEASON) --gw $(GW) \
+		$(if $(MODEL_ID),--model-id $(MODEL_ID),) \
+		$(if $(HINDSIGHT_BEST),--hindsight-best $(HINDSIGHT_BEST),) \
+		$(if $(N_FIXTURES),--n-fixtures $(N_FIXTURES),) \
 		$(ARGS)
 
 # Chip-arm simulated-season SE smoke (N6). Short GW window × few CRN paths —
