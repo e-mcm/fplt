@@ -794,7 +794,13 @@ def run_plan(
                 names=names,
             )
             try:
-                path = write_plan(data_dir, table)
+                from fplt.automation.release import resolve_prod_tag_label
+
+                path = write_plan(
+                    data_dir,
+                    table,
+                    prod_tag=resolve_prod_tag_label(),
+                )
             except FileExistsError as exc:
                 raise PlanExistsError(Path(str(exc)), report) from exc
             (path.parent / "report.md").write_text(report, encoding="utf-8")

@@ -236,7 +236,8 @@ class RunWriter:
             squad_mode: ``real`` / ``virtual`` for official plan runs.
             prev_run_id: Prior virtual-line plan run, when chaining.
             checkpoint: Ops checkpoint label (e.g. ``T-90m``).
-            prod_tag: ``prod-…`` tag from ops-04 when known.
+            prod_tag: Moving ops tag label when running from ``prod``; defaults
+                to ``FPLT_PROD_TAG`` when set (ops-04).
         """
         self.data_dir = data_dir
         self.run_id = run_id if run_id is not None else mint_run_id()
@@ -289,7 +290,12 @@ class RunWriter:
         self._squad_mode: SquadMode | None = squad_mode
         self._prev_run_id = prev_run_id
         self._checkpoint = checkpoint
-        self._prod_tag = prod_tag
+        if prod_tag is not None:
+            self._prod_tag: str | None = prod_tag
+        else:
+            from fplt.automation.release import resolve_prod_tag_label
+
+            self._prod_tag = resolve_prod_tag_label()
         self._fplt_mc_version = fplt_mc_version()
         self._manifest: RunManifest | None = None
         self._finalized = False

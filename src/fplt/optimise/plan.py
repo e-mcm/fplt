@@ -16,6 +16,7 @@ restricts or forces chips by gameweek (Wave C3 hooks for C5).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
@@ -491,12 +492,33 @@ def plan_parquet(
     return root / "plans" / model_id / stamp / "part.parquet"
 
 
-def write_plan(root: Path, frame: pl.DataFrame) -> Path:
+def plan_code_sha_path(plan_parquet_path: Path) -> Path:
+    """Sidecar path that records the git sha that wrote a plan parquet."""
+    return plan_parquet_path.parent / "code_sha.txt"
+
+
+def plan_metadata_path(plan_parquet_path: Path) -> Path:
+    """JSON metadata beside a plan parquet (``code_sha``, optional ``prod_tag``)."""
+    return plan_parquet_path.parent / "metadata.json"
+
+
+def write_plan(
+    root: Path,
+    frame: pl.DataFrame,
+    *,
+    code_sha: str | None = None,
+    prod_tag: str | None = None,
+) -> Path:
     """Write a plan parquet. The same deadline and horizon are never replaced.
+
+    Also writes ``code_sha.txt`` and ``metadata.json`` beside the parquet so
+    every plan traces to the code that produced it (ops-04).
 
     Args:
         root: Data directory that contains ``plans/``.
         frame: Rows matching ``PlanSchema`` for one model and one deadline.
+        code_sha: Git HEAD to record; defaults to ``git_sha()``.
+        prod_tag: Optional moving-tag label (for example ``prod``) from ops.
 
     Returns:
         The parquet path.
@@ -505,6 +527,8 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
         FileExistsError: That deadline and horizon were already written.
         ValueError: The frame mixes deadlines or skips a horizon step.
     """
+    from fplt.models.spec import git_sha
+
     checked = _frame(frame, PlanSchema)
     seasons = checked["as_of_season"].unique().to_list()
     gameweeks = checked["as_of_gw"].unique().to_list()
@@ -522,6 +546,15 @@ def write_plan(root: Path, frame: pl.DataFrame) -> Path:
         raise FileExistsError(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     checked.write_parquet(path)
+    sha = code_sha if code_sha is not None else git_sha()
+    plan_code_sha_path(path).write_text(sha + "\n", encoding="utf-8")
+    meta: dict[str, str] = {"code_sha": sha}
+    if prod_tag:
+        meta["prod_tag"] = prod_tag
+    plan_metadata_path(path).write_text(
+        json.dumps(meta, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 

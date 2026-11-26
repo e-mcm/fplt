@@ -1,0 +1,176 @@
+name: release
+
+# Move the moving `prod` tag (ops-04). Refuses during the pre-deadline freeze,
+# when CI on the candidate is not green, or when the smoke plan fails.
+# Rollback: workflow_dispatch with ref=<previous prod-YYYYMMDD-sha tag>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit / branch / tag to promote (rollback = prior prod-YYYYMMDD-sha)
+        type: string
+        default: main
+      dry_run:
+        description: Print git tag commands without pushing
+        type: boolean
+        default: false
+      simulate_failure:
+        description: Force a failure to test the ntfy alert
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  checks: read
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Simulate failure
+        if: ${{ inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
+
+      - name: Resolve candidate sha
+        id: sha
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Candidate $SHA (ref=${{ inputs.ref }})"
+
+      - name: Require CI green on candidate
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.sha.outputs.sha }}"
+          # Combined commit status (legacy) plus check-runs conclusion.
+          api="repos/${{ github.repository }}/commits/${SHA}/status"
+          state="$(gh api "$api" --jq '.state')"
+          echo "commit status state=$state"
+          if [ "$state" = "success" ]; then
+            echo "ci_status=success" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$state" = "pending" ] || [ "$state" = "expected" ]; then
+            echo "ci_status=pending" >> "$GITHUB_OUTPUT"
+            echo "refusing release: CI still pending for $SHA"
+            exit 1
+          fi
+          if [ "$state" = "failure" ] || [ "$state" = "error" ]; then
+            echo "ci_status=failure" >> "$GITHUB_OUTPUT"
+            echo "refusing release: CI is red for $SHA"
+            exit 1
+          fi
+          # No combined status yet — look at the CI workflow run for this sha.
+          conclusion="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${SHA}&status=completed&per_page=20" \
+            --jq '[.workflow_runs[] | select(.name=="CI")] | .[0].conclusion // "missing"')"
+          echo "CI workflow conclusion=$conclusion"
+          if [ "$conclusion" = "success" ]; then
+            echo "ci_status=success" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$conclusion" = "missing" ] || [ "$conclusion" = "null" ]; then
+            echo "ci_status=unknown" >> "$GITHUB_OUTPUT"
+            echo "refusing release: CI status unknown for $SHA (need success)"
+            exit 1
+          fi
+          echo "ci_status=failure" >> "$GITHUB_OUTPUT"
+          echo "refusing release: CI is red for $SHA (conclusion=$conclusion)"
+          exit 1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync --frozen
+
+      - name: Install rclone
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+
+      - name: Restore staged tables for freeze check
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/staged
+          key: ops-state-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ops-state-${{ runner.os }}-
+
+      - name: Pull staged gameweeks/fixtures when R2 configured
+        env:
+          FPLT_DATA_DIR: ${{ github.workspace }}/data
+          FPLT_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          FPLT_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          FPLT_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FPLT_DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$FPLT_DATA_DIR"
+          if [ -z "${FPLT_DATA_BUCKET:-}" ] || [ -z "${FPLT_R2_ACCOUNT_ID:-}" ]; then
+            echo "R2 not configured; freeze check uses local staged cache only"
+            exit 0
+          fi
+          # Best-effort: empty staged tables mean outside freeze.
+          uv run python - <<'PY' || true
+          import os
+          from pathlib import Path
+          from fplt.data.remote import Remote, pull
+          from fplt.settings import get_settings
+
+          root = Path(os.environ["FPLT_DATA_DIR"])
+          settings = get_settings()
+          remote = Remote.from_settings(settings)
+          if remote is None:
+              print("no data bucket; skip staged pull")
+              raise SystemExit(0)
+          for name in ("gameweeks", "fixtures"):
+              dest = root / "staged" / name
+              dest.mkdir(parents=True, exist_ok=True)
+              pull(remote, f"staged/{name}", dest)
+              print(f"pulled staged/{name}")
+          PY
+
+      - name: Run freeze + smoke gates
+        id: gates
+        env:
+          FPLT_DATA_DIR: ${{ github.workspace }}/data
+        run: |
+          set -euo pipefail
+          CI_STATUS="${{ steps.ci.outputs.ci_status }}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            uv run fplt release check --ref HEAD --ci-status "$CI_STATUS"
+          else
+            uv run fplt release promote --ref HEAD --ci-status "$CI_STATUS"
+          fi
+
+  alerts:
+    needs: release
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify failure
+        if: needs.release.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}

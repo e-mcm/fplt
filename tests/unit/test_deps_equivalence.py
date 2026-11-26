@@ -46,10 +46,17 @@ def test_runtime_deps_board_loads() -> None:
     assert spec.equivalence is not None
 
 
-def test_check_prod_freeze_soft_skips_without_ops04() -> None:
+def test_check_prod_freeze_open_when_ops04_present(tmp_path: Path) -> None:
+    """ops-04 landed ``fplt.ops.freeze``; empty staged data is outside freeze."""
+    from fplt.ops.freeze import in_prod_freeze
+
+    frozen, detail = in_prod_freeze(data_dir=tmp_path)
+    assert frozen is False
+    assert "outside freeze" in detail
+    # check_prod_freeze uses Settings.data_dir; the hook itself is present now.
     result = check_prod_freeze()
-    assert result.state == "soft_skip"
-    assert "ops-04" in result.reason or "fplt.ops.freeze" in result.reason
+    assert result.state in ("open", "frozen")
+    assert result.state != "soft_skip"
 
 
 def test_check_prod_freeze_honours_hook() -> None:

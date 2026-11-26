@@ -1,0 +1,31 @@
+name: checkout-prod
+description: >
+  Check out the moving prod tag for ops jobs. If the tag is missing
+  (first cut-over), fall back to the default branch so workflows stay green.
+
+inputs:
+  token:
+    description: GitHub token for fetch (default GITHUB_TOKEN)
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch and check out prod (or bootstrap default branch)
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        # actions/checkout already cloned the default ref; fetch tags and
+        # switch to prod when it exists.
+        git fetch --tags --force origin "refs/tags/prod:refs/tags/prod" 2>/dev/null || true
+        if git rev-parse --verify refs/tags/prod >/dev/null 2>&1; then
+          echo "Checking out moving tag prod ($(git rev-parse prod))"
+          git checkout --force prod
+          echo "FPLT_PROD_TAG=prod" >> "$GITHUB_ENV"
+        else
+          echo "prod tag missing; bootstrapping on default checkout @ $(git rev-parse HEAD)"
+        fi
+        echo "OPS_CODE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"

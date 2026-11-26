@@ -1419,6 +1419,70 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP even when alerts fire",
     )
+    release = sub.add_parser(
+        "release",
+        parents=[log_flags],
+        help="Promote or roll back the moving prod tag (ops-04)",
+    )
+    release_sub = release.add_subparsers(dest="release_command")
+    release_check = release_sub.add_parser(
+        "check",
+        parents=[log_flags],
+        help="Run CI / freeze / smoke gates without moving tags",
+    )
+    release_check.add_argument(
+        "--ref",
+        default="HEAD",
+        help="Candidate commit / branch / tag (default: HEAD)",
+    )
+    release_check.add_argument(
+        "--ci-status",
+        choices=("success", "failure", "pending", "unknown"),
+        default=None,
+        help=(
+            "Inject CI status (tests / GHA). When omitted, treat as success "
+            "locally; release.yml passes the Actions conclusion."
+        ),
+    )
+    release_check.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Data root for staged gameweeks/fixtures (default: settings)",
+    )
+    release_promote = release_sub.add_parser(
+        "promote",
+        parents=[log_flags],
+        help=(
+            "Run gates then move prod (and write prod-YYYYMMDD-<sha>). "
+            "Rollback: --ref=<previous immutable tag>."
+        ),
+    )
+    release_promote.add_argument(
+        "--ref",
+        default="HEAD",
+        help="Candidate commit / branch / tag (default: HEAD)",
+    )
+    release_promote.add_argument(
+        "--ci-status",
+        choices=("success", "failure", "pending", "unknown"),
+        default=None,
+        help="Inject CI status (required to be success to promote)",
+    )
+    release_promote.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Data root for staged gameweeks/fixtures (default: settings)",
+    )
+    release_promote.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print git tag/push commands without running them",
+    )
+    release_sub.add_parser(
+        "smoke",
+        parents=[log_flags],
+        help="Load production ModelSpec (smoke plan gate only)",
+    )
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
@@ -1761,6 +1825,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "drift-check":
         _drift_check(args)
+        return
+    if args.command == "release":
+        _release(args)
         return
     if args.command == "backtest":
         _backtest(args)
@@ -2287,6 +2354,81 @@ def _drift_check(args: argparse.Namespace) -> None:
     if not reports:
         print("drift-check: no production models resolved")
     raise SystemExit(1 if alerted else 0)
+
+
+def _release(args: argparse.Namespace) -> None:
+    from datetime import UTC, datetime
+
+    import polars as pl
+
+    from fplt.automation.release import (
+        ReleaseGateError,
+        evaluate_release_gates,
+        promote_prod_tags,
+        run_smoke_plan,
+    )
+    from fplt.data.store import DataStore
+
+    command = getattr(args, "release_command", None)
+    if command == "smoke":
+        try:
+            result = run_smoke_plan()
+        except ReleaseGateError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(result.detail)
+        return
+    if command not in ("check", "promote"):
+        print("usage: fplt release {check,promote,smoke}", file=sys.stderr)
+        raise SystemExit(2)
+
+    data_dir = Path(args.data_dir) if args.data_dir else get_settings().data_dir
+    gameweeks = pl.DataFrame()
+    fixtures = pl.DataFrame()
+    store = DataStore(data_dir)
+    if store.path("gameweeks").exists():
+        try:
+            gameweeks = store.read("gameweeks")
+        except Exception as exc:  # noqa: BLE001 — treat unreadable as empty
+            logger.warning("release: could not read staged gameweeks: %s", exc)
+    if store.path("fixtures").exists():
+        try:
+            fixtures = store.read("fixtures")
+        except Exception as exc:  # noqa: BLE001 — treat unreadable as empty
+            logger.warning("release: could not read staged fixtures: %s", exc)
+
+    status = args.ci_status or "success"
+
+    def _status(_sha: str) -> str:
+        return str(status)
+
+    try:
+        checked = evaluate_release_gates(
+            str(args.ref),
+            now=datetime.now(UTC),
+            gameweeks=gameweeks,
+            fixtures=fixtures,
+            status_fn=_status,  # type: ignore[arg-type]
+        )
+    except ReleaseGateError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    print(
+        f"release gates ok: ref={checked.candidate.ref} "
+        f"sha={checked.candidate.sha} "
+        f"history_tag={checked.history_tag} "
+        f"smoke={checked.smoke.model}"
+    )
+    if command == "check":
+        return
+    cmds = promote_prod_tags(
+        checked.candidate,
+        history_tag=checked.history_tag,
+        dry_run=bool(args.dry_run),
+    )
+    for line in cmds:
+        print(line)
 
 
 def _ingest_lineups(args: argparse.Namespace) -> None:
