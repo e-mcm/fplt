@@ -108,6 +108,34 @@ def test_heartbeat_soft_skips_when_ping_url_unset() -> None:
     assert "soft skip" in result.stdout
 
 
+def test_push_raw_soft_skips_when_r2_secrets_unset(tmp_path: Path) -> None:
+    """Empty R2_* / DATA_BUCKET exits 0 with a soft-skip log (no rclone)."""
+    doc = yaml.safe_load(
+        (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
+    )
+    gate = doc["runs"]["steps"][0]
+    assert gate["name"] == "Gate on R2 credentials"
+    script = str(gate["run"])
+    env = {
+        "R2_ACCOUNT_ID": "",
+        "R2_ACCESS_KEY_ID": "",
+        "R2_SECRET_ACCESS_KEY": "",
+        "DATA_BUCKET": "fplt-data",
+        "GITHUB_OUTPUT": str(tmp_path / "out"),
+    }
+    (tmp_path / "out").write_text("", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert "soft skip" in result.stdout
+    assert "skip=true" in (tmp_path / "out").read_text(encoding="utf-8")
+
+
 def test_notify_failure_soft_skips_when_ntfy_url_unset() -> None:
     """Empty NTFY_URL exits 0 with a soft-skip log (no network)."""
     script = _action_run_script("notify-failure")

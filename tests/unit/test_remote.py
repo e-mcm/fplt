@@ -58,6 +58,27 @@ def test_from_settings_returns_none_when_bucket_unset() -> None:
     assert Remote.from_settings(Settings(lab_bucket="fplt-lab")) is None
 
 
+def test_from_settings_returns_none_when_credentials_incomplete(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bucket name alone must soft-skip; empty account yields ``.r2…`` otherwise."""
+    settings = Settings(data_bucket="fplt-data", lab_bucket="fplt-lab")
+    with caplog.at_level(logging.INFO, logger="fplt.data.remote"):
+        assert Remote.from_settings(settings) is None
+        assert Remote.from_settings(settings, bucket="fplt-lab") is None
+    assert "soft skip" in caplog.text
+    assert "credentials incomplete" in caplog.text
+
+    partial = Settings(
+        data_bucket="fplt-data",
+        r2_account_id="acct",
+        r2_access_key_id="key",
+        # secret missing
+    )
+    assert Remote.from_settings(partial) is None
+    assert not remote_mod.r2_credentials_complete(partial)
+
+
 def test_from_settings_builds_data_and_lab_remotes() -> None:
     settings = Settings(
         r2_account_id="acct",

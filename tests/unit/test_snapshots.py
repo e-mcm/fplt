@@ -170,6 +170,41 @@ def test_fetch_raw_source_bucket_requires_data_bucket(tmp_path: Path) -> None:
         fetch_raw(tmp_path / "raw", Settings(), source="bucket")
 
 
+def test_fetch_raw_auto_falls_back_to_branch_when_credentials_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DATA_BUCKET set without R2 secrets must not fail auto fetch."""
+    remote = tmp_path / "remote"
+    raw = remote / "data" / "raw" / "fpl_api"
+    raw.mkdir(parents=True)
+    (raw / "bootstrap_static.json.gz").write_bytes(b"branch")
+    _commit(remote, "snapshots")
+
+    def boom(*_a: object, **_k: object) -> list[Path]:
+        raise AssertionError("bucket pull must not run without credentials")
+
+    monkeypatch.setattr("fplt.data.snapshots.pull", boom)
+    written = fetch_raw(
+        tmp_path / "raw",
+        Settings(data_bucket="fplt-data"),
+        source="auto",
+        remote=str(remote),
+    )
+    assert len(written) == 1
+    assert written[0].read_bytes() == b"branch"
+
+
+def test_fetch_raw_source_bucket_requires_complete_credentials(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SnapshotFetchError, match="complete R2 credentials"):
+        fetch_raw(
+            tmp_path / "raw",
+            Settings(data_bucket="fplt-data"),
+            source="bucket",
+        )
+
+
 def test_fetch_raw_source_bucket_propagates_remote_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

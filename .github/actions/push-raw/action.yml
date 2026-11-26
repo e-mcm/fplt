@@ -7,9 +7,25 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: Gate on R2 credentials
+      id: gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] \
+          || [ -z "${R2_SECRET_ACCESS_KEY:-}" ] || [ -z "${DATA_BUCKET:-}" ]; then
+          echo "soft skip: R2 credentials or DATA_BUCKET unset (configure R2_* secrets and DATA_BUCKET)"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+    - name: Install rclone
+      if: steps.gate.outputs.skip != 'true'
+      shell: bash
       run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
-    - shell: bash
+    - name: Upload raw captures
+      if: steps.gate.outputs.skip != 'true'
+      shell: bash
       env:
         RCLONE_CONFIG_FPLT_TYPE: s3
         RCLONE_CONFIG_FPLT_PROVIDER: Cloudflare
