@@ -26,6 +26,8 @@ from fplt.optimise.decisions import (
 from fplt.optimise.plan import (
     DEFAULT_PLAN_HORIZON,
     covered_horizon,
+    plan_code_sha_path,
+    plan_metadata_path,
     plan_squad,
     plan_table,
     render_report,
@@ -201,10 +203,11 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
     points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
     plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
     frame = plan_table(plan, "model", "2024-25", 1, [1])
-    path = write_plan(tmp_path, frame)
+    path = write_plan(tmp_path, frame, code_sha="deadbeef")
     assert path.parent.name == "as_of=2024-25_gw01_h01"
     with pytest.raises(FileExistsError):
         write_plan(path.parents[3], frame)
+
     longer = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=2)
     other = write_plan(tmp_path, plan_table(longer, "model", "2024-25", 1, [1, 2]))
     assert other.parent.name == "as_of=2024-25_gw01_h02"
@@ -215,6 +218,23 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
     broken = frame.with_columns(pl.lit(2).alias("step"))
     with pytest.raises(ValueError, match="horizon step"):
         write_plan(tmp_path, broken)
+
+
+def test_write_plan_records_code_sha_in_metadata(tmp_path: Path) -> None:
+    """ops-04: every plan directory carries code_sha (sidecar + metadata.json)."""
+    import json
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
+    frame = plan_table(plan, "model", "2024-25", 1, [1])
+    path = write_plan(tmp_path, frame, code_sha="abc1234deadbeef", prod_tag="prod")
+    sidecar = plan_code_sha_path(path)
+    meta_path = plan_metadata_path(path)
+    assert sidecar.read_text(encoding="utf-8").strip() == "abc1234deadbeef"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["code_sha"] == "abc1234deadbeef"
+    assert meta["prod_tag"] == "prod"
 
 
 def test_decision_bakeoff_rejects_inflated_mean_ppg(tmp_path: Path) -> None:

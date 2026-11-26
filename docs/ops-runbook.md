@@ -63,10 +63,14 @@ Do not add a keepalive workflow; heartbeats are the dead-man's switch.
 |---|---|
 | **Means** | Ops is running a bad `prod` tag (failed smoke plan, freeze-window violation caught late, or a regression after promote). Rollback restores the previous immutable tag. |
 | **Urgency** | **Urgent** before the next deadline if live plans are wrong. After kickoff, roll back before the next tick. |
-| **Fix** | `gh workflow run release.yml -f ref=<previous-prod-tag>` |
+| **Fix** | `gh workflow run release.yml -f ref=<previous-prod-tag>` (or locally `make release ARGS='--ref prod-YYYYMMDD-<sha>'`) |
 
-Immutable history tags look like `prod-YYYYMMDD-<sha>`. Confirm the sha in
-plan metadata after the rollback lands.
+Immutable history tags look like `prod-YYYYMMDD-<shortsha>`. List with
+`git tag -l 'prod-*' | sort | tail`. Confirm the sha in plan
+`code_sha.txt` / `metadata.json` after the rollback lands. Do not
+force-push `main` to roll back ops — move `prod` only. Promote a new sha
+the same way (`ref=main`); refused during freeze, on red CI, or when smoke
+fails.
 
 ### ops-05: Apply policy
 

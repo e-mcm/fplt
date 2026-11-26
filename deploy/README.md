@@ -89,16 +89,24 @@ one-shot recovery.
 
 | Workflow | Trigger | Command |
 |---|---|---|
-| `.github/workflows/ops-tick.yml` | cron `7,22,37,52 * * * *` + `workflow_dispatch` | `fplt ops-tick` |
-| `.github/workflows/ops-catchup.yml` | `workflow_dispatch` | `fplt ops-catchup` |
+| `.github/workflows/ops-tick.yml` | cron `7,22,37,52 * * * *` + `workflow_dispatch` | `fplt ops-tick` (from `prod`) |
+| `.github/workflows/ops-catchup.yml` | `workflow_dispatch` | `fplt ops-catchup` (from `prod`) |
+| `.github/workflows/release.yml` | `workflow_dispatch` | move `prod` (CI + freeze + smoke) |
 
-Both share `concurrency: group: ops` (no overlapping ticks). Capture dual-write
+Both ops workflows share `concurrency: group: ops` (no overlapping ticks) and
+check out the moving **`prod`** tag via `.github/actions/checkout-prod` (falls
+back to the default branch when the tag is missing). Capture dual-write
 (branch + R2) is unchanged. `ops-tick` is deadline-aware (ops-02):
 `due_checkpoints` drives T−24h / T−6h / T−90m / T−30m plan+refresh windows
 (missed minutes catch up on the next tick; apply at T−90m is stubbed until
 ops-05). The no-plan alarm retries at T−3h and sends an urgent ntfy at T−2h
 when any production model still lacks a plan. Checkpoint completion state
 lives under `$FPLT_DATA_DIR/ops/checkpoint_state.json`.
+
+**Promote / roll back `prod`:** `gh workflow run release.yml -f ref=main` (or
+`make release ARGS='--ref …'`). Refused during the freeze window, on red CI, or
+when smoke fails. Rollback: `ref=prod-YYYYMMDD-<sha>`. See
+[`docs/ops-runbook.md`](../docs/ops-runbook.md).
 
 **Live gate:** repo variable `OPS_LIVE` must be `true` before a scheduled tick
 plans on GitHub-hosted runners (avoids a cold cache re-planning every checked
@@ -289,11 +297,10 @@ runtime PRs. Enable full promote-eval execute with repo variable
 Until then the workflow prepares the EvalSpec and soft-skips execute.
 
 **Prod freeze hook (ops-04):** `fplt deps-equivalence --check-freeze-only`
-calls `fplt.ops.freeze.in_prod_freeze` when that module exists and fails the
-job while a deadline freeze is active. Until ops-04 lands the helper is
-absent and the check **soft-skips** (logged). When ops-04 ships, wire the
-same hook into Renovate automerge / branch protection so bot PRs never merge
-inside the freeze window.
+calls `fplt.ops.freeze.in_prod_freeze` (wraps staged freeze windows) and
+fails the job while a deadline freeze is active. Wire the same hook into
+Renovate automerge / branch protection so bot PRs never merge inside the
+freeze window.
 
 **Owner setup:** install the Renovate GitHub App on `e-mcm/fplt`, create
 labels `deps:dev`, `deps:runtime`, and `equivalence` if missing, set

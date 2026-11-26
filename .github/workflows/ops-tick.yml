@@ -37,6 +37,11 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out prod tag (bootstrap if missing)
+        uses: ./.github/actions/checkout-prod
 
       - name: Simulate failure
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}

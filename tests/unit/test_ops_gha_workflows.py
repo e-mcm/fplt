@@ -1,4 +1,4 @@
-"""ops-tick / ops-catchup GHA workflows: schedule, concurrency, heartbeats."""
+"""ops-tick / ops-catchup / release GHA workflows: schedule, prod, gates."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import yaml
 
 _REPO = Path(__file__).resolve().parents[2]
 _WORKFLOWS = _REPO / ".github" / "workflows"
+_ACTIONS = _REPO / ".github" / "actions"
 
 
 def _load(name: str) -> dict:
@@ -68,6 +69,18 @@ def test_ops_workflows_gate_on_ops_live_and_call_cli() -> None:
     assert "fplt ops-catchup" in run_catchup["run"]
 
 
+def test_ops_workflows_checkout_prod_with_bootstrap() -> None:
+    for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
+        steps = _load(name)["jobs"][job]["steps"]
+        assert any(s.get("uses") == "./.github/actions/checkout-prod" for s in steps), (
+            name
+        )
+    action = (_ACTIONS / "checkout-prod" / "action.yml").read_text(encoding="utf-8")
+    assert "refs/tags/prod" in action
+    assert "bootstrapping" in action
+    assert "FPLT_PROD_TAG=prod" in action
+
+
 def test_ops_workflows_ping_heartbeat_and_notify_failure() -> None:
     for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
         doc = _load(name)
@@ -96,6 +109,22 @@ def test_ops_catchup_heartbeat_secret_is_ops_catchup() -> None:
     steps = _load("ops-catchup.yml")["jobs"]["alerts"]["steps"]
     heartbeat = next(s for s in steps if s.get("uses") == "./.github/actions/heartbeat")
     assert heartbeat["with"]["ping_url"] == "${{ secrets.HC_PING_URL_OPS_CATCHUP }}"
+
+
+def test_release_workflow_refuses_on_red_ci_freeze_or_smoke() -> None:
+    doc = _load("release.yml")
+    on = _on(doc)
+    assert "workflow_dispatch" in on
+    assert "ref" in on["workflow_dispatch"]["inputs"]
+    text = (_WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    assert "refusing release: CI is red" in text
+    assert "fplt release" in text
+    assert "ci-status" in text
+    job = doc["jobs"]["release"]
+    assert job["timeout-minutes"] == 30
+    step_names = [s.get("name") for s in job["steps"]]
+    assert "Require CI green on candidate" in step_names
+    assert "Run freeze + smoke gates" in step_names
 
 
 def test_dual_write_capture_workflows_untouched() -> None:

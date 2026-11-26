@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
+.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -386,6 +386,15 @@ ops-catchup:
 # Deadline checkpoints (ops-02) build on this later. Optional: ARGS='--no-notify'
 ops-tick:
 	uv run fplt ops-tick $(ARGS)
+
+# ── Promote / roll back the moving prod tag (ops-04) ──────────────────────────
+# Gates: CI green, outside freeze (T−24h → kickoff), smoke plan loads production.
+# Usage: make release ARGS='--ref main'
+# Rollback: make release ARGS='--ref prod-YYYYMMDD-<sha>'
+# Dry-run: make release ARGS='--ref main --dry-run'
+# Prefer GHA: gh workflow run release.yml -f ref=main
+release:
+	uv run fplt release promote $(ARGS)
 
 # ── Dagster UI ────────────────────────────────────────────────────────────────
 dagster-dev:
