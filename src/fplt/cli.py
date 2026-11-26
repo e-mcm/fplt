@@ -173,9 +173,15 @@ def main(argv: list[str] | None = None) -> None:
     compare = sub.add_parser(
         "compare",
         parents=[log_flags],
-        help="Compare models under shared windows (walk-forward + fixed)",
+        help=(
+            "Compare models under shared windows, or mint a comparison "
+            "experiment via repeated --spec (storage; no verdict)"
+        ),
     )
-    compare.add_argument("--season", required=True)
+    compare.add_argument(
+        "--season",
+        help="Season for walk-forward compare (required unless --spec)",
+    )
     compare.add_argument("--test-from-gw", type=int, default=1)
     compare.add_argument("--test-to-gw", type=int, default=38)
     compare.add_argument(
@@ -187,6 +193,25 @@ def main(argv: list[str] | None = None) -> None:
         "--models",
         nargs="+",
         help=f"Override the default set ({', '.join(CORE_MODELS)})",
+    )
+    compare.add_argument(
+        "--spec",
+        action="append",
+        dest="specs",
+        metavar="NAME",
+        help=(
+            "ModelSpec name for a comparison-flavour experiment "
+            "(repeat ≥2; pins latest build + as-of, no walk-forward)"
+        ),
+    )
+    compare.add_argument(
+        "--gw",
+        type=int,
+        help="As-of gameweek when minting a --spec comparison (default: 1)",
+    )
+    compare.add_argument(
+        "--question",
+        help="Optional one-line question for a --spec comparison experiment",
     )
     compare.add_argument(
         "--modes",
@@ -204,12 +229,23 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     compare.add_argument("--steps", type=int, default=1)
+    compare.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_PROJECTION_HORIZON,
+        help="Horizon for --spec comparison experiments (default: projection H)",
+    )
     compare.add_argument("--with-openfpl", action="store_true")
     compare.add_argument("--openfpl-model-dir")
     compare.add_argument(
         "--output-dir",
         type=Path,
         help="Write summary JSON/parquet here (default: $FPLT_DATA_DIR/compare/...)",
+    )
+    compare.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR when minting a --spec comparison",
     )
     predict = sub.add_parser(
         "predict",
@@ -1589,6 +1625,66 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip R2 status/quarantine pull/push around --check",
     )
+    exp = sub.add_parser(
+        "exp",
+        parents=[log_flags],
+        help="Experiment / batch submit (Stage C / data-model step 7)",
+    )
+    exp_sub = exp.add_subparsers(dest="exp_command")
+    exp_submit = exp_sub.add_parser(
+        "submit",
+        parents=[log_flags],
+        help=(
+            "Submit EvalSpec YAML(s) as ab experiments; with --batch mint a "
+            "batch and dedupe shared arms across the batch"
+        ),
+    )
+    exp_submit.add_argument(
+        "evals",
+        nargs="+",
+        help="EvalSpec stems or paths (configs/evals/<name>.yaml)",
+    )
+    exp_submit.add_argument(
+        "--batch",
+        required=True,
+        metavar="LABEL",
+        help="Batch label (mints batch_id; required for this CLI surface)",
+    )
+    exp_submit.add_argument(
+        "--evals-dir",
+        type=Path,
+        help="Override configs/evals when stems are passed",
+    )
+    exp_submit.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    exp_submit.add_argument(
+        "--build-id",
+        help="Pin curated build_id for all arms (default: latest, else none)",
+    )
+    exp_ls = exp_sub.add_parser(
+        "ls",
+        parents=[log_flags],
+        help="List experiment ids under experiments/",
+    )
+    exp_ls.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    exp_show = exp_sub.add_parser(
+        "show",
+        parents=[log_flags],
+        help="Show one experiment manifest summary and folded status",
+    )
+    exp_show.add_argument("experiment_id", help="Experiment id (exp_…)")
+    exp_show.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
     catalog = sub.add_parser(
         "catalog",
         parents=[log_flags],
@@ -1792,6 +1888,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "catalog":
         logger.info("fplt catalog")
         _catalog(args)
+        return
+    if args.command == "exp":
+        logger.info("fplt exp")
+        _exp(args)
         return
     if args.command == "sql":
         logger.info("fplt sql")
@@ -2571,6 +2671,17 @@ def _configure_cli_logging() -> None:
 
 def _compare(args: argparse.Namespace) -> None:
     _configure_cli_logging()
+    specs = list(args.specs) if getattr(args, "specs", None) else []
+    if specs:
+        _compare_experiment(args, specs)
+        return
+    if not args.season:
+        print(
+            "compare requires --season (walk-forward) or repeated --spec "
+            "(comparison experiment)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     modes: list[CompareMode] | None = (
         list(args.modes) if args.modes is not None else None
     )
@@ -2606,6 +2717,112 @@ def _compare(args: argparse.Namespace) -> None:
     print(f"wrote {result.output_dir / 'summary.json'}")
     if result.skipped_openfpl:
         print(result.skipped_openfpl, file=sys.stderr)
+
+
+def _compare_experiment(args: argparse.Namespace, specs: list[str]) -> None:
+    """Mint a comparison-flavour experiment from repeated ``--spec``."""
+    from fplt.store.experiment_submit import submit_comparison
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    try:
+        result = submit_comparison(
+            data_dir,
+            specs,
+            horizon=int(args.horizon),
+            question=args.question,
+            season=args.season,
+            gw=int(args.gw) if args.gw is not None else None,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        logger.error("compare --spec failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"experiment_id={result.experiment_id}")
+    print(f"build_id={result.build_id}")
+    print(f"fresh_runs={result.fresh_runs} reused_runs={result.reused_runs}")
+    for arm in result.arms:
+        flag = "reused" if arm.reused else "fresh"
+        print(f"  {arm.arm} run_id={arm.run_id} ({flag})")
+
+
+def _exp(args: argparse.Namespace) -> None:
+    command = getattr(args, "exp_command", None)
+    if command == "submit":
+        _exp_submit(args)
+        return
+    if command == "ls":
+        _exp_ls(args)
+        return
+    if command == "show":
+        _exp_show(args)
+        return
+    raise SystemExit(_not_implemented(f"exp {command}"))
+
+
+def _exp_submit(args: argparse.Namespace) -> None:
+    from fplt.store.experiment_submit import load_eval_ref, submit_batch
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    evals_dir = Path(args.evals_dir) if args.evals_dir is not None else None
+    try:
+        specs = [load_eval_ref(ref, evals_dir=evals_dir) for ref in args.evals]
+        result = submit_batch(
+            data_dir,
+            specs,
+            batch_label=str(args.batch),
+            build_id=args.build_id,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        logger.error("exp submit failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(f"batch_id={result.batch_id}")
+    print(
+        f"experiments={len(result.experiment_ids)} "
+        f"fresh_runs={result.fresh_runs} reused_runs={result.reused_runs}"
+    )
+    for exp_id in result.experiment_ids:
+        print(f"  experiment_id={exp_id}")
+    for arm in result.arms:
+        flag = "reused" if arm.reused else "fresh"
+        print(f"  {arm.experiment_id} arm={arm.arm} run_id={arm.run_id} ({flag})")
+
+
+def _exp_ls(args: argparse.Namespace) -> None:
+    from fplt.store.experiments import list_experiment_ids
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    for exp_id in list_experiment_ids(data_dir):
+        print(exp_id)
+
+
+def _exp_show(args: argparse.Namespace) -> None:
+    from fplt.store.api import Store
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    try:
+        handle = Store(data_dir).experiment(str(args.experiment_id))
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    manifest = handle.manifest
+    print(f"experiment_id={handle.experiment_id}")
+    print(f"flavour={manifest.flavour}")
+    print(f"question={manifest.question}")
+    print(f"status={handle.status.label}")
+    print(f"batch_id={manifest.batch_id}")
+    print(f"eval_spec={manifest.eval_spec}")
+    print(f"horizon={manifest.horizon}")
+    for arm, run_id in handle.arms.items():
+        print(f"  arm={arm} run_id={run_id}")
 
 
 def _explain(args: argparse.Namespace) -> None:
