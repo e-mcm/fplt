@@ -16,7 +16,10 @@ is omitted — FPL `fixtures` already cover domestic league kickoffs.
 
 - **Players start empty.** Unmapped players still stage into `player_injuries`
   with a null `player_key`. Ingest logs a warning with a sample of unmapped
-  API ids. Until mapped, the minutes injury overlay cannot see them.
+  API ids. Until mapped, the minutes injury overlay cannot see them. Suggest
+  candidates with `uv run fplt idmap suggest --source api_football --season …`
+  and merge high-confidence rows via PR (nothing auto-merged). Season
+  checklist: [`deploy/README.md`](../../deploy/README.md) § Season rollover.
 - **Teams are seeded for recurring EPL clubs.** Promoted sides and id churn
   need a manual check against `GET /teams?league=39&season=YYYY` each summer.
   Unmapped teams stage with a null `team_key` (rows are kept).
