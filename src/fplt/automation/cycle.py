@@ -137,6 +137,58 @@ def catch_up(
     return done
 
 
+def plan_deadline(
+    data_dir: Path,
+    key: GWKey,
+    now: datetime,
+    models: list[str] | None = None,
+    horizon: int | None = None,
+    *,
+    refresh_if_stale: bool = True,
+) -> bool:
+    """Plan a specific deadline when missing, or refresh when stale.
+
+    Used by deadline checkpoints (ops-02) outside the three-hour
+    ``pre_deadline`` window. Archives benchmark projections first (N1).
+
+    Args:
+        data_dir: Root that contains ``staged/`` and receives the plan.
+        key: Deadline to plan.
+        now: Clock reading, timezone-aware.
+        models: YAML spec names. Defaults to ``load_production_ops().models``.
+        horizon: Weeks the plan looks ahead. Defaults to
+            ``load_production_ops().plan_horizon``.
+        refresh_if_stale: When true (default), retire write-once plans whose
+            mtime is older than the latest ``player_status`` /
+            ``predicted_lineups`` / ``player_injuries`` signal and rebuild.
+
+    Returns:
+        True when a plan was written (or rebuilt) this call.
+    """
+    ops = load_production_ops()
+    chosen = list(ops.models) if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
+    store = DataStore(data_dir)
+    # North-star N1: archive ep_next + OpenFPL before the deadline (write-once).
+    archive_if_missing(data_dir, key, now=now)
+    if plans_exist(data_dir, chosen, key, steps):
+        if refresh_if_stale and plans_stale_vs_signals(
+            data_dir, store, chosen, key, steps, now=now
+        ):
+            retired = retire_plans(data_dir, chosen, key, steps, retired_at=now)
+            logger.info(
+                "plan_deadline: retired %s stale plan(s) for %s; re-predicting",
+                len(retired),
+                key,
+            )
+        else:
+            logger.info("plan_deadline: plan already exists for %s", key)
+            return False
+    logger.info("plan_deadline: planning %s models=%s", key, chosen)
+    _play(data_dir, chosen, key, steps)
+    return True
+
+
 def pre_deadline(
     data_dir: Path,
     now: datetime,
@@ -168,24 +220,15 @@ def pre_deadline(
     if key is None:
         logger.info("pre_deadline: nothing due within %s", _WINDOW)
         return None
-    # North-star N1: archive ep_next + OpenFPL before the deadline (write-once).
-    archive_if_missing(data_dir, key, now=now)
-    if plans_exist(data_dir, chosen, key, steps):
-        if refresh_if_stale and plans_stale_vs_signals(
-            data_dir, store, chosen, key, steps, now=now
-        ):
-            retired = retire_plans(data_dir, chosen, key, steps, retired_at=now)
-            logger.info(
-                "pre_deadline: retired %s stale plan(s) for %s; re-predicting",
-                len(retired),
-                key,
-            )
-        else:
-            logger.info("pre_deadline: plan already exists for %s", key)
-            return None
-    logger.info("pre_deadline: planning %s models=%s", key, chosen)
-    _play(data_dir, chosen, key, steps)
-    return key
+    wrote = plan_deadline(
+        data_dir,
+        key,
+        now,
+        chosen,
+        steps,
+        refresh_if_stale=refresh_if_stale,
+    )
+    return key if wrote else None
 
 
 def reports(root: Path) -> str:

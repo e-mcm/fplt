@@ -31,11 +31,17 @@ def test_format_ops_tick_status_lists_catch_up_and_pre_deadline() -> None:
             still_pending=[],
             models=["dc_layered_v4_native"],
             horizon=3,
+            checkpoints_run=["T-6h"],
+            no_plan_alarms=[],
+            upcoming=GWKey("2024-25", 2),
         )
     )
     assert "ops-tick status" in text
     assert "catch_up planned:  2024-25 gw1" in text
     assert "pre_deadline:      2024-25 gw2" in text
+    assert "upcoming deadline: 2024-25 gw2" in text
+    assert "checkpoints run:   T-6h" in text
+    assert "no-plan alarms:    none" in text
     assert "dc_layered_v4_native / H=3" in text
     assert text.endswith("\n")
 

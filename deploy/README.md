@@ -93,8 +93,12 @@ one-shot recovery.
 | `.github/workflows/ops-catchup.yml` | `workflow_dispatch` | `fplt ops-catchup` |
 
 Both share `concurrency: group: ops` (no overlapping ticks). Capture dual-write
-(branch + R2) is unchanged. Deadline checkpoints and the no-plan alarm are
-ops-02 follow-ons; this foundation only runs the existing idempotent cycle.
+(branch + R2) is unchanged. `ops-tick` is deadline-aware (ops-02):
+`due_checkpoints` drives T−24h / T−6h / T−90m / T−30m plan+refresh windows
+(missed minutes catch up on the next tick; apply at T−90m is stubbed until
+ops-05). The no-plan alarm retries at T−3h and sends an urgent ntfy at T−2h
+when any production model still lacks a plan. Checkpoint completion state
+lives under `$FPLT_DATA_DIR/ops/checkpoint_state.json`.
 
 **Live gate:** repo variable `OPS_LIVE` must be `true` before a scheduled tick
 plans on GitHub-hosted runners (avoids a cold cache re-planning every checked
