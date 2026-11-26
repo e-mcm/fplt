@@ -302,7 +302,7 @@ GitHub's 6 h default). Sized at roughly 2–3× expected p95 wall time:
 | `ops-catchup` / `catchup` | 180 | Multi-GW catch-up; > 15× one solver budget |
 | Capture `capture` jobs | 20–30 | Snapshot / fetch + R2 + branch publish |
 | Capture / ops `alerts` | 5 | Heartbeat + ntfy only |
-| `ci` lint / tests / builds | 5–90 | Lint 20; linux test 60; macOS mc build 90 |
+| `ci` lint / tests / builds | 5–90 | Lint 20; production-governance 10; linux test 60; macOS mc build 90 |
 | `mc-release` | 15–90 | Same order as CI mc builds |
 | `deps-equivalence` | 180 | Runtime equivalence board (ops-12) |
 | `raw-parity` | 30 | Branch tip vs R2 one-way check |
