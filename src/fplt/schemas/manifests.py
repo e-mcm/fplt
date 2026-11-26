@@ -193,6 +193,21 @@ class InterventionRecord(BaseModel):
     plan_run_id: str | None = None
 
 
+class SubmittedRecord(BaseModel):
+    """What FPL actually held after apply (ops-05 verification).
+
+    Path: ``official/season=<s>/gw=<gw>/checkpoint=<cp>/submitted.json``.
+    Separate from ``applied.json`` (intent) so the record keeps both.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    line: str = Field(min_length=1)
+    plan_run_id: str = Field(min_length=1)
+    submitted_at: datetime
+    entry_id: int | None = None
+
+
 class ExperimentArm(BaseModel):
     """One arm declared on an experiment manifest at submit time."""
 

@@ -33,6 +33,7 @@ from fplt.schemas.manifests import (
     RunMode,
     RunStatus,
     RunType,
+    SquadMode,
 )
 from fplt.types import GWKey
 
@@ -193,6 +194,11 @@ class RunWriter:
         experiment_id: str | None = None,
         arm: str | None = None,
         auto_build_id: bool = True,
+        line: str | None = None,
+        squad_mode: SquadMode | None = None,
+        prev_run_id: str | None = None,
+        checkpoint: str | None = None,
+        prod_tag: str | None = None,
     ) -> None:
         """Build a writer; the folder is created only on ``__enter__``.
 
@@ -226,6 +232,11 @@ class RunWriter:
             experiment_id: Owning experiment when ``kind="experiment"``.
             arm: Arm name within that experiment (control / treatment / …).
             auto_build_id: Resolve ``latest_build_id`` when ``build_id`` is None.
+            line: Official line name (B12), or ``None``.
+            squad_mode: ``real`` / ``virtual`` for official plan runs.
+            prev_run_id: Prior virtual-line plan run, when chaining.
+            checkpoint: Ops checkpoint label (e.g. ``T-90m``).
+            prod_tag: ``prod-…`` tag from ops-04 when known.
         """
         self.data_dir = data_dir
         self.run_id = run_id if run_id is not None else mint_run_id()
@@ -274,6 +285,11 @@ class RunWriter:
         )
         self._experiment_id = experiment_id
         self._arm = arm
+        self._line = line
+        self._squad_mode: SquadMode | None = squad_mode
+        self._prev_run_id = prev_run_id
+        self._checkpoint = checkpoint
+        self._prod_tag = prod_tag
         self._fplt_mc_version = fplt_mc_version()
         self._manifest: RunManifest | None = None
         self._finalized = False
@@ -441,9 +457,13 @@ class RunWriter:
             spec_label=self._spec_label,
             model_id=self._model_id,
             config_hashes=self._config_hashes,
+            line=self._line,
             plan_horizon=self._plan_horizon,
+            squad_mode=self._squad_mode,
+            prev_run_id=self._prev_run_id,
             code_sha=self._code_sha,
             code_dirty=self._code_dirty,
+            prod_tag=self._prod_tag,
             fplt_mc_version=self._fplt_mc_version,
             lockfile_hash=self._lockfile_hash,
             build_id=self._build_id,
@@ -451,6 +471,7 @@ class RunWriter:
             staged_digests=self._staged_digests,
             as_of=self._as_of,
             horizon=self._horizon,
+            checkpoint=self._checkpoint,
             seeds=self._seeds,
             host=self._host,
             started_at=self._started_at,

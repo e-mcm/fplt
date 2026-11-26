@@ -23,6 +23,7 @@ from fplt.schemas.manifests import (
     InterventionRecord,
     OfficialPointer,
     RunManifest,
+    SubmittedRecord,
 )
 from fplt.schemas.outcomes import FixtureOutcomesSchema, PlayerFixtureOutcomesSchema
 from fplt.schemas.squad_state_table import SquadStateTableSchema
@@ -152,6 +153,13 @@ def test_official_pointer_and_applied_and_intervention() -> None:
     assert pointer.role == "primary"
     assert applied.line == "v4_h3"
     assert "Salah" in intervention.what_changed
+    submitted = SubmittedRecord(
+        line="v4_h3",
+        plan_run_id="r_plan",
+        submitted_at=_TS,
+        entry_id=1,
+    )
+    assert submitted.entry_id == 1
     with pytest.raises(ValidationError):
         OfficialPointer(
             predict_run_id="r_predict",
