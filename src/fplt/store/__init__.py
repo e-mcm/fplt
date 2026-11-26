@@ -2,10 +2,10 @@
 
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
 builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
-outcomes). B12 adds write-once ``official/`` pointers. Stage C adds
-``fplt.store.experiments``, ``catalog/`` rebuild, and the ``Store`` read API
-(``runs`` / ``official`` / ``load`` / ``experiment`` / ``pit``) plus
-``fplt sql`` from migration step 8.
+outcomes). B12 adds write-once ``official/`` pointers, virtual-squad tables,
+and official ``points_pmf`` helpers. Stage C adds ``fplt.store.experiments``,
+``catalog/`` rebuild, and the ``Store`` read API (``runs`` / ``official`` /
+``load`` / ``experiment`` / ``pit``) plus ``fplt sql`` from migration step 8.
 """
 
 from fplt.store.api import ExperimentHandle, Store
@@ -43,6 +43,13 @@ from fplt.store.official import (
     write_official_pointer,
     write_submitted_record,
 )
+from fplt.store.points_pmf import (
+    POINTS_PMF_MAX,
+    POINTS_PMF_MIN,
+    PointsPmfGwSchema,
+    PointsPmfSchema,
+    points_pmf_from_draws,
+)
 from fplt.store.push import (
     IncompleteRunError,
     maybe_push_build,
@@ -57,6 +64,11 @@ from fplt.store.runs import (
     run_dir,
 )
 from fplt.store.sql import open_sql, run_sql
+from fplt.store.virtual_squad import (
+    chip_remaining,
+    resolve_virtual_squad,
+    write_squad_state_pair,
+)
 
 __all__ = [
     "ArmReuseKey",
@@ -68,11 +80,16 @@ __all__ = [
     "LegacyImportResult",
     "LineRunPair",
     "OfficialExistsError",
+    "POINTS_PMF_MAX",
+    "POINTS_PMF_MIN",
+    "PointsPmfGwSchema",
+    "PointsPmfSchema",
     "RunWriter",
     "STAGING_VERSION",
     "Store",
     "build_from_staged",
     "catalog_runs_path",
+    "chip_remaining",
     "finalize_official_checkpoint",
     "find_reusable_arm",
     "fold_experiment_status",
@@ -88,10 +105,12 @@ __all__ = [
     "mint_experiment_id",
     "mint_run_id",
     "open_sql",
+    "points_pmf_from_draws",
     "push_build",
     "push_run",
     "read_runs_catalog",
     "rebuild_runs_catalog",
+    "resolve_virtual_squad",
     "run_dir",
     "run_sql",
     "submit_experiment",
@@ -99,5 +118,6 @@ __all__ = [
     "write_intervention_record",
     "write_official_pointer",
     "write_run_inbox_row",
+    "write_squad_state_pair",
     "write_submitted_record",
 ]
