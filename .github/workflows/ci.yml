@@ -72,6 +72,29 @@ jobs:
           find mc \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' -o -name '*.cc' \) \
             -print0 | xargs -0 uv run clang-format --dry-run --Werror
 
+  production-governance:
+    name: production-governance (ops-09)
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python deps
+        run: uv sync --frozen
+      - name: Require promote-eval keep for production flips
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$PR_BODY" > /tmp/pr-body.txt
+          uv run fplt governance-check \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.sha }}" \
+            --pr-body-file /tmp/pr-body.txt
+
   version-guard:
     runs-on: ubuntu-24.04
     needs: changes
@@ -261,7 +284,7 @@ jobs:
         run: uv run pytest mc/tests -q
 
   gate:
-    needs: [changes, lint, version-guard, mc-build-linux, mc-build-macos, sanitizers, test-linux, test-macos]
+    needs: [changes, lint, production-governance, version-guard, mc-build-linux, mc-build-macos, sanitizers, test-linux, test-macos]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -269,6 +292,7 @@ jobs:
         run: |
           echo "changes=${{ needs.changes.result }}"
           echo "lint=${{ needs.lint.result }}"
+          echo "production-governance=${{ needs.production-governance.result }}"
           echo "version-guard=${{ needs.version-guard.result }}"
           echo "mc-build-linux=${{ needs.mc-build-linux.result }}"
           echo "mc-build-macos=${{ needs.mc-build-macos.result }}"
