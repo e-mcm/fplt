@@ -1,0 +1,48 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Asia/Hong_Kong",
+  "schedule": ["before 6am on Monday"],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 3,
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Never auto-bump fplt-mc (own mc-release path only)",
+      "matchPackageNames": ["fplt-mc"],
+      "enabled": false
+    },
+    {
+      "description": "Dev tools: patch/minor, grouped, automerge on green CI",
+      "matchDepTypes": ["dev"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "dev tools (patch/minor)",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "labels": ["deps:dev"]
+    },
+    {
+      "description": "Dev tool majors: grouped, no automerge",
+      "matchDepTypes": ["dev"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "dev tools (major)",
+      "automerge": false,
+      "labels": ["deps:dev"]
+    },
+    {
+      "description": "Runtime libraries: grouped; equivalence label; never automerge",
+      "matchDepTypes": ["dependencies"],
+      "groupName": "runtime libraries",
+      "automerge": false,
+      "labels": ["deps:runtime", "equivalence"]
+    }
+  ]
+}

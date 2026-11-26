@@ -1,0 +1,60 @@
+# Fixed board for Renovate runtime-library PRs (ops-12).
+# Do not run this YAML raw: `fplt deps-equivalence` rewrites change.packages /
+# control_ref / treatment_ref from the PR's uv.lock diff, then promote-eval.
+# Window is an S1-style smoke board (never a keep/confirmation window).
+name: runtime_deps_equivalence
+kind: environment
+question: "Does the Renovate runtime lockfile bump keep forecasts identical within tolerance?"
+description: >
+  ops-12 fixed board. Same ModelSpec both arms; uv.lock differs.
+  fplt-mc is excluded from Renovate and must never appear in change.packages.
+
+change:
+  lever: dependency_upgrade
+  packages: [polars]
+  control_ref: main
+  treatment_ref: deps/runtime-placeholder
+  tables: []
+  features: []
+  allow_multi_lever: false
+  diff:
+    - "uv.lock: placeholder (rewritten by fplt deps-equivalence)"
+  notes: >
+    Placeholder packages/refs only. The label-triggered workflow overwrites
+    them from the PR base vs head lockfile contrast.
+
+control: dc_layered_v4
+treatment: dc_layered_v4
+
+window:
+  seasons: ["2024-25"]
+  from_gw: 1
+  to_gw: 3
+  seasons_back: 4
+  modes: [walk_forward]
+  note: "S1-style smoke board for runtime dep equivalence; not a confirmation window."
+
+suites:
+  prediction: true
+  components: false
+  decisions: false
+  steps: 1
+
+gates:
+  min_coverage: null
+  allow_low_coverage: false
+  keep_if:
+    prediction_any: [mae, spearman]
+  drop_if:
+    coverage_below_min: true
+    mean_ppg_gate_fail: true
+
+equivalence:
+  tolerance:
+    xpts_abs: 1.0e-6
+    prob_abs: 1.0e-9
+  compare: predictions
+
+report:
+  title: "Runtime deps equivalence (ops-12)"
+  store_doc: null

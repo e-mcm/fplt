@@ -255,3 +255,34 @@ absorb this; until then this is the checklist.
    the threshold in `configs/ops/preflight.yaml`.
 5. **Weekly** — re-run `fplt preflight --season …` during the season to catch
    new signings and loans.
+
+## Dependency updates (ops-12 / Renovate)
+
+Weekly Renovate (`renovate.json`) groups updates and never auto-bumps
+`fplt-mc` (that pin follows `mc-release` only):
+
+| Group | Scope | Automerge | Labels |
+|---|---|---|---|
+| `dev tools (patch/minor)` | `dependency-groups.dev` patch/minor | yes, on green CI | `deps:dev` |
+| `dev tools (major)` | dev majors | no | `deps:dev` |
+| `runtime libraries` | `project.dependencies` | **no** | `deps:runtime`, `equivalence` |
+
+Runtime PRs trigger `.github/workflows/deps-equivalence.yml`, which runs
+`fplt deps-equivalence` against the fixed board
+`configs/evals/runtime_deps_equivalence.yaml` (`kind: environment`, §7.4).
+Merge requires CI green **and** this check; Renovate must not automerge
+runtime PRs. Enable full promote-eval execute with repo variable
+`DEPS_EQUIVALENCE_LIVE=true` (and R2 / snapshots access as for ops-tick).
+Until then the workflow prepares the EvalSpec and soft-skips execute.
+
+**Prod freeze hook (ops-04):** `fplt deps-equivalence --check-freeze-only`
+calls `fplt.ops.freeze.in_prod_freeze` when that module exists and fails the
+job while a deadline freeze is active. Until ops-04 lands the helper is
+absent and the check **soft-skips** (logged). When ops-04 ships, wire the
+same hook into Renovate automerge / branch protection so bot PRs never merge
+inside the freeze window.
+
+**Owner setup:** install the Renovate GitHub App on `e-mcm/fplt`, create
+labels `deps:dev`, `deps:runtime`, and `equivalence` if missing, set
+`DEPS_EQUIVALENCE_LIVE=true` when staged data is available on runners, and
+require the `deps-equivalence` check on runtime PRs.

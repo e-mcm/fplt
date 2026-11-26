@@ -605,6 +605,7 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 | Scheduled GHA failure | workflow `alerts` job | Short ntfy POST via `NTFY_URL` (workflow, job, run URL; no logs; soft skip when unset). `simulate_failure` workflow_dispatch input forces one alert |
 | Ops tick (GHA `ops-tick.yml`) | schedule `7,22,37,52 * * * *` + `workflow_dispatch` | `fplt ops-tick`: fetch raw → restage → `catch_up` → deadline checkpoints (ops-02) → no-plan alarm → `pre_deadline` (idempotent). Checkpoints: T−24h full plan, T−6h plan+notify, T−90m refresh (apply stubbed until ops-05), T−30m last-chance refresh. Missed checkpoint minutes catch up on the next tick via `due_checkpoints`. No-plan alarm: T−3h retry, T−2h urgent ntfy. `concurrency: ops`. Gated by repo variable `OPS_LIVE=true` until live cut-over; `force_live` on dispatch overrides. Heartbeat `HC_PING_URL_OPS_TICK`. |
 | Ops catch-up (GHA `ops-catchup.yml`) | `workflow_dispatch` | `fplt ops-catchup` one-shot recovery (same library as `make ops-catchup`). Shares `concurrency: ops`. Same `OPS_LIVE` gate / `force_live`. Heartbeat `HC_PING_URL_OPS_CATCHUP`. |
+| Runtime deps PR labeled `deps:runtime` / `equivalence` | GHA `deps-equivalence.yml` (ops-12) | Renovate weekly groups (`renovate.json`); never auto-bumps `fplt-mc`. Runtime PRs: `fplt deps-equivalence` rewrites fixed board `configs/evals/runtime_deps_equivalence.yaml` (`kind: environment`) from base vs head `uv.lock`, posts verdict; no automerge. Dev-tool patch/minor may automerge on green CI. Gated by `DEPS_EQUIVALENCE_LIVE=true` for execute. Prod freeze (ops-04) soft-skips until `fplt.ops.freeze.in_prod_freeze` exists. |
 
 Missed heartbeats are the dead-man's switch for silent cron disable (including GitHub's ~60-day inactivity gate on public scheduled workflows). **Choice: runbook, not keepalive** — re-enable the workflow; see `deploy/README.md`.
 
@@ -695,7 +696,7 @@ fplt/
 ├── pyproject.toml  uv.lock  Makefile
 ├── .github/
 │   ├── ISSUE_TEMPLATE/task.md
-│   └── workflows/ci.yml  snapshot.yml
+│   └── workflows/ci.yml  snapshot.yml  deps-equivalence.yml
 ├── configs/
 │   ├── models/*.yaml            # ModelSpecs
 │   ├── scoring/<season>.yaml    # FPL points table per season

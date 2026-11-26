@@ -1267,6 +1267,48 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Score floor flagged for PR (default 0.92)",
     )
+    deps_eq = sub.add_parser(
+        "deps-equivalence",
+        parents=[log_flags],
+        help=(
+            "Runtime lockfile PR → environment promote-eval (ops-12). "
+            "Rewrites the fixed board from base vs head uv.lock and gates merge."
+        ),
+    )
+    deps_eq.add_argument(
+        "--control-ref",
+        default=None,
+        help=(
+            "Control git ref (PR base SHA or main); required unless --check-freeze-only"
+        ),
+    )
+    deps_eq.add_argument(
+        "--treatment-ref",
+        default=None,
+        help=("Treatment git ref (PR head SHA); required unless --check-freeze-only"),
+    )
+    deps_eq.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for promote-eval artifacts and comment.md",
+    )
+    deps_eq.add_argument(
+        "--live",
+        action="store_true",
+        help="Execute promote-eval (otherwise prepare + soft-skip)",
+    )
+    deps_eq.add_argument(
+        "--check-freeze-only",
+        action="store_true",
+        help="Print freeze status and exit 1 only when prod freeze is active",
+    )
+    deps_eq.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root (default: cwd)",
+    )
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
@@ -1510,6 +1552,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "idmap":
         _idmap(args)
+        return
+    if args.command == "deps-equivalence":
+        _deps_equivalence(args)
         return
     if args.command == "backtest":
         _backtest(args)
@@ -1873,6 +1918,67 @@ def _ops_tick(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
     print(format_ops_tick_status(result), end="")
     print(format_status(auth_status()), end="")
+
+
+def _deps_equivalence(args: argparse.Namespace) -> None:
+    """Prepare / run runtime-deps equivalence and write comment.md."""
+    from fplt.automation.deps_equivalence import (
+        check_prod_freeze,
+        format_pr_comment,
+        materialise_lock_from_git,
+        run_deps_equivalence,
+    )
+
+    if bool(args.check_freeze_only):
+        freeze = check_prod_freeze()
+        print(f"{freeze.state}: {freeze.reason}")
+        if freeze.state == "frozen":
+            raise SystemExit(1)
+        return
+
+    if not args.control_ref or not args.treatment_ref or args.output_dir is None:
+        print(
+            "deps-equivalence requires --control-ref, --treatment-ref, "
+            "and --output-dir (or pass --check-freeze-only)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    repo_root = Path(args.repo_root) if args.repo_root else Path.cwd()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    locks_dir = output_dir / "locks"
+    control_lock = materialise_lock_from_git(
+        repo_root, str(args.control_ref), locks_dir / "control.uv.lock"
+    )
+    treatment_lock = materialise_lock_from_git(
+        repo_root, str(args.treatment_ref), locks_dir / "treatment.uv.lock"
+    )
+    gate = run_deps_equivalence(
+        repo_root=repo_root,
+        control_ref=str(args.control_ref),
+        treatment_ref=str(args.treatment_ref),
+        data_dir=get_settings().data_dir,
+        output_dir=output_dir,
+        control_lock=control_lock,
+        treatment_lock=treatment_lock,
+        live=bool(args.live),
+        execute=True,
+    )
+    comment = format_pr_comment(
+        gate,
+        packages=gate.packages,
+        control_ref=gate.control_ref or str(args.control_ref),
+        treatment_ref=gate.treatment_ref or str(args.treatment_ref),
+    )
+    comment_path = output_dir / "comment.md"
+    comment_path.write_text(comment, encoding="utf-8")
+    print(comment, end="")
+    print(f"wrote {comment_path}", file=sys.stderr)
+    if gate.gate == "fail":
+        raise SystemExit(1)
+    if gate.gate == "skip":
+        raise SystemExit(0)
 
 
 def _ingest_lineups(args: argparse.Namespace) -> None:
