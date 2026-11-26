@@ -3,7 +3,8 @@ description: POST a short ntfy alert on job failure (no log excerpts)
 inputs:
   ntfy_url:
     description: ntfy topic URL (store as a repo secret; never log it)
-    required: true
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -17,7 +18,7 @@ runs:
       run: |
         set -euo pipefail
         if [ -z "${NTFY_URL:-}" ]; then
-          echo "NTFY_URL unset; skipping failure alert"
+          echo "soft skip: NTFY_URL unset (configure NTFY_URL secret)"
           exit 0
         fi
         title="fplt ${WORKFLOW} failed"

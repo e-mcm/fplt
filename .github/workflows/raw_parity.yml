@@ -8,6 +8,11 @@ on:
     # Mondays 06:00 UTC
     - cron: "0 6 * * 1"
   workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force a failure to test the ntfy alert (ops-03)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,8 +20,15 @@ permissions:
 jobs:
   parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -38,3 +50,23 @@ jobs:
           set -euo pipefail
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           uv run fplt data parity --remote "$remote" --branch snapshots
+
+  alerts:
+    needs: parity
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Heartbeat
+        if: needs.parity.result == 'success'
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_RAW_PARITY }}
+
+      - name: Notify failure
+        if: needs.parity.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}

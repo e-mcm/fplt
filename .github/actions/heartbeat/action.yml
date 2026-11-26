@@ -3,7 +3,8 @@ description: Ping a healthchecks.io (or compatible) URL on job success
 inputs:
   ping_url:
     description: Full heartbeat ping URL (store as a repo secret; never log it)
-    required: true
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -14,7 +15,7 @@ runs:
       run: |
         set -euo pipefail
         if [ -z "${PING_URL:-}" ]; then
-          echo "heartbeat ping URL unset; skipping (configure secret for A8)"
+          echo "soft skip: heartbeat ping URL unset (configure HC_PING_URL_* secret)"
           exit 0
         fi
         # Never echo PING_URL — curl errors can embed it; swallow stderr.
