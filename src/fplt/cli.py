@@ -1372,7 +1372,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Repository root (default: cwd)",
     )
-governance = sub.add_parser(
+    governance = sub.add_parser(
         "governance-check",
         parents=[log_flags],
         help=(
@@ -1820,7 +1820,7 @@ governance = sub.add_parser(
     if args.command == "deps-equivalence":
         _deps_equivalence(args)
         return
-if args.command == "governance-check":
+    if args.command == "governance-check":
         _governance_check(args)
         return
     if args.command == "drift-check":

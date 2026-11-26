@@ -185,7 +185,6 @@ class RunWriter:
         run_id: str | None = None,
         code_sha: str | None = None,
         code_dirty: bool | None = None,
-        prod_tag: str | None = None,
         lockfile_hash: str | None = None,
         host: str | None = None,
         raw_manifest_hash: str | None = None,
@@ -222,8 +221,6 @@ class RunWriter:
             run_id: Optional fixed id (tests). Minted when omitted.
             code_sha: Git HEAD; defaults to ``git_sha()``.
             code_dirty: Working-tree dirty flag; defaults to ``_git_is_dirty()``.
-            prod_tag: Moving ops tag label when running from ``prod``; defaults
-                to ``FPLT_PROD_TAG`` when set.
             lockfile_hash: ``uv.lock`` digest; defaults to ``uv_lock_sha256()``.
             host: Manifest host label; defaults to ``detect_host()``.
             raw_manifest_hash: Override; defaults to ``hash_raw_manifest``.
@@ -239,7 +236,8 @@ class RunWriter:
             squad_mode: ``real`` / ``virtual`` for official plan runs.
             prev_run_id: Prior virtual-line plan run, when chaining.
             checkpoint: Ops checkpoint label (e.g. ``T-90m``).
-            prod_tag: ``prod-…`` tag from ops-04 when known.
+            prod_tag: Moving ops tag label when running from ``prod``; defaults
+                to ``FPLT_PROD_TAG`` when set (ops-04).
         """
         self.data_dir = data_dir
         self.run_id = run_id if run_id is not None else mint_run_id()
@@ -259,12 +257,6 @@ class RunWriter:
         self._tags = dict(tags or {})
         self._code_sha = code_sha if code_sha is not None else git_sha()
         self._code_dirty = code_dirty if code_dirty is not None else _git_is_dirty()
-        if prod_tag is not None:
-            self._prod_tag: str | None = prod_tag
-        else:
-            from fplt.automation.release import resolve_prod_tag_label
-
-            self._prod_tag = resolve_prod_tag_label()
         self._lockfile_hash = (
             lockfile_hash if lockfile_hash is not None else uv_lock_sha256()
         )
@@ -298,7 +290,12 @@ class RunWriter:
         self._squad_mode: SquadMode | None = squad_mode
         self._prev_run_id = prev_run_id
         self._checkpoint = checkpoint
-        self._prod_tag = prod_tag
+        if prod_tag is not None:
+            self._prod_tag: str | None = prod_tag
+        else:
+            from fplt.automation.release import resolve_prod_tag_label
+
+            self._prod_tag = resolve_prod_tag_label()
         self._fplt_mc_version = fplt_mc_version()
         self._manifest: RunManifest | None = None
         self._finalized = False
