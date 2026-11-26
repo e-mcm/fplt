@@ -143,6 +143,16 @@ class ProductionOps(BaseModel):
                 groups[entry.spec] = entry.horizon
         return groups
 
+    def official_slate(
+        self, *, checkpoint: str = "T-90m"
+    ) -> tuple[dict[str, int], tuple[OfficialLine, ...], str]:
+        """Return ``(predict_horizons, lines, checkpoint)`` for official ops.
+
+        Callers run one predict per ``predict_horizons`` entry, then one plan
+        per line, then ``fplt.store.official.finalize_official_checkpoint``.
+        """
+        return dict(self.predict_groups()), tuple(self.lines), checkpoint
+
 
 def default_production_path() -> Path:
     """Return the repo-root path to ``configs/ops/production.yaml``."""

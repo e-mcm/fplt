@@ -4,6 +4,13 @@ GitHub Actions runs this on an offset cron ``7,22,37,52`` (see ``ops-tick.yml``)
 Extra ticks are safe: ``catch_up``, deadline checkpoints, and the no-plan
 alarm no-op when nothing is due. Missed checkpoint minutes are caught up on
 the next tick (ops-02).
+
+TODO(B12): at checkpoint ``T-90m``, run ``ProductionOps.official_slate`` —
+one predict per distinct spec, one plan per line — then
+``fplt.store.official.finalize_official_checkpoint``.
+
+TODO(ops-04): pass the checkout ``prod`` tag into ``RunWriter(prod_tag=…)`` for
+official runs so manifests record the frozen release.
 """
 
 from __future__ import annotations

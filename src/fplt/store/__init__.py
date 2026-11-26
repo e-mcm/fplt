@@ -2,9 +2,10 @@
 
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
 builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
-outcomes). Stage C adds ``fplt.store.experiments`` and ``catalog/`` rebuild;
-the rest of the ``Store`` read API (``runs`` / ``official`` / ``load``)
-follows in migration step 8.
+outcomes). B12 adds write-once ``official/`` pointers. Stage C adds
+``fplt.store.experiments`` and ``catalog/`` rebuild; the rest of the
+``Store`` read API (``runs`` / ``official`` / ``load``) follows in migration
+step 8.
 """
 
 from fplt.store.api import Store
@@ -33,6 +34,15 @@ from fplt.store.experiments import (
     submit_experiment,
 )
 from fplt.store.legacy import LegacyImportResult, import_legacy, legacy_run_id
+from fplt.store.official import (
+    LineRunPair,
+    OfficialExistsError,
+    finalize_official_checkpoint,
+    write_applied_record,
+    write_intervention_record,
+    write_official_pointer,
+    write_submitted_record,
+)
 from fplt.store.push import (
     IncompleteRunError,
     maybe_push_build,
@@ -54,11 +64,14 @@ __all__ = [
     "FoldedStatus",
     "IncompleteRunError",
     "LegacyImportResult",
+    "LineRunPair",
+    "OfficialExistsError",
     "RunWriter",
     "STAGING_VERSION",
     "Store",
     "build_from_staged",
     "catalog_runs_path",
+    "finalize_official_checkpoint",
     "find_reusable_arm",
     "fold_experiment_status",
     "import_legacy",
@@ -78,5 +91,9 @@ __all__ = [
     "rebuild_runs_catalog",
     "run_dir",
     "submit_experiment",
+    "write_applied_record",
+    "write_intervention_record",
+    "write_official_pointer",
     "write_run_inbox_row",
+    "write_submitted_record",
 ]
