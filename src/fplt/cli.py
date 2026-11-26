@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -1288,6 +1289,19 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Push each new run to fplt-lab when the lab bucket is configured",
     )
+    ui = sub.add_parser(
+        "ui",
+        parents=[log_flags],
+        help=(
+            "Local Streamlit dashboard on localhost (reads $FPLT_DATA_DIR; no writes)"
+        ),
+    )
+    ui.add_argument(
+        "--port",
+        type=int,
+        default=8501,
+        help="Streamlit port (default: 8501)",
+    )
     auth = sub.add_parser(
         "auth",
         parents=[log_flags],
@@ -1360,6 +1374,9 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("fplt auth")
         _auth(args)
         return
+    if args.command == "ui":
+        logger.info("fplt ui (data_dir=%s)", get_settings().data_dir)
+        raise SystemExit(_ui(args))
     if args.command == "data":
         logger.info("fplt data")
         _data(args)
@@ -1445,6 +1462,42 @@ def main(argv: list[str] | None = None) -> None:
         _perf_report(args)
         return
     raise SystemExit(_not_implemented(args.command))
+
+
+def _ui(args: argparse.Namespace) -> int:
+    """Launch the local Streamlit dashboard bound to localhost."""
+    from importlib.util import find_spec
+
+    if find_spec("streamlit") is None:
+        print(
+            "streamlit is not installed; run `uv sync` "
+            "(dev dependency) or `uv add --dev streamlit`",
+            file=sys.stderr,
+        )
+        return 2
+    app = Path(__file__).resolve().parent / "ui" / "app.py"
+    port = int(getattr(args, "port", 8501))
+    argv = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(app),
+        "--server.address",
+        "localhost",
+        "--server.headless",
+        "true",
+        "--server.port",
+        str(port),
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    print(
+        f"Starting fplt UI on http://localhost:{port}/ "
+        f"(data_dir={get_settings().data_dir})",
+        flush=True,
+    )
+    return int(subprocess.call(argv))
 
 
 def _data(args: argparse.Namespace) -> None:
