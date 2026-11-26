@@ -206,6 +206,56 @@ def copy_mutable(remote: Remote, source: str, dest: str) -> None:
     _rclone(["copy", source, dest, "--fast-list"], env=remote.env)
 
 
+def push_replace(remote: Remote, src: Path, object_key: str) -> None:
+    """Upload one file with overwrite allowed (mutable ``status/`` / ``catalog/``).
+
+    Uses ``rclone copyto`` without ``--immutable`` so ops can rewrite
+    ``status/status.json`` each tick. Only ``status`` and ``catalog`` roots are
+    accepted on the data bucket.
+
+    Args:
+        remote: rclone target (R2 or a local directory in tests).
+        src: Local file to upload.
+        object_key: Destination key under the bucket (e.g. ``status/status.json``).
+
+    Raises:
+        ValueError: The key root is not a mutable rewrite prefix, or ``src`` is
+            not a file.
+        RemoteError: rclone failed.
+    """
+    if not src.is_file():
+        raise ValueError(f"push_replace requires a file; got {src}")
+    key = object_key.strip("/")
+    root = key.split("/", 1)[0]
+    mutable = frozenset({"status", "catalog"})
+    if remote.kind != "data" or root not in mutable:
+        raise ValueError(
+            f"object key {object_key!r} is not a mutable rewrite on the "
+            f"{remote.kind} bucket; allowed roots: {sorted(mutable)} on data"
+        )
+    if root not in PUSHABLE[remote.kind]:
+        raise ValueError(
+            f"prefix root {root!r} is not pushable to the {remote.kind} bucket"
+        )
+    dest = f"{remote.target.rstrip('/')}/{key}"
+    nbytes = src.stat().st_size
+    start = time.perf_counter()
+    with timed_phase("remote/push"):
+        _rclone(
+            ["copyto", str(src), dest, "--fast-list"],
+            env=remote.env,
+        )
+    elapsed = time.perf_counter() - start
+    _emit_remote_timing(
+        "push",
+        remote=remote,
+        prefix=key,
+        elapsed=elapsed,
+        n_objects=1,
+        nbytes=nbytes,
+    )
+
+
 def check_one_way(src: Path, remote: Remote, prefix: str) -> None:
     """Assert every file under ``src`` exists under ``prefix`` with the same size.
 

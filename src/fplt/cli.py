@@ -1186,6 +1186,34 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    status_cmd = sub.add_parser(
+        "status",
+        parents=[log_flags],
+        help=(
+            "Ops health document (captures, plans, deadline, token, "
+            "quarantines, prod sha); write status.json under data_dir"
+        ),
+    )
+    status_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the status document as JSON (default: short text)",
+    )
+    status_cmd.add_argument(
+        "--public",
+        action="store_true",
+        help="Emit / write the public whitelist (no token or last_error)",
+    )
+    status_cmd.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    status_cmd.add_argument(
+        "--push",
+        action="store_true",
+        help="Push status/status.json to FPLT_DATA_BUCKET (mutable overwrite)",
+    )
     ops_tick = sub.add_parser(
         "ops-tick",
         parents=[log_flags],
@@ -1671,6 +1699,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "ops-catchup":
         _ops_catchup(args)
         return
+    if args.command == "status":
+        _status(args)
+        return
     if args.command == "ops-tick":
         _ops_tick(args)
         return
@@ -2045,6 +2076,29 @@ def _data_parity(args: argparse.Namespace) -> None:
         f"raw parity ok: {result.source_files} files on {result.branch} "
         f"→ {result.remote_target}/raw"
     )
+
+
+def _status(args: argparse.Namespace) -> None:
+    import json
+
+    from fplt.automation.status import (
+        build_status,
+        format_status_human,
+        public_status,
+        push_status,
+        write_status,
+    )
+
+    root = args.data_dir if args.data_dir is not None else get_settings().data_dir
+    doc = build_status(root)
+    write_status(root, doc)
+    if args.push:
+        push_status(root)
+    if args.json:
+        payload = public_status(doc) if args.public else doc.model_dump_json_doc()
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(format_status_human(doc), end="")
 
 
 def _ops_catchup(args: argparse.Namespace) -> None:
