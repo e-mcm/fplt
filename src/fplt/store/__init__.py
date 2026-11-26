@@ -1,8 +1,9 @@
-"""Immutable analytic-output store (runs, curated builds; later catalog).
+"""Immutable analytic-output store (runs, curated builds, experiments).
 
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
 builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
-outcomes). The rest of the ``Store`` read API arrives in migration step 8.
+outcomes). Stage C adds ``fplt.store.experiments``. The rest of the ``Store``
+read API arrives in migration step 8.
 """
 
 from fplt.store.api import Store
@@ -13,6 +14,15 @@ from fplt.store.builds import (
     build_from_staged,
     latest_build_id,
     load_build_manifest,
+)
+from fplt.store.experiments import (
+    ArmReuseKey,
+    FoldedStatus,
+    find_reusable_arm,
+    fold_experiment_status,
+    mint_batch_id,
+    mint_experiment_id,
+    submit_experiment,
 )
 from fplt.store.legacy import LegacyImportResult, import_legacy, legacy_run_id
 from fplt.store.push import (
@@ -30,14 +40,18 @@ from fplt.store.runs import (
 )
 
 __all__ = [
+    "ArmReuseKey",
     "BuildExistsError",
     "CuratedBuildSource",
+    "FoldedStatus",
     "IncompleteRunError",
     "LegacyImportResult",
     "RunWriter",
     "STAGING_VERSION",
     "Store",
     "build_from_staged",
+    "find_reusable_arm",
+    "fold_experiment_status",
     "import_legacy",
     "latest_build_id",
     "legacy_run_id",
@@ -45,8 +59,11 @@ __all__ = [
     "load_build_manifest",
     "maybe_push_build",
     "maybe_push_run",
+    "mint_batch_id",
+    "mint_experiment_id",
     "mint_run_id",
     "push_build",
     "push_run",
     "run_dir",
+    "submit_experiment",
 ]

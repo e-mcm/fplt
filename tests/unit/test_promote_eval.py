@@ -1091,6 +1091,16 @@ def test_execute_coverage_drop_writes_recommendation(tmp_path: Path) -> None:
     assert audit["git_dirty"] is False
     assert "uv_lock_sha256" in audit
     assert "config" in audit
+    assert result.experiment_id is not None
+    assert (out / "experiment_id.txt").read_text(encoding="utf-8").strip() == (
+        result.experiment_id
+    )
+    exp_root = tmp_path / "experiments" / f"exp={result.experiment_id}"
+    assert (exp_root / "manifest.json").is_file()
+    assert (exp_root / "results" / "verdict.json").is_file()
+    frozen = json.loads((exp_root / "manifest.json").read_text(encoding="utf-8"))
+    assert frozen["gates"] == spec.gates.model_dump(mode="json")
+    assert frozen["eval_spec_hash"]
 
 
 def test_execute_allow_dirty_inconclusive_skips_compare_on_s0(

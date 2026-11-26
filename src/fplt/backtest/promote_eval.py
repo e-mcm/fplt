@@ -26,7 +26,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -550,6 +550,7 @@ class PromoteEvalResult:
     components: ComponentEvalResult | None = None
     per_match: pl.DataFrame | None = None
     equivalence_diff: EquivalenceDiff | None = None
+    experiment_id: str | None = None
 
 
 def default_evals_dir() -> Path:
@@ -986,7 +987,40 @@ def execute_promote_eval(
     out = output_dir or _default_output_dir(data_dir, spec.name)
     out.mkdir(parents=True, exist_ok=True)
     (out / "plan.json").write_text(plan_to_json(plan), encoding="utf-8")
+    result = _execute_promote_eval_body(
+        spec,
+        plan,
+        data_dir=data_dir,
+        output_dir=out,
+        tier=tier,
+        allow_dirty=allow_dirty,
+        models_dir=models_dir,
+        argv=argv,
+    )
+    try:
+        result.experiment_id = record_promote_eval_experiment(
+            spec,
+            result,
+            data_dir=data_dir,
+        )
+    except Exception:
+        logger.exception("failed to record experiment storage for %s", spec.name)
+    return result
 
+
+def _execute_promote_eval_body(
+    spec: EvalSpec,
+    plan: PromoteEvalPlan,
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    tier: Tier | None,
+    allow_dirty: bool,
+    models_dir: Path | None,
+    argv: list[str] | None,
+) -> PromoteEvalResult:
+    """Run preflight / suites / artifacts for one non-dry-run promote-eval."""
+    out = output_dir
     preflight = preflight_promote_eval(
         spec,
         plan,
@@ -3976,6 +4010,257 @@ def _pooled_arm_metric(per_match: pl.DataFrame, arm: str, metric: str) -> float 
     return None
 
 
+def _synthetic_deadline(season: str, gw: int) -> datetime:
+    """Stable UTC deadline derived from season / GW for arm-reuse keys."""
+    year = int(season.split("-", 1)[0])
+    # 1 Aug of the season start year + (gw-1) weeks — identity only, not real fixtures.
+    return datetime(year, 8, 1, 11, 0, 0, tzinfo=UTC) + timedelta(weeks=gw - 1)
+
+
+def record_promote_eval_experiment(
+    spec: EvalSpec,
+    result: PromoteEvalResult,
+    *,
+    data_dir: Path,
+    submitted_by: str = "promote-eval",
+) -> str:
+    """Mint an experiment folder for one promote-eval execute.
+
+    Freezes EvalSpec gates + hash at submit, resolves each arm via catalog
+    reuse (exact key) or a fresh ``kind=experiment`` shell run, writes
+    ``results/verdict.json`` + ``report.md``, and appends events through
+    ``analysed`` or ``aborted``.
+
+    Args:
+        spec: EvalSpec under test (gates snapshotted from this object).
+        result: Finished promote-eval result (verdict / recommendation).
+        data_dir: Local data root for ``experiments/`` and ``runs/``.
+        submitted_by: Manifest ``submitted_by`` label.
+
+    Returns:
+        The minted ``experiment_id``.
+    """
+    from fplt.models.spec_identity import spec_hash as model_spec_hash
+    from fplt.schemas.l2 import SCHEMA_VERSION
+    from fplt.schemas.manifests import (
+        AsOfDeadline,
+        ExperimentArm,
+        ExperimentEvent,
+        ExperimentVerdict,
+        ExperimentWindow,
+    )
+    from fplt.store.experiments import (
+        append_experiment_event,
+        arm_reuse_key,
+        bind_arm_run,
+        hash_eval_spec_payload,
+        resolve_or_create_arm_run,
+        submit_experiment,
+        write_experiment_results,
+    )
+
+    plan = result.plan
+    preflight = result.preflight
+    now = datetime.now(UTC)
+    eval_hash = hash_eval_spec_payload(spec.model_dump(mode="json"))
+    gates_frozen = spec.gates.model_dump(mode="json")
+    window = ExperimentWindow(
+        role="primary",
+        seasons=list(plan.seasons),
+        from_gw=plan.from_gw,
+        to_gw=plan.to_gw,
+    )
+    # Deterministic as_of anchors so reuse keys are stable across submits.
+    deadlines = [
+        AsOfDeadline(
+            season=plan.seasons[0],
+            gw=plan.from_gw,
+            deadline_utc=_synthetic_deadline(plan.seasons[0], plan.from_gw),
+        ),
+        AsOfDeadline(
+            season=plan.seasons[-1],
+            gw=plan.to_gw,
+            deadline_utc=_synthetic_deadline(plan.seasons[-1], plan.to_gw),
+        ),
+    ]
+    code = preflight.git_sha or git_sha()
+    lock = uv_lock_sha256()
+    control = preflight.control_spec
+    treatment = preflight.treatment_spec
+    arm_defs: list[tuple[str, str, ModelSpec | None]] = [
+        ("control", "control", control),
+        ("treatment", "treatment", treatment),
+    ]
+    for extra in plan.arms:
+        arm_defs.append((extra, "baseline", None))
+
+    experiment_arms: list[ExperimentArm] = []
+    for arm_name, role, model in arm_defs:
+        if model is not None:
+            digest = model_spec_hash(model)
+            label = model.name
+        else:
+            digest = hash_eval_spec_payload({"arm": arm_name, "eval": eval_hash})
+            label = arm_name
+        experiment_arms.append(
+            ExperimentArm(
+                arm=arm_name,
+                role=role,  # type: ignore[arg-type]
+                spec_hash=digest,
+                spec_label=label,
+            )
+        )
+
+    manifest = submit_experiment(
+        data_dir,
+        flavour="ab",
+        question=spec.question,
+        arms=experiment_arms,
+        windows=[window],
+        horizon=max(plan.suites.steps, 1),
+        code_sha=code,
+        lockfile_hash=lock,
+        gates=gates_frozen,
+        metrics=list(spec.gates.keep_if.prediction_any),
+        seeds={"eval": int(control.seed) if control is not None else 0},
+        build_id=None,
+        as_of=deadlines,
+        eval_spec=spec.name,
+        eval_spec_hash=eval_hash,
+        submitted_by=submitted_by,
+        host="promote-eval",
+        submitted_at=now,
+    )
+    exp_id = manifest.experiment_id
+
+    for arm_name, role, model in arm_defs:
+        arm_meta = next(a for a in experiment_arms if a.arm == arm_name)
+        seeds = {"base": int(model.seed)} if model is not None else {"base": 0}
+        key = arm_reuse_key(
+            spec_hash=arm_meta.spec_hash,
+            code_sha=code,
+            lockfile_hash=(
+                preflight.control_lock_sha256
+                if role == "control" and preflight.control_lock_sha256
+                else (
+                    preflight.treatment_lock_sha256
+                    if role == "treatment" and preflight.treatment_lock_sha256
+                    else lock
+                )
+            ),
+            build_id=None,
+            deadlines=deadlines,
+            horizon=manifest.horizon,
+            seeds=seeds,
+        )
+        append_experiment_event(
+            data_dir,
+            exp_id,
+            ExperimentEvent(event="arm_started", at=datetime.now(UTC), arm=arm_name),
+        )
+        if result.exit_code == 2 and preflight.failures and model is None:
+            append_experiment_event(
+                data_dir,
+                exp_id,
+                ExperimentEvent(
+                    event="arm_failed",
+                    at=datetime.now(UTC),
+                    arm=arm_name,
+                    detail="preflight",
+                ),
+            )
+            continue
+        run_id, reused = resolve_or_create_arm_run(
+            data_dir,
+            key=key,
+            spec_label=arm_meta.spec_label,
+            model_id=model.model_id if model is not None else arm_name,
+            experiment_id=exp_id,
+            arm=arm_name,
+            purpose=f"promote-eval {spec.name} {arm_name}",
+            host="promote-eval",
+        )
+        bind_arm_run(
+            data_dir,
+            exp_id,
+            arm=arm_name,
+            run_id=run_id,
+            reused=reused,
+        )
+
+    arm_metrics = None
+    paired = None
+    if result.summary is not None and not result.summary.is_empty():
+        # Best-effort: one row per arm metric from compare summary when present.
+        rows: list[dict[str, Any]] = []
+        frame = result.summary
+        metric_cols = [
+            c
+            for c in frame.columns
+            if c
+            not in {
+                "model",
+                "model_id",
+                "arm",
+                "season",
+                "mode",
+            }
+        ]
+        name_col = (
+            "model"
+            if "model" in frame.columns
+            else ("model_name" if "model_name" in frame.columns else "model_id")
+        )
+        for row in frame.to_dicts():
+            label = str(row.get(name_col) or row.get("model_id") or "arm")
+            for metric in metric_cols:
+                value = row.get(metric)
+                if value is None or isinstance(value, (dict, list)):
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                rows.append(
+                    {
+                        "arm": label,
+                        "window": "primary",
+                        "metric": metric,
+                        "value": numeric,
+                        "se": None,
+                        "n": 0,
+                        "stage": "prediction",
+                        "schema_version": SCHEMA_VERSION,
+                    }
+                )
+        if rows:
+            arm_metrics = pl.DataFrame(rows)
+
+    terminal = "analysed" if result.exit_code != 2 else "aborted"
+    write_experiment_results(
+        data_dir,
+        exp_id,
+        arm_metrics=arm_metrics,
+        paired=paired,
+        verdict=ExperimentVerdict(
+            overall=result.verdict,
+            gates=[{"frozen": True, "gates": gates_frozen}],
+            computed_at=datetime.now(UTC),
+            eval_spec_hash=eval_hash,
+        ),
+        report_md=result.recommendation,
+    )
+    append_experiment_event(
+        data_dir,
+        exp_id,
+        ExperimentEvent(event=terminal, at=datetime.now(UTC)),  # type: ignore[arg-type]
+    )
+    (result.output_dir / "experiment_id.txt").write_text(
+        exp_id + "\n", encoding="utf-8"
+    )
+    return exp_id
+
+
 __all__ = [
     "ChangeSpec",
     "CoverageResult",
@@ -4003,6 +4288,7 @@ __all__ = [
     "plan_to_json",
     "preflight_promote_eval",
     "raw_de_vig_spec",
+    "record_promote_eval_experiment",
     "render_recommendation",
     "repo_root",
     "slot_component_names",
