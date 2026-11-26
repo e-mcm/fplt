@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
+.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report
 
 # ── Historical data (vaastav) ─────────────────────────────────────────────────
 bootstrap-vaastav:
@@ -63,6 +63,11 @@ typecheck:
 # ── Leaderboard ───────────────────────────────────────────────────────────────
 leaderboard:
 	uv run streamlit run apps/leaderboard.py
+
+# ── Local results UI (localhost only; reads $FPLT_DATA_DIR; no writes) ────────
+# Prefer: uv run fplt ui   or   make ui
+ui:
+	uv run streamlit run src/fplt/ui/app.py --server.address localhost --browser.gatherUsageStats false
 
 # ── Multi-model eval (ledger for make leaderboard) ────────────────────────────
 # Usage: make eval-board SEASON=2024-25

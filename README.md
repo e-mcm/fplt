@@ -86,6 +86,7 @@ Logged-in next-deadline actions (production model, not a guessed season/GW, and 
 | Store live-team token from browser | `uv run fplt auth from-browser --entry-id …` (reads localStorage → `~/.config/fplt/env`) |
 | Store live-team token (manual paste) | `uv run fplt auth set --entry-id …` |
 | Leaderboard app | `make leaderboard` |
+| Results UI (overview; localhost) | `make ui` or `uv run fplt ui` — also `uv run streamlit run src/fplt/ui/app.py --server.address localhost` |
 
 Run `fplt auth from-browser` (or `fplt auth set`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `dc_layered_v4` (same as `configs/ops/production.yaml`); pass `MODEL=` to override. `SEASON` / `GW` on that target are required and are **not** “whatever is next” — resolve them ([`docs/next-gw-actions.md`](docs/next-gw-actions.md)). Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
 
