@@ -1415,6 +1415,25 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip R2 status/quarantine pull/push around --check",
     )
+    catalog = sub.add_parser(
+        "catalog",
+        parents=[log_flags],
+        help="Derived catalog/ index over run manifests (Stage C / step 8)",
+    )
+    catalog_sub = catalog.add_subparsers(dest="catalog_command")
+    catalog_rebuild = catalog_sub.add_parser(
+        "rebuild",
+        parents=[log_flags],
+        help=(
+            "Rescan runs/run=*/ with _SUCCESS into catalog/runs.parquet "
+            "(clears catalog/inbox/)"
+        ),
+    )
+    catalog_rebuild.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
     legacy = sub.add_parser(
         "legacy",
         parents=[log_flags],
@@ -1535,6 +1554,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "data":
         logger.info("fplt data")
         _data(args)
+        return
+    if args.command == "catalog":
+        logger.info("fplt catalog")
+        _catalog(args)
         return
     if args.command == "legacy":
         logger.info("fplt legacy")
@@ -1825,6 +1848,24 @@ def _data_gates(args: argparse.Namespace) -> None:
     for action in failed:
         names = ", ".join(f.name for f in action.report.failures)
         print(f"  quarantined {action.capture_path}: {names}")
+
+
+def _catalog(args: argparse.Namespace) -> None:
+    command = getattr(args, "catalog_command", None)
+    if command == "rebuild":
+        _catalog_rebuild(args)
+        return
+    raise SystemExit(_not_implemented(f"catalog {command}"))
+
+
+def _catalog_rebuild(args: argparse.Namespace) -> None:
+    from fplt.store.catalog import catalog_runs_path, rebuild_runs_catalog
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    frame = rebuild_runs_catalog(data_dir)
+    print(f"catalog rebuild: rows={frame.height} path={catalog_runs_path(data_dir)}")
 
 
 def _legacy(args: argparse.Namespace) -> None:

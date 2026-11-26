@@ -5,7 +5,7 @@ Library-first FPL points prediction and team selection. Dagster / CLI / apps are
 | Module | Role |
 |---|---|
 | `data/` | Clients, raw/staging, `DataStore`, **`PITView`** |
-| `store/` | Write-once analytic runs (`RunWriter`, `push_run`); catalog / Store readers later |
+| `store/` | Write-once analytic runs (`RunWriter`, `push_run`); derived `catalog/`; `Store.ledger` (more Store readers in step 8) |
 | `analysis/` | Pure polars helpers for dashboards / reports (no Streamlit) |
 | `ui/` | Local Streamlit app (`fplt ui`); thin wrappers over `analysis` + read adapter |
 | `schemas/` | `pandera.polars` contracts at module boundaries |

@@ -411,6 +411,10 @@ class RunWriter:
         self._write_manifest(self._manifest)
         if status == "succeeded":
             (self.path / _SUCCESS).write_text("", encoding="utf-8")
+            # Lazy import: catalog depends on run paths; avoid a cycle.
+            from fplt.store.catalog import write_run_inbox_row
+
+            write_run_inbox_row(self.data_dir, self._manifest)
         self._finalized = True
         logger.info(
             "run finished run_id=%s status=%s",
