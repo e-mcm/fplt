@@ -19,12 +19,22 @@
 #
 # B11: `pipeline:` is the typed PipelineSpec (data / model / planner /
 # policy / env). `models` / `plan_horizon` stay as the short form; they
-# must match pipeline.model / pipeline.planner.horizon. Official lines
-# (B12) will expand this into named lines that share the same shape.
+# must match pipeline.model / pipeline.planner.horizon and the primary line.
+#
+# B12: `lines:` is the official slate (data model §4.1). Exactly one
+# primary (applied); candidates are recorded only. One predict per
+# distinct spec at max horizon; one plan per line. Primary is always
+# real squad; candidates default to virtual.
 
 models:
   - dc_layered_v4_native
 plan_horizon: 3
+
+lines:
+  - {line: v4_h3, spec: dc_layered_v4_native, horizon: 3, role: primary}
+  - {line: v4_h5, spec: dc_layered_v4_native, horizon: 5, role: candidate, squad_mode: virtual}
+  - {line: v4_h7, spec: dc_layered_v4_native, horizon: 7, role: candidate, squad_mode: virtual}
+  - {line: v4_h9, spec: dc_layered_v4_native, horizon: 9, role: candidate, squad_mode: virtual}
 
 pipeline:
   data:

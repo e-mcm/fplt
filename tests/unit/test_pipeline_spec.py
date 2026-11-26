@@ -239,3 +239,11 @@ def test_production_ops_requires_pipeline_field() -> None:
             models=["dc_layered_v4_native"],
             plan_horizon=3,
         )
+
+
+def test_committed_production_lines_slate() -> None:
+    """B12: committed slate is v4_h3 primary + h5/h7/h9 candidates."""
+    ops = load_production_ops()
+    assert ops.primary_line().line == "v4_h3"
+    assert ops.predict_groups() == {"dc_layered_v4_native": 9}
+    assert load_production_pipeline().planner.horizon == 3

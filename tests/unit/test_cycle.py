@@ -16,7 +16,11 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
-from fplt.automation.production import ProductionOps, load_production_ops
+from fplt.automation.production import (
+    OfficialLine,
+    ProductionOps,
+    load_production_ops,
+)
 from fplt.backtest.ledger import align_ledger_columns
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
@@ -274,6 +278,14 @@ def test_materialize_attaches_the_report(
             pipeline=live_pipeline_defaults(
                 model="rolling_mean_v1", horizon=1, mc_backend="python"
             ),
+            lines=[
+                OfficialLine(
+                    line="primary",
+                    spec="rolling_mean_v1",
+                    horizon=1,
+                    role="primary",
+                )
+            ],
         ),
     )
     result = dg.materialize([recommendation_report])
