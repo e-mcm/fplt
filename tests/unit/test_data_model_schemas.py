@@ -13,8 +13,13 @@ from fplt.schemas.l2 import SCHEMA_VERSION, L2StandardKeys
 from fplt.schemas.manifests import (
     AppliedRecord,
     AsOfDeadline,
+    BatchManifest,
     BuildManifest,
     BuildTableEntry,
+    ExperimentArm,
+    ExperimentEvent,
+    ExperimentManifest,
+    ExperimentWindow,
     InterventionRecord,
     OfficialPointer,
     RunManifest,
@@ -243,9 +248,43 @@ def test_squad_state_table_schema_empty_owned() -> None:
     assert json.loads(checked["owned"].to_list()[0]) == []
 
 
-def test_no_experiment_or_batch_manifests_in_b2() -> None:
-    """Stage C owns experiment/batch schemas — they must not land in B2."""
-    import fplt.schemas.manifests as manifests
-
-    assert not hasattr(manifests, "ExperimentManifest")
-    assert not hasattr(manifests, "BatchManifest")
+def test_experiment_and_batch_manifest_round_trip() -> None:
+    """Stage C experiment / batch manifests validate and round-trip."""
+    arm = ExperimentArm(
+        arm="control",
+        role="control",
+        spec_hash="a" * 64,
+        spec_label="demo",
+    )
+    window = ExperimentWindow(role="primary", seasons=["2024-25"], from_gw=1, to_gw=10)
+    experiment = ExperimentManifest(
+        experiment_id="exp_20261124T125601Z_aaaaaa",
+        flavour="ab",
+        question="Does the lever help?",
+        eval_spec="demo_ab",
+        eval_spec_hash="c" * 64,
+        arms=[arm],
+        windows=[window],
+        horizon=3,
+        gates={"min_coverage": 0.5},
+        code_sha="abc1234",
+        lockfile_hash="b" * 64,
+        submitted_by="test",
+        host="test",
+        submitted_at=_TS,
+    )
+    restored = ExperimentManifest.model_validate(
+        json.loads(experiment.model_dump_json())
+    )
+    assert restored.experiment_id == experiment.experiment_id
+    event = ExperimentEvent(event="submitted", at=_TS)
+    assert event.event == "submitted"
+    batch = BatchManifest(
+        batch_id="batch_20261124T125601Z_bbbbbb",
+        label="nightly",
+        experiment_ids=[experiment.experiment_id],
+        submitted_at=_TS,
+        submitted_by="test",
+        host="test",
+    )
+    assert batch.experiment_ids == [experiment.experiment_id]

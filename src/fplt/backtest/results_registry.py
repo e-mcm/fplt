@@ -103,6 +103,7 @@ class PromoteResult(BaseModel):
     provisional: bool = False
     provisional_reason: str | None = None
     eval_spec: str | None = None
+    experiment_id: str | None = None
     control: str | None = None
     treatment: str | None = None
     store_doc: str | None = None

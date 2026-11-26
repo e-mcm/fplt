@@ -190,6 +190,9 @@ class RunWriter:
         staged_digests: dict[str, str] | None = None,
         build_id: str | None = None,
         started_at: datetime | None = None,
+        experiment_id: str | None = None,
+        arm: str | None = None,
+        auto_build_id: bool = True,
     ) -> None:
         """Build a writer; the folder is created only on ``__enter__``.
 
@@ -216,9 +219,13 @@ class RunWriter:
             host: Manifest host label; defaults to ``detect_host()``.
             raw_manifest_hash: Override; defaults to ``hash_raw_manifest``.
             staged_digests: Override; defaults to ``hash_staged_data``.
-            build_id: Curated build id. Defaults to ``latest_build_id`` when
-                curated builds exist locally; otherwise ``None``.
+            build_id: Curated build id. When ``auto_build_id`` is true and this
+                is ``None``, defaults to ``latest_build_id``; when
+                ``auto_build_id`` is false, ``None`` is stored as-is.
             started_at: Manifest start time; defaults to now (UTC).
+            experiment_id: Owning experiment when ``kind="experiment"``.
+            arm: Arm name within that experiment (control / treatment / …).
+            auto_build_id: Resolve ``latest_build_id`` when ``build_id`` is None.
         """
         self.data_dir = data_dir
         self.run_id = run_id if run_id is not None else mint_run_id()
@@ -254,15 +261,19 @@ class RunWriter:
         )
         if build_id is not None:
             self._build_id: str | None = build_id
-        else:
+        elif auto_build_id:
             # Lazy import avoids a circular import at module load
             # (builds → runs.hash_raw_manifest).
             from fplt.store.builds import latest_build_id
 
             self._build_id = latest_build_id(data_dir)
+        else:
+            self._build_id = None
         self._started_at = _aware(
             started_at if started_at is not None else datetime.now(UTC)
         )
+        self._experiment_id = experiment_id
+        self._arm = arm
         self._fplt_mc_version = fplt_mc_version()
         self._manifest: RunManifest | None = None
         self._finalized = False
@@ -419,6 +430,8 @@ class RunWriter:
             kind=self._kind,
             mode=self._mode,
             purpose=self._purpose,
+            experiment_id=self._experiment_id,
+            arm=self._arm,
             run_type=self._run_type,
             spec_hash=self._spec_hash,
             spec_label=self._spec_label,

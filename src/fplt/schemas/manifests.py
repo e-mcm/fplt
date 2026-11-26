@@ -1,13 +1,13 @@
-"""Pydantic manifests for runs, curated builds, and official pointers.
+"""Pydantic manifests for runs, curated builds, official pointers, experiments.
 
-These are the Stage B2 JSON contracts from ``docs/proposals/fplt-data-model.md``
-step 2. Experiment / batch manifests wait for Stage C.
+Stage B2 contracts plus Stage C experiment / batch manifests and write-once
+events from ``docs/proposals/fplt-data-model.md`` §3.8.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -17,6 +17,17 @@ RunType = Literal["predict", "plan", "eval"]
 RunStatus = Literal["running", "succeeded", "failed"]
 SquadMode = Literal["real", "virtual"]
 LineRole = Literal["primary", "candidate"]
+ExperimentFlavour = Literal["comparison", "ab"]
+ArmRole = Literal["control", "treatment", "baseline"]
+ExperimentEventKind = Literal[
+    "submitted",
+    "arm_started",
+    "arm_succeeded",
+    "arm_failed",
+    "analysed",
+    "aborted",
+]
+ExperimentStatusName = Literal["planned", "running", "analysed", "failed", "aborted"]
 
 
 class AsOfDeadline(BaseModel):
@@ -180,3 +191,163 @@ class InterventionRecord(BaseModel):
     reason: str = Field(min_length=1)
     line: str | None = None
     plan_run_id: str | None = None
+
+
+class ExperimentArm(BaseModel):
+    """One arm declared on an experiment manifest at submit time."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    arm: str = Field(min_length=1)
+    role: ArmRole
+    spec_hash: str = Field(min_length=1)
+    spec_label: str = Field(min_length=1)
+    env: dict[str, str] = Field(default_factory=dict)
+    run_id: str | None = None
+
+    @field_validator("env")
+    @classmethod
+    def _env_keys(cls, value: dict[str, str]) -> dict[str, str]:
+        for key in value:
+            if not key.strip():
+                raise ValueError("env keys must be non-empty")
+        return value
+
+
+class ExperimentWindow(BaseModel):
+    """One primary / confirm / holdout window pinned at experiment submit."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: str = Field(min_length=1)
+    seasons: list[str] = Field(min_length=1)
+    from_gw: int = Field(ge=1, le=38)
+    to_gw: int = Field(ge=1, le=38)
+
+    @field_validator("seasons")
+    @classmethod
+    def _seasons_nonempty(cls, value: list[str]) -> list[str]:
+        cleaned = [s.strip() for s in value]
+        if any(not s for s in cleaned):
+            raise ValueError("seasons entries must be non-empty")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _gw_order(self) -> ExperimentWindow:
+        if self.from_gw > self.to_gw:
+            raise ValueError("from_gw must be <= to_gw")
+        return self
+
+
+class ExperimentManifest(BaseModel):
+    """Immutable experiment identity written at submit under ``experiments/``.
+
+    Gates, metrics, windows and the EvalSpec hash are frozen here so later
+    edits to the YAML cannot change a submitted experiment's verdict rule.
+    Status is derived from write-once event files, not a mutable field.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    experiment_id: str = Field(min_length=1)
+    flavour: ExperimentFlavour
+    question: str = Field(min_length=1)
+    batch_id: str | None = None
+    eval_spec: str | None = None
+    eval_spec_hash: str | None = None
+    arms: list[ExperimentArm] = Field(min_length=1)
+    build_id: str | None = None
+    windows: list[ExperimentWindow] = Field(min_length=1)
+    as_of: list[AsOfDeadline] = Field(default_factory=list[AsOfDeadline])
+    horizon: int = Field(ge=1)
+    seeds: dict[str, int] = Field(default_factory=dict)
+    metrics: list[str] = Field(default_factory=list)
+    gates: dict[str, Any] = Field(default_factory=dict)
+    code_sha: str = Field(min_length=1)
+    lockfile_hash: str = Field(min_length=1)
+    submitted_by: str = Field(min_length=1)
+    host: str = Field(min_length=1)
+    submitted_at: datetime
+
+    @field_validator("question")
+    @classmethod
+    def _question_strip(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("question must be non-blank")
+        return cleaned
+
+    @field_validator("seeds")
+    @classmethod
+    def _seed_keys(cls, value: dict[str, int]) -> dict[str, int]:
+        for key in value:
+            if not key.strip():
+                raise ValueError("seed keys must be non-empty")
+        return value
+
+    @model_validator(mode="after")
+    def _ab_requires_eval(self) -> ExperimentManifest:
+        if self.flavour == "ab" and not (self.eval_spec and self.eval_spec_hash):
+            raise ValueError("ab experiments require eval_spec and eval_spec_hash")
+        names = [arm.arm for arm in self.arms]
+        if len(names) != len(set(names)):
+            raise ValueError("arm names must be unique")
+        return self
+
+
+class ExperimentEvent(BaseModel):
+    """One write-once progress event under ``experiments/exp=…/events/``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event: ExperimentEventKind
+    at: datetime
+    arm: str | None = None
+    run_id: str | None = None
+    detail: str | None = None
+
+    @model_validator(mode="after")
+    def _arm_events_need_arm(self) -> ExperimentEvent:
+        if self.event.startswith("arm_") and not (self.arm and self.arm.strip()):
+            raise ValueError(f"{self.event} events require arm")
+        return self
+
+
+class BatchManifest(BaseModel):
+    """Immutable batch of experiments submitted together.
+
+    Path: ``batches/batch=<batch_id>/manifest.json``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    batch_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    experiment_ids: list[str] = Field(min_length=1)
+    submitted_at: datetime
+    submitted_by: str = Field(min_length=1)
+    host: str = Field(min_length=1)
+
+    @field_validator("experiment_ids")
+    @classmethod
+    def _unique_experiments(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("experiment_ids must be non-empty")
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("experiment_ids must be unique")
+        return cleaned
+
+
+class ExperimentVerdict(BaseModel):
+    """Computed verdict under ``experiments/exp=…/results/verdict.json``.
+
+    Distinct from the human keep/drop decision in ``registry.yaml``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    overall: str = Field(min_length=1)
+    gates: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    computed_at: datetime
+    eval_spec_hash: str | None = None
