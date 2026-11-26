@@ -59,6 +59,32 @@ class TransferDeltaSchema(pa.DataFrameModel):
         coerce = True
 
 
+class PlayerDepthSchema(pa.DataFrameModel):
+    """Fixture / involvement depth for one player in one target gameweek.
+
+    Fixture labels come from PIT tables. ``team_eg`` / ``opp_eg``, involvement
+    weights, and ``xmins`` need layered components; opaque models leave them
+    null. ``xmins`` is derived at explain time from the minutes PMF.
+    """
+
+    player_key: int
+    target_gw: int = pa.Field(ge=1, le=38)
+    fixture_id: int = pa.Field(nullable=True)
+    is_home: bool = pa.Field(nullable=True)
+    team_key: int = pa.Field(nullable=True)
+    opponent_team_key: int = pa.Field(nullable=True)
+    team_eg: float = pa.Field(nullable=True)
+    opp_eg: float = pa.Field(nullable=True)
+    goal_weight: float = pa.Field(ge=0, nullable=True)
+    assist_weight: float = pa.Field(ge=0, nullable=True)
+    xmins: float = pa.Field(ge=0, nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["player_key", "target_gw", "fixture_id"]
+
+
 FORECAST_BOARD_COLUMNS: dict[str, pl.DataType] = {
     "player_key": pl.Int64(),
     "position": pl.Utf8(),
@@ -89,4 +115,18 @@ TRANSFER_DELTA_COLUMNS: dict[str, pl.DataType] = {
     "price_out": pl.Int64(),
     "price_in": pl.Int64(),
     "delta_price": pl.Int64(),
+}
+
+PLAYER_DEPTH_COLUMNS: dict[str, pl.DataType] = {
+    "player_key": pl.Int64(),
+    "target_gw": pl.Int64(),
+    "fixture_id": pl.Int64(),
+    "is_home": pl.Boolean(),
+    "team_key": pl.Int64(),
+    "opponent_team_key": pl.Int64(),
+    "team_eg": pl.Float64(),
+    "opp_eg": pl.Float64(),
+    "goal_weight": pl.Float64(),
+    "assist_weight": pl.Float64(),
+    "xmins": pl.Float64(),
 }

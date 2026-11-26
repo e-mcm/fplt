@@ -245,3 +245,322 @@ def _pool() -> pl.DataFrame:
             }
         )
     return pl.DataFrame(rows)
+
+
+def test_decision_explain_soft_fails_when_baseline_budget_breaks() -> None:
+    """Keep-squad list prices over £100m must not kill transfers / planned XI."""
+    pool = _expensive_owned_pool()
+    # Selling prices fit the plan; candidate list prices blow the baseline.
+    owned = [OwnedPlayer(player_key=key, selling_price=45) for key in range(1, 16)]
+    state = SquadState.model_validate(
+        {
+            "bank": 0,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [player.model_dump() for player in owned],
+        }
+    )
+    xpts = [2.0] * 16
+    xpts[11] = 0.5
+    xpts[15] = 9.0
+    points = pl.DataFrame(
+        {
+            "player_key": list(range(1, 17)),
+            "step": [0] * 16,
+            "xpts": xpts,
+        }
+    )
+    # Owned list prices 15×70 = 1050 > 1000 → baseline select_squad fails.
+    expensive = pool.drop("xpts").with_columns(
+        pl.when(pl.col("player_key") <= 15)
+        .then(pl.lit(70))
+        .otherwise(pl.col("price"))
+        .alias("price")
+    )
+    plan = plan_squad(
+        expensive,
+        points,
+        state,
+        initial=False,
+        horizon=1,
+    )
+    explain = build_decision_explain(plan, state, expensive)
+    assert explain.is_draft is False
+    assert explain.baseline_xi_xpts is None
+    assert explain.net_delta is None
+    assert any("baseline unavailable" in note for note in explain.constraints)
+    assert explain.planned_xi_xpts > 0
+    text = format_decision_explain(explain)
+    assert "baseline unavailable" in text.lower() or "—" in text
+
+
+def test_explain_plan_markdown_emits_board_when_baseline_fails(
+    tmp_path,
+) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise.explain import explain_plan_markdown
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    rules = Rules.for_season("2024-25")
+    pool = _expensive_owned_pool()
+    owned = [OwnedPlayer(player_key=key, selling_price=45) for key in range(1, 16)]
+    state = SquadState.model_validate(
+        {
+            "bank": 0,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [player.model_dump() for player in owned],
+        }
+    )
+    xpts = [2.0] * 16
+    xpts[11] = 0.5
+    xpts[15] = 9.0
+    candidates = pool.drop("xpts").with_columns(
+        pl.when(pl.col("player_key") <= 15)
+        .then(pl.lit(70))
+        .otherwise(pl.col("price"))
+        .alias("price")
+    )
+    points = pl.DataFrame(
+        {
+            "player_key": list(range(1, 17)),
+            "step": [0] * 16,
+            "xpts": xpts,
+        }
+    )
+    plan = plan_squad(candidates, points, state, initial=False, horizon=1)
+    preds = pl.DataFrame(
+        {
+            "player_key": list(range(1, 17)),
+            "position": pool["position"].to_list(),
+            "target_gw": [2] * 16,
+            "xpts": xpts,
+            "p_played": [1.0] * 16,
+            "p_60": [0.8] * 16,
+            "p_goal": [0.1] * 16,
+            "p_assist": [0.1] * 16,
+            "p_cs": [0.2] * 16,
+            "p_haul": [0.05] * 16,
+        }
+    )
+    text = explain_plan_markdown(
+        plan,
+        state,
+        candidates,
+        preds,
+        season="2024-25",
+        gameweek=2,
+        rules=rules,
+        view=view,
+        parts=None,
+    )
+    assert "Forecast board" in text
+    assert "baseline unavailable" in text.lower() or "Baseline XI" in text
+    assert "Why (fixture" in text or "Starting XI depth" in text
+
+
+def test_player_depth_fixture_labels_without_parts(tmp_path) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise.explain import build_player_depth, format_player_depth
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    rules = Rules.for_season("2024-25")
+    preds = pl.DataFrame(
+        {
+            "player_key": [100],
+            "position": ["MID"],
+            "target_gw": [2],
+            "xpts": [5.0],
+            "p_played": [1.0],
+            "p_60": [0.9],
+            "p_goal": [0.2],
+            "p_assist": [0.1],
+            "p_cs": [0.3],
+            "p_haul": [0.05],
+        }
+    )
+    depth = build_player_depth(
+        view,
+        player_key=100,
+        target_gw=2,
+        predictions=preds,
+        rules=rules,
+        parts=None,
+    )
+    assert depth.depth.height == 1
+    row = depth.depth.row(0, named=True)
+    assert int(row["fixture_id"]) == 2
+    assert row["is_home"] is False  # team 3 away at team 7 in GW2 builder
+    assert row["team_eg"] is None
+    assert row["xmins"] is None
+    text = format_player_depth(depth, names={100: "A"})
+    assert "Player depth" in text
+    assert "A" in text
+
+
+def test_player_depth_fills_layered_fields(tmp_path) -> None:
+    import numpy as np
+
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.models.distributions import (
+        MAX_GOALS,
+        MINUTE_BINS,
+        MinutesDist,
+        ScorelineDist,
+    )
+    from fplt.optimise.explain import (
+        LayeredExplainParts,
+        build_player_depth,
+        xmins_from_minutes_pmf,
+    )
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    rules = Rules.for_season("2024-25")
+    goals = MAX_GOALS + 1
+    pmf = np.zeros((1, goals + 1, goals + 1))
+    pmf[0, 2, 1] = 1.0
+
+    class _Score:
+        def predict(self, _view, fixtures):
+            ids = fixtures["fixture_id"].to_numpy()
+            grid = np.zeros((len(ids), goals + 1, goals + 1))
+            for index in range(len(ids)):
+                grid[index, 2, 1] = 1.0
+            return ScorelineDist(ids, grid)
+
+    class _Minutes:
+        def predict(self, _view, asked):
+            n = asked.height
+            pmf_m = np.zeros((n, len(MINUTE_BINS)))
+            pmf_m[:, list(MINUTE_BINS).index(90)] = 1.0
+            keys = asked.select("player_key", "fixture_id")
+            return MinutesDist(keys, MINUTE_BINS, pmf_m)
+
+    class _Involvement:
+        def predict(self, _view, asked):
+            return asked.select("player_key", "fixture_id").with_columns(
+                pl.lit(0.4).alias("goal_weight"),
+                pl.lit(0.25).alias("assist_weight"),
+            )
+
+    parts = LayeredExplainParts(
+        score=_Score(), minutes=_Minutes(), involvement=_Involvement()
+    )
+    preds = pl.DataFrame(
+        {
+            "player_key": [200],
+            "position": ["FWD"],
+            "target_gw": [2],
+            "xpts": [4.0],
+            "p_played": [1.0],
+            "p_60": [1.0],
+            "p_goal": [0.3],
+            "p_assist": [0.1],
+            "p_cs": [0.2],
+            "p_haul": [0.1],
+        }
+    )
+    depth = build_player_depth(
+        view,
+        player_key=200,
+        target_gw=2,
+        predictions=preds,
+        rules=rules,
+        parts=parts,
+    )
+    row = depth.depth.row(0, named=True)
+    assert float(row["goal_weight"]) == pytest.approx(0.4)
+    assert float(row["assist_weight"]) == pytest.approx(0.25)
+    assert float(row["xmins"]) == pytest.approx(90.0)
+    # Player 200 is team 7, home in GW2 fixture 2 vs team 3.
+    assert row["is_home"] is True
+    assert float(row["team_eg"]) == pytest.approx(2.0)
+    assert float(row["opp_eg"]) == pytest.approx(1.0)
+    xmins = xmins_from_minutes_pmf(
+        _Minutes().predict(view, depth.depth.select("player_key", "fixture_id"))
+    )
+    assert float(xmins["xmins"][0]) == pytest.approx(90.0)
+
+
+def test_layered_explain_parts_none_for_opaque() -> None:
+    from fplt.optimise.explain import layered_explain_parts
+
+    assert layered_explain_parts(object()) is None
+
+
+def test_transfer_pair_depth_markdown(tmp_path) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise.explain import (
+        build_transfer_pair_depth,
+        format_transfer_pair_depth,
+    )
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    rules = Rules.for_season("2024-25")
+    preds = pl.DataFrame(
+        {
+            "player_key": [100, 200],
+            "position": ["MID", "FWD"],
+            "target_gw": [2, 2],
+            "xpts": [4.0, 5.0],
+            "p_played": [1.0, 1.0],
+            "p_60": [0.8, 0.9],
+            "p_goal": [0.1, 0.2],
+            "p_assist": [0.1, 0.1],
+            "p_cs": [0.2, 0.1],
+            "p_haul": [0.05, 0.1],
+        }
+    )
+    pair = build_transfer_pair_depth(
+        view,
+        player_out=100,
+        player_in=200,
+        target_gw=2,
+        predictions=preds,
+        rules=rules,
+        parts=None,
+    )
+    text = format_transfer_pair_depth(pair, names={100: "A", 200: "B"})
+    assert "A → B" in text
+    assert "Forecast board" in text
+
+
+def _expensive_owned_pool() -> pl.DataFrame:
+    """Fifteen owned players plus cheap haul mid 16."""
+    rows: list[dict[str, object]] = []
+    positions = ["GK"] * 2 + ["DEF"] * 5 + ["MID"] * 5 + ["FWD"] * 3 + ["MID"]
+    for index, position in enumerate(positions, start=1):
+        price = 45 if index == 16 else 70
+        xpts = 9.0 if index == 16 else (0.5 if index == 12 else 2.0)
+        rows.append(
+            {
+                "player_key": index,
+                "position": position,
+                "team_key": ((index - 1) % 10) + 1,
+                "price": price,
+                "xpts": xpts,
+            }
+        )
+    return pl.DataFrame(rows)

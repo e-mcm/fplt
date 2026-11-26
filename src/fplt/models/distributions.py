@@ -96,6 +96,23 @@ class ScorelineDist:
             return self.pmf.sum(axis=1)
         raise ValueError(f"side must be 'home' or 'away', got {side!r}")
 
+    def expected_goals(self) -> pl.DataFrame:
+        """Expected goals per side from the goal-count marginals.
+
+        Returns:
+            Columns ``fixture_id``, ``home_eg``, ``away_eg``.
+        """
+        goals = np.arange(self.pmf.shape[1], dtype=np.float64)
+        home = self.marginal("home") @ goals
+        away = self.marginal("away") @ goals
+        return pl.DataFrame(
+            {
+                "fixture_id": np.asarray(self.fixture_ids, dtype=np.int64),
+                "home_eg": home,
+                "away_eg": away,
+            }
+        )
+
     def sample(self, rng: np.random.Generator, n: int) -> np.ndarray:
         """Draw scorelines for every fixture.
 
@@ -200,6 +217,17 @@ class MinutesDist:
         if not np.any(mask):
             return np.zeros(rows, dtype=np.float64)
         return np.asarray(self.pmf[:, mask].sum(axis=1), dtype=np.float64)
+
+    def expected_minutes(self) -> pl.DataFrame:
+        """Expected minutes per player-fixture from the binned PMF.
+
+        Returns:
+            Columns ``player_key``, ``fixture_id``, ``xmins``
+            (``Σ bin · P(bin)``).
+        """
+        bins = np.asarray(self.bins, dtype=np.float64)
+        xmins = self.pmf @ bins
+        return self.keys.with_columns(pl.Series("xmins", xmins))
 
 
 def enforce_hard_starters(

@@ -383,6 +383,19 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the forecast board (plan required)",
     )
+    explain.add_argument(
+        "--player",
+        type=int,
+        default=None,
+        help="Player key for fixture/involvement depth (skips plan sections)",
+    )
+    explain.add_argument(
+        "--vs",
+        type=int,
+        default=None,
+        dest="vs_player",
+        help="Sold player key for A→B transfer-pair depth (requires --player as in)",
+    )
     apply = sub.add_parser(
         "apply",
         help="Dry-run or POST a saved plan's transfers/lineup to FPL",
@@ -2832,6 +2845,9 @@ def _explain(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
+    if args.vs_player is not None and args.player is None:
+        print("--vs requires --player", file=sys.stderr)
+        raise SystemExit(2)
     try:
         text = run_explain(
             get_settings().data_dir,
@@ -2842,6 +2858,8 @@ def _explain(args: argparse.Namespace) -> None:
             top_n=int(args.top),
             include_forecast=not bool(args.decision_only),
             include_decision=not bool(args.forecast_only),
+            player_key=None if args.player is None else int(args.player),
+            vs_player_key=(None if args.vs_player is None else int(args.vs_player)),
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         logger.error("explain failed: %s", exc)
