@@ -8,6 +8,7 @@ dependencies = [
     "arch>=9.0.0",
     "chromium-reader>=0.1.1",
     "dagster>=1.13.30",
+    "duckdb>=2.0.1",
     "fplt-mc==0.5.0",
     "highspy>=1.16.0",
     "httpx>=0.28.1",

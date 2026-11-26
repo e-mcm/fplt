@@ -3,12 +3,12 @@
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
 builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
 outcomes). B12 adds write-once ``official/`` pointers. Stage C adds
-``fplt.store.experiments`` and ``catalog/`` rebuild; the rest of the
-``Store`` read API (``runs`` / ``official`` / ``load``) follows in migration
-step 8.
+``fplt.store.experiments``, ``catalog/`` rebuild, and the ``Store`` read API
+(``runs`` / ``official`` / ``load`` / ``experiment`` / ``pit``) plus
+``fplt sql`` from migration step 8.
 """
 
-from fplt.store.api import Store
+from fplt.store.api import ExperimentHandle, Store
 from fplt.store.builds import (
     STAGING_VERSION,
     BuildExistsError,
@@ -56,11 +56,13 @@ from fplt.store.runs import (
     mint_run_id,
     run_dir,
 )
+from fplt.store.sql import open_sql, run_sql
 
 __all__ = [
     "ArmReuseKey",
     "BuildExistsError",
     "CuratedBuildSource",
+    "ExperimentHandle",
     "FoldedStatus",
     "IncompleteRunError",
     "LegacyImportResult",
@@ -85,11 +87,13 @@ __all__ = [
     "mint_batch_id",
     "mint_experiment_id",
     "mint_run_id",
+    "open_sql",
     "push_build",
     "push_run",
     "read_runs_catalog",
     "rebuild_runs_catalog",
     "run_dir",
+    "run_sql",
     "submit_experiment",
     "write_applied_record",
     "write_intervention_record",

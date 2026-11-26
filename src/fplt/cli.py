@@ -1481,6 +1481,30 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Override FPLT_DATA_DIR (default: settings.data_dir)",
     )
+    sql = sub.add_parser(
+        "sql",
+        parents=[log_flags],
+        help=(
+            "DuckDB over catalog + run tables (views: runs, official, "
+            "player_fixture, minutes, plans, outcomes, ledger)"
+        ),
+    )
+    sql.add_argument(
+        "-c",
+        "--command",
+        dest="sql_command",
+        help="Run one SQL statement and print the result (non-interactive)",
+    )
+    sql.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    sql.add_argument(
+        "--rebuild-catalog",
+        action="store_true",
+        help="Rescan runs into catalog/runs.parquet before opening DuckDB",
+    )
     legacy = sub.add_parser(
         "legacy",
         parents=[log_flags],
@@ -1605,6 +1629,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "catalog":
         logger.info("fplt catalog")
         _catalog(args)
+        return
+    if args.command == "sql":
+        logger.info("fplt sql")
+        _sql(args)
         return
     if args.command == "legacy":
         logger.info("fplt legacy")
@@ -1919,6 +1947,25 @@ def _catalog_rebuild(args: argparse.Namespace) -> None:
     )
     frame = rebuild_runs_catalog(data_dir)
     print(f"catalog rebuild: rows={frame.height} path={catalog_runs_path(data_dir)}")
+
+
+def _sql(args: argparse.Namespace) -> None:
+    from fplt.store.sql import open_sql, run_sql, sql_repl
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    rebuild = bool(args.rebuild_catalog)
+    query = getattr(args, "sql_command", None)
+    if query:
+        frame = run_sql(str(query), data_dir, rebuild_catalog=rebuild)
+        print(frame)
+        return
+    con = open_sql(data_dir, rebuild_catalog=rebuild)
+    try:
+        sql_repl(con)
+    finally:
+        con.close()
 
 
 def _legacy(args: argparse.Namespace) -> None:
