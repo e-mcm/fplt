@@ -28,6 +28,10 @@ def test_refresh_ops_feeds_calls_fetch_and_ingests(
 
     monkeypatch.setattr("fplt.automation.ops_feeds.fetch_raw", fetch)
     monkeypatch.setattr(
+        "fplt.automation.ops_feeds.pull_quarantine",
+        lambda *a, **k: calls.append("pull_quarantine") or False,
+    )
+    monkeypatch.setattr(
         "fplt.automation.ops_feeds.ingest_raw",
         lambda store, raw: calls.append("ingest_raw") or 2,
     )
@@ -61,6 +65,7 @@ def test_refresh_ops_feeds_calls_fetch_and_ingests(
     assert result == FeedRefreshResult(1, 2, 3, 4)
     assert calls == [
         "fetch:branch:/tmp/r:snapshots",
+        "pull_quarantine",
         "ingest_raw",
         "vaastav",
         "understat",

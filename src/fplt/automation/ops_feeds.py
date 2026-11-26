@@ -15,6 +15,7 @@ from fplt.data.api_football import (
 from fplt.data.api_football import (
     load_id_maps as load_api_football_id_maps,
 )
+from fplt.data.quarantine import pull_quarantine
 from fplt.data.raw import ingest_raw
 from fplt.data.snapshots import RawSource, fetch_raw
 from fplt.data.store import DataStore
@@ -90,6 +91,9 @@ def refresh_ops_feeds(
         remote=remote,
         branch=branch,
     )
+
+    logger.info("ops_feeds: pull quarantine skip list")
+    pull_quarantine(root, cfg)
 
     store = DataStore(root)
     logger.info("ops_feeds: refresh staged")
