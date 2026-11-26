@@ -43,6 +43,7 @@ from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.production import load_production_ops
 from fplt.automation.runbook import OPS_02_NO_PLAN
+from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
 from fplt.settings import Settings, get_settings
@@ -131,137 +132,160 @@ def run_ops_tick(
     steps = ops.plan_horizon if horizon is None else horizon
     moment = datetime.now(UTC) if now is None else now
 
-    feeds = refresh_ops_feeds(
-        root,
-        source=source,
-        remote=remote,
-        branch=branch,
-        settings=cfg,
-    )
-
-    logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
-    caught = catch_up(root, chosen, horizon=steps)
-
-    store = DataStore(root)
-    checkpoint_ids: list[str] = []
-    alarm_ids: list[str] = []
-    upcoming_key: GWKey | None = None
-    notified_plan = False
-
-    upcoming = next_upcoming_deadline(store, moment)
-    if upcoming is not None:
-        upcoming_key, deadline = upcoming
-        state = resolve_checkpoint_state(root, upcoming_key, deadline)
-        due = due_checkpoints(moment, deadline, state.done)
-        logger.info(
-            "ops_tick: checkpoints key=%s due=%s",
-            upcoming_key,
-            [cp.id for cp in due],
+    try:
+        feeds = refresh_ops_feeds(
+            root,
+            source=source,
+            remote=remote,
+            branch=branch,
+            settings=cfg,
         )
-        for checkpoint in due:
-            _, sent = _run_checkpoint(
-                root,
+
+        logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
+        caught = catch_up(root, chosen, horizon=steps)
+
+        store = DataStore(root)
+        checkpoint_ids: list[str] = []
+        alarm_ids: list[str] = []
+        upcoming_key: GWKey | None = None
+        notified_plan = False
+
+        upcoming = next_upcoming_deadline(store, moment)
+        if upcoming is not None:
+            upcoming_key, deadline = upcoming
+            state = resolve_checkpoint_state(root, upcoming_key, deadline)
+            due = due_checkpoints(moment, deadline, state.done)
+            logger.info(
+                "ops_tick: checkpoints key=%s due=%s",
                 upcoming_key,
-                checkpoint,
-                moment,
-                chosen,
-                steps,
-                cfg,
-                notify=notify,
+                [cp.id for cp in due],
             )
-            state = mark_checkpoint_done(state, checkpoint.id)
-            checkpoint_ids.append(checkpoint.id)
-            if sent:
-                notified_plan = True
-            # Apply is ops-05; never call apply here even when checkpoint.apply.
-            if checkpoint.apply:
-                logger.info(
-                    "ops_tick: skipping apply at %s (ops-05 not landed)",
-                    checkpoint.id,
+            for checkpoint in due:
+                _, sent = _run_checkpoint(
+                    root,
+                    upcoming_key,
+                    checkpoint,
+                    moment,
+                    chosen,
+                    steps,
+                    cfg,
+                    notify=notify,
                 )
-
-        has_plan = plans_exist(root, chosen, upcoming_key, steps)
-        alarms = due_no_plan_alarms(
-            moment,
-            deadline,
-            has_plan=has_plan,
-            alarms_done=state.alarms_done,
-        )
-        for alarm in alarms:
-            # A successful T−3h retry can create the plan; skip later alarms.
-            if plans_exist(root, chosen, upcoming_key, steps):
-                break
-            _run_no_plan_alarm(
-                root,
-                upcoming_key,
-                alarm,
-                moment,
-                chosen,
-                steps,
-                cfg,
-                notify=notify,
-            )
-            state = mark_alarm_done(state, alarm.id)
-            alarm_ids.append(alarm.id)
-
-        save_checkpoint_state(root, state)
-
-    logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
-    due_gw = pre_deadline(root, moment, chosen, horizon=steps)
-
-    if notify and (caught or due_gw is not None) and not notified_plan:
-        text = reports(root) or "No plan yet."
-        notify_recommendation(cfg, "fplt recommendation", text)
-
-    # ops-09: alert-only live drift vs backtest (never auto-switch models).
-    if caught:
-        try:
-            from fplt.automation.drift import run_live_drift_monitor
-
-            drift_reports = run_live_drift_monitor(
-                root,
-                model_names=chosen,
-                settings=cfg,
-                notify=notify,
-            )
-            for drift in drift_reports:
-                if drift.alerted:
-                    logger.warning(
-                        "ops_tick drift alert model_id=%s metrics=%s",
-                        drift.model_id,
-                        [alert.metric for alert in drift.alerts],
+                state = mark_checkpoint_done(state, checkpoint.id)
+                checkpoint_ids.append(checkpoint.id)
+                if sent:
+                    notified_plan = True
+                # Apply is ops-05; never call apply here even when checkpoint.apply.
+                if checkpoint.apply:
+                    logger.info(
+                        "ops_tick: skipping apply at %s (ops-05 not landed)",
+                        checkpoint.id,
                     )
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            logger.exception("ops_tick: drift monitor failed (non-fatal): %s", exc)
 
-    waiting = pending_checked(store, root, chosen, steps)
-    result = OpsTickResult(
-        snapshots_fetched=feeds.snapshots_fetched,
-        staged_snapshots=feeds.staged_snapshots,
-        understat_matches=feeds.understat_matches,
-        api_football_captures=feeds.api_football_captures,
-        catch_up_planned=caught,
-        pre_deadline_planned=due_gw,
-        still_pending=waiting,
-        models=list(chosen),
-        horizon=steps,
-        checkpoints_run=checkpoint_ids,
-        no_plan_alarms=alarm_ids,
-        upcoming=upcoming_key,
-    )
-    due_key = result.pre_deadline_planned
-    logger.info(
-        "ops_tick done fetched=%s staged=%s catch_up=%s checkpoints=%s "
-        "alarms=%s pre_deadline=%s pending=%s",
-        result.snapshots_fetched,
-        result.staged_snapshots,
-        [str(key) for key in result.catch_up_planned],
-        result.checkpoints_run,
-        result.no_plan_alarms,
-        None if due_key is None else str(due_key),
-        [str(key) for key in result.still_pending],
-    )
-    return result
+            has_plan = plans_exist(root, chosen, upcoming_key, steps)
+            alarms = due_no_plan_alarms(
+                moment,
+                deadline,
+                has_plan=has_plan,
+                alarms_done=state.alarms_done,
+            )
+            for alarm in alarms:
+                # A successful T−3h retry can create the plan; skip later alarms.
+                if plans_exist(root, chosen, upcoming_key, steps):
+                    break
+                _run_no_plan_alarm(
+                    root,
+                    upcoming_key,
+                    alarm,
+                    moment,
+                    chosen,
+                    steps,
+                    cfg,
+                    notify=notify,
+                )
+                state = mark_alarm_done(state, alarm.id)
+                alarm_ids.append(alarm.id)
+
+            save_checkpoint_state(root, state)
+
+        logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
+        due_gw = pre_deadline(root, moment, chosen, horizon=steps)
+
+        if notify and (caught or due_gw is not None) and not notified_plan:
+            text = reports(root) or "No plan yet."
+            notify_recommendation(cfg, "fplt recommendation", text)
+
+        # ops-09: alert-only live drift vs backtest (never auto-switch models).
+        if caught:
+            try:
+                from fplt.automation.drift import run_live_drift_monitor
+
+                drift_reports = run_live_drift_monitor(
+                    root,
+                    model_names=chosen,
+                    settings=cfg,
+                    notify=notify,
+                )
+                for drift in drift_reports:
+                    if drift.alerted:
+                        logger.warning(
+                            "ops_tick drift alert model_id=%s metrics=%s",
+                            drift.model_id,
+                            [alert.metric for alert in drift.alerts],
+                        )
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                logger.exception("ops_tick: drift monitor failed (non-fatal): %s", exc)
+
+        waiting = pending_checked(store, root, chosen, steps)
+        result = OpsTickResult(
+            snapshots_fetched=feeds.snapshots_fetched,
+            staged_snapshots=feeds.staged_snapshots,
+            understat_matches=feeds.understat_matches,
+            api_football_captures=feeds.api_football_captures,
+            catch_up_planned=caught,
+            pre_deadline_planned=due_gw,
+            still_pending=waiting,
+            models=list(chosen),
+            horizon=steps,
+            checkpoints_run=checkpoint_ids,
+            no_plan_alarms=alarm_ids,
+            upcoming=upcoming_key,
+        )
+        due_key = result.pre_deadline_planned
+        logger.info(
+            "ops_tick done fetched=%s staged=%s catch_up=%s checkpoints=%s "
+            "alarms=%s pre_deadline=%s pending=%s",
+            result.snapshots_fetched,
+            result.staged_snapshots,
+            [str(key) for key in result.catch_up_planned],
+            result.checkpoints_run,
+            result.no_plan_alarms,
+            None if due_key is None else str(due_key),
+            [str(key) for key in result.still_pending],
+        )
+        publish_ops_status(
+            root,
+            now=moment,
+            models=list(chosen),
+            horizon=steps,
+            settings=cfg,
+            clear_error=True,
+        )
+        return result
+    except Exception as exc:
+        try:
+            record_last_error(root, exc, source="ops-tick", now=moment)
+            publish_ops_status(
+                root,
+                now=moment,
+                models=list(chosen),
+                horizon=steps,
+                settings=cfg,
+                clear_error=False,
+            )
+        except Exception:
+            logger.exception("failed to publish status after ops-tick error")
+        raise
 
 
 def _run_checkpoint(

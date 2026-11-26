@@ -11,7 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from fplt.data import remote as remote_mod
-from fplt.data.remote import PUSHABLE, Remote, RemoteError, pull, push
+from fplt.data.remote import PUSHABLE, Remote, RemoteError, pull, push, push_replace
 from fplt.settings import Settings, get_settings
 from fplt.utils.timing import (
     TimingSession,
@@ -143,6 +143,39 @@ def test_push_refuses_non_whitelisted_prefix() -> None:
         push(lab, Path("/tmp"), "raw")
     assert "raw" in PUSHABLE["data"]
     assert "raw" not in PUSHABLE["lab"]
+
+
+def test_push_replace_status_omits_immutable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_rclone(args: list[str], *, env: dict[str, str]) -> None:
+        seen["args"] = args
+
+    monkeypatch.setattr(remote_mod, "_rclone", fake_rclone)
+    src = tmp_path / "status.json"
+    src.write_text("{}", encoding="utf-8")
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    push_replace(remote, src, "status/status.json")
+    assert seen["args"] == [
+        "copyto",
+        str(src),
+        "fplt:fplt-data/status/status.json",
+        "--fast-list",
+    ]
+    assert "--immutable" not in seen["args"]  # type: ignore[operator]
+
+
+def test_push_replace_refuses_immutable_prefixes(tmp_path: Path) -> None:
+    src = tmp_path / "x.json"
+    src.write_text("{}", encoding="utf-8")
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(ValueError, match="mutable rewrite"):
+        push_replace(remote, src, "raw/foo.json")
+    lab = Remote(target="fplt:fplt-lab", kind="lab", env={})
+    with pytest.raises(ValueError, match="mutable rewrite"):
+        push_replace(lab, src, "status/status.json")
 
 
 def test_rclone_nonzero_exit_raises_remote_error(
