@@ -13,6 +13,8 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `eval_board.py` | Multi-model ledger helper | `make eval-board SEASON=…` |
 | `perf_report.py` | Rank `$FPLT_DATA_DIR/timing` hotspots | `make perf-report` |
 | `mc_bench.py` | Per-step MC micro-bench (§1.1) | `make mc-bench` |
+| `check_workflow_timeouts.py` | Fail if any GHA job lacks `timeout-minutes` (ops-11) | `make check` / CI lint |
+| `secret_rotation_reminders.py` | List due secret-rotation reminder issues (ops-11) | `.github/workflows/secret-rotation-reminder.yml` |
 
 ## Invariants
 

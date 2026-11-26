@@ -150,8 +150,9 @@ volumes.
 ## Heartbeats and failure alerts (ops-03)
 
 Every scheduled workflow (`snapshot`, `understat`, `api_football`,
-`football_data`, `ops-tick`, `raw_parity`) plus dispatch-only `ops-catchup`
-pings a dead-man's switch on success and POSTs a short ntfy alert on failure.
+`football_data`, `ops-tick`, `raw_parity`, `secret-rotation-reminder`) plus
+dispatch-only `ops-catchup` pings a dead-man's switch on success and POSTs a
+short ntfy alert on failure.
 
 Missing `HC_PING_URL_*` / `NTFY_URL` secrets are a **soft skip** (log and exit
 0). Jobs stay green until Eamon configures healthchecks.io + ntfy; do not treat
@@ -180,6 +181,7 @@ would otherwise drop `.github/actions/`.
 | `HC_PING_URL_OPS_TICK` | ping URL for `ops-tick` |
 | `HC_PING_URL_OPS_CATCHUP` | ping URL for `ops-catchup` |
 | `HC_PING_URL_RAW_PARITY` | ping URL for `raw_parity` (dual-write; drop after A9) |
+| `HC_PING_URL_SECRET_ROTATION` | ping URL for `secret-rotation-reminder` |
 
 ### healthchecks.io check table (configure later)
 
@@ -191,6 +193,7 @@ would otherwise drop `.github/actions/`.
 | `fplt-football-data` | `football_data.yml` | 35 days | 7 days | `0 6 1 * *` |
 | `fplt-ops-tick` | `ops-tick.yml` | 15 min | 45 min | `7,22,37,52 * * * *` |
 | `fplt-raw-parity` | `raw_parity.yml` | 8 days | 2 days | `0 6 * * 1` |
+| `fplt-secret-rotation` | `secret-rotation-reminder.yml` | 2 days | 1 day | `0 9 * * *` |
 | `fplt-ops-catchup` | `ops-catchup.yml` | n/a (dispatch) | — | manual |
 
 Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.
@@ -287,3 +290,109 @@ inside the freeze window.
 labels `deps:dev`, `deps:runtime`, and `equivalence` if missing, set
 `DEPS_EQUIVALENCE_LIVE=true` when staged data is available on runners, and
 require the `deps-equivalence` check on runtime PRs.
+
+## Workflow timeouts (ops-11)
+
+Every job under `.github/workflows/` sets `timeout-minutes` (no reliance on
+GitHub's 6 h default). Sized at roughly 2–3× expected p95 wall time:
+
+| Workflow / job | `timeout-minutes` | Rationale |
+|---|---|---|
+| `ops-tick` / `tick` | 90 | > 5× production HiGHS `time_limit_s` (600s) for chip-board solves |
+| `ops-catchup` / `catchup` | 180 | Multi-GW catch-up; > 15× one solver budget |
+| Capture `capture` jobs | 20–30 | Snapshot / fetch + R2 + branch publish |
+| Capture / ops `alerts` | 5 | Heartbeat + ntfy only |
+| `ci` lint / tests / builds | 5–90 | Lint 20; linux test 60; macOS mc build 90 |
+| `mc-release` | 15–90 | Same order as CI mc builds |
+| `deps-equivalence` | 180 | Runtime equivalence board (ops-12) |
+| `raw-parity` | 30 | Branch tip vs R2 one-way check |
+| `secret-rotation-reminder` / `remind` | 10 | Issue create only |
+| `secret-rotation-reminder` / `alerts` | 5 | Heartbeat + ntfy |
+
+CI lint: `uv run python scripts/check_workflow_timeouts.py` (also in
+`make check`). A missing or non-positive `timeout-minutes` fails the job.
+
+## Secret inventory (ops-11)
+
+Where each secret lives, who it is scoped to, and when to rotate. Calendar
+dates live in `configs/ops/secret_rotation.yaml`; the
+`secret-rotation-reminder` workflow opens a GitHub issue a week before each
+`next_due`. Never log secret values.
+
+### GitHub Actions (repo → Settings → Secrets and variables → Actions)
+
+| Name | Kind | Scope / used by | Rotation |
+|---|---|---|---|
+| `R2_ACCOUNT_ID` | secret | Capture + ops + raw-parity (Cloudflare account id) | Yearly with R2 tokens |
+| `R2_ACCESS_KEY_ID` | secret | Same; `fplt-gha-writer` Access Key ID | Yearly |
+| `R2_SECRET_ACCESS_KEY` | secret | Same; `fplt-gha-writer` secret | Yearly |
+| `API_FOOTBALL_KEY` | secret | `api_football.yml` (aliases below also accepted) | On API-Sports plan change / yearly review |
+| `APISPORTS_KEY` | secret | Alias for API-Football key | Same |
+| `FPLT_API_FOOTBALL_KEY` | secret | Alias matching local Settings name | Same |
+| `FPLT_ENTRY_ID` | secret | `ops-tick` / `ops-catchup` live squad | When entry changes |
+| `FPLT_FPL_API_TOKEN` | secret | Live my-team JWT (~8 h expiry) | Continuous (ops-01 / `fplt auth`); not on the yearly calendar |
+| `FPLT_NTFY_URL` | secret | Recommendation push from ops tick | Yearly / if leaked |
+| `NTFY_URL` | secret | Failure alerts from capture + ops `alerts` jobs | Yearly / if leaked |
+| `HC_PING_URL_SNAPSHOT` | secret | healthchecks.io ping for `snapshot` | Yearly / if leaked |
+| `HC_PING_URL_UNDERSTAT` | secret | Ping for `understat` | Yearly / if leaked |
+| `HC_PING_URL_API_FOOTBALL` | secret | Ping for `api_football` | Yearly / if leaked |
+| `HC_PING_URL_FOOTBALL_DATA` | secret | Ping for `football_data` | Yearly / if leaked |
+| `HC_PING_URL_OPS_TICK` | secret | Ping for `ops-tick` | Yearly / if leaked |
+| `HC_PING_URL_OPS_CATCHUP` | secret | Ping for `ops-catchup` | Yearly / if leaked |
+| `HC_PING_URL_RAW_PARITY` | secret | Ping for `raw_parity` (dual-write; drop after A9) | Yearly / if leaked |
+| `HC_PING_URL_SECRET_ROTATION` | secret | Ping for `secret-rotation-reminder` | Yearly / if leaked |
+| `GITHUB_TOKEN` | auto | Default Actions token (`mc-release` Pages publish; reminder issues) | GitHub-managed |
+
+### GitHub Actions variables (not secrets)
+
+| Name | Purpose |
+|---|---|
+| `DATA_BUCKET` | R2 data bucket name (`fplt-data`) |
+| `LAB_BUCKET` | R2 lab bucket name (`fplt-lab`) |
+| `OPS_LIVE` | `true` enables planning on GHA ops runners |
+| `FPLT_PRODUCTION_MODELS` | Optional live model override |
+| `FPLT_PLAN_HORIZON` | Optional plan horizon override |
+| `DEPS_EQUIVALENCE_LIVE` | `true` enables ops-12 equivalence execute on runners |
+
+### Local / launchd / docker (`~/.config/fplt/env` or `deploy/.env`)
+
+| Name | Scope | Rotation |
+|---|---|---|
+| `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` | Owner Mac / VPS; mode `600` | Token ~8 h (prefer `fplt auth set`) |
+| `FPLT_API_FOOTBALL_KEY` | Local injuries fetch | On plan change |
+| `FPLT_R2_ACCOUNT_ID` / `FPLT_R2_ACCESS_KEY_ID` / `FPLT_R2_SECRET_ACCESS_KEY` | Owner token (`fplt-owner`) for both buckets | Yearly with R2 tokens |
+| `FPLT_DATA_BUCKET` / `FPLT_LAB_BUCKET` | Bucket names | Rarely |
+| `FPLT_NTFY_URL` / `FPLT_SMTP_*` | Alerts | Yearly / if leaked |
+
+### Modal / cloud agents
+
+| Name | Scope | Rotation |
+|---|---|---|
+| Modal Secret with `fplt-agent` R2 keys | Object Read on `fplt-data`; Read & Write on `fplt-lab` | Yearly with R2 tokens |
+| Cloud-agent env (same agent token) | Same permissions; never write to `fplt-data` | Yearly |
+
+Token layout: `docs/proposals/r2-data-bucket-plan.md` §2.3. After rotating R2,
+bump `next_due` for `r2-tokens` (and usually `ntfy-and-heartbeats`) in
+`configs/ops/secret_rotation.yaml`.
+
+## Spend caps — owner steps (ops-11)
+
+**Agents do not set these.** The owner should configure billing limits in each
+provider UI so a runaway job cannot silently rack up cost:
+
+1. **Modal workspace budget**
+   - Open the Modal dashboard → Settings / Billing (workspace).
+   - Set a workspace spending limit or budget alert at a level you are
+     willing to lose on a bad week of experiment runs.
+   - Confirm the workspace used by `fplt exp` / lab arms is the one capped.
+
+2. **Cloudflare R2 billing notifications**
+   - Cloudflare dashboard → Billing → Notifications (or R2 analytics).
+   - Add an alert when R2 storage or Class A/B operations approach the free
+     tier (or your paid plan threshold).
+   - Buckets: `fplt-data` (immutable raw/curated) and `fplt-lab` (runs /
+     experiments). No lifecycle deletes on locked prefixes — growth is
+     expected; the alert is the safety net.
+
+Record the chosen limits somewhere outside git if needed; this README only
+documents *that* they must be set, not the dollar amounts.

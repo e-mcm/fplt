@@ -45,6 +45,7 @@ check:
 	uv run ruff check src tests scripts
 	uv run ruff format --check src tests scripts
 	uv run pyright
+	uv run python scripts/check_workflow_timeouts.py
 	uv run pytest -m "not slow"
 
 # ── Monte Carlo micro-bench (native-mc-build-spec §1.1 / §5.5) ─────────────────
