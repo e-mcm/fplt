@@ -25,3 +25,5 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 
 - Do not put business logic here that belongs in `src/fplt/` — Dagster and CLI must call the library.
 - Lint scope includes `scripts/` (`make check`).
+- Runtime dependency equivalence (ops-12) lives in `fplt.automation.deps_equivalence`
+  / `fplt deps-equivalence` + `.github/workflows/deps-equivalence.yml`, not here.
