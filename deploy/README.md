@@ -170,8 +170,10 @@ Every scheduled workflow (`snapshot`, `understat`, `api_football`,
 success and POSTs a short ntfy alert on failure.
 
 Missing `HC_PING_URL_*` / `NTFY_URL` secrets are a **soft skip** (log and exit
-0). Jobs stay green until Eamon configures healthchecks.io + ntfy; do not treat
-absent secrets as CI or schedule failures.
+0). Missing `R2_*` secrets / `DATA_BUCKET` on capture `push-raw` is also a
+**soft skip** (branch publish still runs). Jobs stay green until Eamon
+configures healthchecks.io + ntfy + R2; do not treat absent secrets as CI or
+schedule failures.
 
 ### Composite actions
 
@@ -179,6 +181,7 @@ absent secrets as CI or schedule failures.
 |---|---|---|
 | `.github/actions/heartbeat` | `alerts` job when the main job succeeded | `curl` the check's ping URL |
 | `.github/actions/notify-failure` | `alerts` job when the main job failed | ntfy POST with workflow, job, and run URL (no log excerpts) |
+| `.github/actions/push-raw` | capture jobs after raw write | rclone copy to R2; soft-skips when R2 secrets / `DATA_BUCKET` unset |
 
 `alerts` is a separate job (`needs: <main>`, `if: always()`) with a fresh
 checkout. Capture jobs may switch to the `snapshots` branch for publish, which

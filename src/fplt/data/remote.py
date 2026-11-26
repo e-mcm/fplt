@@ -59,7 +59,11 @@ class Remote:
 
     @classmethod
     def from_settings(cls, s: Settings, bucket: str | None = None) -> Remote | None:
-        """Build the R2 remote from settings; ``None`` when no bucket is configured.
+        """Build the R2 remote from settings; ``None`` when not usable.
+
+        Returns ``None`` when the chosen bucket is unset **or** R2 credentials
+        are incomplete (account / access key / secret). Callers treat that as a
+        soft skip so GHA stays green until secrets are configured.
 
         Args:
             s: Process settings with R2 credentials and bucket names.
@@ -67,7 +71,8 @@ class Remote:
                 Must equal ``s.data_bucket`` or ``s.lab_bucket``.
 
         Returns:
-            A configured remote, or ``None`` when the chosen bucket is unset.
+            A configured remote, or ``None`` when the bucket or credentials are
+            missing.
 
         Raises:
             ValueError: ``bucket`` is set but matches neither configured name.
@@ -84,7 +89,23 @@ class Remote:
                 f"unknown bucket {name!r}; expected "
                 f"data_bucket={s.data_bucket!r} or lab_bucket={s.lab_bucket!r}"
             )
+        if not r2_credentials_complete(s):
+            logger.info(
+                "soft skip: R2 credentials incomplete for bucket=%s "
+                "(need r2_account_id, r2_access_key_id, r2_secret_access_key)",
+                name,
+            )
+            return None
         return cls(target=f"fplt:{name}", kind=kind, env=_rclone_env(s))
+
+
+def r2_credentials_complete(settings: Settings) -> bool:
+    """Return True when account id, access key, and secret are all set."""
+    if not settings.r2_account_id or not settings.r2_access_key_id:
+        return False
+    if settings.r2_secret_access_key is None:
+        return False
+    return bool(settings.r2_secret_access_key.get_secret_value())
 
 
 def _rclone_env(settings: Settings) -> dict[str, str]:

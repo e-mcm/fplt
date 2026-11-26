@@ -1,12 +1,14 @@
 """Copy gzipped snapshots into the local data dir (bucket or git branch).
 
-When ``Settings.data_bucket`` is set, ``fetch_raw`` pulls from R2 via
-``fplt.data.remote``. Otherwise it clones the orphan ``snapshots`` branch.
-Nothing here rewrites a file that is already on disk.
+When ``Settings.data_bucket`` is set and R2 credentials are complete,
+``fetch_raw`` pulls from R2 via ``fplt.data.remote``. Otherwise it clones the
+orphan ``snapshots`` branch (soft-skip when the bucket name is set but secrets
+are missing). Nothing here rewrites a file that is already on disk.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +20,8 @@ from fplt.data.remote import Remote, pull
 from fplt.settings import Settings, get_settings
 
 RawSource = Literal["auto", "bucket", "branch"]
+
+logger = logging.getLogger(__name__)
 
 
 class SnapshotFetchError(RuntimeError):
@@ -35,9 +39,10 @@ def fetch_raw(
     """Copy new raw captures into ``dest`` from the bucket or the snapshots branch.
 
     ``source="auto"`` (default) uses the R2 data bucket when
-    ``settings.data_bucket`` is set, and the git ``snapshots`` branch otherwise.
-    ``source="bucket"`` requires a configured data bucket; ``source="branch"``
-    always uses git.
+    ``settings.data_bucket`` is set **and** R2 credentials are complete; otherwise
+    it falls back to the git ``snapshots`` branch (soft skip when the bucket
+    name is set but secrets are missing). ``source="bucket"`` requires a usable
+    remote; ``source="branch"`` always uses git.
 
     Args:
         dest: Directory that corresponds to ``$FPLT_DATA_DIR/raw``.
@@ -52,7 +57,7 @@ def fetch_raw(
 
     Raises:
         SnapshotFetchError: The branch could not be cloned, or ``source`` is
-            ``bucket`` but no data bucket is configured.
+            ``bucket`` but no usable data bucket / credentials are configured.
         RemoteError: An rclone pull against the bucket failed.
         ValueError: ``source`` is not one of ``auto`` / ``bucket`` / ``branch``.
     """
@@ -61,18 +66,26 @@ def fetch_raw(
         raise ValueError(
             f"source must be 'auto', 'bucket', or 'branch'; got {source!r}"
         )
-    use_bucket = source == "bucket" or (source == "auto" and bool(cfg.data_bucket))
+    if source == "branch":
+        return fetch_snapshots(dest, remote=remote, branch=branch)
     if source == "bucket" and not cfg.data_bucket:
         raise SnapshotFetchError(
             "source=bucket requires FPLT_DATA_BUCKET (settings.data_bucket) to be set"
         )
-    if use_bucket:
+    if cfg.data_bucket:
         r2 = Remote.from_settings(cfg)
-        if r2 is None:
+        if r2 is not None:
+            return pull(r2, "raw", dest)
+        if source == "bucket":
             raise SnapshotFetchError(
-                "data bucket is configured but Remote.from_settings returned None"
+                "source=bucket requires complete R2 credentials "
+                "(r2_account_id, r2_access_key_id, r2_secret_access_key)"
             )
-        return pull(r2, "raw", dest)
+        logger.info(
+            "soft skip: data_bucket=%s set but R2 credentials incomplete; "
+            "falling back to snapshots branch",
+            cfg.data_bucket,
+        )
     return fetch_snapshots(dest, remote=remote, branch=branch)
 
 
