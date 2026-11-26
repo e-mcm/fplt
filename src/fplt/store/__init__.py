@@ -1,9 +1,10 @@
-"""Immutable analytic-output store (runs, curated builds, experiments).
+"""Immutable analytic-output store (runs, curated builds, catalog, experiments).
 
 Stage B4 introduced ``RunWriter`` / ``push_run``. Stage B6 adds curated
 builds under ``fplt.store.builds``. B9 adds ``Store.ledger`` (predictions ⋈
-outcomes). Stage C adds ``fplt.store.experiments``. The rest of the ``Store``
-read API arrives in migration step 8.
+outcomes). Stage C adds ``fplt.store.experiments`` and ``catalog/`` rebuild;
+the rest of the ``Store`` read API (``runs`` / ``official`` / ``load``)
+follows in migration step 8.
 """
 
 from fplt.store.api import Store
@@ -14,6 +15,13 @@ from fplt.store.builds import (
     build_from_staged,
     latest_build_id,
     load_build_manifest,
+)
+from fplt.store.catalog import (
+    catalog_runs_path,
+    list_succeeded_run_ids,
+    read_runs_catalog,
+    rebuild_runs_catalog,
+    write_run_inbox_row,
 )
 from fplt.store.experiments import (
     ArmReuseKey,
@@ -50,12 +58,14 @@ __all__ = [
     "STAGING_VERSION",
     "Store",
     "build_from_staged",
+    "catalog_runs_path",
     "find_reusable_arm",
     "fold_experiment_status",
     "import_legacy",
     "latest_build_id",
     "legacy_run_id",
     "list_succeeded_predict_run_ids",
+    "list_succeeded_run_ids",
     "load_build_manifest",
     "maybe_push_build",
     "maybe_push_run",
@@ -64,6 +74,9 @@ __all__ = [
     "mint_run_id",
     "push_build",
     "push_run",
+    "read_runs_catalog",
+    "rebuild_runs_catalog",
     "run_dir",
     "submit_experiment",
+    "write_run_inbox_row",
 ]

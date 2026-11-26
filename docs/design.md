@@ -472,6 +472,7 @@ ledger = runs/*/predictions/player_fixture  ⋈  curated outcomes (latest build)
 - Scoring uses the latest outcomes build by default; pass `outcomes_build=` to pin one (e.g. to reproduce an audit).
 - Decision and chip-window rows live on the plan run the same way (`plans/decisions.parquet`, etc.), not as rewritten partitions.
 - Metric readers use `Store.ledger()` (B9): predictions under `runs/` ⋈ staged/curated `player_fixture_outcomes`. `append_predictions` / `fill_actuals` are removed. `read_predictions` is a thin alias for `Store.ledger()`. A legacy `ledger/predictions` parquet is read only when no local runs exist (B10 archive).
+- Derived `catalog/runs.parquet` (Stage C / step 8): one row per succeeded run manifest, rebuildable via `fplt catalog rebuild`. Incomplete runs (no `_SUCCESS`) stay invisible. Optional `catalog/inbox/run=<id>.parquet` rows are unioned on read and cleared on rebuild.
 
 **Transitional local store (until outcomes + run writer cut over):**
 
