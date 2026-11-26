@@ -1197,6 +1197,76 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    preflight = sub.add_parser(
+        "preflight",
+        parents=[log_flags],
+        help=(
+            "Season-rollover checks: scoring/chips, team maps, unmapped "
+            "share, GW1 deadline, ModelSpecs, dry-run plan (ops-07)"
+        ),
+    )
+    preflight.add_argument(
+        "--season",
+        required=True,
+        help="Season label, e.g. 2027-28",
+    )
+    preflight.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    preflight.add_argument(
+        "--skip-plan",
+        action="store_true",
+        help="Skip the dry-run plan check",
+    )
+    idmap = sub.add_parser(
+        "idmap",
+        parents=[log_flags],
+        help="Suggest Understat / API-Football → player_key map entries",
+    )
+    idmap_sub = idmap.add_subparsers(dest="idmap_command")
+    idmap_suggest = idmap_sub.add_parser(
+        "suggest",
+        parents=[log_flags],
+        help=(
+            "Fuzzy-match unmapped players; write high-confidence candidates "
+            "for a review PR (nothing is auto-merged)"
+        ),
+    )
+    idmap_suggest.add_argument(
+        "--source",
+        required=True,
+        choices=("understat", "api_football"),
+        help="Upstream id map to suggest against",
+    )
+    idmap_suggest.add_argument(
+        "--season",
+        required=True,
+        help="Season label used to scan raw captures and staged FPL players",
+    )
+    idmap_suggest.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    idmap_suggest.add_argument(
+        "--out",
+        type=Path,
+        help="Write scored candidates YAML (for a review PR)",
+    )
+    idmap_suggest.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="Minimum similarity to suggest (default 0.75)",
+    )
+    idmap_suggest.add_argument(
+        "--high-confidence",
+        type=float,
+        default=None,
+        help="Score floor flagged for PR (default 0.92)",
+    )
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
@@ -1435,6 +1505,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "ops-tick":
         _ops_tick(args)
         return
+    if args.command == "preflight":
+        _preflight(args)
+        return
+    if args.command == "idmap":
+        _idmap(args)
+        return
     if args.command == "backtest":
         _backtest(args)
         return
@@ -1541,6 +1617,111 @@ def _ui(args: argparse.Namespace) -> int:
         flush=True,
     )
     return int(subprocess.call(argv))
+
+
+def _preflight(args: argparse.Namespace) -> None:
+    from fplt.data.store import DataStore
+    from fplt.ops.preflight import format_preflight_report, run_preflight
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    report = run_preflight(
+        str(args.season),
+        store=DataStore(data_dir),
+        skip_plan=bool(args.skip_plan),
+    )
+    print(format_preflight_report(report))
+    if not report.ok:
+        raise SystemExit(1)
+
+
+def _idmap(args: argparse.Namespace) -> None:
+    command = getattr(args, "idmap_command", None)
+    if command == "suggest":
+        _idmap_suggest(args)
+        return
+    raise SystemExit(_not_implemented(f"idmap {command}"))
+
+
+def _idmap_suggest(args: argparse.Namespace) -> None:
+    from typing import cast
+
+    from fplt.data.api_football import (
+        default_id_maps_path as api_football_id_maps_path,
+    )
+    from fplt.data.api_football import (
+        load_id_maps as load_api_football_id_maps,
+    )
+    from fplt.data.store import DataStore
+    from fplt.data.understat import (
+        default_id_maps_path as understat_id_maps_path,
+    )
+    from fplt.data.understat import (
+        load_id_maps as load_understat_id_maps,
+    )
+    from fplt.ops.idmap import (
+        DEFAULT_HIGH_CONFIDENCE,
+        DEFAULT_MIN_SCORE,
+        SourceName,
+        collect_api_football_unmapped,
+        collect_understat_unmapped,
+        format_candidates_report,
+        suggest_matches,
+        write_candidates_yaml,
+    )
+    from fplt.ops.preflight import build_fpl_targets
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    raw_root = data_dir / "raw"
+    store = DataStore(data_dir)
+    season = str(args.season)
+    source = cast(SourceName, str(args.source))
+    min_score = (
+        float(args.min_score) if args.min_score is not None else DEFAULT_MIN_SCORE
+    )
+    high_confidence = (
+        float(args.high_confidence)
+        if args.high_confidence is not None
+        else DEFAULT_HIGH_CONFIDENCE
+    )
+
+    if source == "understat":
+        player_keys, team_keys = load_understat_id_maps(understat_id_maps_path())
+        unmapped = collect_understat_unmapped(
+            raw_root,
+            season,
+            player_keys=player_keys,
+            team_keys=team_keys,
+        )
+    else:
+        player_keys, team_keys = load_api_football_id_maps(api_football_id_maps_path())
+        unmapped = collect_api_football_unmapped(
+            raw_root,
+            season,
+            player_keys=player_keys,
+            team_keys=team_keys,
+        )
+
+    if not store.path("players").is_file():
+        print(
+            f"idmap suggest: no staged players under {data_dir}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    targets = build_fpl_targets(store.read("players"), season=season)
+    candidates = suggest_matches(
+        unmapped,
+        targets,
+        min_score=min_score,
+        high_confidence=high_confidence,
+    )
+    print(format_candidates_report(candidates, source=source))
+    if args.out is not None:
+        write_candidates_yaml(Path(args.out), candidates, source=source)
+        print(f"wrote {args.out}")
 
 
 def _data(args: argparse.Namespace) -> None:

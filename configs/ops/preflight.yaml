@@ -1,0 +1,7 @@
+# Season-rollover / weekly preflight thresholds (ops-07).
+# Unmapped player share above max_unmapped_share fails the check.
+# Top-N unmapped rows are listed for triage.
+
+expected_team_count: 20
+max_unmapped_share: 0.05
+top_unmapped: 10

@@ -16,7 +16,15 @@
 2. **Unmapped players** — staged rows keep `player_key` null. After you decide
    the FPL element `code`, add `understat_player_id: player_key` under
    `players` and re-run the `understat_ingest` Dagster job (writes collapse on
-   the table keys, so remapped rows replace the nulls).
+   the table keys, so remapped rows replace the nulls). For candidates:
+
+   ```bash
+   uv run fplt idmap suggest --source understat --season 2024-25 --out /tmp/us.yaml
+   ```
+
+   Review the high-confidence fragment in a PR; nothing is auto-merged.
+   Season checklist: [`deploy/README.md`](../../deploy/README.md) § Season
+   rollover.
 
 FPL element and team `id`s change every season; **codes do not**. Never map to
 season-local `element_id` / team `id`.

@@ -219,3 +219,39 @@ notice silence and documents the fix here (no keepalive workflow):
 3. Optionally push a trivial docs commit so the 60-day inactivity clock resets.
 4. Confirm the next scheduled run pings the heartbeat (or re-run via
    `workflow_dispatch`).
+
+## Season rollover checklist (ops-07)
+
+Run before (and weekly during) a new season. Full ops runbook (ops-13) will
+absorb this; until then this is the checklist.
+
+1. **Scoring + chips** — add `configs/scoring/<season>.yaml` and
+   `configs/chips/<season>.yaml` from the official rules (copy the prior
+   season and edit).
+2. **Team id maps** — for every promoted / returning club, add entries to
+   `configs/understat/id_maps.yaml`, `configs/api_football/id_maps.yaml`, and
+   `configs/football_data/team_names.yaml` (FPL **codes**, not season-local
+   ids). See those READMEs.
+3. **Preflight** — after the first post-launch capture is staged:
+
+   ```bash
+   uv run fplt preflight --season 2027-28
+   ```
+
+   Checks scoring/chips, all 20 teams mapped per source, unmapped-player
+   share, GW1 deadline, production ModelSpecs, and a dry-run plan probe.
+4. **Player id maps** — suggest high-confidence joins (review PR; never
+   auto-merged):
+
+   ```bash
+   uv run fplt idmap suggest --source understat --season 2027-28 \
+     --out /tmp/understat-candidates.yaml
+   uv run fplt idmap suggest --source api_football --season 2027-28 \
+     --out /tmp/api-football-candidates.yaml
+   ```
+
+   Open a PR that merges only the `high_confidence_players` fragment into the
+   matching `id_maps.yaml`. Re-run preflight until unmapped share is under
+   the threshold in `configs/ops/preflight.yaml`.
+5. **Weekly** — re-run `fplt preflight --season …` during the season to catch
+   new signings and loans.
