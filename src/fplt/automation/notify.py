@@ -8,10 +8,30 @@ from email.message import EmailMessage
 from typing import Any
 from urllib.request import Request, urlopen
 
+from fplt.automation.runbook import RECOMMENDATION, footer
 from fplt.settings import Settings
 
 _Post = Callable[[Request], object]
 _SmtpFactory = Callable[[str, int], Any]
+
+
+def with_runbook(message: str, runbook_anchor: str | None) -> str:
+    """Append a runbook pointer to ``message`` when ``runbook_anchor`` is set.
+
+    Args:
+        message: Notification body.
+        runbook_anchor: ``docs/ops-runbook.md#…`` path, or ``None`` to leave
+            the body unchanged.
+
+    Returns:
+        Message text, possibly with a ``Runbook: …`` footer.
+    """
+    if not runbook_anchor:
+        return message
+    line = footer(runbook_anchor)
+    if line in message:
+        return message
+    return f"{message.rstrip()}\n\n{line}\n"
 
 
 def notify(
@@ -21,6 +41,7 @@ def notify(
     post: _Post | None = None,
     *,
     priority: str | None = None,
+    runbook_anchor: str | None = None,
 ) -> bool:
     """POST ``message`` to an ntfy topic.
 
@@ -32,18 +53,21 @@ def notify(
         post: HTTP sender. Defaults to ``urllib.request.urlopen``. Tests pass
             a fake so this never touches the network.
         priority: Optional ntfy ``Priority`` header (``5`` = urgent).
+        runbook_anchor: Optional ``docs/ops-runbook.md#…`` pointer appended to
+            the body so every alert names its runbook section.
 
     Returns:
         True when a request was sent.
     """
     if not url:
         return False
+    body = with_runbook(message, runbook_anchor)
     headers = {"Title": title, "Content-Type": "text/plain"}
     if priority:
         headers["Priority"] = priority
     request = Request(
         url,
-        data=message.encode("utf-8"),
+        data=body.encode("utf-8"),
         headers=headers,
         method="POST",
     )
@@ -108,6 +132,7 @@ def notify_recommendation(
     post: _Post | None = None,
     smtp_factory: _SmtpFactory | None = None,
     priority: str | None = None,
+    runbook_anchor: str | None = None,
 ) -> bool:
     """Push a plan report via ntfy and/or email when those channels are set.
 
@@ -121,18 +146,29 @@ def notify_recommendation(
         post: Optional ntfy HTTP fake for tests.
         smtp_factory: Optional SMTP fake for tests.
         priority: Optional ntfy ``Priority`` (``5`` = urgent for no-plan alarm).
+        runbook_anchor: Optional ``docs/ops-runbook.md#…`` pointer. Defaults to
+            the recommendation section when omitted.
 
     Returns:
         True when at least one channel sent.
     """
-    ntfy_sent = notify(settings.ntfy_url, title, message, post=post, priority=priority)
+    anchor = RECOMMENDATION if runbook_anchor is None else runbook_anchor
+    body = with_runbook(message, anchor)
+    ntfy_sent = notify(
+        settings.ntfy_url,
+        title,
+        body,
+        post=post,
+        priority=priority,
+        runbook_anchor=None,
+    )
     email_sent = email(
         settings.smtp_host,
         settings.smtp_port,
         settings.smtp_from,
         settings.smtp_to,
         title,
-        message,
+        body,
         username=settings.smtp_user,
         password=settings.smtp_password,
         use_tls=settings.smtp_use_tls,

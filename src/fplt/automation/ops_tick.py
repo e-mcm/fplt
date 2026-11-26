@@ -35,6 +35,7 @@ from fplt.automation.cycle import (
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.production import load_production_ops
+from fplt.automation.runbook import OPS_02_NO_PLAN
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
 from fplt.settings import Settings, get_settings
@@ -315,6 +316,7 @@ def _run_no_plan_alarm(
             f"fplt NO PLAN {key.season} gw{key.gw}",
             message,
             priority="5",
+            runbook_anchor=OPS_02_NO_PLAN,
         )
 
 
