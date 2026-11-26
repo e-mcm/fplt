@@ -561,6 +561,35 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Write report.md / summary parquet / meta.json here",
     )
+    weekly_report = sub.add_parser(
+        "weekly-report",
+        parents=[log_flags],
+        help=(
+            "Post-GW decision scoring report (ops-08): realised vs plan EV, "
+            "hindsight regret, captaincy, hit payback, points-at-rank"
+        ),
+    )
+    weekly_report.add_argument("--season", required=True)
+    weekly_report.add_argument("--gw", type=int, required=True)
+    weekly_report.add_argument(
+        "--model-id",
+        help="Ledger model_id filter (default: all models for the GW)",
+    )
+    weekly_report.add_argument(
+        "--hindsight-best",
+        type=int,
+        help="Constrained-hindsight net points for this GW (else local XV opt)",
+    )
+    weekly_report.add_argument(
+        "--n-fixtures",
+        type=int,
+        help="Fixture count for blank/double tagging (0=blank, >10=double)",
+    )
+    weekly_report.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Write the report without sending ntfy/SMTP",
+    )
     sim_season = sub.add_parser(
         "sim-season",
         parents=[log_flags],
@@ -1683,6 +1712,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "regret-board":
         _regret_board(args)
+        return
+    if args.command == "weekly-report":
+        _weekly_report(args)
         return
     if args.command == "sim-season":
         _sim_season(args)
@@ -2845,6 +2877,33 @@ def _regret_board(args: argparse.Namespace) -> None:
     if args.output_dir is not None:
         path = write_regret_board(result, Path(args.output_dir))
         print(path)
+
+
+def _weekly_report(args: argparse.Namespace) -> None:
+    from fplt.optimise.weekly_report import run_weekly_report
+
+    data_dir = get_settings().data_dir
+    try:
+        result = run_weekly_report(
+            data_dir,
+            season=str(args.season),
+            gw=int(args.gw),
+            model_id=args.model_id,
+            hindsight_best=args.hindsight_best,
+            n_fixtures=args.n_fixtures,
+            notify=not bool(args.no_notify),
+            settings=get_settings(),
+        )
+    except ValueError as exc:
+        logger.error("weekly-report failed: %s", exc)
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    print(result.report_md, end="")
+    print(result.report_dir / "weekly.md")
+    if result.notified:
+        print("notified: yes")
+    else:
+        print(f"notified: no ({result.notify_skipped_reason})")
 
 
 def _decisions(args: argparse.Namespace) -> None:
