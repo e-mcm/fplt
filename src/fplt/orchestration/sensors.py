@@ -14,6 +14,7 @@ import dagster as dg
 from fplt.automation.cycle import due_gameweek, pending_checked, plans_exist
 from fplt.automation.notify import notify
 from fplt.automation.production import load_production_ops
+from fplt.automation.runbook import OPS_03_WORKFLOW_FAILURE
 from fplt.data.benchmark_projections import benchmarks_path
 from fplt.data.football_data import list_e0_csv_paths
 from fplt.data.remote import RemoteError
@@ -245,5 +246,10 @@ def notify_run_failure(context: dg.RunFailureSensorContext) -> dg.SkipReason | N
     if not url:
         return dg.SkipReason("FPLT_NTFY_URL is not set")
     message = context.failure_event.message or "run failed"
-    notify(url, "fplt run failed", message)
+    notify(
+        url,
+        "fplt run failed",
+        message,
+        runbook_anchor=OPS_03_WORKFLOW_FAILURE,
+    )
     return None

@@ -4,7 +4,7 @@ Always-on templates for `dagster-webserver` and `dagster-daemon`. Secrets for th
 live squad and recommendation alerts are injected from the environment; they are
 never committed.
 
-**Agents:** cadence and sensor map → [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md); architecture §8 → [`docs/design.md`](../docs/design.md). Live models → `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`). Do not put secrets in plists or compose committed files.
+**Agents:** alert → fix commands → [`docs/ops-runbook.md`](../docs/ops-runbook.md); cadence and sensor map → [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md); architecture §8 → [`docs/design.md`](../docs/design.md). Live models → `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`). Do not put secrets in plists or compose committed files.
 
 ## What to set
 
@@ -211,7 +211,8 @@ Expect exactly one ntfy alert with the Actions run URL. Heartbeat must not ping.
 GitHub disables scheduled workflows on public repos after ~60 days without
 repository activity. A monthly "re-enable" keepalive does not create that
 activity and can itself be disabled, so **ops-03 relies on heartbeats** to
-notice silence and documents the fix here (no keepalive workflow):
+notice silence and documents the fix here (no keepalive workflow; also
+[`docs/ops-runbook.md#ops-03-heartbeat-missing`](../docs/ops-runbook.md#ops-03-heartbeat-missing)):
 
 1. healthchecks.io (or ntfy from a missed ping) alerts that a check is down.
 2. Open the workflow in the Actions tab → **Enable workflow**, or

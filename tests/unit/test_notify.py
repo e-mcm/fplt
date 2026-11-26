@@ -9,7 +9,8 @@ from urllib.request import Request
 import dagster as dg
 import pytest
 
-from fplt.automation.notify import email, notify, notify_recommendation
+from fplt.automation.notify import email, notify, notify_recommendation, with_runbook
+from fplt.automation.runbook import OPS_03_WORKFLOW_FAILURE, RECOMMENDATION, footer
 from fplt.orchestration.assets import pre_deadline_plan, recommendation_report
 from fplt.settings import Settings, get_settings
 
@@ -68,6 +69,25 @@ def test_notify_posts_only_when_a_url_is_set() -> None:
         is True
     )
     assert sent[1].get_header("Priority") == "5"
+    assert (
+        notify(
+            "https://ntfy.sh/fplt",
+            "title",
+            "hello",
+            post,
+            runbook_anchor=OPS_03_WORKFLOW_FAILURE,
+        )
+        is True
+    )
+    assert footer(OPS_03_WORKFLOW_FAILURE).encode() in sent[2].data
+
+
+def test_with_runbook_appends_once() -> None:
+    line = footer(RECOMMENDATION)
+    once = with_runbook("body", RECOMMENDATION)
+    assert once.endswith(f"{line}\n")
+    assert with_runbook(once, RECOMMENDATION) == once
+    assert with_runbook("body", None) == "body"
 
 
 def test_email_is_noop_without_host_from_or_to() -> None:
@@ -133,9 +153,13 @@ def test_notify_recommendation_shares_message_across_channels() -> None:
         )
         is True
     )
-    assert posts[0].data == b"shared body"
+    expected = with_runbook("shared body", RECOMMENDATION).encode()
+    assert posts[0].data == expected
     assert _FakeSmtp.instances[0].sent is not None
-    assert _FakeSmtp.instances[0].sent.get_content().strip() == "shared body"
+    assert (
+        _FakeSmtp.instances[0].sent.get_content().strip()
+        == with_runbook("shared body", RECOMMENDATION).strip()
+    )
 
 
 def test_notify_recommendation_noop_when_nothing_configured() -> None:

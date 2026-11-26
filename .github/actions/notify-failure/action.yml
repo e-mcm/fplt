@@ -22,8 +22,11 @@ runs:
           exit 0
         fi
         title="fplt ${WORKFLOW} failed"
+        # Runbook: docs/ops-runbook.md#ops-03-workflow-failure
         body="job=${JOB}
-        run=${RUN_URL}"
+        run=${RUN_URL}
+
+        Runbook: docs/ops-runbook.md#ops-03-workflow-failure"
         # Never echo NTFY_URL. Report only the HTTP status so secrets stay out of logs.
         code="$(
           curl -sS -o /dev/null -w "%{http_code}" -m 10 \

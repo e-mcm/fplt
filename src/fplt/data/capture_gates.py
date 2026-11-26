@@ -18,6 +18,7 @@ from urllib.request import Request
 import polars as pl
 
 from fplt.automation.notify import notify
+from fplt.automation.runbook import OPS_06_QUARANTINE
 from fplt.data.gates import (
     CaptureGateReport,
     load_data_gates_config,
@@ -235,7 +236,13 @@ def evaluate_capture(
             + "\n".join(detail_lines)
             + "\ninspect: fplt data gates --since 7d"
         )
-        notify(notify_url, "fplt capture quarantined", message, post=post)
+        notify(
+            notify_url,
+            "fplt capture quarantined",
+            message,
+            post=post,
+            runbook_anchor=OPS_06_QUARANTINE,
+        )
         logger.warning(
             "quarantined %s; alerted new types=%s", capture_path, ",".join(new_types)
         )
