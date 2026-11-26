@@ -22,6 +22,7 @@ _SCHEDULED = (
     "ops-catchup.yml",
     "raw_parity.yml",
     "secret-rotation-reminder.yml",
+    "auth-check.yml",
 )
 
 _MAIN_JOB = {
@@ -33,6 +34,7 @@ _MAIN_JOB = {
     "ops-catchup.yml": "catchup",
     "raw_parity.yml": "parity",
     "secret-rotation-reminder.yml": "remind",
+    "auth-check.yml": "check",
 }
 
 _PING_SECRETS = {
@@ -44,6 +46,7 @@ _PING_SECRETS = {
     "ops-catchup.yml": "HC_PING_URL_OPS_CATCHUP",
     "raw_parity.yml": "HC_PING_URL_RAW_PARITY",
     "secret-rotation-reminder.yml": "HC_PING_URL_SECRET_ROTATION",
+    "auth-check.yml": "HC_PING_URL_AUTH_CHECK",
 }
 
 
@@ -210,6 +213,7 @@ def test_deploy_readme_documents_checks_and_runbook_choice() -> None:
         "fplt-raw-parity",
         "fplt-ops-catchup",
         "fplt-secret-rotation",
+        "fplt-auth-check",
     ):
         assert name in text, name
     assert "15 min" in text
