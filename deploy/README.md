@@ -143,25 +143,26 @@ Container `FPLT_DATA_DIR` remains `/var/lib/fplt` (volume-backed). Do not point
 compose at a host `.env` that sets `FPLT_DATA_DIR=./data` unless you also adjust
 volumes.
 
-## Capture-job heartbeats and failure alerts (ops-03 / A7)
+## Heartbeats and failure alerts (ops-03)
 
-Scheduled capture workflows (`snapshot`, `understat`, `api_football`,
-`football_data`) and the ops workflows (`ops-tick`, `ops-catchup`) ping a
-dead-man's switch on success and POST a short ntfy alert on failure.
+Every scheduled workflow (`snapshot`, `understat`, `api_football`,
+`football_data`, `ops-tick`, `raw_parity`) plus dispatch-only `ops-catchup`
+pings a dead-man's switch on success and POSTs a short ntfy alert on failure.
+
+Missing `HC_PING_URL_*` / `NTFY_URL` secrets are a **soft skip** (log and exit
+0). Jobs stay green until Eamon configures healthchecks.io + ntfy; do not treat
+absent secrets as CI or schedule failures.
 
 ### Composite actions
 
 | Action | When | What |
 |---|---|---|
-| `.github/actions/heartbeat` | `alerts` job when `capture` succeeded | `curl` the check's ping URL |
-| `.github/actions/notify-failure` | `alerts` job when `capture` failed | ntfy POST with workflow, job, and run URL (no log excerpts) |
+| `.github/actions/heartbeat` | `alerts` job when the main job succeeded | `curl` the check's ping URL |
+| `.github/actions/notify-failure` | `alerts` job when the main job failed | ntfy POST with workflow, job, and run URL (no log excerpts) |
 
-`alerts` is a separate job (`needs: capture`, `if: always()`) with a fresh
-checkout. The capture job may switch to the `snapshots` branch for publish,
-which would otherwise drop `.github/actions/`.
-
-Missing ping / ntfy secrets are a no-op so the workflows stay green before A8
-configures healthchecks.io.
+`alerts` is a separate job (`needs: <main>`, `if: always()`) with a fresh
+checkout. Capture jobs may switch to the `snapshots` branch for publish, which
+would otherwise drop `.github/actions/`.
 
 ### Repo secrets (never log these)
 
@@ -174,8 +175,9 @@ configures healthchecks.io.
 | `HC_PING_URL_FOOTBALL_DATA` | ping URL for `football_data` |
 | `HC_PING_URL_OPS_TICK` | ping URL for `ops-tick` |
 | `HC_PING_URL_OPS_CATCHUP` | ping URL for `ops-catchup` |
+| `HC_PING_URL_RAW_PARITY` | ping URL for `raw_parity` (dual-write; drop after A9) |
 
-### healthchecks.io check table (configure in A8)
+### healthchecks.io check table (configure later)
 
 | Check name | Workflow | Period | Grace | Cron (UTC) |
 |---|---|---|---|---|
@@ -184,6 +186,7 @@ configures healthchecks.io.
 | `fplt-api-football` | `api_football.yml` | 6 h | 3 h | `15 */6 * * *` |
 | `fplt-football-data` | `football_data.yml` | 35 days | 7 days | `0 6 1 * *` |
 | `fplt-ops-tick` | `ops-tick.yml` | 15 min | 45 min | `7,22,37,52 * * * *` |
+| `fplt-raw-parity` | `raw_parity.yml` | 8 days | 2 days | `0 6 * * 1` |
 | `fplt-ops-catchup` | `ops-catchup.yml` | n/a (dispatch) | — | manual |
 
 Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.
@@ -203,16 +206,12 @@ Expect exactly one ntfy alert with the Actions run URL. Heartbeat must not ping.
 
 GitHub disables scheduled workflows on public repos after ~60 days without
 repository activity. A monthly "re-enable" keepalive does not create that
-activity and can itself be disabled, so **A7 relies on heartbeats** to notice
-silence and documents the fix here:
+activity and can itself be disabled, so **ops-03 relies on heartbeats** to
+notice silence and documents the fix here (no keepalive workflow):
 
-1. healthchecks.io (or ntfy from a missed ping) alerts that a capture check is
-   down.
+1. healthchecks.io (or ntfy from a missed ping) alerts that a check is down.
 2. Open the workflow in the Actions tab → **Enable workflow**, or
    `gh workflow enable <name>.yml`.
 3. Optionally push a trivial docs commit so the 60-day inactivity clock resets.
 4. Confirm the next scheduled run pings the heartbeat (or re-run via
    `workflow_dispatch`).
-
-Do not add a keepalive workflow in this stage. Full ops-03 may revisit this if
-ops-tick needs a different policy.

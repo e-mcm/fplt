@@ -600,12 +600,12 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 | GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger (transitional mutate; target: outcomes build + ledger view); refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
 | Next deadline within 3 h and plan missing **or** stale vs late availability signals | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report. Stale = plan parquet mtime older than newest `player_status` / `predicted_lineups` / `player_injuries` `available_at` at or before the deadline — retired under `plans/<model_id>/superseded/` then rebuilt (`fplt.automation.late_refresh`). |
 | Run failure | run-failure sensor | Notify (email or push via ntfy) |
-| Capture GHA success (`snapshot`, `understat`, `api_football`, `football_data`) | workflow step | Ping healthchecks.io URL from `HC_PING_URL_*` secrets (ops-03 / A7; no-op until configured) |
-| Capture GHA failure | workflow step `if: failure()` | Short ntfy POST via `NTFY_URL` (workflow, job, run URL; no logs). `simulate_failure` workflow_dispatch input forces one alert |
+| Scheduled GHA success (`snapshot`, `understat`, `api_football`, `football_data`, `ops-tick`, `raw_parity`; plus `ops-catchup` on dispatch) | workflow `alerts` job | Ping healthchecks.io URL from `HC_PING_URL_*` secrets (ops-03; soft skip when unset) |
+| Scheduled GHA failure | workflow `alerts` job | Short ntfy POST via `NTFY_URL` (workflow, job, run URL; no logs; soft skip when unset). `simulate_failure` workflow_dispatch input forces one alert |
 | Ops tick (GHA `ops-tick.yml`) | schedule `7,22,37,52 * * * *` + `workflow_dispatch` | `fplt ops-tick`: fetch raw → restage → `catch_up` → `pre_deadline` (idempotent). `concurrency: ops`. Gated by repo variable `OPS_LIVE=true` until live cut-over; `force_live` on dispatch overrides. Heartbeat `HC_PING_URL_OPS_TICK`. Deadline checkpoints (ops-02) build on this later. |
 | Ops catch-up (GHA `ops-catchup.yml`) | `workflow_dispatch` | `fplt ops-catchup` one-shot recovery (same library as `make ops-catchup`). Shares `concurrency: ops`. Same `OPS_LIVE` gate / `force_live`. Heartbeat `HC_PING_URL_OPS_CATCHUP`. |
 
-Missed capture heartbeats are the dead-man's switch for silent cron disable (including GitHub's ~60-day inactivity gate on public scheduled workflows). Fix: re-enable the workflow; see `deploy/README.md`. Ops-tick uses the same heartbeat / failure-alert pattern.
+Missed heartbeats are the dead-man's switch for silent cron disable (including GitHub's ~60-day inactivity gate on public scheduled workflows). **Choice: runbook, not keepalive** — re-enable the workflow; see `deploy/README.md`.
 
 The pre-deadline run can always be launched manually from the UI or via `gh workflow run ops-tick.yml`.
 
