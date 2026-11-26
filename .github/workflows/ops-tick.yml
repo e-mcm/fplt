@@ -1,8 +1,9 @@
 name: ops-tick
 
-# Cheap idempotent tick (foundation for ops-02 checkpoints). Offset minutes
-# avoid top-of-hour GHA congestion. concurrency: ops so ticks never overlap.
-# Set repo variable OPS_LIVE=true before enabling real planning on runners.
+# Cheap idempotent tick with deadline checkpoints + no-plan alarm (ops-02).
+# Offset minutes avoid top-of-hour GHA congestion. concurrency: ops so ticks
+# never overlap. Alarm/retry lives in `fplt ops-tick` (deadline-aware), not a
+# separate workflow step. Set OPS_LIVE=true before enabling live planning.
 
 on:
   schedule:

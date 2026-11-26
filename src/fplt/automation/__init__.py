@@ -1,4 +1,4 @@
-"""Unattended gameweek cycle: catch-up, pre-deadline refresh, and alerts."""
+"""Unattended gameweek cycle: catch-up, checkpoints, pre-deadline, alerts."""
 
 from fplt.automation.ops_catchup import (
     OpsCatchupResult,

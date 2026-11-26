@@ -1162,7 +1162,7 @@ def main(argv: list[str] | None = None) -> None:
         parents=[log_flags],
         help=(
             "Idempotent ops tick: fetch → restage → catch_up → "
-            "pre_deadline → status (GHA cron / no Dagster UI)"
+            "deadline checkpoints → no-plan alarm → pre_deadline → status"
         ),
     )
     ops_tick.add_argument(

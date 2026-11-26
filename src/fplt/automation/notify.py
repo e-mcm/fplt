@@ -19,6 +19,8 @@ def notify(
     title: str,
     message: str,
     post: _Post | None = None,
+    *,
+    priority: str | None = None,
 ) -> bool:
     """POST ``message`` to an ntfy topic.
 
@@ -29,16 +31,20 @@ def notify(
         message: Body text.
         post: HTTP sender. Defaults to ``urllib.request.urlopen``. Tests pass
             a fake so this never touches the network.
+        priority: Optional ntfy ``Priority`` header (``5`` = urgent).
 
     Returns:
         True when a request was sent.
     """
     if not url:
         return False
+    headers = {"Title": title, "Content-Type": "text/plain"}
+    if priority:
+        headers["Priority"] = priority
     request = Request(
         url,
         data=message.encode("utf-8"),
-        headers={"Title": title, "Content-Type": "text/plain"},
+        headers=headers,
         method="POST",
     )
     sender = urlopen if post is None else post
@@ -101,6 +107,7 @@ def notify_recommendation(
     *,
     post: _Post | None = None,
     smtp_factory: _SmtpFactory | None = None,
+    priority: str | None = None,
 ) -> bool:
     """Push a plan report via ntfy and/or email when those channels are set.
 
@@ -113,11 +120,12 @@ def notify_recommendation(
         message: Report body, typically concatenated ``report.md`` text.
         post: Optional ntfy HTTP fake for tests.
         smtp_factory: Optional SMTP fake for tests.
+        priority: Optional ntfy ``Priority`` (``5`` = urgent for no-plan alarm).
 
     Returns:
         True when at least one channel sent.
     """
-    ntfy_sent = notify(settings.ntfy_url, title, message, post=post)
+    ntfy_sent = notify(settings.ntfy_url, title, message, post=post, priority=priority)
     email_sent = email(
         settings.smtp_host,
         settings.smtp_port,

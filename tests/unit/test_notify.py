@@ -56,6 +56,18 @@ def test_notify_posts_only_when_a_url_is_set() -> None:
     assert notify("https://ntfy.sh/fplt", "title", "hello", post) is True
     assert sent[0].data == b"hello"
     assert sent[0].get_header("Title") == "title"
+    assert sent[0].get_header("Priority") is None
+    assert (
+        notify(
+            "https://ntfy.sh/fplt",
+            "urgent",
+            "missing plan",
+            post,
+            priority="5",
+        )
+        is True
+    )
+    assert sent[1].get_header("Priority") == "5"
 
 
 def test_email_is_noop_without_host_from_or_to() -> None:
