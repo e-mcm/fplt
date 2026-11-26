@@ -213,6 +213,27 @@ def run_ops_tick(
         text = reports(root) or "No plan yet."
         notify_recommendation(cfg, "fplt recommendation", text)
 
+    # ops-09: alert-only live drift vs backtest (never auto-switch models).
+    if caught:
+        try:
+            from fplt.automation.drift import run_live_drift_monitor
+
+            drift_reports = run_live_drift_monitor(
+                root,
+                model_names=chosen,
+                settings=cfg,
+                notify=notify,
+            )
+            for drift in drift_reports:
+                if drift.alerted:
+                    logger.warning(
+                        "ops_tick drift alert model_id=%s metrics=%s",
+                        drift.model_id,
+                        [alert.metric for alert in drift.alerts],
+                    )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.exception("ops_tick: drift monitor failed (non-fatal): %s", exc)
+
     waiting = pending_checked(store, root, chosen, steps)
     result = OpsTickResult(
         snapshots_fetched=feeds.snapshots_fetched,

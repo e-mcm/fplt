@@ -1309,6 +1309,53 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Repository root (default: cwd)",
     )
+    governance = sub.add_parser(
+        "governance-check",
+        parents=[log_flags],
+        help=(
+            "CI gate: fail when production.yaml / listed ModelSpecs change "
+            "without a promote-eval-run keep link (ops-09)"
+        ),
+    )
+    governance.add_argument(
+        "--base",
+        required=True,
+        help="Git base SHA/ref (PR base)",
+    )
+    governance.add_argument(
+        "--head",
+        default="HEAD",
+        help="Git head SHA/ref (default: HEAD)",
+    )
+    governance.add_argument(
+        "--pr-body",
+        default="",
+        help="Pull-request body text (look for promote-eval-run:)",
+    )
+    governance.add_argument(
+        "--pr-body-file",
+        type=Path,
+        help="Read PR body from a file instead of --pr-body",
+    )
+    drift_check = sub.add_parser(
+        "drift-check",
+        parents=[log_flags],
+        help=(
+            "Compare rolling live RMSE/Brier to backtest distribution "
+            "and alert on sustained drift (ops-09; alert only)"
+        ),
+    )
+    drift_check.add_argument(
+        "--model",
+        action="append",
+        dest="models",
+        help="ModelSpec name (repeatable; default: production models)",
+    )
+    drift_check.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Skip ntfy/SMTP even when alerts fire",
+    )
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
@@ -1578,6 +1625,12 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "deps-equivalence":
         _deps_equivalence(args)
+        return
+    if args.command == "governance-check":
+        _governance_check(args)
+        return
+    if args.command == "drift-check":
+        _drift_check(args)
         return
     if args.command == "backtest":
         _backtest(args)
@@ -2020,6 +2073,45 @@ def _deps_equivalence(args: argparse.Namespace) -> None:
         raise SystemExit(1)
     if gate.gate == "skip":
         raise SystemExit(0)
+
+
+def _governance_check(args: argparse.Namespace) -> None:
+    from fplt.automation.governance import check_git_production_governance
+
+    body = str(args.pr_body or "")
+    if args.pr_body_file is not None:
+        body = Path(args.pr_body_file).read_text(encoding="utf-8")
+    repo = Path(__file__).resolve().parents[2]
+    result = check_git_production_governance(
+        repo=repo,
+        base_ref=str(args.base),
+        head_ref=str(args.head),
+        pr_body=body,
+        data_dir=get_settings().data_dir,
+    )
+    if result.passed:
+        print("governance-check: ok")
+        return
+    for reason in result.reasons:
+        print(f"governance-check: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _drift_check(args: argparse.Namespace) -> None:
+    from fplt.automation.drift import format_drift_alerts, run_live_drift_monitor
+
+    reports = run_live_drift_monitor(
+        get_settings().data_dir,
+        model_names=args.models,
+        notify=not bool(args.no_notify),
+    )
+    alerted = False
+    for report in reports:
+        print(format_drift_alerts(report))
+        alerted = alerted or report.alerted
+    if not reports:
+        print("drift-check: no production models resolved")
+    raise SystemExit(1 if alerted else 0)
 
 
 def _ingest_lineups(args: argparse.Namespace) -> None:

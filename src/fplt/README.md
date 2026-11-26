@@ -15,7 +15,7 @@ Library-first FPL points prediction and team selection. Dagster / CLI / apps are
 | `backtest/` | Walk-forward, ledger, compare / promote-eval / bakeoff |
 | `optimise/` | Squad MILP, chips, plans, apply |
 | `orchestration/` | Thin Dagster assets / sensors / factories |
-| `automation/` | Catch-up, pre-deadline, production ops, notify |
+| `automation/` | Catch-up, pre-deadline, production ops, governance, drift, notify |
 | `ops/` | Season preflight + idmap suggest (ops-07) |
 | `cli.py` | `uv run fplt …` entry |
 | `settings.py` | Paths + env (`FPLT_*`); no hardcoded `./data` |

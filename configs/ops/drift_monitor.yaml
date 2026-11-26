@@ -1,0 +1,23 @@
+# Live forecast drift monitor (ops-09). Thresholds live here, not in code.
+# Alert only — never auto-switch production models.
+
+# Horizon to score (live vs backtest distribution).
+horizon: 1
+
+# Rolling window length in gameweeks for live metrics.
+rolling_window: 5
+
+# Alert after this many consecutive GWs with rolling metric beyond threshold.
+consecutive_beyond: 3
+
+# Per-metric z-score vs backtest per-GW distribution
+# (alert when rolling > mean + z * std). Lower scores are better for RMSE/Brier.
+metrics:
+  rmse:
+    z_score: 2.0
+  brier_60:
+    z_score: 2.0
+  brier_goal:
+    z_score: 2.0
+  brier_cs:
+    z_score: 2.0
