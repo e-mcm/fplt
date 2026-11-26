@@ -192,6 +192,20 @@ def push(remote: Remote, src: Path, prefix: str) -> None:
     )
 
 
+def copy_mutable(remote: Remote, source: str, dest: str) -> None:
+    """rclone ``copy`` without ``--immutable`` for rewritten prefixes (``status/``).
+
+    Args:
+        remote: rclone target (credentials via ``remote.env``).
+        source: Local path or ``fplt:bucket/prefix`` source.
+        dest: Local path or ``fplt:bucket/prefix`` destination.
+
+    Raises:
+        RemoteError: rclone failed.
+    """
+    _rclone(["copy", source, dest, "--fast-list"], env=remote.env)
+
+
 def check_one_way(src: Path, remote: Remote, prefix: str) -> None:
     """Assert every file under ``src`` exists under ``prefix`` with the same size.
 

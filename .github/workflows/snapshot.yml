@@ -34,7 +34,43 @@ jobs:
         run: pip install httpx
 
       - name: Capture snapshots
-        run: python scripts/snapshot.py --out "$RUNNER_TEMP/raw"
+        id: capture
+        run: |
+          set -euo pipefail
+          out="$(python scripts/snapshot.py --out "$RUNNER_TEMP/raw")"
+          echo "$out"
+          if echo "$out" | grep -q 'static=wrote'; then
+            echo "wrote_static=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "wrote_static=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.capture.outputs.wrote_static == 'true'
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        if: steps.capture.outputs.wrote_static == 'true'
+        run: uv sync --frozen
+
+      - name: Install rclone
+        if: steps.capture.outputs.wrote_static == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+
+      - name: Run capture sanity gates
+        if: steps.capture.outputs.wrote_static == 'true'
+        env:
+          FPLT_DATA_DIR: ${{ runner.temp }}/data
+          FPLT_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          FPLT_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          FPLT_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FPLT_DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+          FPLT_NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$FPLT_DATA_DIR"
+          uv run fplt data gates --check --new-raw "$RUNNER_TEMP/raw" --notify
 
       - name: Upload to R2
         if: always()

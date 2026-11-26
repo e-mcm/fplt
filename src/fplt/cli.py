@@ -1260,6 +1260,49 @@ def main(argv: list[str] | None = None) -> None:
         default="snapshots",
         help="Branch that holds write-once captures (default: snapshots)",
     )
+    data_gates = data_sub.add_parser(
+        "gates",
+        parents=[log_flags],
+        help=(
+            "Capture sanity gates (ops-06): explain quarantine with --since, "
+            "or --check new bootstrap captures"
+        ),
+    )
+    data_gates.add_argument(
+        "--since",
+        help=(
+            "Show quarantine rows with available_at on/after this bound "
+            "(ISO datetime/date, or relative Nd/Nh/Nm such as 7d)"
+        ),
+    )
+    data_gates.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Run gates on new bootstrap captures, quarantine failures, "
+            "and alert once per new failure type"
+        ),
+    )
+    data_gates.add_argument(
+        "--new-raw",
+        type=Path,
+        help="Directory of newly written raw captures to gate (GHA temp out)",
+    )
+    data_gates.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    data_gates.add_argument(
+        "--notify",
+        action="store_true",
+        help="POST ntfy for newly seen failure types (uses FPLT_NTFY_URL)",
+    )
+    data_gates.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="Skip R2 status/quarantine pull/push around --check",
+    )
     legacy = sub.add_parser(
         "legacy",
         parents=[log_flags],
@@ -1505,7 +1548,57 @@ def _data(args: argparse.Namespace) -> None:
     if command == "parity":
         _data_parity(args)
         return
+    if command == "gates":
+        _data_gates(args)
+        return
     raise SystemExit(_not_implemented(f"data {command}"))
+
+
+def _data_gates(args: argparse.Namespace) -> None:
+    from fplt.data.capture_gates import (
+        check_new_captures,
+        format_gates_status,
+        parse_since,
+    )
+    from fplt.data.remote import RemoteError
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    if args.since:
+        try:
+            bound = parse_since(str(args.since))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(format_gates_status(data_dir, since=bound), end="")
+        if not args.check:
+            return
+    if not args.check:
+        print(
+            "fplt data gates: pass --since to explain quarantine, "
+            "or --check to gate new captures",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        result = check_new_captures(
+            data_dir,
+            new_raw=Path(args.new_raw) if args.new_raw is not None else None,
+            notify_alerts=bool(args.notify),
+            sync_remote=not bool(args.no_sync),
+        )
+    except RemoteError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+    failed = result.failed
+    print(
+        f"capture gates: checked={len(result.actions)} "
+        f"failed={len(failed)} alerted={list(result.alerted)}"
+    )
+    for action in failed:
+        names = ", ".join(f.name for f in action.report.failures)
+        print(f"  quarantined {action.capture_path}: {names}")
 
 
 def _legacy(args: argparse.Namespace) -> None:
