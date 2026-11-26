@@ -12,7 +12,13 @@ from typing import Literal
 
 import polars as pl
 
-from fplt.auth import clear_credentials, format_status, set_credentials
+from fplt.auth import (
+    check_token,
+    clear_credentials,
+    format_auth_check,
+    format_status,
+    set_credentials,
+)
 from fplt.auth import status as auth_status
 from fplt.backtest.archive_compare import (
     DEFAULT_SOURCES,
@@ -1615,6 +1621,42 @@ def main(argv: list[str] | None = None) -> None:
         parents=[log_flags],
         help="Show stored entry id and token expiry (default)",
     )
+    auth_check = auth_sub.add_parser(
+        "check",
+        parents=[log_flags],
+        help=(
+            "Monitor FPL API token expiry (ops-01); exit 1 when missing, "
+            "malformed, expired, or inside the warn / deadline window"
+        ),
+    )
+    auth_check.add_argument(
+        "--warn-days",
+        type=float,
+        default=3.0,
+        help="Warn when exp falls within this many days (default: 3)",
+    )
+    auth_check.add_argument(
+        "--deadline-aware",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Urgent when exp is before the next staged deadline "
+            "(default: on; needs staged gameweeks)"
+        ),
+    )
+    auth_check.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help=(
+            "Soft-skip (exit 0) when FPLT_FPL_API_TOKEN is unset so "
+            "CI/crons stay green before secrets are configured"
+        ),
+    )
+    auth_check.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Skip ntfy/SMTP even when the check is warning/urgent",
+    )
     auth_set = auth_sub.add_parser(
         "set",
         parents=[log_flags],
@@ -3178,6 +3220,8 @@ def _auth(args: argparse.Namespace) -> None:
         if command == "status":
             print(format_status(auth_status()), end="")
             return
+        if command == "check":
+            raise SystemExit(_auth_check(args))
         if command == "set":
             token = _read_auth_token(args.token)
             result = set_credentials(token=token, entry_id=args.entry_id)
@@ -3217,6 +3261,47 @@ def _auth(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     raise SystemExit(_not_implemented(f"auth {command}"))
+
+
+def _auth_check(args: argparse.Namespace) -> int:
+    """Run ops-01 token expiry check; optionally notify and set exit code."""
+    from datetime import UTC, datetime
+
+    from fplt.automation.notify import notify_recommendation
+    from fplt.automation.runbook import OPS_01_TOKEN_EXPIRY
+    from fplt.data.store import DataStore
+
+    deadline = None
+    if bool(args.deadline_aware):
+        try:
+            from fplt.automation.checkpoints import next_upcoming_deadline
+
+            upcoming = next_upcoming_deadline(
+                DataStore(get_settings().data_dir),
+                datetime.now(tz=UTC),
+            )
+            if upcoming is not None:
+                deadline = upcoming[1]
+        except (OSError, ValueError, KeyError) as exc:
+            logger.info("auth check: no staged deadline (%s)", exc)
+
+    result = check_token(
+        warn_days=float(args.warn_days),
+        next_deadline=deadline,
+        deadline_aware=bool(args.deadline_aware),
+        allow_missing=bool(args.allow_missing),
+    )
+    print(format_auth_check(result), end="")
+    if not bool(args.no_notify) and result.level in ("warning", "urgent"):
+        priority = "5" if result.level == "urgent" else None
+        notify_recommendation(
+            get_settings(),
+            f"fplt auth {result.level}",
+            result.message,
+            priority=priority,
+            runbook_anchor=OPS_01_TOKEN_EXPIRY,
+        )
+    return result.exit_code
 
 
 def _step_weights_for_decay(

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
 from fplt.automation.checkpoints import (
     Checkpoint,
     NoPlanAlarm,
@@ -42,7 +43,7 @@ from fplt.automation.cycle import (
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.production import load_production_ops
-from fplt.automation.runbook import OPS_02_NO_PLAN
+from fplt.automation.runbook import OPS_01_TOKEN_EXPIRY, OPS_02_NO_PLAN
 from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
@@ -74,6 +75,9 @@ class OpsTickResult:
         models: Spec names used for planning.
         horizon: Plan horizon used.
         upcoming: Upcoming deadline key when checkpoints were evaluated.
+        auth_level: ops-01 token check level (``ok`` / ``soft_skip`` / …).
+        auth_manual_apply: True when plan notifications carry the manual-apply
+            banner because the token is already dead.
     """
 
     snapshots_fetched: int
@@ -88,6 +92,8 @@ class OpsTickResult:
     checkpoints_run: list[str] = field(default_factory=_empty_ids)
     no_plan_alarms: list[str] = field(default_factory=_empty_ids)
     upcoming: GWKey | None = None
+    auth_level: str = "ok"
+    auth_manual_apply: bool = False
 
 
 def run_ops_tick(
@@ -141,18 +147,33 @@ def run_ops_tick(
             settings=cfg,
         )
 
-        logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
-        caught = catch_up(root, chosen, horizon=steps)
-
         store = DataStore(root)
         checkpoint_ids: list[str] = []
         alarm_ids: list[str] = []
         upcoming_key: GWKey | None = None
         notified_plan = False
+        upcoming_deadline: datetime | None = None
 
         upcoming = next_upcoming_deadline(store, moment)
         if upcoming is not None:
-            upcoming_key, deadline = upcoming
+            upcoming_key, upcoming_deadline = upcoming
+
+        # ops-01: watch token expiry before planning; never abort the tick.
+        auth = check_token(
+            now=moment,
+            next_deadline=upcoming_deadline,
+            deadline_aware=True,
+            allow_missing=True,
+        )
+        _notify_auth_check(cfg, auth, notify=notify)
+
+        logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
+        caught = catch_up(root, chosen, horizon=steps)
+
+        if upcoming is not None:
+            assert upcoming_key is not None
+            assert upcoming_deadline is not None
+            deadline = upcoming_deadline
             state = resolve_checkpoint_state(root, upcoming_key, deadline)
             due = due_checkpoints(moment, deadline, state.done)
             logger.info(
@@ -170,6 +191,7 @@ def run_ops_tick(
                     steps,
                     cfg,
                     notify=notify,
+                    auth=auth,
                 )
                 state = mark_checkpoint_done(state, checkpoint.id)
                 checkpoint_ids.append(checkpoint.id)
@@ -212,7 +234,10 @@ def run_ops_tick(
         due_gw = pre_deadline(root, moment, chosen, horizon=steps)
 
         if notify and (caught or due_gw is not None) and not notified_plan:
-            text = reports(root) or "No plan yet."
+            text = with_manual_apply_banner(
+                reports(root) or "No plan yet.",
+                auth,
+            )
             notify_recommendation(cfg, "fplt recommendation", text)
 
         # ops-09: alert-only live drift vs backtest (never auto-switch models).
@@ -250,6 +275,8 @@ def run_ops_tick(
             checkpoints_run=checkpoint_ids,
             no_plan_alarms=alarm_ids,
             upcoming=upcoming_key,
+            auth_level=auth.level,
+            auth_manual_apply=auth.manual_apply,
         )
         due_key = result.pre_deadline_planned
         logger.info(
@@ -288,6 +315,34 @@ def run_ops_tick(
         raise
 
 
+def _notify_auth_check(
+    settings: Settings,
+    auth: AuthCheckResult,
+    *,
+    notify: bool,
+) -> None:
+    """Push an ops-01 alert when the token is warning/urgent; soft-skip is quiet."""
+    logger.info(
+        "ops_tick: auth check level=%s reason=%s manual_apply=%s",
+        auth.level,
+        auth.reason,
+        auth.manual_apply,
+    )
+    if auth.level == "soft_skip":
+        logger.info("ops_tick: %s", auth.message)
+        return
+    if not notify or auth.level not in ("warning", "urgent"):
+        return
+    priority = "5" if auth.level == "urgent" else None
+    notify_recommendation(
+        settings,
+        f"fplt auth {auth.level}",
+        auth.message,
+        priority=priority,
+        runbook_anchor=OPS_01_TOKEN_EXPIRY,
+    )
+
+
 def _run_checkpoint(
     root: Path,
     key: GWKey,
@@ -298,6 +353,7 @@ def _run_checkpoint(
     settings: Settings,
     *,
     notify: bool,
+    auth: AuthCheckResult | None = None,
 ) -> tuple[bool, bool]:
     """Execute one due checkpoint. Returns ``(planned, notified)``."""
     planned = False
@@ -313,6 +369,8 @@ def _run_checkpoint(
     notified = False
     if notify and checkpoint.notify:
         text = reports(root) or f"No plan yet for {key.season} gw{key.gw}."
+        if auth is not None:
+            text = with_manual_apply_banner(text, auth)
         notify_recommendation(
             settings,
             f"fplt plan {checkpoint.id} {key.season} gw{key.gw}",
@@ -410,6 +468,8 @@ def format_ops_tick_status(result: OpsTickResult) -> str:
         f"  understat matches: {result.understat_matches}",
         f"  api_football:      {result.api_football_captures}",
         f"  models / horizon:  {models} / H={result.horizon}",
+        f"  auth check:        {result.auth_level}"
+        + (" (manual apply)" if result.auth_manual_apply else ""),
         f"  catch_up planned:  {caught}",
         f"  upcoming deadline: {upcoming}",
         f"  checkpoints run:   {checkpoints}",

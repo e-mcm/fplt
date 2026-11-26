@@ -114,7 +114,14 @@ GW). Manual dispatch can pass `force_live=true`. Locally, `make ops-tick` /
 | `FPLT_ENTRY_ID` / `FPLT_FPL_API_TOKEN` | secret | live squad (optional) |
 | `FPLT_NTFY_URL` | secret | recommendation push from the tick |
 | `HC_PING_URL_OPS_TICK` / `HC_PING_URL_OPS_CATCHUP` | secret | heartbeats (ops-03) |
+| `HC_PING_URL_AUTH_CHECK` | secret | daily token monitor heartbeat (ops-01) |
 | `NTFY_URL` | secret | failure alerts (same as capture) |
+
+Daily token monitor: `auth-check.yml` runs `fplt auth check --allow-missing`
+(`17 8 * * *`). Missing secret soft-skips; expired / warn / malformed exits
+non-zero and notifies. Live `ops-tick` runs the same check before planning and
+keeps producing plans with an `apply manually: token expired` banner when the
+JWT is already dead.
 
 ```bash
 gh workflow run ops-tick.yml -f force_live=true
@@ -150,9 +157,9 @@ volumes.
 ## Heartbeats and failure alerts (ops-03)
 
 Every scheduled workflow (`snapshot`, `understat`, `api_football`,
-`football_data`, `ops-tick`, `raw_parity`, `secret-rotation-reminder`) plus
-dispatch-only `ops-catchup` pings a dead-man's switch on success and POSTs a
-short ntfy alert on failure.
+`football_data`, `ops-tick`, `raw_parity`, `secret-rotation-reminder`,
+`auth-check`) plus dispatch-only `ops-catchup` pings a dead-man's switch on
+success and POSTs a short ntfy alert on failure.
 
 Missing `HC_PING_URL_*` / `NTFY_URL` secrets are a **soft skip** (log and exit
 0). Jobs stay green until Eamon configures healthchecks.io + ntfy; do not treat
@@ -182,6 +189,7 @@ would otherwise drop `.github/actions/`.
 | `HC_PING_URL_OPS_CATCHUP` | ping URL for `ops-catchup` |
 | `HC_PING_URL_RAW_PARITY` | ping URL for `raw_parity` (dual-write; drop after A9) |
 | `HC_PING_URL_SECRET_ROTATION` | ping URL for `secret-rotation-reminder` |
+| `HC_PING_URL_AUTH_CHECK` | ping URL for `auth-check` (ops-01 daily token monitor) |
 
 ### healthchecks.io check table (configure later)
 
@@ -194,6 +202,7 @@ would otherwise drop `.github/actions/`.
 | `fplt-ops-tick` | `ops-tick.yml` | 15 min | 45 min | `7,22,37,52 * * * *` |
 | `fplt-raw-parity` | `raw_parity.yml` | 8 days | 2 days | `0 6 * * 1` |
 | `fplt-secret-rotation` | `secret-rotation-reminder.yml` | 2 days | 1 day | `0 9 * * *` |
+| `fplt-auth-check` | `auth-check.yml` | 1 day | 12 h | `17 8 * * *` |
 | `fplt-ops-catchup` | `ops-catchup.yml` | n/a (dispatch) | — | manual |
 
 Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.

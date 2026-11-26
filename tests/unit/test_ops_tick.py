@@ -37,6 +37,7 @@ def test_format_ops_tick_status_lists_catch_up_and_pre_deadline() -> None:
         )
     )
     assert "ops-tick status" in text
+    assert "auth check:        ok" in text
     assert "catch_up planned:  2024-25 gw1" in text
     assert "pre_deadline:      2024-25 gw2" in text
     assert "upcoming deadline: 2024-25 gw2" in text
@@ -252,3 +253,84 @@ def test_makefile_documents_ops_tick() -> None:
     makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "ops-tick:" in makefile
     assert "fplt ops-tick" in makefile
+
+
+def test_run_ops_tick_expired_token_keeps_planning_with_banner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ops-01: expired token still plans; recommendation carries manual-apply banner."""
+    import base64
+    import json
+
+    from fplt.auth import MANUAL_APPLY_BANNER
+
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    exp = int((datetime(2020, 1, 1, tzinfo=UTC)).timestamp())
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode("ascii").rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
+    monkeypatch.setenv("FPLT_FPL_API_TOKEN", f"{header}.{payload}.sig")
+    get_settings.cache_clear()
+
+    bodies: list[str] = []
+
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.refresh_ops_feeds",
+        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.catch_up",
+        lambda *a, **k: [GWKey("2024-25", 1)],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.pre_deadline",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.pending_checked",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.reports",
+        lambda _d: "plan report body",
+    )
+
+    def capture_notify(
+        _settings: object,
+        title: str,
+        message: str,
+        **kwargs: object,
+    ) -> bool:
+        bodies.append(f"{title}\n{message}")
+        return True
+
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.notify_recommendation",
+        capture_notify,
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.load_production_ops",
+        lambda: type(
+            "Ops",
+            (),
+            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+        )(),
+    )
+
+    result = run_ops_tick(
+        now=datetime(2026, 11, 26, 12, 0, tzinfo=UTC),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        notify=True,
+    )
+    assert result.catch_up_planned == [GWKey("2024-25", 1)]
+    assert result.auth_level == "urgent"
+    assert result.auth_manual_apply is True
+    assert any(MANUAL_APPLY_BANNER in body for body in bodies)
+    assert any("plan report body" in body for body in bodies)
+    # Auth alert + plan recommendation (at least two notify calls).
+    assert len(bodies) >= 2
+    get_settings.cache_clear()
