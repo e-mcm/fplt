@@ -844,9 +844,22 @@ def _with_explain_sections(
     gameweek: int,
     names: dict[int, str],
 ) -> str:
-    """Append decision / forecast explain blocks when predictions allow it."""
-    from fplt.optimise.explain import append_explain_sections, explain_plan_markdown
+    """Append decision / forecast / depth explain blocks when possible.
+
+    Decision baseline failures no longer drop the forecast board: soft-fail
+    lives inside ``build_decision_explain`` / ``explain_plan_markdown``. A
+    missing prediction ledger still skips the whole append.
+    """
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.models.spec import load_model_specs
+    from fplt.optimise.explain import (
+        append_explain_sections,
+        explain_plan_markdown,
+        load_layered_explain_parts,
+    )
     from fplt.scoring.rules import Rules
+    from fplt.types import GWKey
 
     ledger = read_predictions(data_dir)
     preds = ledger.filter(
@@ -855,6 +868,28 @@ def _with_explain_sections(
         & (pl.col("as_of_gw") == gameweek)
         & (pl.col("target_season") == season)
         & (pl.col("target_gw") == gameweek)
+    )
+    if preds.is_empty():
+        logger.warning(
+            "explain sections skipped: no predictions for model_id=%s %s GW%s",
+            model_id,
+            season,
+            gameweek,
+        )
+        return report
+    store = DataStore(data_dir)
+    view = PITData(store).view(GWKey(season, gameweek))
+    model_name: str | None = None
+    for name, spec in load_model_specs().items():
+        if spec.model_id == model_id:
+            model_name = name
+            break
+    parts = (
+        load_layered_explain_parts(
+            data_dir, model_name, season, gameweek, fit_if_missing=False
+        )
+        if model_name is not None
+        else None
     )
     try:
         explain = explain_plan_markdown(
@@ -866,8 +901,11 @@ def _with_explain_sections(
             gameweek=gameweek,
             rules=Rules.for_season(season),
             names=names,
+            view=view,
+            parts=parts,
         )
     except (ValueError, KeyError) as exc:
+        # Board build can still raise (e.g. missing columns); keep plan report.
         logger.warning("explain sections skipped: %s", exc)
         return report
     return append_explain_sections(report, decision=explain)

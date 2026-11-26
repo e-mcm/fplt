@@ -3,21 +3,27 @@
 Prefer explaining decisions via optimiser deltas (planned squad vs keep-and-
 line-up the current fifteen) rather than model internals. Layered event
 probs on the prediction ledger feed a first-order xPts decomposition; opaque
-models still show ``xpts`` with null component columns.
+models still show ``xpts`` with null component columns. Fixture / involvement
+depth (H/A, E[goals], shares, xMins from the minutes PMF) is a second layer
+for layered models via public component accessors — still no SHAP or duals.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
 from fplt.backtest.ledger import read_predictions
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
-from fplt.models.spec import load_model_specs
+from fplt.models.distributions import MinutesDist
+from fplt.models.spec import artifact_dir, get_model, load_model_specs
+from fplt.models.universe import player_fixtures
 from fplt.optimise.decisions import candidates_as_of
 from fplt.optimise.plan import (
     DEFAULT_PLAN_HORIZON,
@@ -30,13 +36,17 @@ from fplt.optimise.squad import select_squad
 from fplt.optimise.state import SquadState, load_squad_state
 from fplt.schemas.explain import (
     FORECAST_BOARD_COLUMNS,
+    PLAYER_DEPTH_COLUMNS,
     TRANSFER_DELTA_COLUMNS,
     ForecastBoardSchema,
+    PlayerDepthSchema,
     TransferDeltaSchema,
 )
 from fplt.schemas.plan import PlanSchema
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
+
+logger = logging.getLogger(__name__)
 
 _POSITION_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 _PROB_COLS = ("p_played", "p_60", "p_goal", "p_assist", "p_cs", "p_haul")
@@ -56,7 +66,9 @@ class DecisionExplain:
     ``baseline_xi_xpts`` is the captain-doubled XI score from keeping the
     current fifteen (no transfers). ``planned_xi_xpts`` is the same scoring
     on the planned step-0 XI. ``net_delta`` is
-    ``planned_xi_xpts - baseline_xi_xpts - hit``.
+    ``planned_xi_xpts - baseline_xi_xpts - hit``. When the keep-squad
+    baseline cannot be formed (budget/club), baseline and net are null and
+    a constraint note records why — transfers and planned XI still return.
     """
 
     transfers: pl.DataFrame
@@ -69,6 +81,34 @@ class DecisionExplain:
     net_delta: float | None
     constraints: tuple[str, ...]
     is_draft: bool
+
+
+@dataclass(frozen=True)
+class LayeredExplainParts:
+    """Public layered components used to build fixture / involvement depth."""
+
+    score: Any
+    minutes: Any
+    involvement: Any
+
+
+@dataclass(frozen=True)
+class PlayerDepthExplain:
+    """Per-fixture depth rows plus the matching forecast-board slice."""
+
+    depth: pl.DataFrame
+    board: pl.DataFrame
+
+
+@dataclass(frozen=True)
+class TransferPairDepth:
+    """Side-by-side depth for one A→B transfer pair."""
+
+    player_out: int
+    player_in: int
+    out_depth: pl.DataFrame
+    in_depth: pl.DataFrame
+    board: pl.DataFrame
 
 
 def build_forecast_board(
@@ -300,13 +340,23 @@ def build_decision_explain(
         .cast(pl.Float64)
         .alias("xpts")
     )
-    baseline = select_squad(
-        owned_pool.select("player_key", "position", "team_key", "price", "xpts")
-    )
-    net = planned_xi_xpts - float(baseline.total_xpts) - hit
+    baseline_xi: float | None
+    net: float | None
+    try:
+        baseline = select_squad(
+            owned_pool.select("player_key", "position", "team_key", "price", "xpts")
+        )
+        baseline_xi = float(baseline.total_xpts)
+        net = planned_xi_xpts - baseline_xi - hit
+    except ValueError as exc:
+        # Keep-squad select_squad uses list prices and a £100m budget; live
+        # squads with bank≈0 can fail even when the plan itself is valid.
+        baseline_xi = None
+        net = None
+        constraints = (*constraints, f"baseline unavailable: {exc}")
     return DecisionExplain(
         transfers=transfers,
-        baseline_xi_xpts=float(baseline.total_xpts),
+        baseline_xi_xpts=baseline_xi,
         planned_xi_xpts=planned_xi_xpts,
         hit=hit,
         free_transfers_before=free_before,
@@ -433,8 +483,15 @@ def explain_plan_markdown(
     gameweek: int,
     rules: Rules,
     names: Mapping[int, str] | None = None,
+    view: PITView | None = None,
+    parts: LayeredExplainParts | None = None,
 ) -> str:
-    """Build decision + forecast markdown for a just-solved plan.
+    """Build decision + forecast (+ optional depth) markdown for a plan.
+
+    Decision baseline soft-fails when keep-squad ``select_squad`` cannot form
+    a legal fifteen; the forecast board and player-depth “why” blocks still
+    emit. Depth needs ``view`` (fixture labels always; λ / shares / xMins
+    when ``parts`` is set).
 
     Args:
         plan: Solved ``GameweekPlan``.
@@ -446,15 +503,39 @@ def explain_plan_markdown(
         gameweek: Act-on gameweek.
         rules: Scoring rules for the forecast split.
         names: Optional display names.
+        view: PIT view for fixture / involvement depth.
+        parts: Layered components when available.
 
     Returns:
-        Markdown with decision explain then forecast board (planned squad).
+        Markdown with decision explain, optional why-depth, then forecast board.
     """
-    decision = build_decision_explain(plan, state, candidates)
-    decision_md = format_decision_explain(decision, names)
-    kept_keys = plan.picks.filter((pl.col("step") == 0) & ~pl.col("sold"))[
-        "player_key"
-    ].to_list()
+    sections: list[str] = []
+    decision: DecisionExplain | None
+    try:
+        decision = build_decision_explain(plan, state, candidates)
+        sections.append(format_decision_explain(decision, names))
+    except ValueError as exc:
+        decision = None
+        sections.append(f"### Decision explain\n\n_Unavailable: {exc}_\n")
+
+    kept = plan.picks.filter((pl.col("step") == 0) & ~pl.col("sold"))
+    kept_keys = [int(key) for key in kept["player_key"].to_list()]
+    xi_keys = [int(key) for key in kept.filter(pl.col("in_xi"))["player_key"].to_list()]
+    if view is not None:
+        why = _plan_why_markdown(
+            view=view,
+            season=season,
+            gameweek=gameweek,
+            predictions=predictions,
+            rules=rules,
+            names=names,
+            parts=parts,
+            decision=decision,
+            xi_keys=xi_keys,
+        )
+        if why:
+            sections.append(why)
+
     board = build_forecast_board(
         predictions,
         season=season,
@@ -462,7 +543,8 @@ def explain_plan_markdown(
         target_gw=gameweek,
         player_keys=kept_keys,
     )
-    return decision_md + "\n" + format_forecast_board(board, names)
+    sections.append(format_forecast_board(board, names))
+    return "\n".join(part.rstrip() for part in sections if part) + "\n"
 
 
 def run_explain(
@@ -476,6 +558,8 @@ def run_explain(
     squad: SquadState | None = None,
     include_forecast: bool = True,
     include_decision: bool = True,
+    player_key: int | None = None,
+    vs_player_key: int | None = None,
 ) -> str:
     """Load ledger predictions and a saved plan; render explain markdown.
 
@@ -490,6 +574,10 @@ def run_explain(
             ``load_squad_state`` when omitted.
         include_forecast: Build the forecast board section.
         include_decision: Build the decision-delta section (needs a plan).
+        player_key: When set, render per-player fixture depth (and optional
+            ``vs_player_key`` transfer-pair depth) as the primary section.
+        vs_player_key: Optional sell-side key for A→B depth with ``player_key``
+            as the buy-side (``--player`` in / ``--vs`` out).
 
     Returns:
         Markdown text.
@@ -497,8 +585,11 @@ def run_explain(
     Raises:
         FileNotFoundError: Plan parquet missing when decision explain is on.
         KeyError: Unknown model name.
-        ValueError: Predictions missing for the board.
+        ValueError: Predictions missing for the board, or ``--vs`` without
+            ``--player``.
     """
+    if vs_player_key is not None and player_key is None:
+        raise ValueError("--vs requires --player")
     spec = load_model_specs()[model_name]
     view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
     names = _player_names(view)
@@ -514,7 +605,43 @@ def run_explain(
     state = squad if squad is not None else load_squad_state()
     sections: list[str] = [f"# Explain {model_name} · {season} GW{gameweek}", ""]
 
+    if player_key is not None:
+        if preds.is_empty():
+            raise ValueError(
+                f"{model_name} has no predictions for {season} GW{gameweek}; "
+                "run fplt predict first"
+            )
+        parts = load_layered_explain_parts(
+            data_dir, model_name, season, gameweek, fit_if_missing=True
+        )
+        if vs_player_key is not None:
+            pair = build_transfer_pair_depth(
+                view,
+                player_out=vs_player_key,
+                player_in=player_key,
+                target_gw=gameweek,
+                predictions=preds,
+                rules=rules,
+                parts=parts,
+                season=season,
+            )
+            sections.append(format_transfer_pair_depth(pair, names))
+        else:
+            depth = build_player_depth(
+                view,
+                player_key=player_key,
+                target_gw=gameweek,
+                predictions=preds,
+                rules=rules,
+                parts=parts,
+                season=season,
+            )
+            sections.append(format_player_depth(depth, names))
+        return "\n".join(part.rstrip() for part in sections if part).rstrip() + "\n"
+
     plan_frame: pl.DataFrame | None = None
+    solved: GameweekPlan | None = None
+    candidates: pl.DataFrame | None = None
     if include_decision:
         covered = covered_horizon(gameweek, horizon)
         path = plan_parquet(data_dir, spec.model_id, season, gameweek, covered)
@@ -525,6 +652,25 @@ def run_explain(
         candidates = candidates_as_of(view)
         plan_frame = raw
         solved = _gameweek_plan_from_table(raw, candidates, state)
+        if include_forecast:
+            parts = load_layered_explain_parts(
+                data_dir, model_name, season, gameweek, fit_if_missing=False
+            )
+            sections.append(
+                explain_plan_markdown(
+                    solved,
+                    state,
+                    candidates,
+                    preds,
+                    season=season,
+                    gameweek=gameweek,
+                    rules=rules,
+                    names=names,
+                    view=view,
+                    parts=parts,
+                )
+            )
+            return "\n".join(part.rstrip() for part in sections if part).rstrip() + "\n"
         decision = build_decision_explain(solved, state, candidates)
         sections.append(format_decision_explain(decision, names))
 
@@ -552,6 +698,477 @@ def run_explain(
         sections.append(format_forecast_board(board, names))
 
     return "\n".join(part.rstrip() for part in sections if part).rstrip() + "\n"
+
+
+def layered_explain_parts(model: object) -> LayeredExplainParts | None:
+    """Return layered score/minutes/involvement parts when the model exposes them.
+
+    Uses public ``score_model`` / ``minutes_model`` / ``involvement_model``
+    accessors (or attributes of those names). Opaque predictors yield ``None``.
+
+    Args:
+        model: A fitted or unfitted predictor instance.
+
+    Returns:
+        ``LayeredExplainParts`` or ``None`` when any component is missing.
+    """
+    score = getattr(model, "score_model", None)
+    minutes = getattr(model, "minutes_model", None)
+    involvement = getattr(model, "involvement_model", None)
+    if score is None or minutes is None or involvement is None:
+        return None
+    return LayeredExplainParts(score=score, minutes=minutes, involvement=involvement)
+
+
+def load_layered_explain_parts(
+    data_dir: Path,
+    model_name: str,
+    season: str,
+    gameweek: int,
+    *,
+    fit_if_missing: bool = False,
+) -> LayeredExplainParts | None:
+    """Load (or optionally fit) layered components for explain depth.
+
+    Args:
+        data_dir: Data root with ``artifacts/``.
+        model_name: YAML spec name.
+        season: Season label.
+        gameweek: As-of gameweek.
+        fit_if_missing: When true and no artifact exists, fit and save like
+            ``predict_live`` (CLI ``--player`` path). Plan-report wiring keeps
+            this false so a missing artifact only skips depth.
+
+    Returns:
+        Parts for layered models, else ``None``.
+    """
+    # Import registers predictors / components with get_model.
+    import fplt.models.composite  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+    specs = load_model_specs()
+    if model_name not in specs:
+        return None
+    spec = specs[model_name]
+    as_of = GWKey(season, gameweek)
+    dest = artifact_dir(data_dir, spec, as_of)
+    try:
+        cls = get_model(spec.kind)
+    except KeyError:
+        return None
+    model: Any
+    if (dest / "spec.json").exists():
+        try:
+            model = cls.load(dest, spec)
+        except Exception as exc:  # noqa: BLE001 — depth is best-effort
+            logger.warning("layered explain load failed: %s", exc)
+            return None
+    elif fit_if_missing:
+        view = PITData(DataStore(data_dir)).view(as_of)
+        model = cls(spec)
+        try:
+            model.fit(view)
+            model.save(dest)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("layered explain fit failed: %s", exc)
+            return None
+    else:
+        return None
+    return layered_explain_parts(model)
+
+
+def xmins_from_minutes_pmf(dist: MinutesDist) -> pl.DataFrame:
+    """Derive expected minutes from a minutes PMF at explain/report time.
+
+    Args:
+        dist: Binned ``MinutesDist`` from a minutes component.
+
+    Returns:
+        ``player_key``, ``fixture_id``, ``xmins`` (matches
+        ``MinutesDist.expected_minutes``).
+    """
+    return dist.expected_minutes()
+
+
+def build_player_depth(
+    view: PITView,
+    *,
+    player_key: int,
+    target_gw: int,
+    predictions: pl.DataFrame,
+    rules: Rules,
+    parts: LayeredExplainParts | None = None,
+    season: str | None = None,
+) -> PlayerDepthExplain:
+    """Build fixture / involvement depth for one player in one gameweek.
+
+    Fixture H/A and opponent come from PIT. Team/opp E[goals], involvement
+    weights, and xMins need ``parts``; otherwise those columns are null.
+    Opaque models therefore still get fixture labels + the forecast board.
+
+    Args:
+        view: Point-in-time tables at the deadline.
+        player_key: Player to explain.
+        target_gw: Target gameweek.
+        predictions: Ledger / prediction rows (event probs when present).
+        rules: Scoring rules for the board split.
+        parts: Optional layered components.
+        season: Season label; defaults to ``view.as_of.season``.
+
+    Returns:
+        Depth rows (``PlayerDepthSchema``) and a forecast-board slice.
+    """
+    season_label = season if season is not None else view.as_of.season
+    board = build_forecast_board(
+        predictions,
+        season=season_label,
+        rules=rules,
+        target_gw=target_gw,
+        player_keys=[player_key],
+    )
+    depth = _player_depth_rows(
+        view,
+        player_keys=[player_key],
+        target_gw=target_gw,
+        parts=parts,
+        season=season_label,
+    )
+    return PlayerDepthExplain(depth=depth, board=board)
+
+
+def build_transfer_pair_depth(
+    view: PITView,
+    *,
+    player_out: int,
+    player_in: int,
+    target_gw: int,
+    predictions: pl.DataFrame,
+    rules: Rules,
+    parts: LayeredExplainParts | None = None,
+    season: str | None = None,
+) -> TransferPairDepth:
+    """Build side-by-side depth for a transfer pair (out → in).
+
+    Args:
+        view: Point-in-time tables at the deadline.
+        player_out: Sold player key.
+        player_in: Bought player key.
+        target_gw: Act-on gameweek.
+        predictions: Ledger / prediction rows.
+        rules: Scoring rules for the board split.
+        parts: Optional layered components.
+        season: Season label; defaults to ``view.as_of.season``.
+
+    Returns:
+        Depth for each side plus a two-player forecast board.
+    """
+    season_label = season if season is not None else view.as_of.season
+    board = build_forecast_board(
+        predictions,
+        season=season_label,
+        rules=rules,
+        target_gw=target_gw,
+        player_keys=[player_out, player_in],
+    )
+    out_depth = _player_depth_rows(
+        view,
+        player_keys=[player_out],
+        target_gw=target_gw,
+        parts=parts,
+        season=season_label,
+    )
+    in_depth = _player_depth_rows(
+        view,
+        player_keys=[player_in],
+        target_gw=target_gw,
+        parts=parts,
+        season=season_label,
+    )
+    return TransferPairDepth(
+        player_out=player_out,
+        player_in=player_in,
+        out_depth=out_depth,
+        in_depth=in_depth,
+        board=board,
+    )
+
+
+def format_player_depth(
+    explain: PlayerDepthExplain,
+    names: Mapping[int, str] | None = None,
+) -> str:
+    """Render player fixture depth and the matching forecast board.
+
+    Args:
+        explain: Output of ``build_player_depth``.
+        names: Optional ``player_key`` → display name map.
+
+    Returns:
+        Markdown text.
+    """
+    lines = [
+        "### Player depth",
+        "",
+        (
+            "Fixture context from PIT; E[goals] / involvement / xMins from "
+            "layered components when available (null for opaque models). "
+            "xMins = Σ bin·P(bin) from the minutes PMF."
+        ),
+        "",
+        _format_depth_table(explain.depth, names),
+        format_forecast_board(explain.board, names),
+    ]
+    return "\n".join(part.rstrip() for part in lines if part) + "\n"
+
+
+def format_transfer_pair_depth(
+    explain: TransferPairDepth,
+    names: Mapping[int, str] | None = None,
+) -> str:
+    """Render side-by-side depth for a transfer pair.
+
+    Args:
+        explain: Output of ``build_transfer_pair_depth``.
+        names: Optional display names.
+
+    Returns:
+        Markdown text.
+    """
+    out_label = _label(explain.player_out, names)
+    in_label = _label(explain.player_in, names)
+    lines = [
+        f"### Transfer depth · {out_label} → {in_label}",
+        "",
+        f"#### Out · {out_label}",
+        "",
+        _format_depth_table(explain.out_depth, names),
+        f"#### In · {in_label}",
+        "",
+        _format_depth_table(explain.in_depth, names),
+        format_forecast_board(explain.board, names),
+    ]
+    return "\n".join(part.rstrip() for part in lines if part) + "\n"
+
+
+def _plan_why_markdown(
+    *,
+    view: PITView,
+    season: str,
+    gameweek: int,
+    predictions: pl.DataFrame,
+    rules: Rules,
+    names: Mapping[int, str] | None,
+    parts: LayeredExplainParts | None,
+    decision: DecisionExplain | None,
+    xi_keys: Sequence[int],
+) -> str:
+    """Week-1 transfer-pair + XI depth for plan reports."""
+    blocks: list[str] = [
+        "### Why (fixture / involvement depth)",
+        "",
+        (
+            "Act-on week transfers and XI. Fixture labels always; λ / shares / "
+            "xMins when layered components are loaded."
+        ),
+        "",
+    ]
+    if decision is not None and not decision.transfers.is_empty():
+        for row in decision.transfers.iter_rows(named=True):
+            pair = build_transfer_pair_depth(
+                view,
+                player_out=int(row["player_key_out"]),
+                player_in=int(row["player_key_in"]),
+                target_gw=gameweek,
+                predictions=predictions,
+                rules=rules,
+                parts=parts,
+                season=season,
+            )
+            blocks.append(format_transfer_pair_depth(pair, names).rstrip())
+            blocks.append("")
+    if xi_keys:
+        depth = _player_depth_rows(
+            view,
+            player_keys=list(xi_keys),
+            target_gw=gameweek,
+            parts=parts,
+            season=season,
+        )
+        blocks.append("#### Starting XI depth")
+        blocks.append("")
+        blocks.append(_format_depth_table(depth, names))
+    text = "\n".join(blocks).rstrip()
+    return text + "\n" if text.strip() else ""
+
+
+def _player_depth_rows(
+    view: PITView,
+    *,
+    player_keys: Sequence[int],
+    target_gw: int,
+    parts: LayeredExplainParts | None,
+    season: str,
+) -> pl.DataFrame:
+    """Build ``PlayerDepthSchema`` rows for the given players / gameweek."""
+    keys = [int(key) for key in player_keys]
+    empty = _empty_player_depth()
+    if not keys:
+        return empty
+    asked = player_fixtures(view, [GWKey(season, target_gw)]).filter(
+        pl.col("player_key").is_in(keys)
+    )
+    if asked.is_empty():
+        # Blank week / unknown player: one null-fixture stub per key.
+        stubs = [
+            {
+                "player_key": key,
+                "target_gw": target_gw,
+                "fixture_id": None,
+                "is_home": None,
+                "team_key": None,
+                "opponent_team_key": None,
+                "team_eg": None,
+                "opp_eg": None,
+                "goal_weight": None,
+                "assist_weight": None,
+                "xmins": None,
+            }
+            for key in keys
+        ]
+        return _checked_player_depth(pl.DataFrame(stubs, schema=PLAYER_DEPTH_COLUMNS))
+
+    players = (
+        view.latest("players", by=["season", "player_key"])
+        .select("season", "player_key", "team_key")
+        .collect()
+    )
+    fixtures = (
+        view.latest("fixtures", by=["season", "fixture_id"])
+        .select("season", "fixture_id", "team_h_key", "team_a_key")
+        .collect()
+    )
+    base = (
+        asked.join(players, on=["season", "player_key"], how="inner")
+        .join(fixtures, on=["season", "fixture_id"], how="inner")
+        .with_columns(
+            (pl.col("team_key") == pl.col("team_h_key")).alias("is_home"),
+            pl.when(pl.col("team_key") == pl.col("team_h_key"))
+            .then(pl.col("team_a_key"))
+            .otherwise(pl.col("team_h_key"))
+            .alias("opponent_team_key"),
+            pl.lit(target_gw).cast(pl.Int64).alias("target_gw"),
+            pl.lit(None).cast(pl.Float64).alias("team_eg"),
+            pl.lit(None).cast(pl.Float64).alias("opp_eg"),
+            pl.lit(None).cast(pl.Float64).alias("goal_weight"),
+            pl.lit(None).cast(pl.Float64).alias("assist_weight"),
+            pl.lit(None).cast(pl.Float64).alias("xmins"),
+        )
+        .select(list(PLAYER_DEPTH_COLUMNS))
+    )
+
+    if parts is None:
+        return _checked_player_depth(base)
+
+    fixture_rows = (
+        fixtures.join(
+            asked.select("season", "fixture_id").unique(),
+            on=["season", "fixture_id"],
+            how="inner",
+        )
+        .select("season", "fixture_id", "team_h_key", "team_a_key")
+        .unique(subset=["fixture_id"])
+    )
+    try:
+        score_dist = parts.score.predict(view, fixture_rows)
+        eg = score_dist.expected_goals()
+        minutes_dist = parts.minutes.predict(
+            view, asked.select("player_key", "fixture_id")
+        )
+        xmins = xmins_from_minutes_pmf(minutes_dist)
+        weights = parts.involvement.predict(
+            view, asked.select("player_key", "fixture_id")
+        )
+    except Exception as exc:  # noqa: BLE001 — depth is best-effort
+        logger.warning("player depth components failed: %s", exc)
+        return _checked_player_depth(base)
+
+    enriched = (
+        base.drop("team_eg", "opp_eg", "goal_weight", "assist_weight", "xmins")
+        .join(eg, on="fixture_id", how="left")
+        .join(weights, on=["player_key", "fixture_id"], how="left")
+        .join(xmins, on=["player_key", "fixture_id"], how="left")
+        .with_columns(
+            pl.when(pl.col("is_home"))
+            .then(pl.col("home_eg"))
+            .otherwise(pl.col("away_eg"))
+            .alias("team_eg"),
+            pl.when(pl.col("is_home"))
+            .then(pl.col("away_eg"))
+            .otherwise(pl.col("home_eg"))
+            .alias("opp_eg"),
+        )
+        .select(list(PLAYER_DEPTH_COLUMNS))
+    )
+    return _checked_player_depth(enriched)
+
+
+def _format_depth_table(
+    depth: pl.DataFrame,
+    names: Mapping[int, str] | None,
+) -> str:
+    checked = PlayerDepthSchema.validate(depth)
+    assert isinstance(checked, pl.DataFrame)
+    if checked.is_empty():
+        return "_No fixture rows_\n"
+    lines = [
+        "| Name | GW | Fix | H/A | Team | Opp | E[G] | Opp E[G] | "
+        "goal_w | assist_w | xMins |",
+        "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    ordered = sorted(
+        checked.iter_rows(named=True),
+        key=lambda row: (
+            int(row["player_key"]),
+            int(row["fixture_id"]) if row["fixture_id"] is not None else -1,
+        ),
+    )
+    for row in ordered:
+        ha = "—" if row["is_home"] is None else ("H" if bool(row["is_home"]) else "A")
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _label(int(row["player_key"]), names),
+                    str(int(row["target_gw"])),
+                    "—" if row["fixture_id"] is None else str(int(row["fixture_id"])),
+                    ha,
+                    "—" if row["team_key"] is None else str(int(row["team_key"])),
+                    (
+                        "—"
+                        if row["opponent_team_key"] is None
+                        else str(int(row["opponent_team_key"]))
+                    ),
+                    _num(row["team_eg"]),
+                    _num(row["opp_eg"]),
+                    _num(row["goal_weight"]),
+                    _num(row["assist_weight"]),
+                    _num(row["xmins"]),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _empty_player_depth() -> pl.DataFrame:
+    empty = pl.DataFrame(schema=PLAYER_DEPTH_COLUMNS)
+    return _checked_player_depth(empty)
+
+
+def _checked_player_depth(frame: pl.DataFrame) -> pl.DataFrame:
+    checked = PlayerDepthSchema.validate(frame.select(list(PLAYER_DEPTH_COLUMNS)))
+    assert isinstance(checked, pl.DataFrame)
+    return checked
 
 
 def _decompose_rows(frame: pl.DataFrame, rules: Rules) -> pl.DataFrame:
@@ -785,11 +1402,21 @@ def _num(value: object) -> str:
 
 __all__ = [
     "DecisionExplain",
+    "LayeredExplainParts",
+    "PlayerDepthExplain",
+    "TransferPairDepth",
     "append_explain_sections",
     "build_decision_explain",
     "build_forecast_board",
+    "build_player_depth",
+    "build_transfer_pair_depth",
     "explain_plan_markdown",
     "format_decision_explain",
     "format_forecast_board",
+    "format_player_depth",
+    "format_transfer_pair_depth",
+    "layered_explain_parts",
+    "load_layered_explain_parts",
     "run_explain",
+    "xmins_from_minutes_pmf",
 ]

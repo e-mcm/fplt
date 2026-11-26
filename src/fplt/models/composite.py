@@ -147,6 +147,21 @@ class CompositePredictor:
         _apply_involvement_sim_params(self)
         self._fitted = True
 
+    @property
+    def score_model(self) -> Any:
+        """Fitted team-score component (public accessor for explain depth)."""
+        return self._score
+
+    @property
+    def minutes_model(self) -> Any:
+        """Fitted minutes component (public accessor for explain depth)."""
+        return self._minutes
+
+    @property
+    def involvement_model(self) -> Any:
+        """Fitted involvement component (public accessor for explain depth)."""
+        return self._involvement
+
     def predict(self, view: PITView, horizon: list[GWKey]) -> pl.DataFrame:
         """Simulate every player-fixture in ``horizon``.
 

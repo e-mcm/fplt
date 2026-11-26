@@ -129,6 +129,36 @@ def _minutes(pmf: np.ndarray) -> MinutesDist:
     return MinutesDist(keys, MINUTE_BINS, pmf)
 
 
+def test_expected_goals_from_marginals() -> None:
+    pmf = np.zeros((2, _GOALS, _GOALS))
+    pmf[0, 2, 1] = 1.0  # home 2, away 1
+    pmf[1, 0, 3] = 1.0  # home 0, away 3
+    frame = _dist(pmf).expected_goals()
+    assert frame.height == 2
+    home0 = float(frame.filter(pl.col("fixture_id") == 0)["home_eg"][0])
+    away0 = float(frame.filter(pl.col("fixture_id") == 0)["away_eg"][0])
+    home1 = float(frame.filter(pl.col("fixture_id") == 1)["home_eg"][0])
+    away1 = float(frame.filter(pl.col("fixture_id") == 1)["away_eg"][0])
+    assert home0 == pytest.approx(2.0)
+    assert away0 == pytest.approx(1.0)
+    assert home1 == pytest.approx(0.0)
+    assert away1 == pytest.approx(3.0)
+
+
+def test_expected_minutes_from_pmf() -> None:
+    pmf = np.zeros((2, len(MINUTE_BINS)))
+    pmf[0, list(MINUTE_BINS).index(90)] = 1.0
+    pmf[1, list(MINUTE_BINS).index(60)] = 0.5
+    pmf[1, list(MINUTE_BINS).index(30)] = 0.5
+    frame = _minutes(pmf).expected_minutes()
+    assert float(frame.filter(pl.col("player_key") == 0)["xmins"][0]) == pytest.approx(
+        90.0
+    )
+    assert float(frame.filter(pl.col("player_key") == 1)["xmins"][0]) == pytest.approx(
+        45.0
+    )
+
+
 def test_minutes_sample_stays_on_the_bins_and_is_independent() -> None:
     pmf = np.zeros((2, len(MINUTE_BINS)))
     pmf[0, 0] = 1.0
