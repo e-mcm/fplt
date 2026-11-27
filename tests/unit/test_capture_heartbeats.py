@@ -362,6 +362,7 @@ def test_deploy_readme_documents_checks_and_runbook_choice() -> None:
         "fplt-ops-catchup",
         "fplt-secret-rotation",
         "fplt-auth-check",
+        "fplt-ci",
     ):
         assert name in text, name
     assert "15 min" in text
@@ -371,15 +372,42 @@ def test_deploy_readme_documents_checks_and_runbook_choice() -> None:
     assert "Do not add a keepalive" not in text or "no keepalive workflow" in text
 
 
+# Capture / ops schedules that must queue (ci.yml uses sha-keyed concurrency).
+_CAPTURE_CONCURRENCY = (
+    "snapshot.yml",
+    "understat.yml",
+    "api_football.yml",
+    "football_data.yml",
+    "raw_parity.yml",
+    "vaastav.yml",
+    "auth-check.yml",
+    "secret-rotation-reminder.yml",
+)
+
+
+def test_capture_workflows_queue_without_cancel() -> None:
+    """Capture schedules declare concurrency with cancel-in-progress: false (#305)."""
+    for name in _CAPTURE_CONCURRENCY:
+        doc = _load(name)
+        conc = doc["concurrency"]
+        assert conc["cancel-in-progress"] is False, name
+        assert conc["group"], name
+
+
 def test_every_scheduled_workflow_file_is_covered() -> None:
-    """Guardrail: any new cron workflow must appear in _SCHEDULED."""
+    """Guardrail: any new cron workflow must appear in _SCHEDULED (or be CI).
+
+    ``ci.yml`` is scheduled for the nightly full matrix (#305) but uses the
+    ``gate`` job for notify/heartbeat rather than a capture-style ``alerts``
+    job, so it is excluded from ``_SCHEDULED``.
+    """
     scheduled: list[str] = []
     for path in sorted(_WORKFLOWS.glob("*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         on = _on(doc)
         if "schedule" in on:
             scheduled.append(path.name)
-    expected = {n for n in _SCHEDULED if n != "ops-catchup.yml"}
+    expected = {n for n in _SCHEDULED if n != "ops-catchup.yml"} | {"ci.yml"}
     assert set(scheduled) == expected, textwrap.dedent(
         f"""
         scheduled workflows drifted:

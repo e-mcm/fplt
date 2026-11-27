@@ -14,6 +14,11 @@ on:
         type: boolean
         default: false
 
+# Queue overlapping cron + dispatch (#305).
+concurrency:
+  group: raw_parity
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

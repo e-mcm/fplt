@@ -166,8 +166,11 @@ volumes.
 
 Every scheduled workflow (`snapshot`, `understat`, `api_football`,
 `football_data`, `ops-tick`, `raw_parity`, `secret-rotation-reminder`,
-`auth-check`) plus dispatch-only `ops-catchup` pings a dead-man's switch on
-success and POSTs a short ntfy alert on failure.
+`auth-check`, nightly `ci.yml`) plus dispatch-only `ops-catchup` pings a
+dead-man's switch on success and POSTs a short ntfy alert on failure.
+Capture / ops schedules declare `concurrency` with `cancel-in-progress: false`
+so cron + dispatch queue instead of racing (#305). CI cancels only superseded
+PR runs — never `main` / schedule / dispatch.
 
 Missing `HC_PING_URL_*` / `NTFY_URL` secrets are a **soft skip** (log and exit
 0). Missing `R2_*` secrets / `DATA_BUCKET` on capture `push-raw` **soft-skips
@@ -203,6 +206,7 @@ would otherwise drop `.github/actions/`.
 | `HC_PING_URL_RAW_PARITY` | ping URL for `raw_parity` (dual-write; drop after A9) |
 | `HC_PING_URL_SECRET_ROTATION` | ping URL for `secret-rotation-reminder` |
 | `HC_PING_URL_AUTH_CHECK` | ping URL for `auth-check` (ops-01 daily token monitor) |
+| `HC_PING_URL_CI` | ping URL for nightly full CI (`ci.yml` schedule / dispatch) |
 
 ### healthchecks.io check table (configure later)
 
@@ -216,6 +220,7 @@ would otherwise drop `.github/actions/`.
 | `fplt-raw-parity` | `raw_parity.yml` | 8 days | 2 days | `0 6 * * 1` |
 | `fplt-secret-rotation` | `secret-rotation-reminder.yml` | 2 days | 1 day | `0 9 * * *` |
 | `fplt-auth-check` | `auth-check.yml` | 1 day | 12 h | `17 8 * * *` |
+| `fplt-ci` | `ci.yml` (nightly full matrix) | 1 day | 12 h | `17 5 * * *` |
 | `fplt-ops-catchup` | `ops-catchup.yml` | n/a (dispatch) | — | manual |
 
 Wire each check's "when down" integration to the same ntfy topic as `NTFY_URL`.
@@ -330,8 +335,12 @@ GitHub's 6 h default). Sized at roughly 2–3× expected p95 wall time:
 | `secret-rotation-reminder` / `remind` | 10 | Issue create only |
 | `secret-rotation-reminder` / `alerts` | 5 | Heartbeat + ntfy |
 
-CI lint: `uv run python scripts/check_workflow_timeouts.py` (also in
-`make check`). A missing or non-positive `timeout-minutes` fails the job.
+CI lints: `uv run python scripts/check_workflow_timeouts.py`,
+`scripts/check_workflow_r2_environment.py`, and
+`scripts/check_workflow_concurrency.py` (also in `make check`). A missing or
+non-positive `timeout-minutes` fails the job; concurrency lint fails if
+`ci.yml` cancels main runs or a scheduled workflow lacks a concurrency group
+(#305).
 
 ## Secret inventory (ops-11)
 
@@ -362,6 +371,7 @@ dates live in `configs/ops/secret_rotation.yaml`; the
 | `HC_PING_URL_OPS_CATCHUP` | secret | Ping for `ops-catchup` | Yearly / if leaked |
 | `HC_PING_URL_RAW_PARITY` | secret | Ping for `raw_parity` (dual-write; drop after A9) | Yearly / if leaked |
 | `HC_PING_URL_SECRET_ROTATION` | secret | Ping for `secret-rotation-reminder` | Yearly / if leaked |
+| `HC_PING_URL_CI` | secret | Ping for nightly full CI (`ci.yml`) | Yearly / if leaked |
 | `GITHUB_TOKEN` | auto | Default Actions token (`mc-release` Pages publish; reminder issues) | GitHub-managed |
 
 ### GitHub Actions variables (not secrets)

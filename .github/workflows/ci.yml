@@ -5,10 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Nightly full matrix (linux + macos native) regardless of paths (#305).
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force a failure to test the ntfy alert (#305)
+        type: boolean
+        default: false
 
+# Cancel superseded PR runs only — never cancel main / schedule / dispatch (#305).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,12 +33,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
       # Git-based filter (no GitHub API) — avoids "Resource not accessible by
       # integration" on private repos with restricted GITHUB_TOKEN scopes.
       - id: filter
         name: Detect mc/ / workflow changes
         run: |
           set -euo pipefail
+          # Nightly / manual full CI: always build + test native on linux + macos.
+          if [ "${{ github.event_name }}" = "schedule" ] \
+            || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mc=true" >> "$GITHUB_OUTPUT"
+            echo "full CI: forcing native builds (linux + macos)"
+            exit 0
+          fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
           else
@@ -71,6 +93,8 @@ jobs:
         run: uv run python scripts/check_workflow_timeouts.py
       - name: Workflow R2 environment lint (#278)
         run: uv run python scripts/check_workflow_r2_environment.py
+      - name: Workflow concurrency lint (#305)
+        run: uv run python scripts/check_workflow_concurrency.py
       - name: clang-format (mc/)
         if: needs.changes.outputs.mc == 'true'
         run: |
@@ -372,11 +396,30 @@ jobs:
             exit 1
           fi
           echo "gate ok"
-      # Alert only on push-to-main so PR noise stays out of ntfy (#287).
+      # Alert on main push / nightly / dispatch — never on PRs (#287, #305).
       - uses: actions/checkout@v4
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: >-
+          always() &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' ||
+           github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch')
       - name: Notify failure
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: >-
+          failure() &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' ||
+           github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch')
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+      - name: Heartbeat
+        if: >-
+          success() &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch')
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_CI }}

@@ -110,7 +110,7 @@ def test_four_soft_skip_paths_raise_when_main_ref_set(
 
 
 def test_ci_yml_notifies_on_main_push_gate_failure() -> None:
-    """``ci.yml`` gate posts ntfy when a push to main fails the gate (#287)."""
+    """Gate posts ntfy when main push/schedule/dispatch fails (#287, #305)."""
     doc = yaml.safe_load(_CI_YML.read_text(encoding="utf-8"))
     steps = doc["jobs"]["gate"]["steps"]
     notifies = [s for s in steps if s.get("uses") == "./.github/actions/notify-failure"]
@@ -119,5 +119,43 @@ def test_ci_yml_notifies_on_main_push_gate_failure() -> None:
     cond = step.get("if", "")
     assert "failure()" in cond
     assert "push" in cond
+    assert "schedule" in cond
+    assert "workflow_dispatch" in cond
     assert "main" in cond
     assert step["with"]["ntfy_url"] == "${{ secrets.NTFY_URL }}"
+
+
+def test_ci_yml_concurrency_never_cancels_main() -> None:
+    """Main / schedule / dispatch runs must not be cancelled by concurrency (#305)."""
+    doc = yaml.safe_load(_CI_YML.read_text(encoding="utf-8"))
+    conc = doc["concurrency"]
+    assert "pull_request" in str(conc["group"])
+    assert "github.sha" in str(conc["group"])
+    cancel = conc["cancel-in-progress"]
+    assert isinstance(cancel, str)
+    assert "pull_request" in cancel
+
+
+def test_ci_yml_nightly_forces_native_and_heartbeats() -> None:
+    """Nightly schedule + dispatch force mc builds and ping HC_PING_URL_CI (#305)."""
+    doc = yaml.safe_load(_CI_YML.read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    assert "schedule" in on
+    assert "workflow_dispatch" in on
+    changes_run = "\n".join(
+        s.get("run", "")
+        for s in doc["jobs"]["changes"]["steps"]
+        if isinstance(s.get("run"), str)
+    )
+    assert "schedule" in changes_run
+    assert "workflow_dispatch" in changes_run
+    assert "mc=true" in changes_run
+    heartbeats = [
+        s
+        for s in doc["jobs"]["gate"]["steps"]
+        if s.get("uses") == "./.github/actions/heartbeat"
+    ]
+    assert len(heartbeats) == 1
+    hb = heartbeats[0]
+    assert "schedule" in hb.get("if", "")
+    assert hb["with"]["ping_url"] == "${{ secrets.HC_PING_URL_CI }}"

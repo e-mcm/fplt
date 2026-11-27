@@ -53,6 +53,7 @@ check:
 	uv run pyright
 	uv run python scripts/check_workflow_timeouts.py
 	uv run python scripts/check_workflow_r2_environment.py
+	uv run python scripts/check_workflow_concurrency.py
 	uv run pytest -n auto -m "not slow"
 
 # ── Monte Carlo micro-bench (native-mc-build-spec §1.1 / §5.5) ─────────────────

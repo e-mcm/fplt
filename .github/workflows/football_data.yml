@@ -11,6 +11,11 @@ on:
         type: boolean
         default: false
 
+# Queue overlapping cron + dispatch; never cancel mid-publish (#305).
+concurrency:
+  group: football_data
+  cancel-in-progress: false
+
 permissions:
   contents: write
 

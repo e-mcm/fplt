@@ -16,6 +16,7 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `mc_bench.py` | Per-step MC micro-bench (§1.1) | `make mc-bench` |
 | `check_workflow_timeouts.py` | Fail if any GHA job lacks `timeout-minutes` (ops-11) | `make check` / CI lint |
 | `check_workflow_r2_environment.py` | Fail if a job reads `secrets.R2_` without `environment: r2` (#278) | `make check` / CI lint |
+| `check_workflow_concurrency.py` | Fail if `ci.yml` cancels main runs or a scheduled workflow lacks concurrency (#305) | `make check` / CI lint |
 | `secret_rotation_reminders.py` | List due secret-rotation reminder issues (ops-11) | `.github/workflows/secret-rotation-reminder.yml` |
 
 ## Invariants
