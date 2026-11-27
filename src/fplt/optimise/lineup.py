@@ -10,9 +10,9 @@ order) is the sample-average approximation for the single-GW problem.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from itertools import combinations, permutations, product
+from itertools import combinations, permutations
 
 import numpy as np
 import polars as pl
@@ -82,10 +82,13 @@ def select_lineup_scenarios(
     minutes = bundle.minutes
     haul = p_haul or {}
     any_blank = bool(np.any(minutes <= 0))
+    # Player keys that blank in at least one sim — only they need every vice.
+    may_blank = frozenset(key for key in keys if bool(np.any(minutes[index[key]] <= 0)))
 
     best_mean = -np.inf
     best_score = -np.inf
     best: tuple[tuple[int, ...], tuple[int, ...], int, int] | None = None
+    n_sims = int(points.shape[1])
 
     for xi_keys in _iter_valid_xis(by_pos):
         xi_set = set(xi_keys)
@@ -97,27 +100,44 @@ def select_lineup_scenarios(
         )
         xi_idx = [index[key] for key in xi_keys]
         xi_pos = [positions[key] for key in xi_keys]
-        outfield_orders: Sequence[tuple[int, ...]]
+        # Bench order only affects autosub; armbands are scored on the
+        # resulting active set. Evaluate autosub once per (XI, bench), then
+        # try captain/vice pairs without re-running substitutions.
+        outfield_orders: Iterable[tuple[int, ...]]
         if any_blank:
-            outfield_orders = tuple(permutations(bench_outfield))
+            outfield_orders = permutations(bench_outfield)
         else:
             outfield_orders = (bench_outfield,)
+        armbands = _armband_pairs(
+            xi_keys,
+            any_blank=any_blank,
+            haul=haul,
+            captain_may_blank=may_blank,
+        )
         for outfield_order in outfield_orders:
             bench_keys = outfield_order + (reserve_gk,)
             bench_idx = [index[key] for key in bench_keys]
             bench_pos = [positions[key] for key in bench_keys]
-            armbands = _armband_pairs(xi_keys, any_blank=any_blank, haul=haul)
-            for captain, vice in armbands:
-                means = _mean_nets(
+            states = [
+                _autosub_state(
                     xi_idx=xi_idx,
                     xi_pos=xi_pos,
                     bench_idx=bench_idx,
                     bench_pos=bench_pos,
+                    pts=points[:, sim],
+                    mins=minutes[:, sim],
+                )
+                for sim in range(n_sims)
+            ]
+            for captain, vice in armbands:
+                means = _mean_from_states(
+                    states,
                     captain_i=index[captain],
                     vice_i=index[vice],
                     points=points,
                     minutes=minutes,
                     chip=chip,
+                    bench_idx=bench_idx,
                 )
                 haul_bonus = haul_tiebreak * float(haul.get(captain, 0.0))
                 score = means + haul_bonus
@@ -193,23 +213,27 @@ def _armband_pairs(
     *,
     any_blank: bool,
     haul: dict[int, float],
+    captain_may_blank: frozenset[int] | None = None,
 ) -> Sequence[tuple[int, int]]:
     """Captain/vice pairs to try for one XI.
 
     When nobody ever blanks, vice never receives the armband, so pick a
     deterministic vice (lowest ``player_key`` among non-captains) and only
-    vary the captain. With blanks, enumerate every ordered pair.
+    vary the captain. With blanks, enumerate every ordered pair for captains
+    who can blank; captains who play in every sim keep a fixed vice.
     """
-    if any_blank:
-        return tuple(
-            (captain, vice)
-            for captain, vice in product(xi_keys, repeat=2)
-            if captain != vice
-        )
     pairs: list[tuple[int, int]] = []
-    for captain in xi_keys:
-        vice = min(key for key in xi_keys if key != captain)
-        pairs.append((captain, vice))
+    if any_blank:
+        blank_caps = captain_may_blank or frozenset(xi_keys)
+        for captain in xi_keys:
+            if captain in blank_caps:
+                pairs.extend((captain, vice) for vice in xi_keys if vice != captain)
+            else:
+                pairs.append((captain, min(key for key in xi_keys if key != captain)))
+    else:
+        for captain in xi_keys:
+            vice = min(key for key in xi_keys if key != captain)
+            pairs.append((captain, vice))
     # Prefer higher-haul captains earlier only for readability; search is exact.
     if haul:
         pairs.sort(key=lambda pair: -float(haul.get(pair[0], 0.0)))
@@ -243,47 +267,25 @@ def _iter_valid_xis(
     return xis
 
 
-def _mean_nets(
+@dataclass(frozen=True)
+class _AutosubState:
+    """Per-sim autosub outcome reused across captain/vice pairs."""
+
+    active: frozenset[int]
+    used_bench: frozenset[int]
+    xi_sum: float
+
+
+def _autosub_state(
     *,
     xi_idx: list[int],
     xi_pos: list[str],
     bench_idx: list[int],
     bench_pos: list[str],
-    captain_i: int,
-    vice_i: int,
-    points: np.ndarray,
-    minutes: np.ndarray,
-    chip: str | None,
-) -> float:
-    n_sims = points.shape[1]
-    total = 0.0
-    for sim in range(n_sims):
-        total += _net_one_sim(
-            xi_idx=xi_idx,
-            xi_pos=xi_pos,
-            bench_idx=bench_idx,
-            bench_pos=bench_pos,
-            captain_i=captain_i,
-            vice_i=vice_i,
-            pts=points[:, sim],
-            mins=minutes[:, sim],
-            chip=chip,
-        )
-    return total / float(n_sims)
-
-
-def _net_one_sim(
-    *,
-    xi_idx: list[int],
-    xi_pos: list[str],
-    bench_idx: list[int],
-    bench_pos: list[str],
-    captain_i: int,
-    vice_i: int,
     pts: np.ndarray,
     mins: np.ndarray,
-    chip: str | None,
-) -> float:
+) -> _AutosubState:
+    """Apply FPL autosubs for one scenario; return active XI and points sum."""
     order = sorted(
         range(len(xi_idx)),
         key=lambda i: (_POS_ORDER[xi_pos[i]], xi_idx[i]),
@@ -314,20 +316,63 @@ def _net_one_sim(
     for key in active:
         if int(mins[key]) > 0:
             xi_sum += float(pts[key])
-    total = xi_sum
+    return _AutosubState(
+        active=frozenset(active),
+        used_bench=frozenset(used_bench),
+        xi_sum=xi_sum,
+    )
+
+
+def _finish_one_sim(
+    state: _AutosubState,
+    *,
+    captain_i: int,
+    vice_i: int,
+    pts: np.ndarray,
+    mins: np.ndarray,
+    chip: str | None,
+    bench_idx: list[int],
+) -> float:
+    """Add captain/vice armband and optional bench boost to an autosub state."""
+    total = state.xi_sum
     if int(mins[captain_i]) > 0:
         extra = 2.0 * float(pts[captain_i]) if chip == "3xc" else float(pts[captain_i])
         total += extra
     elif int(mins[vice_i]) > 0:
-        if vice_i in active:
+        if vice_i in state.active:
             total += float(pts[vice_i])
         else:
             total += 2.0 * float(pts[vice_i])
     if chip == "bboost":
         for sub in bench_idx:
-            if sub not in used_bench and int(mins[sub]) > 0:
+            if sub not in state.used_bench and int(mins[sub]) > 0:
                 total += float(pts[sub])
     return total
+
+
+def _mean_from_states(
+    states: Sequence[_AutosubState],
+    *,
+    captain_i: int,
+    vice_i: int,
+    points: np.ndarray,
+    minutes: np.ndarray,
+    chip: str | None,
+    bench_idx: list[int],
+) -> float:
+    """Scenario-mean points for one captain/vice on precomputed autosub states."""
+    total = 0.0
+    for sim, state in enumerate(states):
+        total += _finish_one_sim(
+            state,
+            captain_i=captain_i,
+            vice_i=vice_i,
+            pts=points[:, sim],
+            mins=minutes[:, sim],
+            chip=chip,
+            bench_idx=bench_idx,
+        )
+    return total / float(len(states))
 
 
 def _eligible_sub(
