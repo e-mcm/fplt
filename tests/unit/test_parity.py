@@ -93,9 +93,20 @@ def test_check_raw_parity_requires_data_bucket(tmp_path: Path) -> None:
         check_raw_parity(Settings(), remote=str(tmp_path))
 
 
-def test_check_raw_parity_clone_failure(tmp_path: Path) -> None:
+def test_check_raw_parity_clone_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clone failure must raise ParityError once a remote is available."""
     settings = Settings(data_bucket="fplt-data")
     missing = tmp_path / "no-such-repo"
+    # Stub the bucket remote so incomplete-credential soft-skip / main raise
+    # cannot mask the clone-failure path under push-to-main GITHUB_REF.
+    monkeypatch.setattr(
+        "fplt.data.parity.Remote.from_settings",
+        lambda _s, bucket=None: Remote(
+            target="fplt:fplt-data", kind="data", env={}
+        ),
+    )
     with pytest.raises(ParityError, match="(?i)(could not|fatal|not)"):
         check_raw_parity(settings, remote=str(missing), branch="snapshots")
 

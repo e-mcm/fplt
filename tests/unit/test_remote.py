@@ -60,8 +60,12 @@ def test_from_settings_returns_none_when_bucket_unset() -> None:
 
 def test_from_settings_returns_none_when_credentials_incomplete(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bucket name alone must soft-skip off main; empty account yields ``.r2…``."""
+    # Unit tests must not inherit GITHUB_REF=main from a push-to-main GHA job.
+    monkeypatch.delenv("GITHUB_REF", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
     settings = Settings(data_bucket="fplt-data", lab_bucket="fplt-lab")
     with caplog.at_level(logging.INFO, logger="fplt.data.remote"):
         assert Remote.from_settings(settings) is None
