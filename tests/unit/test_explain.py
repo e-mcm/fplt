@@ -564,3 +564,703 @@ def _expensive_owned_pool() -> pl.DataFrame:
             }
         )
     return pl.DataFrame(rows)
+
+
+def test_forecast_board_missing_cols_and_empty() -> None:
+    rules = Rules.for_season("2024-25")
+    with pytest.raises(ValueError, match="missing"):
+        build_forecast_board(
+            pl.DataFrame({"player_key": [1]}), season="2024-25", rules=rules
+        )
+    preds = pl.DataFrame(
+        {
+            "player_key": [1],
+            "position": ["MID"],
+            "target_gw": [1],
+            "xpts": [1.0],
+        }
+    )
+    empty = build_forecast_board(
+        preds, season="2024-25", rules=rules, target_gw=99, player_keys=[1]
+    )
+    assert empty.is_empty()
+    text = format_forecast_board(empty)
+    assert "No prediction rows" in text
+
+
+def test_decision_explain_bad_step_and_missing_owned() -> None:
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    state = SquadState.model_validate(
+        {
+            "bank": 1000,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [],
+        }
+    )
+    plan = plan_squad(pool.drop("xpts"), points, state, initial=True, horizon=1)
+    with pytest.raises(ValueError, match="no rows for step"):
+        build_decision_explain(plan, state, pool.drop("xpts"), step=9)
+
+    owned_state = SquadState.model_validate(
+        {
+            "bank": 30,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [
+                OwnedPlayer(player_key=k, selling_price=45).model_dump()
+                for k in range(1, 16)
+            ],
+        }
+    )
+    # Plan from draft then explain with owned missing from candidates.
+    lean_candidates = pool.drop("xpts").filter(pl.col("player_key") <= 10)
+    with pytest.raises(ValueError, match="owned players are not in candidates"):
+        # Rebuild a non-draft plan-like object using draft picks but owned state.
+        build_decision_explain(plan, owned_state, lean_candidates)
+
+
+def test_append_explain_partial_sections() -> None:
+    only_f = append_explain_sections("# r\n", forecast="### Forecast\n")
+    assert "Forecast" in only_f
+    only_d = append_explain_sections("# r\n", decision="### Decision\n")
+    assert "Decision" in only_d
+    neither = append_explain_sections("# r\n")
+    assert neither.startswith("# r")
+
+
+def test_explain_plan_markdown_unavailable_decision() -> None:
+    from unittest.mock import patch
+
+    from fplt.optimise.explain import explain_plan_markdown
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    state = SquadState.model_validate(
+        {
+            "bank": 1000,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [],
+        }
+    )
+    plan = plan_squad(pool.drop("xpts"), points, state, initial=True, horizon=1)
+    preds = pl.DataFrame(
+        {
+            "player_key": pool["player_key"].to_list(),
+            "position": pool["position"].to_list(),
+            "target_gw": [1] * pool.height,
+            "xpts": pool["xpts"].to_list(),
+        }
+    )
+    rules = Rules.for_season("2024-25")
+    with patch(
+        "fplt.optimise.explain.build_decision_explain",
+        side_effect=ValueError("boom"),
+    ):
+        text = explain_plan_markdown(
+            plan,
+            state,
+            pool.drop("xpts"),
+            preds,
+            season="2024-25",
+            gameweek=1,
+            rules=rules,
+            view=None,
+        )
+    assert "Unavailable" in text
+    assert "Forecast board" in text
+
+
+def test_layered_explain_parts_complete_and_optional_float() -> None:
+    from fplt.optimise.explain import (
+        _label,
+        _num,
+        _optional_float,
+        layered_explain_parts,
+    )
+
+    class _M:
+        score_model = object()
+        minutes_model = object()
+        involvement_model = object()
+
+    parts = layered_explain_parts(_M())
+    assert parts is not None
+    assert _optional_float(None) is None
+    assert _optional_float("x") is None
+    assert _optional_float(float("nan")) is None
+    assert _optional_float(1.5) == 1.5
+    assert _num(None) == "—"
+    assert _label(7, {7: "Salah"}) == "Salah"
+    assert _label(8, None) == "8"
+
+
+def test_player_depth_empty_keys_and_component_failure(tmp_path) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise import explain as mod
+    from fplt.optimise.explain import (
+        LayeredExplainParts,
+    )
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    assert mod._player_depth_rows(
+        view, player_keys=[], target_gw=2, parts=None, season="2024-25"
+    ).is_empty()
+    # Unknown player → stubs
+    stubs = mod._player_depth_rows(
+        view, player_keys=[9999], target_gw=2, parts=None, season="2024-25"
+    )
+    assert stubs.height == 1
+    assert stubs["fixture_id"][0] is None
+
+    class _Boom:
+        def predict(self, *_a, **_k):
+            raise RuntimeError("nope")
+
+    parts = LayeredExplainParts(score=_Boom(), minutes=_Boom(), involvement=_Boom())
+    depth = mod._player_depth_rows(
+        view, player_keys=[100], target_gw=2, parts=parts, season="2024-25"
+    )
+    assert depth["team_eg"][0] is None
+    # format with empty depth
+    text = mod._format_depth_table(stubs.clear(), None)
+    assert "No fixture rows" in text
+
+
+def test_run_explain_vs_requires_player(tmp_path) -> None:
+    from fplt.optimise.explain import run_explain
+
+    with pytest.raises(ValueError, match="--vs requires --player"):
+        run_explain(tmp_path, "rolling_mean_v1", "2024-25", 1, vs_player_key=2)
+
+
+def test_run_explain_player_depth_and_forecast(tmp_path, monkeypatch) -> None:
+
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise import explain as mod
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    preds = pl.DataFrame(
+        {
+            "model_id": ["rolling_mean_v1"],
+            "as_of_season": ["2024-25"],
+            "as_of_gw": [2],
+            "target_season": ["2024-25"],
+            "target_gw": [2],
+            "player_key": [100],
+            "position": ["MID"],
+            "xpts": [4.0],
+            "p_played": [1.0],
+            "p_60": [0.9],
+            "p_goal": [0.1],
+            "p_assist": [0.1],
+            "p_cs": [0.2],
+            "p_haul": [0.05],
+        }
+    )
+
+    class _Spec:
+        model_id = "rolling_mean_v1"
+
+    monkeypatch.setattr(mod, "load_model_specs", lambda: {"rolling_mean_v1": _Spec()})
+    monkeypatch.setattr(
+        mod, "PITData", lambda _s: type("X", (), {"view": lambda self, k: view})()
+    )
+    monkeypatch.setattr(mod, "DataStore", lambda _p: store)
+    monkeypatch.setattr(mod, "read_predictions", lambda _p: preds)
+    monkeypatch.setattr(mod, "load_layered_explain_parts", lambda *_a, **_k: None)
+    text = mod.run_explain(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        2,
+        player_key=100,
+        include_decision=False,
+    )
+    assert "Player depth" in text or "Explain" in text
+
+    pair_text = mod.run_explain(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        2,
+        player_key=100,
+        vs_player_key=200,
+    )
+    assert "Transfer depth" in pair_text or "→" in pair_text
+
+    # Empty preds for player path
+    monkeypatch.setattr(mod, "read_predictions", lambda _p: preds.clear())
+    with pytest.raises(ValueError, match="no predictions"):
+        mod.run_explain(tmp_path, "rolling_mean_v1", "2024-25", 2, player_key=100)
+
+    # Forecast-only path
+    monkeypatch.setattr(mod, "read_predictions", lambda _p: preds)
+    text2 = mod.run_explain(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        2,
+        include_decision=False,
+        include_forecast=True,
+        top_n=5,
+    )
+    assert "Forecast board" in text2
+
+    monkeypatch.setattr(mod, "read_predictions", lambda _p: preds.clear())
+    with pytest.raises(ValueError, match="no predictions"):
+        mod.run_explain(
+            tmp_path,
+            "rolling_mean_v1",
+            "2024-25",
+            2,
+            include_decision=False,
+            include_forecast=True,
+        )
+
+
+def test_plan_why_markdown_with_transfers(tmp_path) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise.explain import (
+        DecisionExplain,
+        _plan_why_markdown,
+    )
+    from fplt.schemas.explain import TRANSFER_DELTA_COLUMNS
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    rules = Rules.for_season("2024-25")
+    transfers = pl.DataFrame(
+        [
+            {
+                "player_key_out": 100,
+                "player_key_in": 200,
+                "position_out": "MID",
+                "position_in": "FWD",
+                "xpts_out": 3.0,
+                "xpts_in": 5.0,
+                "delta_xpts": 2.0,
+                "price_out": 50,
+                "price_in": 70,
+                "delta_price": 20,
+            }
+        ],
+        schema=TRANSFER_DELTA_COLUMNS,
+    )
+    decision = DecisionExplain(
+        transfers=transfers,
+        baseline_xi_xpts=10.0,
+        planned_xi_xpts=12.0,
+        hit=0.0,
+        free_transfers_before=1,
+        free_transfers_after=1,
+        transfers_count=1,
+        net_delta=2.0,
+        constraints=(),
+        is_draft=False,
+    )
+    preds = pl.DataFrame(
+        {
+            "player_key": [100, 200],
+            "position": ["MID", "FWD"],
+            "target_gw": [2, 2],
+            "xpts": [3.0, 5.0],
+        }
+    )
+    text = _plan_why_markdown(
+        view=view,
+        season="2024-25",
+        gameweek=2,
+        predictions=preds,
+        rules=rules,
+        names={100: "A", 200: "B"},
+        parts=None,
+        decision=decision,
+        xi_keys=[100, 200],
+    )
+    assert "Why" in text
+    assert "Transfer depth" in text or "Starting XI" in text
+
+
+def test_decision_explain_hit_notes_and_unequal_transfers() -> None:
+    from fplt.optimise.explain import (
+        DecisionExplain,
+        _constraint_notes,
+        _transfer_deltas,
+        _xi_total,
+        format_decision_explain,
+    )
+
+    hit_state = SquadState.model_validate(
+        {
+            "bank": 100,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [],
+        }
+    )
+    notes = _constraint_notes(
+        state=hit_state,
+        hit=4.0,
+        free_before=0,
+        free_after=0,
+        transfers_count=1,
+        is_draft=False,
+        plan_points=10.0,
+    )
+    assert any("hit cost" in n for n in notes)
+    no_hit = _constraint_notes(
+        state=hit_state,
+        hit=0.0,
+        free_before=1,
+        free_after=1,
+        transfers_count=1,
+        is_draft=False,
+        plan_points=10.0,
+    )
+    assert any("no hit" in n for n in no_hit)
+
+    uneven = pl.DataFrame(
+        {
+            "player_key": [1, 2, 3],
+            "position": ["MID", "MID", "MID"],
+            "price": [40, 50, 60],
+            "xpts": [1.0, 2.0, 3.0],
+            "bought": [True, True, False],
+            "sold": [False, False, True],
+            "in_xi": [True, True, False],
+            "captain": [False, False, False],
+            "vice": [False, False, False],
+        }
+    )
+    deltas = _transfer_deltas(uneven, is_draft=False)
+    assert deltas.height == 1
+    assert _xi_total(uneven.filter(pl.lit(False))) == 0.0
+    empty_explain = DecisionExplain(
+        transfers=pl.DataFrame(
+            schema={
+                "player_key_out": pl.Int64(),
+                "player_key_in": pl.Int64(),
+                "position_out": pl.Utf8(),
+                "position_in": pl.Utf8(),
+                "xpts_out": pl.Float64(),
+                "xpts_in": pl.Float64(),
+                "delta_xpts": pl.Float64(),
+                "price_out": pl.Int64(),
+                "price_in": pl.Int64(),
+                "delta_price": pl.Int64(),
+            }
+        ),
+        baseline_xi_xpts=1.0,
+        planned_xi_xpts=1.0,
+        hit=0.0,
+        free_transfers_before=1,
+        free_transfers_after=1,
+        transfers_count=0,
+        net_delta=0.0,
+        constraints=(),
+        is_draft=False,
+    )
+    assert "_None_" in format_decision_explain(empty_explain)
+
+
+def test_load_layered_explain_parts_paths(tmp_path, monkeypatch) -> None:
+    from fplt.models.spec import ModelSpec, artifact_dir
+    from fplt.optimise import explain as mod
+    from fplt.types import GWKey
+
+    monkeypatch.setattr(mod, "load_model_specs", lambda: {})
+    assert mod.load_layered_explain_parts(tmp_path, "missing", "2024-25", 1) is None
+
+    specs = {"rm": ModelSpec(name="rm", kind="rolling_mean", seed=0)}
+    monkeypatch.setattr(mod, "load_model_specs", lambda: specs)
+    monkeypatch.setattr(
+        mod, "get_model", lambda _k: (_ for _ in ()).throw(KeyError("x"))
+    )
+    assert mod.load_layered_explain_parts(tmp_path, "rm", "2024-25", 1) is None
+
+    class _Cls:
+        @classmethod
+        def load(cls, dest, spec):
+            raise RuntimeError("load fail")
+
+        def __init__(self, spec):
+            self.spec = spec
+            self.score_model = object()
+            self.minutes_model = object()
+            self.involvement_model = object()
+
+        def fit(self, view):
+            raise RuntimeError("fit fail")
+
+        def save(self, dest):
+            pass
+
+    monkeypatch.setattr(mod, "get_model", lambda _k: _Cls)
+    assert (
+        mod.load_layered_explain_parts(
+            tmp_path, "rm", "2024-25", 1, fit_if_missing=False
+        )
+        is None
+    )
+    dest = artifact_dir(tmp_path, specs["rm"], GWKey("2024-25", 1))
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "spec.json").write_text("{}", encoding="utf-8")
+    assert (
+        mod.load_layered_explain_parts(
+            tmp_path, "rm", "2024-25", 1, fit_if_missing=True
+        )
+        is None
+    )
+    import shutil
+
+    shutil.rmtree(dest)
+    monkeypatch.setattr(
+        mod,
+        "PITData",
+        lambda _store: type("P", (), {"view": lambda self, _k: object()})(),
+    )
+    monkeypatch.setattr(mod, "DataStore", lambda _p: object())
+    assert (
+        mod.load_layered_explain_parts(
+            tmp_path, "rm", "2024-25", 1, fit_if_missing=True
+        )
+        is None
+    )
+
+
+def test_gameweek_plan_from_table_and_player_names(tmp_path) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise import explain as mod
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    state = SquadState.model_validate(
+        {
+            "bank": 1000,
+            "free_transfers": 2,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [OwnedPlayer(player_key=1, selling_price=99).model_dump()],
+        }
+    )
+    plan = plan_squad(
+        pool.drop("xpts"),
+        points,
+        state.model_copy(update={"owned": []}),
+        initial=True,
+        horizon=1,
+    )
+    raw = plan.picks.select(
+        "step",
+        "player_key",
+        "position",
+        "team_key",
+        "xpts",
+        "in_xi",
+        "captain",
+        "vice",
+        "bought",
+        "sold",
+    ).with_columns(
+        pl.lit(0.0).alias("hit"),
+        pl.lit("rolling_mean_v1").alias("model_id"),
+        pl.lit("2024-25").alias("as_of_season"),
+        pl.lit(1).alias("as_of_gw"),
+        (pl.col("step") + 1).alias("target_gw"),
+    )
+    rebuilt = mod._gameweek_plan_from_table(raw, pool.drop("xpts"), state)
+    assert rebuilt.free_transfers[0] == 2
+    owned_price = rebuilt.picks.filter(pl.col("player_key") == 1)
+    if owned_price.height:
+        assert int(owned_price["price"][0]) == 99
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    assert mod._player_names(view)[100] == "A"
+
+
+def test_run_explain_decision_with_plan(tmp_path, monkeypatch) -> None:
+    from fplt.data.pit import PITData
+    from fplt.data.store import DataStore
+    from fplt.optimise import explain as mod
+    from fplt.optimise.plan import covered_horizon, plan_parquet
+    from fplt.types import GWKey
+    from tests.builders import build_league
+
+    store = build_league(DataStore(tmp_path))
+    view = PITData(store).view(GWKey("2024-25", 2))
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    state = SquadState.model_validate(
+        {
+            "bank": 1000,
+            "free_transfers": 1,
+            "ft_bank_cap": 2,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [],
+        }
+    )
+    plan = plan_squad(pool.drop("xpts"), points, state, initial=True, horizon=1)
+    covered = covered_horizon(2, 3)
+    path = plan_parquet(tmp_path, "rolling_mean_v1", "2024-25", 2, covered)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plan.picks.with_columns(
+        pl.lit(0.0).alias("hit"),
+        pl.lit("rolling_mean_v1").alias("model_id"),
+        pl.lit("2024-25").alias("as_of_season"),
+        pl.lit(2).alias("as_of_gw"),
+        (pl.col("step") + 2).alias("target_gw"),
+    ).write_parquet(path)
+
+    preds = pl.DataFrame(
+        {
+            "model_id": ["rolling_mean_v1"] * pool.height,
+            "as_of_season": ["2024-25"] * pool.height,
+            "as_of_gw": [2] * pool.height,
+            "target_season": ["2024-25"] * pool.height,
+            "target_gw": [2] * pool.height,
+            "player_key": pool["player_key"].to_list(),
+            "position": pool["position"].to_list(),
+            "xpts": pool["xpts"].to_list(),
+        }
+    )
+
+    class _Spec:
+        model_id = "rolling_mean_v1"
+
+    monkeypatch.setattr(mod, "load_model_specs", lambda: {"rolling_mean_v1": _Spec()})
+    monkeypatch.setattr(
+        mod, "PITData", lambda _s: type("X", (), {"view": lambda self, k: view})()
+    )
+    monkeypatch.setattr(mod, "DataStore", lambda _p: store)
+    monkeypatch.setattr(mod, "read_predictions", lambda _p: preds)
+    monkeypatch.setattr(mod, "candidates_as_of", lambda _v: pool.drop("xpts"))
+    monkeypatch.setattr(mod, "load_layered_explain_parts", lambda *_a, **_k: None)
+    monkeypatch.setattr(mod, "load_squad_state", lambda: state)
+    monkeypatch.setattr(mod.PlanSchema, "validate", staticmethod(lambda frame: frame))
+
+    with pytest.raises(FileNotFoundError):
+        mod.run_explain(
+            tmp_path / "nope",
+            "rolling_mean_v1",
+            "2024-25",
+            2,
+            include_decision=True,
+            include_forecast=False,
+        )
+
+    text = mod.run_explain(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        2,
+        include_decision=True,
+        include_forecast=True,
+        squad=state,
+    )
+    assert "Explain" in text
+    text_d = mod.run_explain(
+        tmp_path,
+        "rolling_mean_v1",
+        "2024-25",
+        2,
+        include_decision=True,
+        include_forecast=False,
+        squad=state,
+    )
+    assert "Decision explain" in text_d
+
+
+def test_build_decision_explain_free_transfers_fallback() -> None:
+    from fplt.optimise.plan import GameweekPlan
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    state = SquadState.model_validate(
+        {
+            "bank": 1000,
+            "free_transfers": 3,
+            "ft_bank_cap": 5,
+            "hit_cost": 4,
+            "decay": 1.0,
+            "bench_weight": 0.0,
+            "owned": [],
+        }
+    )
+    plan = plan_squad(pool.drop("xpts"), points, state, initial=True, horizon=1)
+    # Truncate free_transfers so step lookup falls back to state.
+    short = GameweekPlan(
+        picks=plan.picks,
+        hits=(),
+        free_transfers=(),
+        points=plan.points,
+    )
+    explain = build_decision_explain(short, state, pool.drop("xpts"), step=0)
+    assert explain.free_transfers_before == 3
+
+
+def test_load_layered_fit_success(tmp_path, monkeypatch) -> None:
+    from fplt.models.spec import ModelSpec
+    from fplt.optimise import explain as mod
+
+    specs = {"rm": ModelSpec(name="rm", kind="rolling_mean", seed=0)}
+    monkeypatch.setattr(mod, "load_model_specs", lambda: specs)
+
+    class _Cls:
+        def __init__(self, spec):
+            self.spec = spec
+            self.score_model = object()
+            self.minutes_model = object()
+            self.involvement_model = object()
+
+        def fit(self, view):
+            return None
+
+        def save(self, dest):
+            dest.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(mod, "get_model", lambda _k: _Cls)
+    monkeypatch.setattr(
+        mod,
+        "PITData",
+        lambda _store: type("P", (), {"view": lambda self, _k: object()})(),
+    )
+    monkeypatch.setattr(mod, "DataStore", lambda _p: object())
+    parts = mod.load_layered_explain_parts(
+        tmp_path, "rm", "2024-25", 1, fit_if_missing=True
+    )
+    assert parts is not None
