@@ -20,6 +20,18 @@ from fplt.types import GWKey
 
 _SEASON = "2024-25"
 _START = datetime(2024, 8, 1, tzinfo=UTC)
+# Independent L-BFGS fits of the same data can differ by ~1e-8 on the PMF
+# (seen on CI for missing-past-odds / strength-zero cases; max rel ~4e-8).
+# Real history priors move mass by O(0.1), so this band stays well clear.
+_VANILLA_PMF_RTOL = 1e-7
+_VANILLA_PMF_ATOL = 1e-8
+
+
+def _assert_pmf_matches_vanilla(left: np.ndarray, right: np.ndarray) -> None:
+    """Assert two PMFs match within L-BFGS fit noise (vanilla-equivalence)."""
+    np.testing.assert_allclose(
+        left, right, rtol=_VANILLA_PMF_RTOL, atol=_VANILLA_PMF_ATOL
+    )
 
 
 def test_history_specs_are_registered_without_changing_vanilla() -> None:
@@ -105,11 +117,9 @@ def test_history_strength_zero_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     zero.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         zero.predict(view, fixtures).pmf,
-        rtol=1e-7,
-        atol=1e-8,
     )
 
 
@@ -197,11 +207,9 @@ def test_history_missing_past_odds_matches_vanilla(tmp_path: Path) -> None:
     )
     vanilla.fit(view)
     history.fit(view)
-    np.testing.assert_allclose(
+    _assert_pmf_matches_vanilla(
         vanilla.predict(view, fixtures).pmf,
         history.predict(view, fixtures).pmf,
-        rtol=1e-8,
-        atol=1e-10,
     )
 
 
