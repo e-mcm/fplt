@@ -114,6 +114,7 @@ jobs:
           FPLT_LOG_FORMAT: json
           OPS_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.source || 'auto' }}
           JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
+          OPS_TIMEOUT_MINUTES: "90"
         run: |
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"

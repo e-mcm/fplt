@@ -197,6 +197,8 @@ def test_push_refuses_non_whitelisted_prefix() -> None:
         push(lab, Path("/tmp"), "raw")
     assert "raw" in PUSHABLE["data"]
     assert "raw" not in PUSHABLE["lab"]
+    assert "bench" in PUSHABLE["lab"]
+    assert "bench" not in PUSHABLE["data"]
 
 
 def test_push_replace_status_omits_immutable(

@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report pytest-profile
+.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report bench-nightly pytest-profile
 
 # ── Historical data (vaastav) → raw/vaastav/captured_at=… ─────────────────────
 # First seed: make bootstrap-vaastav ARGS='--full'
@@ -157,6 +157,11 @@ horizon-skill:
 # Optional: ARGS='--kind walk_forward --limit 5 --json'
 perf-report:
 	uv run fplt perf-report $(ARGS)
+
+# Nightly bench assembler (local lab dir; no R2 required).
+# Example: make bench-nightly ARGS='--lab-dir /tmp/lab --skip-fixture --phases-json p.json --skip-mc'
+bench-nightly:
+	uv run python scripts/nightly_bench.py $(ARGS)
 
 # Candidate-prune loss curve (week-1 action agreement vs pool size N).
 # Usage: make pruning-loss
