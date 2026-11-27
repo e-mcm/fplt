@@ -9,7 +9,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from fplt.automation.runbook import RECOMMENDATION, footer
-from fplt.settings import Settings
+from fplt.settings import Settings, secret_value
 
 _Post = Callable[[Request], object]
 _SmtpFactory = Callable[[str, int], Any]
@@ -155,7 +155,7 @@ def notify_recommendation(
     anchor = RECOMMENDATION if runbook_anchor is None else runbook_anchor
     body = with_runbook(message, anchor)
     ntfy_sent = notify(
-        settings.ntfy_url,
+        secret_value(settings.ntfy_url),
         title,
         body,
         post=post,
@@ -170,7 +170,7 @@ def notify_recommendation(
         title,
         body,
         username=settings.smtp_user,
-        password=settings.smtp_password,
+        password=secret_value(settings.smtp_password),
         use_tls=settings.smtp_use_tls,
         smtp_factory=smtp_factory,
     )

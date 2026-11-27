@@ -121,9 +121,11 @@ def test_settings_loads_user_env_outside_pytest(
     monkeypatch.delenv("FPLT_FPL_API_TOKEN", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.chdir(tmp_path)
+    from fplt.settings import secret_value
+
     loaded = Settings()
     assert loaded.entry_id == 77
-    assert loaded.fpl_api_token == "eyJuser"
+    assert secret_value(loaded.fpl_api_token) == "eyJuser"
 
 
 def test_settings_user_env_beats_repo_dotenv(
@@ -136,7 +138,9 @@ def test_settings_user_env_beats_repo_dotenv(
     monkeypatch.delenv("FPLT_FPL_API_TOKEN", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.chdir(tmp_path)
-    assert Settings().fpl_api_token == "eyJuser"
+    from fplt.settings import secret_value
+
+    assert secret_value(Settings().fpl_api_token) == "eyJuser"
 
 
 def test_cli_auth_set_and_status(

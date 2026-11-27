@@ -157,6 +157,16 @@ Use the public/private field split; never put squad secrets in the public copy.
 
 Inventory and cadence: [`../deploy/README.md`](../deploy/README.md).
 
+### Suspected secret leak (public Actions logs)
+
+| | |
+|---|---|
+| **Means** | A credential (FPL JWT, R2 key, API-Football key, ntfy URL, SMTP password, …) or a derived form (`Bearer …`, URL-encoded, remote git URL with token) appeared in a public workflow log, issue comment, or pasted debug output. |
+| **Urgency** | **Urgent**. This is a public repo; treat exposure as already public. |
+| **Fix** | 1. **Rotate** the leaked credential immediately (Cloudflare R2 token, API-Sports key, ntfy topic, SMTP password, and/or refresh `FPLT_FPL_API_TOKEN` via `uv run fplt auth from-browser`). 2. Update GitHub Actions secrets / `~/.config/fplt/env` / Modal in the same window. 3. **Purge logs**: delete or re-run the offending workflow run so the public log is gone (`gh run delete <run-id>` when available; otherwise contact GitHub support for log deletion). 4. Bump `next_due` in `configs/ops/secret_rotation.yaml` for the rotated family. 5. Confirm `fplt.utils.logging` redaction and workflow `::add-mask::` still cover the derived forms you used. |
+
+Never paste raw secrets into issues, PR comments, or `set -x` shell traces. Lint: `scripts/check_workflow_secret_xtrace.py`.
+
 ---
 
 ## Recommendation

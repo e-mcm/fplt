@@ -32,7 +32,7 @@ from fplt.orchestration.assets import (
     refresh_staged,
     understat_ingest_job,
 )
-from fplt.settings import get_settings
+from fplt.settings import get_settings, secret_value
 
 _TEN_MINUTES = 600
 _FIFTEEN_MINUTES = 900
@@ -242,7 +242,7 @@ def pre_deadline_sensor() -> dg.RunRequest | dg.SkipReason:
 @dg.run_failure_sensor(name="notify_run_failure")
 def notify_run_failure(context: dg.RunFailureSensorContext) -> dg.SkipReason | None:
     """POST the failure to ``FPLT_NTFY_URL`` when that setting is present."""
-    url = get_settings().ntfy_url
+    url = secret_value(get_settings().ntfy_url)
     if not url:
         return dg.SkipReason("FPLT_NTFY_URL is not set")
     message = context.failure_event.message or "run failed"

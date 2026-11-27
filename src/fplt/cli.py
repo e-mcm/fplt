@@ -115,7 +115,7 @@ from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.regret_board import run_regret_board, write_regret_board
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
-from fplt.settings import get_settings
+from fplt.settings import get_settings, secret_value
 from fplt.types import GWKey
 from fplt.utils.logging import configure_logging
 
@@ -2984,7 +2984,7 @@ def _plan(args: argparse.Namespace) -> None:
             logger.info(
                 "resolving squad (entry_id=%s session=%s entry_json=%s)",
                 settings.entry_id,
-                "set" if settings.fpl_session else "unset",
+                "set" if secret_value(settings.fpl_session) else "unset",
                 args.entry_json,
             )
             view = PITData(DataStore(data_dir)).view(GWKey(args.season, args.gw))

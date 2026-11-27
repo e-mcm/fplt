@@ -23,10 +23,11 @@ from fplt.orchestration.checks import schema_check_result
 from fplt.orchestration.sensors import (
     api_football_sensor,
     match_odds_sensor,
+    notify_run_failure,
     snapshots_sensor,
     understat_sensor,
 )
-from fplt.settings import get_settings
+from fplt.settings import Settings, get_settings
 
 _BOOTSTRAP = {
     "teams": [{"id": 1, "code": 3, "name": "Arsenal", "short_name": "ARS"}],
@@ -435,3 +436,36 @@ def test_match_odds_ingest_stages_raw_csv(
     assert "match_odds_ingest" in names
     assert "staged_match_odds" in names
     get_settings.cache_clear()
+
+
+def test_notify_run_failure_unwraps_ntfy_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``SecretStr`` ntfy URLs are unwrapped before ``notify`` (#308)."""
+    from fplt.orchestration import sensors
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        sensors,
+        "get_settings",
+        lambda: Settings(ntfy_url="https://ntfy.sh/fplt-secret"),
+    )
+    monkeypatch.setattr(
+        sensors,
+        "notify",
+        lambda url, *args, **kwargs: sent.append(str(url)),
+    )
+
+    class _Event:
+        message = "boom"
+
+    class _Ctx:
+        failure_event = _Event()
+
+    result = notify_run_failure._run_status_sensor_fn(_Ctx())  # noqa: SLF001
+    assert result is None
+    assert sent == ["https://ntfy.sh/fplt-secret"]
+
+    monkeypatch.setattr(sensors, "get_settings", lambda: Settings(ntfy_url=None))
+    skip = notify_run_failure._run_status_sensor_fn(_Ctx())  # noqa: SLF001
+    assert isinstance(skip, dg.SkipReason)

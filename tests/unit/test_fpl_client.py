@@ -210,9 +210,12 @@ def test_load_current_team_uses_api_token(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_blank_api_token_is_unset() -> None:
+    from fplt.settings import secret_value
+
     assert Settings(fpl_api_token=None).fpl_api_token is None
     assert Settings(fpl_api_token="  ").fpl_api_token is None
-    assert Settings(fpl_api_token="Bearer eyJabc").fpl_api_token == "eyJabc"
+    token = Settings(fpl_api_token="Bearer eyJabc").fpl_api_token
+    assert secret_value(token) == "eyJabc"
 
 
 def test_pytest_ignores_repo_dotenv(

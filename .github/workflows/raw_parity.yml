@@ -55,6 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          echo "::add-mask::${remote}"
           uv run fplt data parity --remote "$remote" --branch snapshots
 
   alerts:

@@ -18,7 +18,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from fplt.auth import inspect_token
-from fplt.settings import Settings, bearer_token, get_settings
+from fplt.settings import Settings, bearer_token, get_settings, secret_value
 
 API_ROOT = "https://fantasy.premierleague.com/api"
 logger = logging.getLogger(__name__)
@@ -480,7 +480,9 @@ def load_current_team(
     resolved = entry_id if entry_id is not None else cfg.entry_id
     if resolved is None:
         raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
-    token_info = inspect_token(cfg.fpl_api_token)
+    api_token = secret_value(cfg.fpl_api_token)
+    session = secret_value(cfg.fpl_session)
+    token_info = inspect_token(api_token)
     if token_info is not None and token_info.expired is True:
         logger.warning(
             "FPLT_FPL_API_TOKEN looks expired (exp=%s); run: uv run fplt auth set",
@@ -490,10 +492,10 @@ def load_current_team(
         "load_current_team entry_id=%s event=%s token=%s session=%s",
         resolved,
         event,
-        "set" if cfg.fpl_api_token else "unset",
-        "set" if cfg.fpl_session else "unset",
+        "set" if api_token else "unset",
+        "set" if session else "unset",
     )
-    api = FPLClient(client, session=cfg.fpl_session, api_token=cfg.fpl_api_token)
+    api = FPLClient(client, session=session, api_token=api_token)
     try:
         team = api.current_team(resolved, event=event)
     finally:
