@@ -487,7 +487,9 @@ def test_run_plan_resolves_squad_when_entry_id_set(
 
     monkeypatch.setattr("fplt.optimise.decisions.resolve_squad_state", fake_resolve)
     try:
-        solved, _path, _report = run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1)
+        solved, _path, _report, _run_id = run_plan(
+            tmp_path, "rolling_mean_v1", "2024-25", 1, 1
+        )
     finally:
         get_settings.cache_clear()
     assert len(calls) == 1
@@ -642,7 +644,7 @@ def test_run_plan_defaults_to_optimised_chip_arm(
         return real(*args, **kwargs)
 
     monkeypatch.setattr("fplt.optimise.decisions.plan_squad", spy_plan)
-    solved, _path, _report = run_plan(
+    solved, _path, _report, _run_id = run_plan(
         tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state()
     )
     assert seen["season"] == "2024-25"

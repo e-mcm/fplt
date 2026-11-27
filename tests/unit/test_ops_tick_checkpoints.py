@@ -78,6 +78,34 @@ def _patch_tick_deps(
 
     monkeypatch.setattr("fplt.automation.ops_tick.plan_deadline", plan_deadline)
 
+    def fake_official(
+        data_dir: Path,
+        ops: object,
+        key: GWKey,
+        *,
+        settings: object = None,
+        chip_arm: str = "optimised",
+    ) -> object:
+        from fplt.automation.official_slate import OfficialCheckpointResult
+
+        calls.append(f"official:{key}")
+        return OfficialCheckpointResult(
+            season=key.season,
+            gw=key.gw,
+            checkpoint="T-90m",
+            pairs=(),
+            checkpoint_dir=data_dir
+            / "official"
+            / f"season={key.season}"
+            / f"gw={key.gw}"
+            / "checkpoint=T-90m",
+            build_id="testbuild",
+        )
+
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.run_official_checkpoint", fake_official
+    )
+
     if plans_exist_impl is None:
 
         def plans_exist(*_a: object, **_k: object) -> bool:

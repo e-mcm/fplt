@@ -3005,7 +3005,7 @@ def _plan(args: argparse.Namespace) -> None:
                 owned_n,
                 squad.bank,
             )
-        _solved, path, report = run_plan(
+        _solved, path, report, _run_id = run_plan(
             data_dir,
             args.model,
             args.season,

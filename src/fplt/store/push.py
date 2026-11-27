@@ -226,6 +226,98 @@ def maybe_push_build(
     return push_build(data_dir, build_id, settings=cfg)
 
 
+def push_official(
+    data_dir: Path,
+    *,
+    season: str,
+    gw: int,
+    checkpoint: str = "T-90m",
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> Remote:
+    """Upload one official checkpoint folder to the data bucket.
+
+    Args:
+        data_dir: Local data root holding ``official/``.
+        season: Season key.
+        gw: Gameweek number.
+        checkpoint: Checkpoint label (default ``T-90m``).
+        settings: Process settings (defaults to ``get_settings()``). Ignored
+            when ``remote`` is provided.
+        remote: Optional pre-built data-bucket remote (tests).
+
+    Returns:
+        The remote that received the checkpoint.
+
+    Raises:
+        FileNotFoundError: The local checkpoint directory is missing.
+        ValueError: The data bucket is unset, or ``remote.kind`` is not
+            ``\"data\"``.
+        RemoteError: rclone failed.
+    """
+    from fplt.store.official import official_checkpoint_dir
+
+    local = official_checkpoint_dir(
+        data_dir, season=season, gw=gw, checkpoint=checkpoint
+    )
+    if not local.is_dir():
+        raise FileNotFoundError(local)
+    target = remote if remote is not None else _remote_for("data", settings)
+    if target.kind != "data":
+        raise ValueError(
+            "official pointers require the data bucket; "
+            f"got remote kind={target.kind!r}"
+        )
+    prefix = f"official/season={season}/gw={gw}/checkpoint={checkpoint}"
+    logger.info(
+        "pushing official season=%s gw=%s checkpoint=%s → %s/%s",
+        season,
+        gw,
+        checkpoint,
+        target.target,
+        prefix,
+    )
+    push(target, local, prefix)
+    return target
+
+
+def maybe_push_official(
+    data_dir: Path,
+    *,
+    season: str,
+    gw: int,
+    checkpoint: str = "T-90m",
+    settings: Settings | None = None,
+) -> Remote | None:
+    """Push an official checkpoint when ``FPLT_DATA_BUCKET`` is configured.
+
+    No-op (returns ``None``) when the data bucket is unset.
+
+    Args:
+        data_dir: Local data root.
+        season: Season key.
+        gw: Gameweek number.
+        checkpoint: Checkpoint label.
+        settings: Process settings; defaults to ``get_settings()``.
+
+    Returns:
+        The remote used, or ``None`` when the data bucket is not configured.
+    """
+    cfg = settings if settings is not None else get_settings()
+    if not cfg.data_bucket:
+        logger.debug(
+            "skip push official season=%s gw=%s: data bucket unset", season, gw
+        )
+        return None
+    return push_official(
+        data_dir,
+        season=season,
+        gw=gw,
+        checkpoint=checkpoint,
+        settings=cfg,
+    )
+
+
 def _remote_for(wanted: str, settings: Settings | None) -> Remote:
     cfg = settings if settings is not None else get_settings()
     bucket_name = cfg.data_bucket if wanted == "data" else cfg.lab_bucket

@@ -53,8 +53,10 @@ from fplt.store.points_pmf import (
 from fplt.store.push import (
     IncompleteRunError,
     maybe_push_build,
+    maybe_push_official,
     maybe_push_run,
     push_build,
+    push_official,
     push_run,
 )
 from fplt.store.runs import (
@@ -100,6 +102,7 @@ __all__ = [
     "list_succeeded_run_ids",
     "load_build_manifest",
     "maybe_push_build",
+    "maybe_push_official",
     "maybe_push_run",
     "mint_batch_id",
     "mint_experiment_id",
@@ -107,6 +110,7 @@ __all__ = [
     "open_sql",
     "points_pmf_from_draws",
     "push_build",
+    "push_official",
     "push_run",
     "read_runs_catalog",
     "rebuild_runs_catalog",

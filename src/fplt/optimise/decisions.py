@@ -20,6 +20,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
@@ -584,7 +585,12 @@ def run_plan(
     step_weights: Sequence[float] | None = None,
     joint_scenarios: bool = False,
     n_scenario_sims: int | None = None,
-) -> tuple[GameweekPlan, Path, str]:
+    run_kind: str = "adhoc",
+    checkpoint: str | None = None,
+    line: str | None = None,
+    squad_mode: str | None = None,
+    parent_run_id: str | None = None,
+) -> tuple[GameweekPlan, Path, str, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
     When ``squad`` is omitted, squad state comes from ``resolve_squad_state``:
@@ -620,9 +626,15 @@ def run_plan(
         joint_scenarios: When true, fit the model and pass joint MC samples
             into step-0 lineup SAA (FDB-241; opt-in until a keep flip).
         n_scenario_sims: Draw count for joint SAA.
+        run_kind: Dual-write run kind (``adhoc`` or ``official``).
+        checkpoint: Ops checkpoint label for official runs.
+        line: Official line name when ``run_kind="official"``.
+        squad_mode: ``real`` / ``virtual`` for official plan runs.
+        parent_run_id: Predict run id this plan reads.
 
     Returns:
-        The plan, the parquet path, and the markdown report.
+        The plan, the parquet path, the markdown report, and the dual-write
+        ``run_id``.
 
     Raises:
         KeyError: The spec name or the gameweek is unknown.
@@ -651,6 +663,7 @@ def run_plan(
         step_weights is not None,
     )
     plan_timings = TimingSession()
+    plan_run_id = ""
     with timing_session(plan_timings):
         with timed_phase("plan/setup"):
             spec = load_model_specs()[model_name]
@@ -804,6 +817,8 @@ def run_plan(
             except FileExistsError as exc:
                 raise PlanExistsError(Path(str(exc)), report) from exc
             (path.parent / "report.md").write_text(report, encoding="utf-8")
+            from fplt.schemas.manifests import RunKind, SquadMode
+
             plan_run = write_plan_run(
                 data_dir,
                 spec=spec,
@@ -811,8 +826,14 @@ def run_plan(
                 deadline_utc=store.deadline(GWKey(season, gameweek)),
                 horizon=len(window),
                 frame=table,
+                kind=cast(RunKind, run_kind),
+                checkpoint=checkpoint,
+                line=line,
+                squad_mode=cast(SquadMode | None, squad_mode),
+                parent_run_id=parent_run_id,
             )
-            logger.info("dual-wrote plan run_id=%s", plan_run.run_id)
+            plan_run_id = plan_run.run_id
+            logger.info("dual-wrote plan run_id=%s", plan_run_id)
     meta = {
         "model": model_name,
         "season": season,
@@ -829,7 +850,7 @@ def run_plan(
         solved.points,
         solved.chips,
     )
-    return solved, path, report
+    return solved, path, report, plan_run_id
 
 
 def _with_explain_sections(

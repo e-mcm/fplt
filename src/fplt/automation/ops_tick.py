@@ -5,9 +5,9 @@ Extra ticks are safe: ``catch_up``, deadline checkpoints, and the no-plan
 alarm no-op when nothing is due. Missed checkpoint minutes are caught up on
 the next tick (ops-02).
 
-TODO(B12): at checkpoint ``T-90m``, run ``ProductionOps.official_slate`` —
-one predict per distinct spec, one plan per line — then
-``fplt.store.official.finalize_official_checkpoint``.
+Official T−90m runs ``ProductionOps.official_slate`` via
+``fplt.automation.official_slate.run_official_checkpoint`` (curated build,
+predict + points PMF, plan per line, finalize pointers, push).
 
 TODO(ops-04): pass the checkout ``prod`` tag into ``RunWriter(prod_tag=…)`` for
 official runs so manifests record the frozen release.
@@ -41,9 +41,13 @@ from fplt.automation.cycle import (
     reports,
 )
 from fplt.automation.notify import notify_recommendation
+from fplt.automation.official_slate import (
+    OfficialCheckpointResult,
+    run_official_checkpoint,
+)
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
-from fplt.automation.production import load_production_ops
+from fplt.automation.production import ProductionOps, load_production_ops
 from fplt.automation.runbook import OPS_01_TOKEN_EXPIRY, OPS_02_NO_PLAN
 from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
@@ -157,6 +161,7 @@ def run_ops_tick(
             upcoming_key: GWKey | None = None
             notified_plan = False
             upcoming_deadline: datetime | None = None
+            official_cp_dir: Path | None = None
 
             upcoming = next_upcoming_deadline(store, moment)
             if upcoming is not None:
@@ -186,7 +191,7 @@ def run_ops_tick(
                     [cp.id for cp in due],
                 )
                 for checkpoint in due:
-                    _, sent = _run_checkpoint(
+                    _, sent, official = _run_checkpoint(
                         root,
                         upcoming_key,
                         checkpoint,
@@ -194,6 +199,7 @@ def run_ops_tick(
                         chosen,
                         steps,
                         cfg,
+                        ops=ops,
                         notify=notify,
                         auth=auth,
                     )
@@ -201,6 +207,8 @@ def run_ops_tick(
                     checkpoint_ids.append(checkpoint.id)
                     if sent:
                         notified_plan = True
+                    if official is not None:
+                        official_cp_dir = official.checkpoint_dir
                     # Apply is ops-05; never call apply here even when checkpoint.apply.
                     if checkpoint.apply:
                         logger.info(
@@ -309,6 +317,7 @@ def run_ops_tick(
                 timings,
                 root,
                 meta={"models": list(chosen), "horizon": steps},
+                checkpoint_dir=official_cp_dir,
                 succeeded=True,
             )
             return result
@@ -375,12 +384,23 @@ def _run_checkpoint(
     horizon: int,
     settings: Settings,
     *,
+    ops: ProductionOps,
     notify: bool,
     auth: AuthCheckResult | None = None,
-) -> tuple[bool, bool]:
-    """Execute one due checkpoint. Returns ``(planned, notified)``."""
+) -> tuple[bool, bool, OfficialCheckpointResult | None]:
+    """Execute one due checkpoint.
+
+    Returns:
+        ``(planned, notified, official)`` where ``official`` is set only for
+        the T−90m official slate.
+    """
     planned = False
-    if checkpoint.plan or checkpoint.refresh:
+    official: OfficialCheckpointResult | None = None
+    if checkpoint.id == "T-90m":
+        logger.info("ops_tick: official slate at %s for %s", checkpoint.id, key)
+        official = run_official_checkpoint(root, ops, key, settings=settings)
+        planned = True
+    elif checkpoint.plan or checkpoint.refresh:
         planned = plan_deadline(
             root,
             key,
@@ -407,7 +427,7 @@ def _run_checkpoint(
         planned,
         notified,
     )
-    return planned, notified
+    return planned, notified, official
 
 
 def _run_no_plan_alarm(

@@ -19,7 +19,7 @@ import subprocess
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
-from typing import Self
+from typing import Self, cast
 
 import polars as pl
 
@@ -528,7 +528,9 @@ def write_predict_run(
     frame: pl.DataFrame,
     kind: RunKind = "adhoc",
     purpose: str = "",
+    checkpoint: str | None = None,
     components_for_run_id: object | None = None,
+    points_pmf_for_run_id: object | None = None,
 ) -> RunManifest:
     """Dual-write a live predict table into a new run folder.
 
@@ -536,7 +538,9 @@ def write_predict_run(
     Persists the resolved spec under ``specs/sha=<spec_hash>.json``. When
     ``components_for_run_id`` is a callable ``(run_id) -> RunComponentTables |
     None``, layered §3.1 tables are written after the run id is minted;
-    opaque models pass ``None``.
+    opaque models pass ``None``. When ``points_pmf_for_run_id`` is a callable
+    ``(run_id) -> (points_pmf, points_pmf_gw)``, official points distributions
+    are written (data model §3.3).
 
     Args:
         data_dir: Local data root.
@@ -547,7 +551,9 @@ def write_predict_run(
         frame: ``PredictionSchema`` rows.
         kind: Run kind (default adhoc for local CLI).
         purpose: Free-text purpose.
+        checkpoint: Ops checkpoint label (e.g. ``T-90m``) for official runs.
         components_for_run_id: Optional builder stamped with ``writer.run_id``.
+        points_pmf_for_run_id: Optional official PMF builder.
 
     Returns:
         The succeeded ``RunManifest``.
@@ -569,9 +575,11 @@ def write_predict_run(
         horizon=horizon,
         purpose=purpose or f"predict {spec.name} {as_of.season} gw{as_of.gw}",
         seeds=_seed_from_spec(spec),
+        checkpoint=checkpoint,
     ) as writer:
         writer.write_parquet("predictions/player_fixture.parquet", frame)
         _write_component_tables(writer, components_for_run_id)
+        _write_points_pmf_tables(writer, points_pmf_for_run_id)
     _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
 
@@ -595,6 +603,28 @@ def _write_component_tables(
     writer.write_parquet("predictions/components/involvement.parquet", involvement)
 
 
+def _write_points_pmf_tables(
+    writer: RunWriter, points_pmf_for_run_id: object | None
+) -> None:
+    """Persist official ``points_pmf`` / ``points_pmf_gw`` from a run_id builder."""
+    if points_pmf_for_run_id is None or not callable(points_pmf_for_run_id):
+        return
+    raw: object = points_pmf_for_run_id(writer.run_id)
+    if not isinstance(raw, tuple):
+        return
+    typed = cast(tuple[object, ...], raw)
+    if len(typed) != 2:
+        return
+    fixture_pmf = typed[0]
+    gw_pmf = typed[1]
+    if not isinstance(fixture_pmf, pl.DataFrame) or not isinstance(
+        gw_pmf, pl.DataFrame
+    ):
+        return
+    writer.write_parquet("predictions/points_pmf.parquet", fixture_pmf)
+    writer.write_parquet("predictions/points_pmf_gw.parquet", gw_pmf)
+
+
 def write_plan_run(
     data_dir: Path,
     *,
@@ -606,6 +636,9 @@ def write_plan_run(
     kind: RunKind = "adhoc",
     purpose: str = "",
     parent_run_id: str | None = None,
+    checkpoint: str | None = None,
+    line: str | None = None,
+    squad_mode: SquadMode | None = None,
 ) -> RunManifest:
     """Dual-write a plan table into a new run folder.
 
@@ -619,6 +652,9 @@ def write_plan_run(
         kind: Run kind (default adhoc).
         purpose: Free-text purpose.
         parent_run_id: Optional predict run this plan reads.
+        checkpoint: Ops checkpoint label for official runs.
+        line: Official line name when ``kind="official"``.
+        squad_mode: ``real`` / ``virtual`` for official plan runs.
 
     Returns:
         The succeeded ``RunManifest``.
@@ -642,6 +678,9 @@ def write_plan_run(
         parent_run_id=parent_run_id,
         purpose=purpose or f"plan {spec.name} {as_of.season} gw{as_of.gw} h{horizon}",
         seeds=_seed_from_spec(spec),
+        checkpoint=checkpoint,
+        line=line,
+        squad_mode=squad_mode,
     ) as writer:
         writer.write_parquet("plans/plan.parquet", frame)
     _push_if_configured(data_dir, writer.run_id)
