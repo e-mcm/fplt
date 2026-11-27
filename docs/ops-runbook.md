@@ -175,6 +175,15 @@ Never paste raw secrets into issues, PR comments, or `set -x` shell traces. Lint
 | **Urgency** | **Urgent** before the first live run and inside T−6h. Otherwise **high** until history is restored. |
 | **Fix** | Confirm `rclone lsf fplt:fplt-data/raw/vaastav/ -R \| head` shows captures, then `gh workflow run vaastav.yml -f full=true` once (owner). Re-run `gh workflow run ops-tick.yml -f force_live=true` after staging sees ≥ `min_prior_seasons` prior seasons. |
 
+### Dependency audit / CodeQL finding (#309)
+
+| | |
+|---|---|
+| **Means** | `dependency-audit` (osv-scanner) failed a PR for a **new** vulnerability vs the base branch, the weekly full scan uploaded findings to **Security → Code scanning**, or CodeQL reported a Python alert. |
+| **Urgency** | **High** for a PR gate (blocks merge). **Warning** for weekly / Code Scanning backlog until triaged. |
+| **Fix** | 1. Open the failed check / Code Scanning alert. 2. Prefer upgrading the locked package (`uv lock --upgrade-package <name>` then `uv sync`). 3. If the finding is accepted (no fixed release, false positive, or risk accepted), add `[[IgnoredVulns]]` to `osv-scanner.toml` with `id`, `reason`, and optional `expires`, or dismiss the CodeQL alert with a reason. 4. Re-run the workflow. |
+
+PR scans only fail on **newly introduced** vulns (reusable-pr workflow). Weekly scans report the full baseline without failing `main`. The intentional fixture under `tests/fixtures/security/vulnerable/` is ignored in repo-wide scans via a local `osv-scanner.toml` `PackageOverrides`; `scripts/check_osv_scanner_gate.py` still proves the scanner fails on that pin. Owner must enable GitHub **Dependabot alerts**, **secret scanning**, and **push protection** in repo settings (not automated here).
 
 ---
 

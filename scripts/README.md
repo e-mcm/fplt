@@ -19,6 +19,7 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `check_workflow_concurrency.py` | Fail if `ci.yml` cancels main runs or a scheduled workflow lacks concurrency (#305) | `make check` / CI lint |
 | `check_workflow_action_pins.py` | Fail if any third-party GHA `uses:` is not SHA-pinned (#309) | `make check` / CI lint |
 | `check_workflow_security_lints.py` | Run pinned `actionlint` + `zizmor` (fail on medium+) (#309) | `make check` / CI lint |
+| `check_osv_scanner_gate.py` | Assert osv-scanner still detects the known-vulnerable fixture (#309) | `dependency-audit` workflow |
 | `secret_rotation_reminders.py` | List due secret-rotation reminder issues (ops-11) | `.github/workflows/secret-rotation-reminder.yml` |
 
 ## Invariants

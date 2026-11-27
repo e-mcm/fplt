@@ -1,0 +1,64 @@
+name: dependency-audit
+
+# #309: osv-scanner against uv.lock — fail PRs that introduce new vulns;
+# weekly full scan uploads SARIF to Code Scanning.
+
+on:
+  pull_request:
+    paths:
+      - "uv.lock"
+      - "pyproject.toml"
+      - "osv-scanner.toml"
+      - ".github/workflows/dependency-audit.yml"
+  schedule:
+    # Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  scan-pr:
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932  # v2.7.1
+    with:
+      # Fail the check when the PR introduces new vulnerabilities.
+      fail-on-vuln: true
+
+  scan-scheduled:
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932  # v2.7.1
+    with:
+      # Weekly / dispatch: report to Code Scanning; do not red-gate main on
+      # the existing baseline (accepted findings live in osv-scanner.toml /
+      # Code Scanning triage — see docs/ops-runbook.md).
+      fail-on-vuln: false
+
+  # Acceptance: scanner still fails a known-vulnerable requirements.txt fixture.
+  fixture-gate:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: osv-scanner fixture gate (#309)
+        run: python3 scripts/check_osv_scanner_gate.py

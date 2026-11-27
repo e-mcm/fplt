@@ -1,0 +1,20 @@
+# OSV-Scanner ignore / override file (#309).
+#
+# PR scans use google/osv-scanner-action's reusable-pr workflow, which fails
+# only when a PR *introduces* new vulnerabilities relative to the base branch.
+# Existing baseline findings surface in Code Scanning via the weekly full scan
+# (fail-on-vuln: false) and should be triaged there or listed below.
+#
+# To accept a finding that would otherwise fail a PR (e.g. transitive, no
+# fixed release yet), add an entry:
+#
+#   [[IgnoredVulns]]
+#   id = "GHSA-...."
+#   reason = "why this is accepted; link to tracking issue"
+#   # optional: expires = "2027-01-01"
+#
+# See https://google.github.io/osv-scanner/configuration/ and
+# docs/ops-runbook.md (§ Dependency audit / CodeQL finding).
+
+# No ignored vulns yet — keep this file so `--config` / directory discovery
+# has a documented home for acceptances.
