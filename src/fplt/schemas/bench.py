@@ -7,7 +7,7 @@ are computed at read time from prior nights — not stored in this document.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -47,16 +47,20 @@ class BenchResults(BaseModel):
     )
     meta: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("phases", "mc_bench")
+    @field_validator("phases", "mc_bench", mode="before")
     @classmethod
-    def _positive_named_seconds(cls, value: dict[str, float]) -> dict[str, float]:
+    def _positive_named_seconds(cls, value: object) -> dict[str, float]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("phases/mc_bench must be a mapping")
         cleaned: dict[str, float] = {}
-        for name, seconds in value.items():
+        for name, seconds in cast(dict[object, object], value).items():
             if not str(name).strip():
                 raise ValueError("phase names must be non-empty")
             if isinstance(seconds, bool):
                 raise ValueError(f"{name!r} value must be numeric")
-            as_float = float(seconds)
+            as_float = float(cast(float, seconds))
             if as_float <= 0:
                 continue
             cleaned[str(name)] = as_float

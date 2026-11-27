@@ -12,6 +12,8 @@ from pydantic import SecretStr
 from fplt.automation.bench import (
     BenchConfig,
     BenchExistsError,
+    bench_date_dir,
+    bench_results_path,
     build_bench_results,
     consolidate_fixture_phases,
     evaluate_regression,
@@ -224,3 +226,198 @@ def test_trend_report_mentions_baseline(tmp_path: Path) -> None:
     assert "perf trend:" in text
     assert "fit" in text
     assert "rolling median baseline" in text
+
+
+def test_empty_config_yaml_and_date_helpers(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("", encoding="utf-8")
+    assert load_bench_config(empty) == BenchConfig()
+    from datetime import date as date_cls
+
+    assert bench_date_dir(tmp_path, date_cls(2026, 11, 27)).name == "date=2026-11-27"
+    assert bench_results_path(tmp_path, "2026-11-27").name == "results.json"
+
+
+def test_list_skips_unreadable_and_respects_limit(tmp_path: Path) -> None:
+    assert list_bench_results(tmp_path) == []
+    good = build_bench_results(day="2026-11-27", phases={"fit": 1.0})
+    write_bench_results(tmp_path, good)
+    bad_dir = tmp_path / "bench" / "date=2026-11-26"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "results.json").write_text("{not-json", encoding="utf-8")
+    listed = list_bench_results(tmp_path, limit=1)
+    assert len(listed) == 1
+    assert listed[0].date == "2026-11-27"
+    assert rolling_baseline([], window=0) == {}
+
+
+def test_empty_history_and_missing_phase_paths() -> None:
+    empty = evaluate_regression([], config=_cfg())
+    assert not empty.alerted
+    assert format_regression_alerts(empty) == "No performance regressions."
+    assert format_trend_report([], config=_cfg()).startswith("perf trend: no")
+    # Prior nights without the tracked phase → baseline missing → skip.
+    priors = [
+        build_bench_results(day="2026-11-20", phases={"predict": 5.0}),
+        build_bench_results(day="2026-11-19", phases={"predict": 5.0}),
+    ]
+    recent = [
+        build_bench_results(day="2026-11-22", phases={"fit": 99.0}),
+        build_bench_results(day="2026-11-21", phases={"predict": 5.0}),
+        *priors,
+    ]
+    report = evaluate_regression(recent, config=_cfg(tracked_phases=("fit",)))
+    assert not report.alerted
+    # Newest nights missing the phase break the streak.
+    mixed = [
+        build_bench_results(day="2026-11-23", phases={"predict": 1.0}),
+        build_bench_results(day="2026-11-22", phases={"fit": 50.0}),
+        build_bench_results(day="2026-11-21", phases={"fit": 50.0}),
+        *_history_stable(n=3, fit=10.0),
+    ]
+    assert not evaluate_regression(
+        mixed, config=_cfg(consecutive_nights=3, tracked_phases=("fit",))
+    ).alerted
+
+
+def test_notify_skips_when_not_alerted() -> None:
+    report = evaluate_regression([], config=_cfg())
+    assert (
+        notify_regression_alerts(Settings(ntfy_url=None), report, post=lambda r: None)
+        is False
+    )
+
+
+def test_trend_skips_missing_phase_and_n_a(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    night = build_bench_results(day="2026-11-27", phases={"fit": 10.0})
+    # Tracked phase absent on the night → continue (no row).
+    text = format_trend_report(
+        [night],
+        config=_cfg(tracked_phases=("fit", "plan")),
+        limit=1,
+    )
+    assert "fit" in text
+    assert "plan" not in text.split("rolling median")[0] or "plan:" not in text
+    def _empty_baseline(*_a: object, **_k: object) -> dict[str, float]:
+        return {}
+
+    monkeypatch.setattr(
+        "fplt.automation.bench.rolling_baseline",
+        _empty_baseline,
+    )
+    text_na = format_trend_report(
+        [night],
+        config=_cfg(tracked_phases=("fit",)),
+        limit=1,
+    )
+    assert "n/a" in text_na
+
+
+def test_consolidate_skips_non_positive() -> None:
+    assert consolidate_fixture_phases({"fit": 0.0, "predict": -1.0}) == {}
+
+
+def test_schema_validators_and_z_suffix() -> None:
+    from datetime import UTC, datetime
+
+    from pydantic import ValidationError
+
+    from fplt.schemas.bench import BenchResults
+
+    with pytest.raises(ValidationError):
+        BenchResults(
+            date="2026-11-27",
+            recorded_at=datetime(2026, 11, 27, tzinfo=UTC),
+            phases={"": 1.0},
+        )
+    with pytest.raises(ValidationError):
+        BenchResults(
+            date="2026-11-27",
+            recorded_at=datetime(2026, 11, 27, tzinfo=UTC),
+            phases={"fit": True},  # type: ignore[dict-item]
+        )
+    with pytest.raises(ValidationError):
+        BenchResults.model_validate(
+            {
+                "date": "2026-11-27",
+                "recorded_at": "2026-11-27T00:00:00Z",
+                "phases": ["not", "a", "dict"],
+            }
+        )
+    none_phases = BenchResults.model_validate(
+        {
+            "date": "2026-11-27",
+            "recorded_at": "2026-11-27T00:00:00Z",
+            "phases": None,
+        }
+    )
+    assert none_phases.phases == {}
+
+    ok = BenchResults(
+        date="2026-11-27",
+        recorded_at=datetime(2026, 11, 27, 12, 0, tzinfo=UTC),
+        phases={"fit": 1.0, "skip": 0.0},
+        mc_bench={"a": -1.0, "b": 2.0},
+    )
+    assert "skip" not in ok.phases
+    assert "a" not in ok.mc_bench
+    assert ok.mc_bench["b"] == pytest.approx(2.0)
+    doc = ok.model_dump_json_doc()
+    assert str(doc["recorded_at"]).endswith("Z")
+
+
+def test_ops_timeout_env_invalid_and_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPS_TIMEOUT_MINUTES", "not-an-int")
+    text = format_ops_step_summary(
+        {"phases": {"ingest": 10.0}, "total_s": 10.0},
+        timeout_minutes=None,
+    )
+    assert "WARNING" not in text
+    monkeypatch.setenv("OPS_TIMEOUT_MINUTES", "10")
+    over = format_ops_step_summary(
+        {"phases": {"ingest": 400.0}, "total_s": 400.0},
+        timeout_minutes=None,
+    )
+    assert "**WARNING:**" in over
+
+
+def test_perf_report_trend_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import main
+
+    for night in _history_stable(n=3, fit=9.0):
+        write_bench_results(tmp_path, night)
+    monkeypatch.delenv("FPLT_LAB_DIR", raising=False)
+    main(
+        [
+            "perf-report",
+            "--trend",
+            "--lab-dir",
+            str(tmp_path),
+            "--limit",
+            "3",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "perf trend:" in out
+    main(
+        [
+            "perf-report",
+            "--trend",
+            "--lab-dir",
+            str(tmp_path),
+            "--json",
+            "--limit",
+            "2",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["n_nights"] == 2
+    monkeypatch.setenv("FPLT_LAB_DIR", str(tmp_path))
+    main(["perf-report", "--trend", "--limit", "1"])
+    assert "perf trend:" in capsys.readouterr().out
