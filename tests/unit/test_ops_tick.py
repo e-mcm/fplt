@@ -435,6 +435,7 @@ def test_run_checkpoint_writes_ops_log_jsonl(
     assert "T-6h" in body
     reset_logging_for_tests()
 
+
 def test_run_ops_tick_history_guard_fails_and_alerts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
