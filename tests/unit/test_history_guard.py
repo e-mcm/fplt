@@ -205,6 +205,23 @@ def test_resolve_guard_target_empty_store_raises(tmp_path: Path) -> None:
         resolve_guard_target(store, _CUR_DEADLINE)
 
 
+def test_resolve_guard_target_falls_back_when_no_upcoming(tmp_path: Path) -> None:
+    """Catch-up-only ticks use the latest staged GW with cutoff=now."""
+    store = DataStore(tmp_path)
+    _write_gameweeks(
+        store,
+        [
+            ("2024-25", 1, _CUR_DEADLINE - timedelta(days=7), True, True),
+            ("2024-25", 2, _CUR_DEADLINE - timedelta(days=1), True, True),
+        ],
+    )
+    now = _CUR_DEADLINE + timedelta(days=1)
+    season, as_of, cutoff = resolve_guard_target(store, now)
+    assert season == "2024-25"
+    assert as_of == GWKey("2024-25", 2)
+    assert cutoff == now
+
+
 def test_enforce_training_history_alerts_then_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -227,3 +244,20 @@ def test_enforce_training_history_alerts_then_raises(
             source="ops-tick",
         )
     assert titles == ["fplt history guard"]
+
+
+def test_enforce_training_history_passes_on_complete_store(tmp_path: Path) -> None:
+    from fplt.automation.history_guard import enforce_training_history
+    from fplt.settings import Settings
+
+    store = _complete_store(tmp_path)
+    result = enforce_training_history(
+        store,
+        now=_CUR_DEADLINE - timedelta(hours=1),
+        min_prior_seasons=3,
+        settings=Settings(data_dir=tmp_path),
+        notify=False,
+        source="ops-tick",
+    )
+    assert result.ok
+    assert result.prior_seasons == ("2021-22", "2022-23", "2023-24")

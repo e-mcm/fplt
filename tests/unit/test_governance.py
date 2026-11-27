@@ -120,6 +120,16 @@ def test_additive_ops_key_without_slate_change_passes() -> None:
     assert result.reasons == ()
 
 
+def test_live_slate_changed_edge_cases() -> None:
+    from fplt.automation.governance import _live_slate_changed
+
+    assert _live_slate_changed(None, None) is False
+    assert _live_slate_changed(None, _PROD) is True
+    assert _live_slate_changed(_PROD, None) is True
+    assert _live_slate_changed("[]\n", _PROD) is True
+    assert _live_slate_changed(_PROD, _PROD) is False
+
+
 def test_changed_production_with_passing_eval_link_passes() -> None:
     head = _prod_retarget("dc_prod_v2")
     result = check_production_governance(

@@ -49,6 +49,35 @@ def test_production_model_uses_native_mc_backend() -> None:
     assert str(prod.params.get("mc_backend", "python")).strip().lower() == "native"
 
 
+def test_min_prior_seasons_rejects_invalid_values(tmp_path: Path) -> None:
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "min_prior_seasons": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="min_prior_seasons"):
+        load_production_ops(path, environ={})
+
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "min_prior_seasons": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="min_prior_seasons"):
+        load_production_ops(path, environ={})
+
+
 def test_env_overrides_models_and_horizon(tmp_path: Path) -> None:
     path = tmp_path / "production.yaml"
     path.write_text(
