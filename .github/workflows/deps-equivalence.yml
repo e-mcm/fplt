@@ -26,10 +26,12 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   equivalence:
+    permissions:
+      contents: read
+      pull-requests: write
     if: >
       github.event_name == 'workflow_dispatch' ||
       contains(join(github.event.pull_request.labels.*.name, ','), 'equivalence') ||

@@ -25,12 +25,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  checks: read
-  actions: read
+  contents: read
 
 jobs:
   release:
+    permissions:
+      contents: write
+      checks: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: r2

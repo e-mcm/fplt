@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write  # push gh-pages branch
+  contents: read
 
 jobs:
   release-linux:
@@ -78,6 +78,8 @@ jobs:
           if-no-files-found: error
 
   publish-pages:
+    permissions:
+      contents: write  # push gh-pages branch
     needs: [release-linux, release-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
