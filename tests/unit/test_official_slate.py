@@ -102,6 +102,10 @@ def test_ops_tick_t90m_calls_official_slate(
         "fplt.automation.ops_tick.load_production_ops",
         _tiny_ops,
     )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
+    )
     from fplt.automation.checkpoints import CheckpointState, save_checkpoint_state
 
     save_checkpoint_state(
