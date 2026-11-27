@@ -342,3 +342,175 @@ def test_drift_check_no_models(
     finally:
         get_settings.cache_clear()
     assert "no production models" in capsys.readouterr().out
+
+def test_preflight_cli_ok_and_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _preflight
+
+    monkeypatch.setattr(
+        "fplt.ops.preflight.run_preflight",
+        lambda *_a, **_k: SimpleNamespace(ok=True),
+    )
+    monkeypatch.setattr(
+        "fplt.ops.preflight.format_preflight_report",
+        lambda _r: "preflight ok",
+    )
+    monkeypatch.setattr("fplt.data.store.DataStore", lambda _p: object())
+    _preflight(SimpleNamespace(data_dir=tmp_path, season="2024-25", skip_plan=True))
+    assert "preflight ok" in capsys.readouterr().out
+
+    monkeypatch.setattr(
+        "fplt.ops.preflight.run_preflight",
+        lambda *_a, **_k: SimpleNamespace(ok=False),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _preflight(
+            SimpleNamespace(data_dir=tmp_path, season="2024-25", skip_plan=False)
+        )
+    assert excinfo.value.code == 1
+
+
+def test_status_cli_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _status
+
+    doc = SimpleNamespace(model_dump_json_doc=lambda: {"ok": True})
+    monkeypatch.setattr("fplt.automation.status.build_status", lambda _root: doc)
+    monkeypatch.setattr("fplt.automation.status.write_status", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "fplt.automation.status.format_status_human",
+        lambda _doc: "status body\n",
+    )
+    _status(SimpleNamespace(data_dir=tmp_path, push=False, json=False, public=False))
+    assert "status body" in capsys.readouterr().out
+
+
+def test_status_cli_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _status
+
+    doc = SimpleNamespace(model_dump_json_doc=lambda: {"ok": True})
+    monkeypatch.setattr("fplt.automation.status.build_status", lambda _root: doc)
+    monkeypatch.setattr("fplt.automation.status.write_status", lambda *_a, **_k: None)
+    _status(SimpleNamespace(data_dir=tmp_path, push=False, json=True, public=False))
+    assert '"ok"' in capsys.readouterr().out
+
+
+def test_legacy_without_subcommand_exits() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _legacy(SimpleNamespace(legacy_command=None))
+    assert excinfo.value.code == 2
+
+
+def test_exp_without_subcommand_exits() -> None:
+    from fplt.cli import _exp
+
+    with pytest.raises(SystemExit) as excinfo:
+        _exp(SimpleNamespace(exp_command=None))
+    assert excinfo.value.code == 2
+
+
+def test_configure_cli_logging_idempotent() -> None:
+    from fplt.cli import _configure_cli_logging
+    import logging
+
+    package = logging.getLogger("fplt")
+    package.handlers.clear()
+    _configure_cli_logging()
+    n = len(package.handlers)
+    _configure_cli_logging()
+    assert len(package.handlers) == n >= 1
+
+
+def test_auth_check_cli(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _auth_check
+
+    result = SimpleNamespace(exit_code=0, level="ok", message="fine")
+    monkeypatch.setattr("fplt.cli.check_token", lambda **_k: result)
+    monkeypatch.setattr("fplt.cli.format_auth_check", lambda _r: "auth ok\n")
+    assert (
+        _auth_check(
+            SimpleNamespace(
+                deadline_aware=False,
+                warn_days=7,
+                allow_missing=True,
+                no_notify=True,
+            )
+        )
+        == 0
+    )
+    assert "auth ok" in capsys.readouterr().out
+
+    result = SimpleNamespace(exit_code=1, level="urgent", message="expiring")
+    monkeypatch.setattr("fplt.cli.check_token", lambda **_k: result)
+    monkeypatch.setattr("fplt.cli.format_auth_check", lambda _r: "auth bad\n")
+    monkeypatch.setattr(
+        "fplt.automation.notify.notify_recommendation",
+        lambda *_a, **_k: None,
+    )
+    assert (
+        _auth_check(
+            SimpleNamespace(
+                deadline_aware=False,
+                warn_days=7,
+                allow_missing=False,
+                no_notify=False,
+            )
+        )
+        == 1
+    )
+
+
+def test_data_parity_ok(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _data_parity
+
+    monkeypatch.setattr(
+        "fplt.data.parity.check_raw_parity",
+        lambda **_k: SimpleNamespace(
+            source_files=3, branch="snapshots", remote_target="fplt:fplt-data"
+        ),
+    )
+    _data_parity(SimpleNamespace(remote="fplt:fplt-data", branch="snapshots"))
+    assert "raw parity ok" in capsys.readouterr().out
+
+
+def test_data_parity_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fplt.cli import _data_parity
+    from fplt.data.parity import ParityError
+
+    def _boom(**_k: object) -> None:
+        raise ParityError("mismatch")
+
+    monkeypatch.setattr("fplt.data.parity.check_raw_parity", _boom)
+    with pytest.raises(SystemExit) as excinfo:
+        _data_parity(SimpleNamespace(remote="fplt:fplt-data", branch="snapshots"))
+    assert excinfo.value.code == 1
+
+
+def test_perf_report_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.cli import _perf_report
+
+    monkeypatch.setattr("fplt.utils.timing.load_timing_records", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        "fplt.utils.timing.format_hotspot_report",
+        lambda *_a, **_k: "hotspots",
+    )
+    _perf_report(
+        SimpleNamespace(
+            data_dir=tmp_path,
+            kind=None,
+            limit=10,
+            json=False,
+            hotspots=5,
+        )
+    )
+    assert "hotspots" in capsys.readouterr().out
