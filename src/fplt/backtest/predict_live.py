@@ -137,7 +137,7 @@ def run_predict(
     pit = PITData(store)
     seasons = allowed_seasons(as_of, spec.train_window.seasons_back)
     view = pit.view(as_of).within_seasons(seasons)
-    model = _fit_or_load(data_dir, spec, as_of, view)
+    model = fit_or_load_predictor(data_dir, spec, as_of, view)
     predicted = model.predict(view, horizon_for(as_of, horizon))
     require_scored_predictions(predicted, model_name)
     path = write_predictions(data_dir, spec, as_of, predicted)
@@ -152,7 +152,7 @@ def run_predict(
         deadline_utc=deadline_utc,
         horizon=horizon,
         frame=rows,
-        components_for_run_id=_component_builder(
+        components_for_run_id=component_builder_for(
             model, view, as_of=as_of, deadline_utc=deadline_utc, horizon=horizon
         ),
     )
@@ -160,7 +160,7 @@ def run_predict(
     return path
 
 
-def _component_builder(
+def component_builder_for(
     model: PointsPredictor,
     view: PITView,
     *,
@@ -190,9 +190,10 @@ def _component_builder(
     return _build
 
 
-def _fit_or_load(
+def fit_or_load_predictor(
     data_dir: Path, spec: ModelSpec, as_of: GWKey, view: PITView
 ) -> PointsPredictor:
+    """Load an existing artifact for ``as_of``, or fit and save a new one."""
     dest = artifact_dir(data_dir, spec, as_of)
     cls = get_model(spec.kind)
     if (dest / "spec.json").exists():
@@ -204,6 +205,11 @@ def _fit_or_load(
     model.fit(view)
     model.save(dest)
     return model
+
+
+# Back-compat aliases for older callers / tests.
+_component_builder = component_builder_for
+_fit_or_load = fit_or_load_predictor
 
 
 def _aware(value: datetime) -> datetime:

@@ -33,7 +33,9 @@ def test_plan_from_api_resolves_squad_then_runs_plan(
         }
     )
     resolve = MagicMock(return_value=squad)
-    run = MagicMock(return_value=(object(), tmp_path / "plan.parquet", "# ok\n"))
+    run = MagicMock(
+        return_value=(object(), tmp_path / "plan.parquet", "# ok\n", "r_test")
+    )
     monkeypatch.setattr(
         "fplt.cli.PITData",
         lambda store: MagicMock(view=MagicMock(return_value=view)),
@@ -85,7 +87,7 @@ def test_plan_defaults_to_resolve_when_entry_id_set(
         }
     )
     resolve = MagicMock(return_value=squad)
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",
         lambda store: MagicMock(view=MagicMock(return_value=object())),
@@ -133,7 +135,7 @@ def test_plan_entry_json_wins_over_from_api(
         }
     )
     resolve = MagicMock(return_value=squad)
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",
         lambda store: MagicMock(view=MagicMock(return_value=object())),
@@ -195,7 +197,7 @@ def test_plan_without_entry_skips_resolve(
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     get_settings.cache_clear()
     resolve = MagicMock()
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr("fplt.cli.resolve_squad_state", resolve)
     monkeypatch.setattr("fplt.cli.run_plan", run)
     try:
@@ -226,7 +228,7 @@ def test_plan_cli_passes_chip_arm_override(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     get_settings.cache_clear()
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr("fplt.cli.run_plan", run)
     try:
         main(
@@ -254,7 +256,7 @@ def test_plan_cli_passes_no_force_play(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     get_settings.cache_clear()
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr("fplt.cli.run_plan", run)
     try:
         main(
@@ -296,7 +298,7 @@ def test_plan_rebuild_clears_owned_and_folds_selling_prices(
         }
     )
     resolve = MagicMock(return_value=owned)
-    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n"))
+    run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",
         lambda store: MagicMock(view=MagicMock(return_value=object())),
