@@ -36,6 +36,7 @@ jobs:
       contains(join(github.event.pull_request.labels.*.name, ','), 'deps:runtime')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    environment: r2
     steps:
       - uses: actions/checkout@v4
         with:

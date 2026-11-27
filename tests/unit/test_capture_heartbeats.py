@@ -49,6 +49,16 @@ _PING_SECRETS = {
     "auth-check.yml": "HC_PING_URL_AUTH_CHECK",
 }
 
+# Capture workflows that dual-write via push-raw: heartbeat only when uploaded.
+_PUSH_RAW_CAPTURE = frozenset(
+    {
+        "snapshot.yml",
+        "understat.yml",
+        "api_football.yml",
+        "football_data.yml",
+    }
+)
+
 
 def _load(name: str) -> dict:
     return yaml.safe_load((_WORKFLOWS / name).read_text(encoding="utf-8"))
@@ -108,20 +118,27 @@ def test_heartbeat_soft_skips_when_ping_url_unset() -> None:
     assert "soft skip" in result.stdout
 
 
-def test_push_raw_soft_skips_when_r2_secrets_unset(tmp_path: Path) -> None:
-    """Empty R2_* / DATA_BUCKET exits 0 with a soft-skip log (no rclone)."""
+def _push_raw_gate_script() -> str:
+    """Return the bash body of the push-raw R2 credential gate."""
     doc = yaml.safe_load(
         (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
     )
     gate = doc["runs"]["steps"][0]
     assert gate["name"] == "Gate on R2 credentials"
-    script = str(gate["run"])
+    return str(gate["run"])
+
+
+def test_push_raw_soft_skips_when_r2_secrets_unset_off_main(tmp_path: Path) -> None:
+    """Empty R2_* off main exits 0 with a soft-skip log (no rclone)."""
+    script = _push_raw_gate_script()
     env = {
         "R2_ACCOUNT_ID": "",
         "R2_ACCESS_KEY_ID": "",
         "R2_SECRET_ACCESS_KEY": "",
         "DATA_BUCKET": "fplt-data",
+        "GITHUB_REF": "refs/heads/cursor/feature",
         "GITHUB_OUTPUT": str(tmp_path / "out"),
+        "PATH": "/usr/bin:/bin",
     }
     (tmp_path / "out").write_text("", encoding="utf-8")
     result = subprocess.run(
@@ -133,7 +150,69 @@ def test_push_raw_soft_skips_when_r2_secrets_unset(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert "soft skip" in result.stdout
-    assert "skip=true" in (tmp_path / "out").read_text(encoding="utf-8")
+    out = (tmp_path / "out").read_text(encoding="utf-8")
+    assert "skip=true" in out
+    assert "uploaded=false" in out
+
+
+def test_push_raw_fails_on_main_when_r2_secrets_unset(tmp_path: Path) -> None:
+    """Empty R2_* on main must fail the gate (fires notify-failure) (#278)."""
+    script = _push_raw_gate_script()
+    env = {
+        "R2_ACCOUNT_ID": "",
+        "R2_ACCESS_KEY_ID": "",
+        "R2_SECRET_ACCESS_KEY": "",
+        "DATA_BUCKET": "fplt-data",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_OUTPUT": str(tmp_path / "out"),
+        "PATH": "/usr/bin:/bin",
+    }
+    (tmp_path / "out").write_text("", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "soft skip" not in combined
+    assert "main" in combined.lower()
+
+
+def test_push_raw_soft_skips_on_pull_request_even_when_ref_main(tmp_path: Path) -> None:
+    """pull_request events soft-skip even if GITHUB_REF looks like main."""
+    script = _push_raw_gate_script()
+    env = {
+        "R2_ACCOUNT_ID": "",
+        "R2_ACCESS_KEY_ID": "",
+        "R2_SECRET_ACCESS_KEY": "",
+        "DATA_BUCKET": "fplt-data",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_EVENT_NAME": "pull_request",
+        "GITHUB_OUTPUT": str(tmp_path / "out"),
+        "PATH": "/usr/bin:/bin",
+    }
+    (tmp_path / "out").write_text("", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert "soft skip" in result.stdout
+    assert "uploaded=false" in (tmp_path / "out").read_text(encoding="utf-8")
+
+
+def test_push_raw_exposes_uploaded_output() -> None:
+    """Composite action declares an ``uploaded`` output for heartbeat gating."""
+    doc = yaml.safe_load(
+        (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
+    )
+    assert "uploaded" in doc.get("outputs", {})
 
 
 def test_notify_failure_soft_skips_when_ntfy_url_unset() -> None:
@@ -175,7 +254,11 @@ def test_alerts_job_runs_after_main_even_on_failure() -> None:
 
 
 def test_scheduled_workflows_ping_heartbeat_on_success() -> None:
-    """Each alerts job pings its HC_PING_URL_* secret when the main job succeeds."""
+    """Each alerts job pings its HC_PING_URL_* secret when the main job succeeds.
+
+    Capture workflows that use push-raw also require ``uploaded == true`` so a
+    soft-skipped R2 upload does not keep the capture heartbeat green (#278).
+    """
     for name in _SCHEDULED:
         steps = _alert_steps(_load(name))
         heartbeats = [
@@ -184,8 +267,41 @@ def test_scheduled_workflows_ping_heartbeat_on_success() -> None:
         assert len(heartbeats) == 1, name
         step = heartbeats[0]
         main = _MAIN_JOB[name]
-        assert step.get("if") == f"needs.{main}.result == 'success'"
+        if name in _PUSH_RAW_CAPTURE:
+            expected_if = (
+                f"needs.{main}.result == 'success' "
+                f"&& needs.{main}.outputs.uploaded == 'true'"
+            )
+            assert step.get("if") == expected_if
+            doc = _load(name)
+            assert doc["jobs"][main]["outputs"]["uploaded"] == (
+                "${{ steps.upload.outputs.uploaded }}"
+            )
+        else:
+            assert step.get("if") == f"needs.{main}.result == 'success'"
         assert step["with"]["ping_url"] == f"${{{{ secrets.{_PING_SECRETS[name]} }}}}"
+
+
+def test_r2_secret_jobs_use_environment_r2() -> None:
+    """Every job that reads secrets.R2_* declares environment: r2 (#278)."""
+    for name in (
+        "snapshot.yml",
+        "understat.yml",
+        "api_football.yml",
+        "football_data.yml",
+        "ops-tick.yml",
+        "ops-catchup.yml",
+        "raw_parity.yml",
+        "auth-check.yml",
+        "release.yml",
+        "deps-equivalence.yml",
+    ):
+        doc = _load(name)
+        for job_id, body in doc["jobs"].items():
+            dumped = yaml.safe_dump(body)
+            if "secrets.R2_" not in dumped:
+                continue
+            assert body.get("environment") == "r2", f"{name}::{job_id}"
 
 
 def test_scheduled_workflows_notify_on_failure() -> None:

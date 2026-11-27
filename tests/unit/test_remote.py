@@ -61,7 +61,7 @@ def test_from_settings_returns_none_when_bucket_unset() -> None:
 def test_from_settings_returns_none_when_credentials_incomplete(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Bucket name alone must soft-skip; empty account yields ``.r2…`` otherwise."""
+    """Bucket name alone must soft-skip off main; empty account yields ``.r2…``."""
     settings = Settings(data_bucket="fplt-data", lab_bucket="fplt-lab")
     with caplog.at_level(logging.INFO, logger="fplt.data.remote"):
         assert Remote.from_settings(settings) is None
@@ -77,6 +77,35 @@ def test_from_settings_returns_none_when_credentials_incomplete(
     )
     assert Remote.from_settings(partial) is None
     assert not remote_mod.r2_credentials_complete(partial)
+
+
+def test_from_settings_raises_on_main_when_credentials_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GITHUB_REF=main with a configured bucket must not soft-skip (#278)."""
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    settings = Settings(data_bucket="fplt-data")
+    with pytest.raises(RemoteError, match="credentials incomplete on main"):
+        Remote.from_settings(settings)
+
+
+def test_from_settings_soft_skips_off_main_and_on_pull_request(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-main refs and pull_request keep soft-skip when secrets are empty."""
+    settings = Settings(data_bucket="fplt-data")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/cursor/feature")
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    with caplog.at_level(logging.INFO, logger="fplt.data.remote"):
+        assert Remote.from_settings(settings) is None
+    assert "soft skip" in caplog.text
+
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    assert Remote.from_settings(settings) is None
+    assert remote_mod.github_requires_r2() is False
 
 
 def test_from_settings_builds_data_and_lab_remotes() -> None:

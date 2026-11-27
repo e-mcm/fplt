@@ -4,6 +4,12 @@ inputs:
   src:
     description: Local directory of raw captures to upload
     required: true
+outputs:
+  uploaded:
+    description: >
+      true when R2 credentials were present and the upload step ran
+      (including "nothing new"); false on soft-skip off main
+    value: ${{ steps.gate.outputs.uploaded }}
 runs:
   using: composite
   steps:
@@ -12,13 +18,26 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        missing=false
         if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] \
           || [ -z "${R2_SECRET_ACCESS_KEY:-}" ] || [ -z "${DATA_BUCKET:-}" ]; then
+          missing=true
+        fi
+        if [ "$missing" = true ]; then
+          # Soft-skip only off main / on pull_request (#278). On main, missing
+          # environment secrets must fail so notify-failure fires.
+          if [ "${GITHUB_EVENT_NAME:-}" != "pull_request" ] \
+            && [ "${GITHUB_REF:-}" = "refs/heads/main" ]; then
+            echo "::error::R2 credentials or DATA_BUCKET missing on main (configure environment r2 secrets)"
+            exit 1
+          fi
           echo "soft skip: R2 credentials or DATA_BUCKET unset (configure R2_* secrets and DATA_BUCKET)"
           echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "uploaded=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         echo "skip=false" >> "$GITHUB_OUTPUT"
+        echo "uploaded=true" >> "$GITHUB_OUTPUT"
     - name: Install rclone
       if: steps.gate.outputs.skip != 'true'
       shell: bash

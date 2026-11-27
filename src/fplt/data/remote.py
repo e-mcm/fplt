@@ -61,9 +61,11 @@ class Remote:
     def from_settings(cls, s: Settings, bucket: str | None = None) -> Remote | None:
         """Build the R2 remote from settings; ``None`` when not usable.
 
-        Returns ``None`` when the chosen bucket is unset **or** R2 credentials
-        are incomplete (account / access key / secret). Callers treat that as a
-        soft skip so GHA stays green until secrets are configured.
+        Returns ``None`` when the chosen bucket is unset. When the bucket is set
+        but R2 credentials are incomplete, soft-skips (returns ``None``) **off
+        main** so PR / feature-branch GHA stays green; on ``refs/heads/main``
+        (and not a ``pull_request`` event) raises so missing environment
+        secrets fail the job (#278).
 
         Args:
             s: Process settings with R2 credentials and bucket names.
@@ -71,11 +73,12 @@ class Remote:
                 Must equal ``s.data_bucket`` or ``s.lab_bucket``.
 
         Returns:
-            A configured remote, or ``None`` when the bucket or credentials are
-            missing.
+            A configured remote, or ``None`` when the bucket is unset or
+            credentials are incomplete off main.
 
         Raises:
             ValueError: ``bucket`` is set but matches neither configured name.
+            RemoteError: Credentials incomplete while ``github_requires_r2()``.
         """
         name = s.data_bucket if bucket is None else bucket
         if not name:
@@ -90,6 +93,13 @@ class Remote:
                 f"data_bucket={s.data_bucket!r} or lab_bucket={s.lab_bucket!r}"
             )
         if not r2_credentials_complete(s):
+            if github_requires_r2():
+                raise RemoteError(
+                    "R2 credentials incomplete on main "
+                    "(need r2_account_id, r2_access_key_id, "
+                    "r2_secret_access_key); soft skip is only allowed "
+                    "off main / on pull_request"
+                )
             logger.info(
                 "soft skip: R2 credentials incomplete for bucket=%s "
                 "(need r2_account_id, r2_access_key_id, r2_secret_access_key)",
@@ -97,6 +107,21 @@ class Remote:
             )
             return None
         return cls(target=f"fplt:{name}", kind=kind, env=_rclone_env(s))
+
+
+def github_requires_r2() -> bool:
+    """Return True when GHA is on ``main`` and must have R2 credentials.
+
+    Soft-skip is allowed on ``pull_request`` events and non-main refs.
+    Outside GitHub Actions (no ``GITHUB_REF``) this returns False so local
+    and unit-test runs keep soft-skip behaviour.
+
+    Returns:
+        Whether missing R2 credentials must fail rather than soft-skip.
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        return False
+    return os.environ.get("GITHUB_REF") == "refs/heads/main"
 
 
 def r2_credentials_complete(settings: Settings) -> bool:

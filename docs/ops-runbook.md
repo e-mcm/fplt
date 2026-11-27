@@ -46,6 +46,16 @@ Confirm `OPS_LIVE=true` on the repo before expecting GHA to plan. See
 Composite action: `.github/actions/notify-failure`. Dagster path:
 `notify_run_failure` → same runbook section.
 
+### R2 upload failed: credentials missing on main
+
+| | |
+|---|---|
+| **Means** | A job on `main` that writes or reads R2 saw empty `R2_*` / `DATA_BUCKET` and **failed** (no soft skip). Usually the job is missing `environment: r2`, or the `r2` environment secrets were rotated / deleted. Capture still landed on the `snapshots` branch when dual-write ran. |
+| **Urgency** | **Urgent** for `snapshot` / `ops-tick` inside T−6h (bucket is falling behind the branch). Otherwise **high** until the next successful upload / parity. |
+| **Fix** | Confirm the failing job sets `environment: r2`, then check Repo → Settings → Environments → `r2` has `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (and repo variable `DATA_BUCKET`). Re-run: `gh run rerun <run-id> --failed` or `gh workflow run snapshot.yml`. Backfill missed captures from the `snapshots` tip per [`proposals/r2-data-bucket-plan.md`](proposals/r2-data-bucket-plan.md) §2.6. |
+
+Soft skip of missing R2 credentials is allowed **only off `main`** (PR / feature branches). Lint: `scripts/check_workflow_r2_environment.py`.
+
 ### ops-03: Heartbeat missing
 
 | | |
