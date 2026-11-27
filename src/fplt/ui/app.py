@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import streamlit as st
 
-from fplt.ui.pages import overview
+from fplt.ui.pages import overview, this_week
 
 
 def main() -> None:
-    """Configure the page and run the overview navigation."""
+    """Configure the page and run navigation (This week + Overview)."""
     st.set_page_config(page_title="fplt", layout="wide")
     pages = [
-        st.Page(overview.render, title="Overview", default=True),
+        st.Page(
+            this_week.render,
+            title="This week",
+            url_path="this-week",
+            default=True,
+        ),
+        st.Page(overview.render, title="Overview", url_path="overview"),
     ]
     st.navigation(pages).run()
 

@@ -12,6 +12,8 @@ from typing import Any
 
 import polars as pl
 
+# plotly is imported inside the points_pmf renderer so non-UI imports stay light.
+
 Renderer = Callable[[pl.DataFrame], Any]
 
 _REGISTRY: dict[str, Renderer] = {}
@@ -73,3 +75,27 @@ def render_table(frame: pl.DataFrame) -> pl.DataFrame:
         The same frame (identity renderer for AppTest / non-Plotly views).
     """
     return frame
+
+
+@renderer("points_pmf_bar")
+def render_points_pmf_bar(frame: pl.DataFrame) -> Any:
+    """Plotly bar chart of a player–gameweek points PMF.
+
+    Args:
+        frame: Columns ``points_bin``, ``probability``.
+
+    Returns:
+        A Plotly ``Figure``.
+    """
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+
+    return go.Figure(
+        data=[
+            go.Bar(
+                x=frame["points_bin"].to_list(),
+                y=frame["probability"].to_list(),
+                name="P(points)",
+            )
+        ],
+        layout=go.Layout(xaxis_title="Points", yaxis_title="P"),
+    )

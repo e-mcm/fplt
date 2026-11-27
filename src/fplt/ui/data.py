@@ -22,10 +22,12 @@ from fplt.analysis.overview import (
     runs_catalog_frame,
 )
 from fplt.data.quarantine import load_quarantine
-from fplt.schemas.manifests import OfficialPointer, RunManifest
+from fplt.schemas.manifests import AppliedRecord, OfficialPointer, RunManifest
 from fplt.settings import get_settings
 from fplt.store import Store
+from fplt.store.builds import CuratedBuildSource
 from fplt.store.legacy import parse_as_of_dir
+from fplt.store.official import official_checkpoint_dir
 from fplt.store.push import load_run_manifest
 from fplt.store.runs import run_dir
 
@@ -116,6 +118,46 @@ class DashboardStore:
             logger.warning("status.json is not an object: %s", path)
             return None
         return cast(dict[str, Any], raw)
+
+    def applied_line(self, *, season: str, gw: int, checkpoint: str) -> str | None:
+        """Return the applied line name for a checkpoint, if present."""
+        path = (
+            official_checkpoint_dir(
+                self.data_dir, season=season, gw=gw, checkpoint=checkpoint
+            )
+            / "applied.json"
+        )
+        if not path.is_file():
+            return None
+        try:
+            return AppliedRecord.model_validate_json(
+                path.read_text(encoding="utf-8")
+            ).line
+        except ValueError as exc:
+            logger.debug("skip applied %s: %s", path, exc)
+            return None
+
+    def run_manifest(self, run_id: str) -> RunManifest | None:
+        """Load a succeeded run manifest via ``Store``."""
+        return self._store.manifest(run_id)
+
+    def load_table(self, table: str, *, run_id: str) -> pl.DataFrame:
+        """Collect one run table; empty frame when the file is missing."""
+        try:
+            return self._store.load(table, run=run_id).collect()
+        except FileNotFoundError:
+            return pl.DataFrame()
+
+    def curated_tables(self, build_id: str | None) -> dict[str, pl.DataFrame]:
+        """Load UI label tables from a curated build (empty when missing)."""
+        names = ("players", "teams", "fixtures", "gameweeks", "player_status")
+        if not build_id:
+            return {name: pl.DataFrame() for name in names}
+        try:
+            source = CuratedBuildSource.load(self.data_dir, build_id)
+        except FileNotFoundError:
+            return {name: pl.DataFrame() for name in names}
+        return {name: source.table(name).collect() for name in names}
 
     def _latest_plan_frame(self) -> pl.DataFrame:
         for run_id in reversed(_succeeded_run_ids(self.data_dir)):
