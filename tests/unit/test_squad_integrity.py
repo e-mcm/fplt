@@ -172,12 +172,16 @@ def test_plan_squad_h8_raf_lineup_reopt_with_freehit_windows() -> None:
 
     Prevention: long-horizon tests used to set lineup_reopt=False, so the
     production composition (RAF + reopt + chips) was untested.
+
+    Pool / time_limit are kept deliberately small (FDB-387): assertions only
+    need a feasible step-0 locked fifteen under the production flags, not a
+    large candidate universe.
     """
     scenario = sample_synthetic_scenarios(
         1,
         seed=11,
         horizon=8,
-        pool_counts={"GK": 8, "DEF": 18, "MID": 24, "FWD": 10},
+        pool_counts={"GK": 4, "DEF": 10, "MID": 12, "FWD": 6},
     )[0]
     gameweeks = list(range(5, 13))
     windows = ChipUseWindows(
@@ -204,7 +208,7 @@ def test_plan_squad_h8_raf_lineup_reopt_with_freehit_windows() -> None:
         gameweeks=gameweeks,
         chip_windows=windows,
         prune=False,
-        highs_options=HighsSolveOptions(time_limit=15.0, mip_rel_gap=1e-2),
+        highs_options=HighsSolveOptions(time_limit=5.0, mip_rel_gap=1e-2),
         lineup_reopt=True,
         long_horizon_policy=LongHorizonPolicy(
             relax_and_fix=True,
