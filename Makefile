@@ -41,7 +41,7 @@ fetch-overall-rank:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:
-	uv run pytest --cov=fplt --cov-report=term-missing --cov-report=xml
+	uv run pytest -n auto --cov=fplt --cov-branch --cov-report=term-missing --cov-report=xml --durations=25
 
 # Rank slowest pytest cases (CI-shaped by default). Optional: ARGS='--parse-only …'
 pytest-profile:
@@ -53,7 +53,7 @@ check:
 	uv run pyright
 	uv run python scripts/check_workflow_timeouts.py
 	uv run python scripts/check_workflow_r2_environment.py
-	uv run pytest -m "not slow"
+	uv run pytest -n auto -m "not slow"
 
 # ── Monte Carlo micro-bench (native-mc-build-spec §1.1 / §5.5) ─────────────────
 # Synthetic 40-player fixture, n_sims=10000 by default. Best-of-3 wall times.
