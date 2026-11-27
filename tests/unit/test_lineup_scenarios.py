@@ -262,13 +262,17 @@ def test_autosub_then_armband_matches_realised_lineup() -> None:
     blank_sim=st.sampled_from([0, 1]),
     haul_star=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
 )
-@settings(max_examples=25, deadline=None)
+@settings(max_examples=8, deadline=None)
 def test_blank_aware_select_matches_verify_and_beats_bench_perms(
     blank_player: int,
     blank_sim: int,
     haul_star: float,
 ) -> None:
-    """SAA mean matches verify; chosen bench order is locally optimal."""
+    """SAA mean matches verify; chosen bench order is locally optimal.
+
+    Eight examples are enough to cover blank player / sim / haul tie-breaks
+    after #302; 25× was a ~10s CI hotspot (FDB-387) without extra coverage.
+    """
     squad = _squad()
     keys = squad["player_key"].to_list()
     n = len(keys)
