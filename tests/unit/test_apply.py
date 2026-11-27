@@ -410,3 +410,227 @@ def test_plan_parquet_path_matches_write(tmp_path: Path) -> None:
     path = write_plan(tmp_path, frame)
     spec = load_model_specs()[_MODEL]
     assert path == plan_parquet(tmp_path, spec.model_id, _SEASON, _GW, _HORIZON)
+
+
+def test_build_payload_missing_maps_and_prices() -> None:
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    frame = _swap_plan(team, buy_key=9001)
+    owned = [pick.element for pick in team.picks]
+    prices = {key: 50 for key in owned + [9001]}
+
+    with pytest.raises(ApplyError, match="no element_id"):
+        build_apply_payload(
+            frame,
+            team,
+            element_by_key={key: key for key in owned},  # buy_key missing
+            purchase_price_by_key=prices,
+            entry_id=42,
+        )
+
+    with pytest.raises(ApplyError, match="no purchase price"):
+        build_apply_payload(
+            frame,
+            team,
+            element_by_key={key: key for key in owned + [9001]},
+            purchase_price_by_key={key: 50 for key in owned},  # buy missing
+            entry_id=42,
+        )
+
+    # Strip selling_price from the pick being sold.
+    bare = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    picks = list(bare.picks)
+    sold_el = picks[0].element
+    picks[0] = picks[0].model_copy(update={"selling_price": None})
+    bare_team = bare.model_copy(update={"picks": picks})
+    with pytest.raises(ApplyError, match="no selling_price"):
+        build_apply_payload(
+            _swap_plan(bare_team, buy_key=9001),
+            bare_team,
+            element_by_key={key: key for key in [p.element for p in picks] + [9001]},
+            purchase_price_by_key={
+                key: 50 for key in [p.element for p in picks] + [9001]
+            },
+            entry_id=42,
+        )
+    assert sold_el == picks[0].element
+
+
+def test_build_payload_rejects_empty_step_and_bad_xi() -> None:
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    elements = [pick.element for pick in team.picks]
+    empty_step = _plan_rows(
+        elements=elements,
+        bought=[False] * 15,
+        sold=[False] * 15,
+    ).with_columns(pl.lit(1).alias("step"))
+    with pytest.raises(ApplyError, match="no step 0"):
+        build_apply_payload(
+            empty_step,
+            team,
+            element_by_key={key: key for key in elements},
+            purchase_price_by_key={key: 50 for key in elements},
+            entry_id=42,
+        )
+
+    # 14 kept (one sold without a buy) is already unequal; force kept!=15 via
+    # an extra sold+buy that still leaves wrong XI counts.
+    bad_xi = _plan_rows(
+        elements=elements,
+        bought=[False] * 15,
+        sold=[False] * 15,
+        in_xi=[True] * 10 + [False] * 5,  # 10 XI + 5 bench
+    )
+    with pytest.raises(ApplyError, match="11 XI"):
+        build_apply_payload(
+            bad_xi,
+            team,
+            element_by_key={key: key for key in elements},
+            purchase_price_by_key={key: 50 for key in elements},
+            entry_id=42,
+        )
+
+
+def test_build_payload_missing_kept_element_raises() -> None:
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    elements = [pick.element for pick in team.picks]
+    frame = _plan_rows(
+        elements=elements,
+        bought=[False] * 15,
+        sold=[False] * 15,
+    )
+    # Drop one kept player's element mapping.
+    element_by_key = {key: key for key in elements[1:]}
+    with pytest.raises(ApplyError, match="no element_id"):
+        build_apply_payload(
+            frame,
+            team,
+            element_by_key=element_by_key,
+            purchase_price_by_key={key: 50 for key in elements},
+            entry_id=42,
+        )
+
+
+def test_apply_plan_guardrails(tmp_path: Path) -> None:
+    with pytest.raises(ApplyError, match="at most one"):
+        apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            transfers_only=True,
+            lineup_only=True,
+            settings=Settings(entry_id=42, fpl_api_token="t"),
+        )
+    with pytest.raises(ApplyError, match="FPLT_ENTRY_ID"):
+        apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            settings=Settings(entry_id=None),
+        )
+    with pytest.raises(FileNotFoundError):
+        apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            horizon=_HORIZON,
+            settings=Settings(entry_id=42, fpl_api_token="t"),
+            team=CurrentTeam.from_my_team(42, _load("my_team.json")),
+        )
+
+
+def test_apply_plan_lineup_only_and_no_transfers(tmp_path: Path) -> None:
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    owned = [pick.element for pick in team.picks]
+    _view(tmp_path, element_ids=owned)
+    write_plan(
+        tmp_path,
+        _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
+    )
+    posts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url=_API)
+    api = FPLClient(http, api_token="eyJtest", base_url=_API)
+    settings = Settings(entry_id=42, fpl_api_token="eyJtest")
+    try:
+        no_xfer = apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            horizon=_HORIZON,
+            confirm=True,
+            settings=settings,
+            client=api,
+            team=team,
+        )
+        assert no_xfer.posted_transfers is False
+        assert no_xfer.posted_lineup is True
+
+        posts.clear()
+        lineup = apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            horizon=_HORIZON,
+            confirm=True,
+            lineup_only=True,
+            settings=settings,
+            client=api,
+            team=team,
+        )
+    finally:
+        api.close()
+        http.close()
+
+    assert lineup.posted_transfers is False
+    assert lineup.posted_lineup is True
+    assert len(posts) == 1
+    assert "/my-team/42/" in posts[0]
+
+    preview = format_apply_preview(no_xfer)
+    assert "(no transfers)" in preview
+    assert "mode=confirmed" in preview
+
+
+def test_apply_plan_dry_run_fetches_team(tmp_path: Path) -> None:
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    owned = [pick.element for pick in team.picks]
+    _view(tmp_path, element_ids=owned)
+    write_plan(
+        tmp_path,
+        _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
+    )
+    my_team = _load("my_team.json")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/my-team/42/"):
+            return httpx.Response(200, json=my_team)
+        raise AssertionError(request.url.path)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), base_url=_API)
+    api = FPLClient(http, api_token="eyJtest", base_url=_API)
+    try:
+        result = apply_plan(
+            tmp_path,
+            _MODEL,
+            _SEASON,
+            _GW,
+            horizon=_HORIZON,
+            confirm=False,
+            settings=Settings(entry_id=42, fpl_api_token="eyJtest"),
+            client=api,
+            team=None,
+        )
+    finally:
+        api.close()
+        http.close()
+    assert result.mode == "dry_run"
+    assert result.posted_transfers is False

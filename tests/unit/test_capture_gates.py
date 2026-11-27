@@ -281,3 +281,158 @@ def test_cli_gates_requires_flag(
     err = capsys.readouterr().err
     assert "--since" in err
     get_settings.cache_clear()
+
+
+def test_format_gates_status_empty_and_outside_window(tmp_path: Path) -> None:
+    empty = format_gates_status(tmp_path, since=_GOOD_AT)
+    assert "0 row(s); none on disk" in empty
+
+    append_quarantine(
+        tmp_path,
+        pl.DataFrame(
+            {
+                "season": ["2024-25"],
+                "source": ["fpl_api"],
+                "capture_path": ["fpl_api/season=2024-25/captured_at=old"],
+                "captured_at": [_GOOD_AT],
+                "gate": [GATE_NULL_SHARE],
+                "detail": ["stale"],
+                "previous_capture_path": [None],
+                "available_at": [_GOOD_AT],
+                "schema_version": [SCHEMA_VERSION],
+            }
+        ),
+    )
+    later = format_gates_status(tmp_path, since=_BAD_AT)
+    assert "0 row(s)" in later
+    assert "(no rows in window)" in later
+
+
+def test_evaluate_capture_defaults_available_at_and_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("fplt.data.capture_gates.load_data_gates_config", _pass_config)
+    raw = tmp_path / "raw"
+    _write_capture(raw, _GOOD_AT, _bootstrap())
+    snap = iter_snapshots(raw)[0]
+    action = evaluate_capture(tmp_path, raw, snap)
+    assert action.report.passed
+    assert action.new_failure_types == ()
+    assert load_quarantine(tmp_path).is_empty()
+
+
+def test_check_new_captures_latest_per_season_and_sync_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("fplt.data.capture_gates.load_data_gates_config", _pass_config)
+    data_dir = tmp_path / "data"
+    raw = data_dir / "raw"
+    _write_capture(raw, _GOOD_AT, _bootstrap())
+    _write_capture(raw, _BAD_AT, _bootstrap())
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fplt.data.capture_gates.pull_quarantine",
+        lambda *a, **k: calls.append("pull") or False,
+    )
+    monkeypatch.setattr(
+        "fplt.data.capture_gates.push_quarantine",
+        lambda *a, **k: calls.append("push") or False,
+    )
+    monkeypatch.setattr(
+        "fplt.data.capture_gates._pull_fpl_api_history",
+        lambda *a, **k: calls.append("history"),
+    )
+    settings = Settings(data_dir=data_dir, data_bucket=None, ntfy_url=None)
+    result = check_new_captures(
+        data_dir,
+        settings=settings,
+        notify_alerts=False,
+        sync_remote=True,
+        available_at=_BAD_AT,
+    )
+    assert "pull" in calls and "push" in calls and "history" in calls
+    # Latest capture per season only (two stamps → one action).
+    assert len(result.actions) == 1
+    assert result.actions[0].report.passed
+
+
+def test_check_new_captures_skips_already_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("fplt.data.capture_gates.load_data_gates_config", _pass_config)
+    data_dir = tmp_path / "data"
+    raw = data_dir / "raw"
+    first = _write_capture(raw, _GOOD_AT, _bootstrap())
+    _write_capture(raw, _BAD_AT, _bootstrap())
+    append_quarantine(
+        data_dir,
+        pl.DataFrame(
+            {
+                "season": ["2024-25"],
+                "source": ["fpl_api"],
+                "capture_path": [capture_relpath(raw, first)],
+                "captured_at": [_GOOD_AT],
+                "gate": [GATE_NULL_SHARE],
+                "detail": ["x"],
+                "previous_capture_path": [None],
+                "available_at": [_GOOD_AT],
+                "schema_version": [SCHEMA_VERSION],
+            }
+        ),
+    )
+    # Quarantined older snap skipped; still gates the newer one.
+    result = check_new_captures(
+        data_dir,
+        settings=Settings(data_dir=data_dir, data_bucket=None),
+        sync_remote=False,
+        available_at=_BAD_AT,
+    )
+    assert len(result.actions) == 1
+    assert _BAD_AT.strftime("%Y-%m-%dT%H-%M-%SZ") in result.actions[0].capture_path
+
+
+def test_pull_fpl_api_history_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fplt.data import capture_gates as mod
+    from fplt.data.remote import RemoteError
+
+    raw = tmp_path / "raw"
+    settings = Settings(data_dir=tmp_path, data_bucket=None)
+
+    monkeypatch.setattr(mod.Remote, "from_settings", classmethod(lambda cls, s: None))
+    mod._pull_fpl_api_history(raw, settings)
+    assert not (raw / "fpl_api").exists()
+
+    remote = object()
+    monkeypatch.setattr(
+        mod.Remote, "from_settings", classmethod(lambda cls, s: remote)
+    )
+    pulls: list[tuple[object, str, Path]] = []
+
+    def fake_pull(rem: object, prefix: str, dest: Path) -> None:
+        pulls.append((rem, prefix, dest))
+
+    monkeypatch.setattr(mod, "pull", fake_pull)
+    mod._pull_fpl_api_history(raw, settings)
+    assert pulls == [(remote, "raw/fpl_api", raw / "fpl_api")]
+    assert (raw / "fpl_api").is_dir()
+
+    def missing_pull(rem: object, prefix: str, dest: Path) -> None:
+        raise RemoteError("Directory not found")
+
+    monkeypatch.setattr(mod, "pull", missing_pull)
+    mod._pull_fpl_api_history(raw, settings)  # soft-skip
+
+    def other_pull(rem: object, prefix: str, dest: Path) -> None:
+        raise RemoteError("auth failed")
+
+    monkeypatch.setattr(mod, "pull", other_pull)
+    with pytest.raises(RemoteError, match="auth failed"):
+        mod._pull_fpl_api_history(raw, settings)
+
+
+def test_parse_since_minutes_and_aware() -> None:
+    now = datetime(2024, 8, 20, 12, 0, 0, tzinfo=UTC)
+    assert parse_since("30m", now=now) == now - timedelta(minutes=30)
+    aware = datetime(2024, 8, 1, 12, 0, 0, tzinfo=UTC)
+    assert parse_since(aware.isoformat(), now=now) == aware
