@@ -23,7 +23,11 @@ import os
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from fplt.data.remote import Remote
+    from fplt.settings import Settings
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -184,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         notify_regression_alerts,
         write_bench_results,
     )
-    from fplt.settings import Settings, get_settings
+    from fplt.settings import get_settings
     from fplt.utils.logging import configure_logging
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -338,18 +342,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _lab_remote(settings: object) -> object | None:
+def _lab_remote(settings: Settings) -> Remote | None:
+    """Build a lab-bucket Remote, or None when FPLT_LAB_BUCKET is unset."""
     from fplt.data.remote import Remote
-    from fplt.settings import Settings as SettingsCls
 
-    assert isinstance(settings, SettingsCls)
     if not settings.lab_bucket:
         logger.warning("soft skip: FPLT_LAB_BUCKET unset")
         return None
     return Remote.from_settings(settings, bucket=settings.lab_bucket)
 
 
-def _pull_bench_history(lab_dir: Path, settings: object) -> None:
+def _pull_bench_history(lab_dir: Path, settings: Settings) -> None:
+    """Pull existing ``bench/`` history from the lab bucket into ``lab_dir``."""
     from fplt.data.remote import RemoteError, pull
 
     remote = _lab_remote(settings)
@@ -358,12 +362,13 @@ def _pull_bench_history(lab_dir: Path, settings: object) -> None:
     dest = lab_dir / "bench"
     dest.mkdir(parents=True, exist_ok=True)
     try:
-        pull(remote, "bench", dest)  # type: ignore[arg-type]
+        pull(remote, "bench", dest)
     except (RemoteError, OSError, ValueError) as exc:
         logger.warning("soft skip: pull bench/ failed: %s", exc)
 
 
-def _push_bench_day(lab_dir: Path, day: str, settings: object) -> None:
+def _push_bench_day(lab_dir: Path, day: str, settings: Settings) -> None:
+    """Push today's ``bench/date=<UTC>/`` partition to the lab bucket."""
     from fplt.automation.bench import bench_date_dir
     from fplt.data.remote import RemoteError, push
 
@@ -375,7 +380,7 @@ def _push_bench_day(lab_dir: Path, day: str, settings: object) -> None:
         logger.warning("nothing to push under %s", src)
         return
     try:
-        push(remote, src, f"bench/date={day}")  # type: ignore[arg-type]
+        push(remote, src, f"bench/date={day}")
     except (RemoteError, OSError, ValueError) as exc:
         logger.exception("push bench/date=%s failed: %s", day, exc)
         raise
