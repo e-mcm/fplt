@@ -9,7 +9,6 @@ from fplt.backtest.walk_forward import walk_forward
 from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.models.simulation_native import native_kernel_available
 from fplt.models.spec import get_model, load_model_specs, registered_kinds
 from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
@@ -17,17 +16,17 @@ from tests.builders import build_league
 
 
 def test_both_baselines_appear_for_one_season(tmp_path: Path) -> None:
+    """Both baseline ModelSpecs land on the board for one season.
+
+    Walk-forward only the two baselines (``ep_next_v1``, ``rolling_mean_v1``).
+    Every registered kind still predicts via the contract suite; this case is
+    about leaderboard / side-by-side shape once those baselines are in the
+    ledger, not about fitting the full model universe.
+    """
     store = build_league(DataStore(tmp_path))
-    native_ok = native_kernel_available()
-    specs = {
-        name: spec
-        for name, spec in load_model_specs().items()
-        if spec.kind in registered_kinds()
-        and (
-            str(spec.params.get("mc_backend", "python")).strip().lower() != "native"
-            or native_ok
-        )
-    }
+    all_specs = load_model_specs()
+    specs = {name: all_specs[name] for name in ("ep_next_v1", "rolling_mean_v1")}
+    assert {spec.kind for spec in specs.values()} <= set(registered_kinds())
     as_ofs = [(GWKey("2024-25", 1), store.deadline(GWKey("2024-25", 1)))]
     for spec in specs.values():
         model = get_model(spec.kind)(spec)
