@@ -15,6 +15,7 @@ from fplt.store.runs import RunWriter
 from fplt.utils.logging import (
     CONTEXT_FIELDS,
     RUN_LOG_RELATIVE,
+    ContextFilter,
     JsonFormatter,
     SecretRedactionFilter,
     attach_run_log,
@@ -70,6 +71,24 @@ def _writer(tmp_path: Path, **overrides: object) -> RunWriter:
     }
     kwargs.update(overrides)
     return RunWriter(tmp_path, **kwargs)  # type: ignore[arg-type]
+
+
+def test_log_context_none_default_reads_as_empty() -> None:
+    """ContextVar default is None (B039); readers treat that as {}."""
+    reset_logging_for_tests()
+    assert get_log_context() == {}
+    filter_ = ContextFilter()
+    record = logging.LogRecord(
+        name="t",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="hi",
+        args=(),
+        exc_info=None,
+    )
+    assert filter_.filter(record) is True
+    assert record.run_id == ""  # type: ignore[attr-defined]
 
 
 def test_format_iso_utc_has_date_and_z() -> None:
