@@ -14,8 +14,10 @@ from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.baselines import RollingMeanPredictor
 from fplt.models.spec import ModelSpec
+from fplt.schemas.timing import TimingRecord
 from fplt.types import GWKey
 from fplt.utils.timing import (
+    TimingExistsError,
     TimingSession,
     active_timing_dir,
     binds_timing_artifacts,
@@ -26,7 +28,10 @@ from fplt.utils.timing import (
     format_kind_summary,
     format_run_summary,
     load_timing_records,
+    ops_phase_total,
+    ops_timing_path,
     rank_hotspots,
+    run_timing_path,
     timed_phase,
     timing_artifacts,
     timing_root,
@@ -218,6 +223,111 @@ def test_load_timing_records_filters_kind(tmp_path: Path) -> None:
     summary = format_kind_summary("plan", session, meta={"model": "x", "horizon": 3})
     assert "timing kind=plan" in summary
     assert "optimise/milp=" in summary
+
+
+def test_timing_record_model_and_ops_total() -> None:
+    session = TimingSession()
+    session.add("setup", 1.0)
+    session.add("fit/demo_spec", 10.0)
+    session.add("fit/score", 4.0)
+    session.add("predict/demo_spec", 20.0)
+    session.add("predict/fixtures", 18.0)
+    session.add("remote/push", 2.0)
+    record = build_timing_record(
+        "ops_tick",
+        session,
+        meta={"predict_run_ids": ["r_a"], "plan_run_ids": ["r_b"]},
+    )
+    assert record["schema_version"] == 1
+    assert record["kind"] == "ops_tick"
+    assert record["total_s"] == ops_phase_total(session.phases())
+    assert record["total_s"] == 33.0
+    assert "fit/score" in record["phases"]
+    parsed = TimingRecord.model_validate(record)
+    assert parsed.meta["predict_run_ids"] == ["r_a"]
+    assert parsed.total_s == 33.0
+
+
+def test_write_run_and_ops_timing_write_once(tmp_path: Path) -> None:
+    session = TimingSession()
+    session.add("plan/setup", 1.5)
+    session.add("optimise/milp", 8.0)
+    run_dir = tmp_path / "runs" / "run=r_demo"
+    run_path = run_timing_path(run_dir)
+    written = write_timing_record("plan", session, meta={"model": "x"}, path=run_path)
+    assert written == run_path
+    assert run_path.is_file()
+    loaded = json.loads(run_path.read_text(encoding="utf-8"))
+    assert loaded["kind"] == "plan"
+    assert loaded["total_s"] == 9.5
+    with pytest.raises(TimingExistsError):
+        write_timing_record("plan", session, path=run_path)
+
+    ops_session = TimingSession()
+    ops_session.add("ingest", 3.0)
+    ops_session.add("curate", 1.0)
+    checkpoint = tmp_path / "official" / "season=2025-26" / "gw=12" / "checkpoint=T-90m"
+    ops_path = ops_timing_path(checkpoint)
+    ops_written = write_timing_record(
+        "ops_tick",
+        ops_session,
+        meta={"checkpoint": "T-90m"},
+        path=ops_path,
+    )
+    assert ops_written == ops_path
+    with pytest.raises(TimingExistsError):
+        write_timing_record("ops_tick", ops_session, path=ops_path)
+
+
+def test_perf_report_aggregates_legacy_and_ops_locations(tmp_path: Path) -> None:
+    walk = TimingSession()
+    walk.add("predict/fixtures", 50.0)
+    walk.add("fit", 5.0)
+    write_timing_record(
+        "walk_forward", walk, meta={"model": "legacy"}, data_dir=tmp_path
+    )
+
+    run_session = TimingSession()
+    run_session.add("predict/fixtures", 10.0)
+    write_timing_record(
+        "plan",
+        run_session,
+        path=run_timing_path(tmp_path / "runs" / "run=r1"),
+    )
+
+    ops = TimingSession()
+    ops.add("remote/pull", 2.0)
+    ops.add("fit/score", 1.0)
+    write_timing_record(
+        "ops_tick",
+        ops,
+        path=ops_timing_path(
+            tmp_path / "official" / "season=2025-26" / "gw=1" / "checkpoint=T-90m"
+        ),
+    )
+
+    records = load_timing_records(tmp_path)
+    assert len(records) == 3
+    kinds = {record["kind"] for record in records}
+    assert kinds == {"walk_forward", "plan", "ops_tick"}
+    ranked = rank_hotspots(records)
+    assert ranked[0].phase == "predict/fixtures"
+    assert ranked[0].seconds == 60.0
+    report = format_hotspot_report(records)
+    assert "predict/fixtures=" in report
+    assert "kind=ops_tick" in report or "kind=walk_forward" in report
+
+
+def test_write_timing_record_rejects_path_and_data_dir(tmp_path: Path) -> None:
+    session = TimingSession()
+    session.add("fit", 1.0)
+    with pytest.raises(ValueError, match="path or data_dir"):
+        write_timing_record(
+            "walk_forward",
+            session,
+            data_dir=tmp_path,
+            path=tmp_path / "x.json",
+        )
 
 
 class _SlowMean(RollingMeanPredictor):
