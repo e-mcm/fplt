@@ -488,53 +488,62 @@ def resolve_or_create_arm_run(
     hit the catalog. Prediction tables may be empty until a later producer
     dual-writes the ledger into the run.
     """
-    existing = find_reusable_arm(data_dir, key)
-    if existing is not None:
-        return existing, True
+    from fplt.utils.logging import log_context
 
-    from fplt.models.predictions import empty_predictions
-    from fplt.store.runs import RunWriter
+    with log_context(experiment_id=experiment_id, spec=spec_label):
+        existing = find_reusable_arm(data_dir, key)
+        if existing is not None:
+            logger.info(
+                "experiment arm reused run_id=%s experiment_id=%s arm=%s",
+                existing,
+                experiment_id,
+                arm,
+            )
+            return existing, True
 
-    as_of = [
-        AsOfDeadline(
-            season=season,
-            gw=gw,
-            deadline_utc=datetime.fromisoformat(stamp.replace("Z", "+00:00")),
-        )
-        for season, gw, stamp in key.deadlines
-    ]
-    if not as_of:
-        raise ValueError("arm reuse key requires at least one deadline")
-    run_id = mint_run_id()
-    with RunWriter(
-        data_dir,
-        kind=kind,  # type: ignore[arg-type]
-        mode=mode,  # type: ignore[arg-type]
-        run_type=run_type,  # type: ignore[arg-type]
-        spec_hash=key.spec_hash,
-        spec_label=spec_label,
-        model_id=model_id,
-        as_of=as_of,
-        horizon=key.horizon,
-        purpose=purpose,
-        seeds=dict(key.seeds),
-        run_id=run_id,
-        code_sha=key.code_sha,
-        code_dirty=False,
-        lockfile_hash=key.lockfile_hash,
-        build_id=key.build_id,
-        auto_build_id=False,
-        host=host,
-        experiment_id=experiment_id,
-        arm=arm,
-        raw_manifest_hash="0" * 64,
-        staged_digests={},
-    ) as writer:
-        writer.write_parquet(
-            "predictions/player_fixture.parquet",
-            empty_predictions(),
-        )
-    return writer.run_id, False
+        from fplt.models.predictions import empty_predictions
+        from fplt.store.runs import RunWriter
+
+        as_of = [
+            AsOfDeadline(
+                season=season,
+                gw=gw,
+                deadline_utc=datetime.fromisoformat(stamp.replace("Z", "+00:00")),
+            )
+            for season, gw, stamp in key.deadlines
+        ]
+        if not as_of:
+            raise ValueError("arm reuse key requires at least one deadline")
+        run_id = mint_run_id()
+        with RunWriter(
+            data_dir,
+            kind=kind,  # type: ignore[arg-type]
+            mode=mode,  # type: ignore[arg-type]
+            run_type=run_type,  # type: ignore[arg-type]
+            spec_hash=key.spec_hash,
+            spec_label=spec_label,
+            model_id=model_id,
+            as_of=as_of,
+            horizon=key.horizon,
+            purpose=purpose,
+            seeds=dict(key.seeds),
+            run_id=run_id,
+            code_sha=key.code_sha,
+            code_dirty=False,
+            lockfile_hash=key.lockfile_hash,
+            build_id=key.build_id,
+            auto_build_id=False,
+            host=host,
+            experiment_id=experiment_id,
+            arm=arm,
+            raw_manifest_hash="0" * 64,
+            staged_digests={},
+        ) as writer:
+            writer.write_parquet(
+                "predictions/player_fixture.parquet",
+                empty_predictions(),
+            )
+        return writer.run_id, False
 
 
 def frozen_gates(manifest: ExperimentManifest) -> dict[str, Any]:

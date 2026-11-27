@@ -86,6 +86,7 @@ runs/run=<run_id>/
   plans/decisions.parquet                 # XI, captain, transfers, chips for step 0
   metrics/*.parquet                       # for backtests: per-row and summary scores
   logs/timing.json
+  logs/run.log.jsonl                      # INFO+ JSON lines while RunWriter is open (#310)
   _SUCCESS                                # written last; a run without it is incomplete
 ```
 
@@ -158,6 +159,7 @@ Each table has its own pandera schema, added before its producer (AGENTS.md §2)
 ```
 specs/sha=<spec_hash>.json                                   # resolved spec, content-addressed, forever (§3.7)
 official/season=<s>/gw=<gw>/checkpoint=<cp>/line=<line>.json  # {"predict_run_id", "plan_run_id", "role", "squad_mode", "written_at"}
+official/season=<s>/gw=<gw>/checkpoint=<cp>/ops_log.jsonl     # write-once INFO+ JSON lines for that checkpoint (#310)
 official/season=<s>/gw=<gw>/checkpoint=<cp>/applied.json      # {"line": …, "plan_run_id": …, "submitted_at": …}
 experiments/exp=<experiment_id>/manifest.json   # EvalSpec name + hash, arms → run_ids, windows, CRN seeds, data build ids
 experiments/exp=<experiment_id>/results/…       # paired comparison, DM/bootstrap outputs, verdict computed by code

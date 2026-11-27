@@ -144,6 +144,15 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="WARNING+ only",
     )
+    log_flags.add_argument(
+        "--log-format",
+        choices=("text", "json"),
+        default=None,
+        help=(
+            "Log line format (default: text, or FPLT_LOG_FORMAT). "
+            "Workflows set FPLT_LOG_FORMAT=json."
+        ),
+    )
     parser = argparse.ArgumentParser(prog="fplt", parents=[log_flags])
     sub = parser.add_subparsers(dest="command")
     backtest = sub.add_parser(
@@ -1912,7 +1921,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command is None:
         return
-    configure_logging(verbose=bool(args.verbose), quiet=bool(args.quiet))
+    configure_logging(
+        verbose=bool(args.verbose),
+        quiet=bool(args.quiet),
+        log_format=getattr(args, "log_format", None),
+    )
     if args.command == "auth":
         logger.info("fplt auth")
         _auth(args)
@@ -2330,7 +2343,7 @@ def _sql(args: argparse.Namespace) -> None:
         return
     con = open_sql(data_dir, rebuild_catalog=rebuild)
     try:
-        sql_repl(con)
+        sql_repl(con, write_line=print)
     finally:
         con.close()
 

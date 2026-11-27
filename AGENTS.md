@@ -97,7 +97,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Public methods should also have docstrings where their behaviour isn't obvious from the name and the class docstring.
 - Use `pydantic` for configs, `dataclasses`/`attrs` for internal value objects, `Protocol` for contracts.
 - Paths come from `fplt.settings`; never hardcode `./data` or absolute paths.
-- Log with `logging` (Dagster captures it); no `print` in library code.
+- Log with `logging` (Dagster captures it); no `print` in library code (CLI and `fplt.ui` only). Timestamps are ISO-8601 UTC via `fplt.utils.logging.configure_logging`. Levels: **DEBUG** = diagnostic detail (HTTP paths, per-GW steps); **INFO** = operator progress; **WARNING** = recoverable problems; **ERROR** = failures that need attention. Bind run/ops identity with `log_context` / `RunWriter` (`run_id`, `experiment_id`, `checkpoint`, `line`, `spec`, `season`, `gw`). Use `--log-format json` or `FPLT_LOG_FORMAT=json` in workflows; humans keep text. Run tees INFO+ to `runs/run=<id>/logs/run.log.jsonl`; ops checkpoints write write-once `official/…/ops_log.jsonl` (redaction applies before write).
 ## 6. Domain notes that trip people up
  
 - FPL element and team `id`s change between seasons. Use `player_key` (element `code`) and `team_key` (team `code`) across seasons.

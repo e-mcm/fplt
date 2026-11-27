@@ -109,7 +109,7 @@ def test_sql_opens_repl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     called: list[object] = []
     monkeypatch.setattr(
         "fplt.store.sql.sql_repl",
-        lambda c: called.append(c),
+        lambda c, write_line=None: called.append(c),
     )
     _sql(
         SimpleNamespace(

@@ -300,6 +300,8 @@ class RunWriter:
         self._manifest: RunManifest | None = None
         self._finalized = False
         self._entered = False
+        self._log_context_token: object | None = None
+        self._run_log_handler: object | None = None
 
     @property
     def path(self) -> Path:
@@ -321,6 +323,7 @@ class RunWriter:
         self._manifest = self._build_manifest(status="running", finished_at=None)
         self._write_manifest(self._manifest)
         self._entered = True
+        self._bind_log_context()
         logger.info(
             "run started run_id=%s kind=%s run_type=%s path=%s",
             self.run_id,
@@ -338,13 +341,16 @@ class RunWriter:
     ) -> None:
         """Finalize as succeeded or failed; never suppress the exception."""
         del tb
-        if not self._entered or self._finalized:
+        try:
+            if not self._entered or self._finalized:
+                return None
+            if exc_type is not None:
+                self._finalize("failed")
+            else:
+                self._finalize("succeeded")
             return None
-        if exc_type is not None:
-            self._finalize("failed")
-        else:
-            self._finalize("succeeded")
-        return None
+        finally:
+            self._unbind_log_context()
 
     def write_parquet(self, relative: str, frame: pl.DataFrame) -> Path:
         """Write ``frame`` once under the run directory.
@@ -444,6 +450,38 @@ class RunWriter:
             status,
         )
         return self._manifest
+
+    def _bind_log_context(self) -> None:
+        """Set contextvars identity and tee INFO+ into ``logs/run.log.jsonl``."""
+        from fplt.utils.logging import RUN_LOG_RELATIVE, attach_run_log, set_log_context
+
+        season: str | None = None
+        gw: int | None = None
+        if self._as_of:
+            season = self._as_of[0].season
+            gw = self._as_of[0].gw
+        self._log_context_token = set_log_context(
+            run_id=self.run_id,
+            experiment_id=self._experiment_id,
+            checkpoint=self._checkpoint,
+            line=self._line,
+            spec=self._spec_label,
+            season=season,
+            gw=gw,
+        )
+        self._run_log_handler = attach_run_log(self.path / RUN_LOG_RELATIVE)
+
+    def _unbind_log_context(self) -> None:
+        """Detach the run log tee and restore the prior log context."""
+        from fplt.utils.logging import detach_run_log, reset_log_context
+
+        handler = self._run_log_handler
+        self._run_log_handler = None
+        detach_run_log(handler)  # type: ignore[arg-type]
+        token = self._log_context_token
+        self._log_context_token = None
+        if token is not None:
+            reset_log_context(token)  # type: ignore[arg-type]
 
     def _build_manifest(
         self,

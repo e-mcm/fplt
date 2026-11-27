@@ -31,6 +31,19 @@ def test_configure_logging_defaults_to_info() -> None:
     )
 
 
+def test_configure_logging_json_switches_formatter(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_logging(secrets=(), log_format="json")
+    logging.getLogger("fplt.test.json").info("json-line")
+    err = capsys.readouterr().err.strip().splitlines()[-1]
+    import json
+
+    payload = json.loads(err)
+    assert payload["message"] == "json-line"
+    assert payload["ts"].endswith("Z")
+
+
 def test_verbose_enables_debug() -> None:
     configure_logging(verbose=True, secrets=())
     assert logging.getLogger().level == logging.DEBUG
