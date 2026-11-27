@@ -53,7 +53,13 @@ from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
 from fplt.settings import Settings, get_settings
+from fplt.store.official import official_checkpoint_dir
 from fplt.types import GWKey
+from fplt.utils.logging import (
+    capture_ops_log,
+    log_context,
+    write_ops_log_once,
+)
 from fplt.utils.timing import timing_session
 
 logger = logging.getLogger(__name__)
@@ -394,39 +400,64 @@ def _run_checkpoint(
         ``(planned, notified, official)`` where ``official`` is set only for
         the T−90m official slate.
     """
-    planned = False
-    official: OfficialCheckpointResult | None = None
-    if checkpoint.id == "T-90m":
-        logger.info("ops_tick: official slate at %s for %s", checkpoint.id, key)
-        official = run_official_checkpoint(root, ops, key, settings=settings)
-        planned = True
-    elif checkpoint.plan or checkpoint.refresh:
-        planned = plan_deadline(
-            root,
+    with (
+        log_context(
+            checkpoint=checkpoint.id,
+            season=key.season,
+            gw=key.gw,
+        ),
+        capture_ops_log() as ops_log,
+    ):
+        planned = False
+        official: OfficialCheckpointResult | None = None
+        if checkpoint.id == "T-90m":
+            logger.info("ops_tick: official slate at %s for %s", checkpoint.id, key)
+            official = run_official_checkpoint(root, ops, key, settings=settings)
+            planned = True
+        elif checkpoint.plan or checkpoint.refresh:
+            planned = plan_deadline(
+                root,
+                key,
+                now,
+                models,
+                horizon,
+                refresh_if_stale=checkpoint.refresh,
+            )
+        notified = False
+        if notify and checkpoint.notify:
+            text = reports(root) or f"No plan yet for {key.season} gw{key.gw}."
+            if auth is not None:
+                text = with_manual_apply_banner(text, auth)
+            notify_recommendation(
+                settings,
+                f"fplt plan {checkpoint.id} {key.season} gw{key.gw}",
+                text,
+            )
+            notified = True
+        logger.info(
+            "ops_tick: checkpoint %s key=%s planned=%s notified=%s",
+            checkpoint.id,
             key,
-            now,
-            models,
-            horizon,
-            refresh_if_stale=checkpoint.refresh,
+            planned,
+            notified,
         )
-    notified = False
-    if notify and checkpoint.notify:
-        text = reports(root) or f"No plan yet for {key.season} gw{key.gw}."
-        if auth is not None:
-            text = with_manual_apply_banner(text, auth)
-        notify_recommendation(
-            settings,
-            f"fplt plan {checkpoint.id} {key.season} gw{key.gw}",
-            text,
+        checkpoint_dir = (
+            official.checkpoint_dir
+            if official is not None
+            else official_checkpoint_dir(
+                root,
+                season=key.season,
+                gw=key.gw,
+                checkpoint=checkpoint.id,
+            )
         )
-        notified = True
-    logger.info(
-        "ops_tick: checkpoint %s key=%s planned=%s notified=%s",
-        checkpoint.id,
-        key,
-        planned,
-        notified,
-    )
+        try:
+            write_ops_log_once(checkpoint_dir, ops_log.lines)
+        except FileExistsError:
+            logger.info(
+                "ops_tick: ops_log already present at %s (write-once)",
+                checkpoint_dir,
+            )
     return planned, notified, official
 
 

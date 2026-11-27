@@ -111,6 +111,7 @@ jobs:
           FPLT_NTFY_URL: ${{ secrets.FPLT_NTFY_URL }}
           FPLT_PRODUCTION_MODELS: ${{ vars.FPLT_PRODUCTION_MODELS }}
           FPLT_PLAN_HORIZON: ${{ vars.FPLT_PLAN_HORIZON }}
+          FPLT_LOG_FORMAT: json
           JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
         run: |
           set -euo pipefail

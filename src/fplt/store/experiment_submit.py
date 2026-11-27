@@ -37,6 +37,7 @@ from fplt.store.experiments import (
     write_batch_manifest,
 )
 from fplt.store.runs import detect_host
+from fplt.utils.logging import log_context
 
 if TYPE_CHECKING:
     from fplt.backtest.promote_eval import EvalSpec
@@ -216,53 +217,59 @@ def submit_batch(
         )
         exp_id = manifest.experiment_id
         experiment_ids.append(exp_id)
-        for plan in arms_plan:
-            arm_seeds = {"base": int(plan.spec.seed)}
-            key = arm_reuse_key(
-                spec_hash=plan.digest,
-                code_sha=code,
-                lockfile_hash=lock,
-                build_id=pinned_build,
-                deadlines=deadlines,
-                horizon=horizon,
-                seeds=arm_seeds,
-            )
-            append_experiment_event(
-                data_dir,
-                exp_id,
-                ExperimentEvent(event="arm_started", at=when, arm=plan.name),
-            )
-            run_id, was_reused = resolve_or_create_arm_run(
-                data_dir,
-                key=key,
-                spec_label=plan.spec.name,
-                model_id=plan.spec.model_id,
-                experiment_id=exp_id,
-                arm=plan.name,
-                purpose=f"batch {batch_label} {spec.name} {plan.name}",
-                host=host_label,
-            )
-            bind_arm_run(
-                data_dir,
-                exp_id,
-                arm=plan.name,
-                run_id=run_id,
-                reused=was_reused,
-                at=when,
-            )
-            binds.append(
-                ArmBind(
+        first = deadlines[0] if deadlines else None
+        with log_context(
+            experiment_id=exp_id,
+            season=None if first is None else first.season,
+            gw=None if first is None else first.gw,
+        ):
+            for plan in arms_plan:
+                arm_seeds = {"base": int(plan.spec.seed)}
+                key = arm_reuse_key(
+                    spec_hash=plan.digest,
+                    code_sha=code,
+                    lockfile_hash=lock,
+                    build_id=pinned_build,
+                    deadlines=deadlines,
+                    horizon=horizon,
+                    seeds=arm_seeds,
+                )
+                append_experiment_event(
+                    data_dir,
+                    exp_id,
+                    ExperimentEvent(event="arm_started", at=when, arm=plan.name),
+                )
+                run_id, was_reused = resolve_or_create_arm_run(
+                    data_dir,
+                    key=key,
+                    spec_label=plan.spec.name,
+                    model_id=plan.spec.model_id,
                     experiment_id=exp_id,
+                    arm=plan.name,
+                    purpose=f"batch {batch_label} {spec.name} {plan.name}",
+                    host=host_label,
+                )
+                bind_arm_run(
+                    data_dir,
+                    exp_id,
                     arm=plan.name,
                     run_id=run_id,
                     reused=was_reused,
-                    spec_label=plan.spec.name,
+                    at=when,
                 )
-            )
-            if was_reused:
-                reused += 1
-            else:
-                fresh += 1
+                binds.append(
+                    ArmBind(
+                        experiment_id=exp_id,
+                        arm=plan.name,
+                        run_id=run_id,
+                        reused=was_reused,
+                        spec_label=plan.spec.name,
+                    )
+                )
+                if was_reused:
+                    reused += 1
+                else:
+                    fresh += 1
 
     write_batch_manifest(
         data_dir,
@@ -415,52 +422,57 @@ def submit_comparison(
     binds: list[ArmBind] = []
     fresh = 0
     reused = 0
-    for plan in plans:
-        key = arm_reuse_key(
-            spec_hash=plan.digest,
-            code_sha=code,
-            lockfile_hash=lock,
-            build_id=pinned_build,
-            deadlines=deadlines,
-            horizon=horizon,
-            seeds={"base": int(plan.spec.seed)},
-        )
-        append_experiment_event(
-            data_dir,
-            manifest.experiment_id,
-            ExperimentEvent(event="arm_started", at=when, arm=plan.name),
-        )
-        run_id, was_reused = resolve_or_create_arm_run(
-            data_dir,
-            key=key,
-            spec_label=plan.spec.name,
-            model_id=plan.spec.model_id,
-            experiment_id=manifest.experiment_id,
-            arm=plan.name,
-            purpose=f"comparison H={horizon} {plan.name}",
-            host=host_label,
-        )
-        bind_arm_run(
-            data_dir,
-            manifest.experiment_id,
-            arm=plan.name,
-            run_id=run_id,
-            reused=was_reused,
-            at=when,
-        )
-        binds.append(
-            ArmBind(
+    with log_context(
+        experiment_id=manifest.experiment_id,
+        season=as_season,
+        gw=as_gw,
+    ):
+        for plan in plans:
+            key = arm_reuse_key(
+                spec_hash=plan.digest,
+                code_sha=code,
+                lockfile_hash=lock,
+                build_id=pinned_build,
+                deadlines=deadlines,
+                horizon=horizon,
+                seeds={"base": int(plan.spec.seed)},
+            )
+            append_experiment_event(
+                data_dir,
+                manifest.experiment_id,
+                ExperimentEvent(event="arm_started", at=when, arm=plan.name),
+            )
+            run_id, was_reused = resolve_or_create_arm_run(
+                data_dir,
+                key=key,
+                spec_label=plan.spec.name,
+                model_id=plan.spec.model_id,
                 experiment_id=manifest.experiment_id,
+                arm=plan.name,
+                purpose=f"comparison H={horizon} {plan.name}",
+                host=host_label,
+            )
+            bind_arm_run(
+                data_dir,
+                manifest.experiment_id,
                 arm=plan.name,
                 run_id=run_id,
                 reused=was_reused,
-                spec_label=plan.spec.name,
+                at=when,
             )
-        )
-        if was_reused:
-            reused += 1
-        else:
-            fresh += 1
+            binds.append(
+                ArmBind(
+                    experiment_id=manifest.experiment_id,
+                    arm=plan.name,
+                    run_id=run_id,
+                    reused=was_reused,
+                    spec_label=plan.spec.name,
+                )
+            )
+            if was_reused:
+                reused += 1
+            else:
+                fresh += 1
     return ComparisonSubmitResult(
         experiment_id=manifest.experiment_id,
         arms=binds,

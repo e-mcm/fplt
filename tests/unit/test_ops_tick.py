@@ -342,3 +342,63 @@ def test_run_ops_tick_expired_token_keeps_planning_with_banner(
     # Auth alert + plan recommendation (at least two notify calls).
     assert len(bodies) >= 2
     get_settings.cache_clear()
+
+
+def test_run_checkpoint_writes_ops_log_jsonl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each ops checkpoint persists write-once ``ops_log.jsonl`` (#310)."""
+    from datetime import timedelta
+
+    from fplt.automation.checkpoints import Checkpoint
+    from fplt.automation.ops_tick import _run_checkpoint
+    from fplt.automation.production import load_production_ops
+    from fplt.settings import Settings
+    from fplt.utils.logging import (
+        configure_logging,
+        ops_log_path,
+        reset_logging_for_tests,
+    )
+
+    reset_logging_for_tests()
+    configure_logging(secrets=())
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.plan_deadline",
+        lambda *a, **k: True,
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.reports",
+        lambda _d: "report",
+    )
+    key = GWKey("2026-27", 12)
+    # Non-T-90m path exercises plan_deadline + ops_log without official slate.
+    checkpoint = Checkpoint(
+        id="T-6h",
+        offset=timedelta(hours=6),
+        plan=True,
+        refresh=False,
+        notify=False,
+        apply=False,
+    )
+    planned, notified, official = _run_checkpoint(
+        tmp_path,
+        key,
+        checkpoint,
+        datetime(2026, 11, 28, 3, 0, tzinfo=UTC),
+        ["rolling_mean_v1"],
+        3,
+        Settings(data_dir=tmp_path),
+        ops=load_production_ops(),
+        notify=False,
+    )
+    assert planned is True
+    assert notified is False
+    assert official is None
+    path = ops_log_path(
+        tmp_path / "official" / "season=2026-27" / "gw=12" / "checkpoint=T-6h"
+    )
+    assert path.is_file()
+    body = path.read_text(encoding="utf-8")
+    assert "checkpoint" in body
+    assert "T-6h" in body
+    reset_logging_for_tests()

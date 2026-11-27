@@ -8,16 +8,21 @@ the same source tree when present, else from the installed ``fplt`` package.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Literal, cast
+
+logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Read a request JSON, produce one arm, write parquet + metadata."""
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
-        print("usage: _produce_arm_main.py <request.json>", file=sys.stderr)
+        message = "usage: _produce_arm_main.py <request.json>"
+        logger.error(message)
+        sys.stderr.write(message + "\n")
         return 2
     request_path = Path(args[0])
     payload: dict[str, Any] = json.loads(request_path.read_text(encoding="utf-8"))
@@ -30,7 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     specs = load_model_specs(models_dir)
     model_name = str(payload["model_name"])
     if model_name not in specs:
-        print(f"ModelSpec {model_name!r} missing", file=sys.stderr)
+        message = f"ModelSpec {model_name!r} missing"
+        logger.error(message)
+        sys.stderr.write(message + "\n")
         return 2
     spec = specs[model_name]
     mode = cast(Literal["walk_forward", "fixed"], str(payload["mode"]))
@@ -65,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     out_parquet.with_suffix(".meta.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )
-    print(json.dumps(meta))
+    # Parent process reads one JSON object from stdout (not a log line).
+    sys.stdout.write(json.dumps(meta) + "\n")
     return 0
 
 

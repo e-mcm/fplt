@@ -317,6 +317,30 @@ def test_idempotent_second_pull_and_store_load(
     assert (local / "curated" / "builds" / f"build={first.build_ids[0]}.json").is_file()
 
 
+def test_official_pull_includes_run_and_ops_logs(
+    bucket_local: tuple[Path, Path, Remote],
+) -> None:
+    """``fplt data pull --official`` brings down run.log.jsonl and ops_log.jsonl."""
+    from fplt.utils.logging import RUN_LOG_RELATIVE, ops_log_path, write_ops_log_once
+
+    bucket, local, remote = bucket_local
+    predict = "r_20261127T120000Z_pred01"
+    assert (run_dir(bucket, predict) / RUN_LOG_RELATIVE).is_file()
+    cp_dir = bucket / "official" / f"season={_SEASON}" / "gw=13" / "checkpoint=T-90m"
+    write_ops_log_once(
+        cp_dir,
+        [
+            '{"ts":"2026-11-28T03:04:09.123Z","level":"INFO",'
+            '"logger":"fplt.test","message":"ops","checkpoint":"T-90m"}'
+        ],
+    )
+    pull_official(local, remote, season=_SEASON, gw=13, line="v4_h3")
+    assert (run_dir(local, predict) / RUN_LOG_RELATIVE).is_file()
+    assert ops_log_path(
+        local / "official" / f"season={_SEASON}" / "gw=13" / "checkpoint=T-90m"
+    ).is_file()
+
+
 def test_immutable_local_conflict_errors(
     bucket_local: tuple[Path, Path, Remote],
 ) -> None:

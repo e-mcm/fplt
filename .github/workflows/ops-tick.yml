@@ -110,6 +110,7 @@ jobs:
           FPLT_NTFY_URL: ${{ secrets.FPLT_NTFY_URL }}
           FPLT_PRODUCTION_MODELS: ${{ vars.FPLT_PRODUCTION_MODELS }}
           FPLT_PLAN_HORIZON: ${{ vars.FPLT_PLAN_HORIZON }}
+          FPLT_LOG_FORMAT: json
           OPS_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.source || 'auto' }}
           JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
         run: |

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
@@ -103,15 +105,28 @@ def run_sql(
         con.close()
 
 
-def sql_repl(con: duckdb.DuckDBPyConnection) -> None:
-    """Read SQL statements from stdin until EOF / quit and print results.
+def sql_repl(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    write_line: Callable[[str], None] | None = None,
+) -> None:
+    """Read SQL statements from stdin until EOF / quit and emit results.
+
+    Interactive I/O is intentionally CLI-shaped: pass ``write_line`` from
+    ``fplt.cli`` (defaults to writing to stdout). Library code must not
+    call ``print``.
 
     Args:
         con: Connection from ``open_sql``.
+        write_line: Callback that receives one output string (no newline).
     """
-    print(
-        "fplt sql — views: " + ", ".join(_VIEW_NAMES) + " (quit / exit / EOF to leave)",
-        flush=True,
+
+    def _default_write(line: str) -> None:
+        sys.stdout.write(line + "\n")
+
+    emit = write_line if write_line is not None else _default_write
+    emit(
+        "fplt sql — views: " + ", ".join(_VIEW_NAMES) + " (quit / exit / EOF to leave)"
     )
     buffer = ""
     while True:
@@ -119,7 +134,7 @@ def sql_repl(con: duckdb.DuckDBPyConnection) -> None:
             prompt = "fplt-sql> " if not buffer else "....> "
             line = input(prompt)
         except EOFError:
-            print()
+            emit("")
             break
         stripped = line.strip()
         if not buffer and stripped.lower() in {"quit", "exit", "\\q"}:
@@ -128,9 +143,9 @@ def sql_repl(con: duckdb.DuckDBPyConnection) -> None:
         if not stripped.endswith(";"):
             continue
         try:
-            print(con.sql(buffer).pl())
+            emit(str(con.sql(buffer).pl()))
         except Exception as exc:  # noqa: BLE001 — surface SQL errors to the REPL
-            print(f"Error: {exc}", flush=True)
+            emit(f"Error: {exc}")
         buffer = ""
 
 
