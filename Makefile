@@ -1,8 +1,10 @@
 .PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report pytest-profile
 
-# ── Historical data (vaastav) ─────────────────────────────────────────────────
+# ── Historical data (vaastav) → raw/vaastav/captured_at=… ─────────────────────
+# First seed: make bootstrap-vaastav ARGS='--full'
+# Weekly / local: make bootstrap-vaastav
 bootstrap-vaastav:
-	uv run python scripts/bootstrap_vaastav.py
+	uv run python scripts/bootstrap_vaastav.py $(ARGS)
 
 # ── Understat raw capture (matches + league teamsData Deep/PPDA) ──────────────
 # Usage: make fetch-understat SEASON=2024-25
