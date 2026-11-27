@@ -144,16 +144,50 @@ def run_predict(
     logger.info("wrote %s prediction rows to %s", predicted.height, path)
     _ = append_ledger  # CLI flag retained; mutation path removed in B9.
     rows = ledger_rows(predicted, view, as_of, "live")
+    deadline_utc = store.deadline(as_of)
     run = write_predict_run(
         data_dir,
         spec=spec,
         as_of=as_of,
-        deadline_utc=store.deadline(as_of),
+        deadline_utc=deadline_utc,
         horizon=horizon,
         frame=rows,
+        components_for_run_id=_component_builder(
+            model, view, as_of=as_of, deadline_utc=deadline_utc, horizon=horizon
+        ),
     )
     logger.info("wrote predict run_id=%s", run.run_id)
     return path
+
+
+def _component_builder(
+    model: PointsPredictor,
+    view: PITView,
+    *,
+    as_of: GWKey,
+    deadline_utc: datetime,
+    horizon: int,
+):
+    """Return a ``run_id -> RunComponentTables | None`` builder for layered models."""
+    from fplt.optimise.component_tables import build_run_component_tables
+    from fplt.optimise.explain import layered_explain_parts
+
+    parts = layered_explain_parts(model)
+    if parts is None:
+        return None
+    keys = horizon_for(as_of, horizon)
+
+    def _build(run_id: str):
+        return build_run_component_tables(
+            view,
+            parts=parts,
+            horizon=keys,
+            run_id=run_id,
+            as_of=as_of,
+            deadline_utc=deadline_utc,
+        )
+
+    return _build
 
 
 def _fit_or_load(

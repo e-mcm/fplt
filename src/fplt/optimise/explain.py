@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from fplt.backtest.ledger import read_predictions
@@ -611,9 +612,22 @@ def run_explain(
                 f"{model_name} has no predictions for {season} GW{gameweek}; "
                 "run fplt predict first"
             )
-        parts = load_layered_explain_parts(
-            data_dir, model_name, season, gameweek, fit_if_missing=True
+        stored_depth = _depth_from_stored_components(
+            data_dir,
+            model_name=model_name,
+            season=season,
+            gameweek=gameweek,
+            player_keys=(
+                [vs_player_key, player_key]
+                if vs_player_key is not None
+                else [player_key]
+            ),
         )
+        parts = None
+        if stored_depth is None:
+            parts = load_layered_explain_parts(
+                data_dir, model_name, season, gameweek, fit_if_missing=True
+            )
         if vs_player_key is not None:
             pair = build_transfer_pair_depth(
                 view,
@@ -624,6 +638,7 @@ def run_explain(
                 rules=rules,
                 parts=parts,
                 season=season,
+                stored_depth=stored_depth,
             )
             sections.append(format_transfer_pair_depth(pair, names))
         else:
@@ -635,6 +650,7 @@ def run_explain(
                 rules=rules,
                 parts=parts,
                 season=season,
+                stored_depth=stored_depth,
             )
             sections.append(format_player_depth(depth, names))
         return "\n".join(part.rstrip() for part in sections if part).rstrip() + "\n"
@@ -789,6 +805,22 @@ def xmins_from_minutes_pmf(dist: MinutesDist) -> pl.DataFrame:
     return dist.expected_minutes()
 
 
+def minutes_summary_from_pmf(dist: MinutesDist) -> pl.DataFrame:
+    """Derive ``xmins``, ``p_played``, and ``p_60`` from a minutes PMF.
+
+    Args:
+        dist: Binned ``MinutesDist`` from a minutes component.
+
+    Returns:
+        ``player_key``, ``fixture_id``, ``xmins``, ``p_played``, ``p_60``.
+    """
+    bins = np.asarray(dist.bins, dtype=np.int64)
+    return xmins_from_minutes_pmf(dist).with_columns(
+        pl.Series("p_played", dist.pmf[:, bins > 0].sum(axis=1)),
+        pl.Series("p_60", dist.pmf[:, bins >= 60].sum(axis=1)),
+    )
+
+
 def build_player_depth(
     view: PITView,
     *,
@@ -798,12 +830,13 @@ def build_player_depth(
     rules: Rules,
     parts: LayeredExplainParts | None = None,
     season: str | None = None,
+    stored_depth: pl.DataFrame | None = None,
 ) -> PlayerDepthExplain:
     """Build fixture / involvement depth for one player in one gameweek.
 
     Fixture H/A and opponent come from PIT. Team/opp E[goals], involvement
-    weights, and xMins need ``parts``; otherwise those columns are null.
-    Opaque models therefore still get fixture labels + the forecast board.
+    weights, and xMins need ``parts`` or ``stored_depth``; otherwise those
+    columns are null. Opaque models still get fixture labels + the board.
 
     Args:
         view: Point-in-time tables at the deadline.
@@ -813,6 +846,8 @@ def build_player_depth(
         rules: Scoring rules for the board split.
         parts: Optional layered components.
         season: Season label; defaults to ``view.as_of.season``.
+        stored_depth: Optional prebuilt ``PlayerDepthSchema`` rows from a
+            predict-run component table (preferred when present).
 
     Returns:
         Depth rows (``PlayerDepthSchema``) and a forecast-board slice.
@@ -825,13 +860,18 @@ def build_player_depth(
         target_gw=target_gw,
         player_keys=[player_key],
     )
-    depth = _player_depth_rows(
-        view,
-        player_keys=[player_key],
-        target_gw=target_gw,
-        parts=parts,
-        season=season_label,
-    )
+    if stored_depth is not None:
+        depth = _checked_player_depth(
+            stored_depth.filter(pl.col("player_key") == player_key)
+        )
+    else:
+        depth = _player_depth_rows(
+            view,
+            player_keys=[player_key],
+            target_gw=target_gw,
+            parts=parts,
+            season=season_label,
+        )
     return PlayerDepthExplain(depth=depth, board=board)
 
 
@@ -845,6 +885,7 @@ def build_transfer_pair_depth(
     rules: Rules,
     parts: LayeredExplainParts | None = None,
     season: str | None = None,
+    stored_depth: pl.DataFrame | None = None,
 ) -> TransferPairDepth:
     """Build side-by-side depth for a transfer pair (out → in).
 
@@ -857,6 +898,7 @@ def build_transfer_pair_depth(
         rules: Scoring rules for the board split.
         parts: Optional layered components.
         season: Season label; defaults to ``view.as_of.season``.
+        stored_depth: Optional prebuilt depth rows from run component tables.
 
     Returns:
         Depth for each side plus a two-player forecast board.
@@ -869,26 +911,62 @@ def build_transfer_pair_depth(
         target_gw=target_gw,
         player_keys=[player_out, player_in],
     )
-    out_depth = _player_depth_rows(
-        view,
-        player_keys=[player_out],
-        target_gw=target_gw,
-        parts=parts,
-        season=season_label,
-    )
-    in_depth = _player_depth_rows(
-        view,
-        player_keys=[player_in],
-        target_gw=target_gw,
-        parts=parts,
-        season=season_label,
-    )
+    if stored_depth is not None:
+        out_depth = _checked_player_depth(
+            stored_depth.filter(pl.col("player_key") == player_out)
+        )
+        in_depth = _checked_player_depth(
+            stored_depth.filter(pl.col("player_key") == player_in)
+        )
+    else:
+        out_depth = _player_depth_rows(
+            view,
+            player_keys=[player_out],
+            target_gw=target_gw,
+            parts=parts,
+            season=season_label,
+        )
+        in_depth = _player_depth_rows(
+            view,
+            player_keys=[player_in],
+            target_gw=target_gw,
+            parts=parts,
+            season=season_label,
+        )
     return TransferPairDepth(
         player_out=player_out,
         player_in=player_in,
         out_depth=out_depth,
         in_depth=in_depth,
         board=board,
+    )
+
+
+def _depth_from_stored_components(
+    data_dir: Path,
+    *,
+    model_name: str,
+    season: str,
+    gameweek: int,
+    player_keys: Sequence[int],
+) -> pl.DataFrame | None:
+    """Load depth rows from a predict run's component tables when present."""
+    from fplt.optimise.component_tables import (
+        depth_rows_from_component_tables,
+        load_run_component_tables,
+    )
+
+    tables = load_run_component_tables(
+        data_dir, model_name=model_name, season=season, gameweek=gameweek
+    )
+    if tables is None:
+        return None
+    return depth_rows_from_component_tables(
+        minutes=tables.minutes,
+        scoreline=tables.scoreline,
+        involvement=tables.involvement,
+        player_keys=list(player_keys),
+        target_gw=gameweek,
     )
 
 
@@ -1417,6 +1495,7 @@ __all__ = [
     "format_transfer_pair_depth",
     "layered_explain_parts",
     "load_layered_explain_parts",
+    "minutes_summary_from_pmf",
     "run_explain",
     "xmins_from_minutes_pmf",
 ]

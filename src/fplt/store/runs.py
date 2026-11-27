@@ -528,11 +528,15 @@ def write_predict_run(
     frame: pl.DataFrame,
     kind: RunKind = "adhoc",
     purpose: str = "",
+    components_for_run_id: object | None = None,
 ) -> RunManifest:
     """Dual-write a live predict table into a new run folder.
 
     Legacy ``predictions/<model_id>/…`` paths stay the caller's responsibility.
-    Persists the resolved spec under ``specs/sha=<spec_hash>.json``.
+    Persists the resolved spec under ``specs/sha=<spec_hash>.json``. When
+    ``components_for_run_id`` is a callable ``(run_id) -> RunComponentTables |
+    None``, layered §3.1 tables are written after the run id is minted;
+    opaque models pass ``None``.
 
     Args:
         data_dir: Local data root.
@@ -543,6 +547,7 @@ def write_predict_run(
         frame: ``PredictionSchema`` rows.
         kind: Run kind (default adhoc for local CLI).
         purpose: Free-text purpose.
+        components_for_run_id: Optional builder stamped with ``writer.run_id``.
 
     Returns:
         The succeeded ``RunManifest``.
@@ -566,8 +571,28 @@ def write_predict_run(
         seeds=_seed_from_spec(spec),
     ) as writer:
         writer.write_parquet("predictions/player_fixture.parquet", frame)
+        _write_component_tables(writer, components_for_run_id)
     _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
+
+
+def _write_component_tables(
+    writer: RunWriter, components_for_run_id: object | None
+) -> None:
+    """Persist §3.1 component parquets from an optional ``run_id`` builder."""
+    if components_for_run_id is None or not callable(components_for_run_id):
+        return
+    components = components_for_run_id(writer.run_id)
+    if components is None:
+        return
+    minutes = getattr(components, "minutes", None)
+    scoreline = getattr(components, "scoreline", None)
+    involvement = getattr(components, "involvement", None)
+    if minutes is None or scoreline is None or involvement is None:
+        return
+    writer.write_parquet("predictions/components/minutes.parquet", minutes)
+    writer.write_parquet("predictions/components/scoreline.parquet", scoreline)
+    writer.write_parquet("predictions/components/involvement.parquet", involvement)
 
 
 def write_plan_run(
