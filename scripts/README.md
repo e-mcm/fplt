@@ -9,7 +9,7 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `fetch_api_football.py` | API-Sports `/injuries` | `make fetch-api-football SEASON=…` |
 | `fetch_football_data.py` | football-data.co.uk E0 CSV | `make fetch-football-data SEASON=…` |
 | `fetch_overall_rank.py` | Overall-league points-at-rank | `make fetch-overall-rank` |
-| `bootstrap_vaastav.py` | Historical seasons from vaastav | `make bootstrap-vaastav` |
+| `bootstrap_vaastav.py` | Capture vaastav → `raw/vaastav/captured_at=…` | `make bootstrap-vaastav` |
 | `eval_board.py` | Multi-model ledger helper | `make eval-board SEASON=…` |
 | `perf_report.py` | Rank `$FPLT_DATA_DIR/timing` hotspots | `make perf-report` |
 | `mc_bench.py` | Per-step MC micro-bench (§1.1) | `make mc-bench` |

@@ -1,129 +1,95 @@
-"""Place vaastav historical season directories under ``$FPLT_DATA_DIR``.
+"""Capture vaastav seasons into ``$FPLT_DATA_DIR/raw/vaastav/captured_at=…``.
 
-``import_available`` expects season folders named ``YYYY-YY`` (with
-``gws/merged_gw.csv``) directly under the data directory. This script clones
-or refreshes [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League)
-and copies those seasons into place.
-
-Requires ``git`` on ``PATH``. Network access is only needed when ``--source``
-is omitted.
+Mirrors upstream ``data/`` trees write-once and writes ``_source.json``
+(``VaastavSourceManifest``). Unchanged seasons are skipped by comparing
+sha256 digests against prior captures. Requires ``git`` on ``PATH``.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
+
 REPO_URL = "https://github.com/vaastav/Fantasy-Premier-League.git"
-MIN_SEASON = "2021-22"
-_CACHE_NAME = ".vaastav"
+_SOURCE = "_source.json"
+_SEASON_RE = re.compile(r"^\d{4}-\d{2}$")
+_CAP_RE = re.compile(r"^captured_at=(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)$")
 _log = logging.getLogger(__name__)
 
 
-def default_data_dir() -> Path:
-    """Return ``$FPLT_DATA_DIR`` when set, otherwise ``./data``."""
-    raw = os.environ.get("FPLT_DATA_DIR")
-    return Path(raw) if raw else Path("./data")
+def default_raw_dir() -> Path:
+    """Return ``$FPLT_DATA_DIR/raw`` when set, otherwise ``./data/raw``."""
+    root = (
+        Path(os.environ["FPLT_DATA_DIR"])
+        if os.environ.get("FPLT_DATA_DIR")
+        else Path("./data")
+    )
+    return root / "raw"
 
 
-def is_season_dir(path: Path, min_season: str = MIN_SEASON) -> bool:
-    """True when ``path`` looks like a vaastav season ``import_available`` can use."""
-    if not path.is_dir():
-        return False
-    if path.name < min_season:
-        return False
-    return (path / "gws" / "merged_gw.csv").is_file()
+def stamp_captured_at(moment: datetime) -> str:
+    """Format ``moment`` as a ``captured_at`` directory stamp."""
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
-def list_seasons(source: Path, min_season: str = MIN_SEASON) -> list[Path]:
-    """Return season directories under ``source`` that meet the minimum season.
+def is_season_dir(path: Path) -> bool:
+    """True when ``path`` is a season folder with ``gws/merged_gw.csv``."""
+    return (
+        path.is_dir()
+        and _SEASON_RE.match(path.name) is not None
+        and (path / "gws" / "merged_gw.csv").is_file()
+    )
 
-    Args:
-        source: Directory whose children are season folders (vaastav ``data/``).
-        min_season: Earliest season label to keep (inclusive), e.g. ``"2021-22"``.
 
-    Returns:
-        Season directories sorted by name.
-    """
-    if not source.is_dir():
+def list_season_dirs(data_dir: Path) -> list[Path]:
+    """Return sorted season directories under vaastav ``data/``."""
+    if not data_dir.is_dir():
         return []
-    return sorted(path for path in source.iterdir() if is_season_dir(path, min_season))
+    return sorted(p for p in data_dir.iterdir() if is_season_dir(p))
 
 
-def place_seasons(
-    source: Path,
-    data_dir: Path,
-    *,
-    min_season: str = MIN_SEASON,
-    force: bool = False,
-) -> list[str]:
-    """Copy qualifying season directories from ``source`` into ``data_dir``.
-
-    Existing season directories are left alone unless ``force`` is true.
-
-    Args:
-        source: Directory containing vaastav season folders.
-        data_dir: Destination root (``$FPLT_DATA_DIR``).
-        min_season: Earliest season label to copy.
-        force: Replace existing destination season directories when true.
-
-    Returns:
-        Season labels that were copied (or refreshed).
-    """
-    data_dir.mkdir(parents=True, exist_ok=True)
-    placed: list[str] = []
-    for season_dir in list_seasons(source, min_season):
-        dest = data_dir / season_dir.name
-        if dest.exists() and not force:
-            _log.info("skip existing %s", dest)
-            continue
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(season_dir, dest)
-        placed.append(season_dir.name)
-        _log.info("placed %s", dest)
-    return placed
+def sha256_file(path: Path) -> str:
+    """Return the lowercase hex sha256 digest of ``path``."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def _run_git(args: list[str], cwd: Path) -> None:
+def _run_git(args: list[str], cwd: Path) -> str:
     result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
+        ["git", *args], cwd=cwd, check=False, capture_output=True, text=True
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return (result.stdout or "").strip()
 
 
-def fetch_vaastav(cache_dir: Path, repo_url: str = REPO_URL) -> Path:
-    """Clone or update a sparse checkout of vaastav under ``cache_dir``.
+def resolve_commit_sha(repo: Path) -> str:
+    """Return lowercase ``HEAD`` sha for ``repo``."""
+    return _run_git(["rev-parse", "HEAD"], cwd=repo).lower()
 
-    Args:
-        cache_dir: Local cache directory for the sparse clone.
-        repo_url: Git remote for the Fantasy-Premier-League repository.
 
-    Returns:
-        Path to the repository's ``data/`` directory containing season folders.
-
-    Raises:
-        RuntimeError: If a git command fails.
-    """
-    data = cache_dir / "data"
+def fetch_vaastav_repo(cache_dir: Path, *, repo_url: str = REPO_URL) -> Path:
+    """Clone or update a sparse vaastav checkout under ``cache_dir``."""
     if (cache_dir / ".git").is_dir():
         _run_git(["pull", "--ff-only", "origin", "main"], cwd=cache_dir)
-        return data
+        return cache_dir
     parent = cache_dir.parent
     parent.mkdir(parents=True, exist_ok=True)
-    # Clone into a sibling path, then rename, so a failed clone leaves no
-    # half-written tree at the final cache path.
     staging = parent / f"{cache_dir.name}.partial"
     if staging.exists():
         shutil.rmtree(staging)
@@ -142,88 +108,243 @@ def fetch_vaastav(cache_dir: Path, repo_url: str = REPO_URL) -> Path:
     if cache_dir.exists():
         shutil.rmtree(cache_dir)
     staging.rename(cache_dir)
-    return data
+    return cache_dir
 
 
-def bootstrap(
+def iter_capture_dirs(raw_root: Path) -> list[Path]:
+    """Return ``raw_root/vaastav/captured_at=*`` dirs sorted by stamp."""
+    base = raw_root / "vaastav"
+    if not base.is_dir():
+        return []
+    found: list[tuple[datetime, Path]] = []
+    for path in base.iterdir():
+        match = _CAP_RE.match(path.name)
+        if match and path.is_dir():
+            stamp = datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%SZ").replace(
+                tzinfo=UTC
+            )
+            found.append((stamp, path))
+    return [p for _, p in sorted(found)]
+
+
+def load_prior_file_hashes(raw_root: Path) -> dict[str, str]:
+    """Merge ``path → sha256`` from prior manifests (latest capture wins)."""
+    hashes: dict[str, str] = {}
+    for capture in iter_capture_dirs(raw_root):
+        manifest_path = capture / _SOURCE
+        if not manifest_path.is_file():
+            continue
+        manifest = VaastavSourceManifest.model_validate(
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+        )
+        for entry in manifest.files:
+            hashes[entry.path] = entry.sha256
+    return hashes
+
+
+def file_entries_for(
+    data_dir: Path, seasons: set[str] | None = None
+) -> list[VaastavSourceFile]:
+    """Build ``VaastavSourceFile`` rows (paths relative to the capture root)."""
+    entries: list[VaastavSourceFile] = []
+    for path in sorted(data_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(data_dir)
+        if rel.parts and _SEASON_RE.match(rel.parts[0]):
+            if seasons is not None and rel.parts[0] not in seasons:
+                continue
+        entries.append(
+            VaastavSourceFile(
+                path=(Path("data") / rel).as_posix(),
+                bytes=path.stat().st_size,
+                sha256=sha256_file(path),
+            )
+        )
+    return entries
+
+
+def _top_level_changed(data_dir: Path, prior: dict[str, str]) -> bool:
+    for path in sorted(data_dir.iterdir()):
+        if path.is_file():
+            if prior.get(f"data/{path.name}") != sha256_file(path):
+                return True
+        elif path.is_dir() and not is_season_dir(path):
+            for nested in sorted(path.rglob("*")):
+                if nested.is_file():
+                    key = f"data/{nested.relative_to(data_dir).as_posix()}"
+                    if prior.get(key) != sha256_file(nested):
+                        return True
+    return False
+
+
+def seasons_needing_capture(
+    data_dir: Path, prior: dict[str, str], *, full: bool = False
+) -> list[str]:
+    """Return seasons whose files differ from ``prior`` (or all when ``full``)."""
+    all_seasons = [p.name for p in list_season_dirs(data_dir)]
+    changed = [
+        season
+        for season in all_seasons
+        if any(
+            prior.get(e.path) != e.sha256 for e in file_entries_for(data_dir, {season})
+        )
+    ]
+    top_changed = _top_level_changed(data_dir, prior)
+    if not changed and not top_changed and prior:
+        return []
+    if full or not prior:
+        return all_seasons
+    return changed
+
+
+def write_capture(
+    raw_root: Path,
     data_dir: Path,
     *,
-    source: Path | None = None,
-    min_season: str = MIN_SEASON,
-    force: bool = False,
+    seasons: list[str],
+    repo: str,
+    commit_sha: str,
+    captured_at: datetime,
+    include_top_level: bool = True,
+) -> Path:
+    """Write one write-once ``captured_at=…`` tree and ``_source.json``."""
+    if not seasons and not include_top_level:
+        raise ValueError("seasons must be non-empty when include_top_level is false")
+    dest = raw_root / "vaastav" / f"captured_at={stamp_captured_at(captured_at)}"
+    if dest.exists():
+        raise FileExistsError(f"capture already exists: {dest}")
+    dest.mkdir(parents=True, exist_ok=False)
+    try:
+        for season in seasons:
+            src = data_dir / season
+            if not is_season_dir(src):
+                raise FileNotFoundError(f"missing season directory: {src}")
+            shutil.copytree(src, dest / "data" / season)
+        if include_top_level:
+            for path in sorted(data_dir.iterdir()):
+                if path.is_file():
+                    (dest / "data").mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, dest / "data" / path.name)
+                elif path.is_dir() and not is_season_dir(path):
+                    shutil.copytree(path, dest / "data" / path.name)
+        entries = file_entries_for(
+            dest / "data", None if include_top_level else set(seasons)
+        )
+        if not entries:
+            raise ValueError("capture would contain no files")
+        manifest = VaastavSourceManifest(
+            repo=repo,
+            commit_sha=commit_sha,
+            captured_at=captured_at.astimezone(UTC),
+            seasons=list(seasons),
+            files=entries,
+        )
+        (dest / _SOURCE).write_text(
+            manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+    except Exception:
+        if dest.exists():
+            shutil.rmtree(dest)
+        raise
+    _log.info(
+        "wrote vaastav capture %s seasons=%s files=%d",
+        dest.name,
+        ",".join(seasons) or "-",
+        len(entries),
+    )
+    return dest
+
+
+def capture_vaastav(
+    raw_root: Path,
+    *,
+    repo_path: Path | None = None,
+    cache_dir: Path | None = None,
     repo_url: str = REPO_URL,
-) -> list[str]:
-    """Place vaastav season directories under ``data_dir`` for ``import_available``.
+    full: bool = False,
+    captured_at: datetime | None = None,
+) -> Path | None:
+    """Capture changed vaastav seasons into ``raw_root/vaastav/``.
 
-    When ``source`` is omitted, clones or refreshes a sparse checkout under
-    ``data_dir/.vaastav`` and copies seasons from there.
-
-    Args:
-        data_dir: Destination root (``$FPLT_DATA_DIR``).
-        source: Optional local vaastav ``data/`` directory to copy from.
-        min_season: Earliest season label to place.
-        force: Replace existing season directories when true.
-        repo_url: Remote used when ``source`` is omitted.
-
-    Returns:
-        Season labels that were newly copied or refreshed.
+    Returns the new capture directory, or ``None`` when nothing changed.
     """
-    if source is None:
-        source = fetch_vaastav(data_dir / _CACHE_NAME, repo_url=repo_url)
-    return place_seasons(source, data_dir, min_season=min_season, force=force)
+    if repo_path is None:
+        cache = cache_dir if cache_dir is not None else raw_root / ".vaastav_cache"
+        repo = fetch_vaastav_repo(cache, repo_url=repo_url)
+        repo_label = repo_url
+    else:
+        repo = repo_path
+        repo_label = str(repo_path)
+    data_dir = repo / "data"
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"vaastav data/ missing under {repo}")
+    prior = load_prior_file_hashes(raw_root)
+    seasons = seasons_needing_capture(data_dir, prior, full=full)
+    top_changed = _top_level_changed(data_dir, prior)
+    if not seasons and not top_changed:
+        _log.info("vaastav capture: nothing new")
+        return None
+    return write_capture(
+        raw_root,
+        data_dir,
+        seasons=seasons,
+        repo=repo_label,
+        commit_sha=resolve_commit_sha(repo),
+        captured_at=captured_at if captured_at is not None else datetime.now(UTC),
+        include_top_level=full or not prior or top_changed,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse CLI args and place vaastav seasons under the data directory."""
+    """Parse CLI args and capture vaastav into the raw layout."""
     parser = argparse.ArgumentParser(
         prog="bootstrap_vaastav",
-        description=(
-            "Place vaastav season directories where import_available expects them "
-            "under $FPLT_DATA_DIR."
-        ),
+        description="Capture vaastav into $FPLT_DATA_DIR/raw/vaastav/captured_at=…",
     )
     parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=None,
-        help="Destination root (default: $FPLT_DATA_DIR or ./data).",
+        "--out", type=Path, default=None, help="Raw root (default: …/raw)."
     )
+    parser.add_argument("--repo", type=Path, default=None, help="Local git checkout.")
     parser.add_argument(
-        "--source",
-        type=Path,
-        default=None,
-        help="Local vaastav data/ directory; skip the git clone when set.",
+        "--cache-dir", type=Path, default=None, help="Sparse-clone cache."
     )
+    parser.add_argument("--full", action="store_true", help="Include every season.")
     parser.add_argument(
-        "--min-season",
-        default=MIN_SEASON,
-        help=f"Earliest season to copy (default: {MIN_SEASON}).",
+        "--captured-at", default=None, help="UTC stamp YYYY-MM-DDTHH-MM-SSZ."
     )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Replace existing season directories under the data directory.",
-    )
+    parser.add_argument("--repo-url", default=REPO_URL, help="Upstream git remote.")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    data_dir = args.data_dir if args.data_dir is not None else default_data_dir()
+    out = args.out if args.out is not None else default_raw_dir()
+    captured_at: datetime | None = None
+    if args.captured_at is not None:
+        try:
+            captured_at = datetime.strptime(
+                args.captured_at, "%Y-%m-%dT%H-%M-%SZ"
+            ).replace(tzinfo=UTC)
+        except ValueError:
+            _log.error(
+                "invalid --captured-at %r (want YYYY-MM-DDTHH-MM-SSZ)",
+                args.captured_at,
+            )
+            return 1
     try:
-        placed = bootstrap(
-            data_dir,
-            source=args.source,
-            min_season=args.min_season,
-            force=args.force,
+        written = capture_vaastav(
+            out,
+            repo_path=args.repo,
+            cache_dir=args.cache_dir,
+            repo_url=args.repo_url,
+            full=bool(args.full),
+            captured_at=captured_at,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, FileNotFoundError, FileExistsError, ValueError) as exc:
         _log.error("%s", exc)
         return 1
-    if placed:
-        print(f"placed {', '.join(placed)} under {data_dir.resolve()}")
-    else:
-        print(
-            f"no seasons copied under {data_dir.resolve()} "
-            "(already present, or none matched --min-season)"
-        )
+    if written is None:
+        print(f"nothing new under {out.resolve()}")
+        return 0
+    print(f"wrote {written.resolve()}")
     return 0
 
 
