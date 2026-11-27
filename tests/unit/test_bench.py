@@ -300,6 +300,7 @@ def test_trend_skips_missing_phase_and_n_a(
     )
     assert "fit" in text
     assert "plan" not in text.split("rolling median")[0] or "plan:" not in text
+
     def _empty_baseline(*_a: object, **_k: object) -> dict[str, float]:
         return {}
 
