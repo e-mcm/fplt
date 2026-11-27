@@ -190,6 +190,30 @@ season.
 
 ---
 
+## View this week on the laptop
+
+After official predict/plan runs land in `fplt-data` (ops-tick / M5), pull them
+onto the Mac and open the UI. Needs owner R2 creds in `~/.config/fplt/env`
+(`FPLT_R2_ACCOUNT_ID`, `FPLT_R2_ACCESS_KEY_ID`, `FPLT_R2_SECRET_ACCESS_KEY`,
+`FPLT_DATA_BUCKET=fplt-data`) and `rclone` installed.
+
+```bash
+# Latest GW with a primary T-90m pointer (prints predict/plan run ids)
+uv run fplt data pull --official latest
+
+# Or a specific slate
+uv run fplt data pull --official --gw 14 --season 2026-27
+uv run fplt data pull --official --gw 14 --checkpoint T-24h --line v4_h5
+
+uv run fplt ui
+```
+
+Idempotent (`--immutable`): a second pull downloads nothing. Missing
+`FPLT_R2_*` fails loudly (no soft skip). Spec:
+[`proposals/weekly-ui-milestone.md`](proposals/weekly-ui-milestone.md) §3.2.
+
+---
+
 ## Run a gameweek by hand
 
 Total-outage fallback when GHA / Dagster / heartbeats are down. Same path as

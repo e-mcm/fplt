@@ -1595,6 +1595,27 @@ def main(argv: list[str] | None = None) -> None:
         default="snapshots",
         help="Branch that holds write-once captures (default: snapshots)",
     )
+    data_pull = data_sub.add_parser(
+        "pull",
+        parents=[log_flags],
+        help="Pull from FPLT_DATA_BUCKET (--official latest | --gw N)",
+    )
+    data_pull.add_argument(
+        "--official",
+        action="store_true",
+        help="Pull official pointers, runs, and curated UI tables",
+    )
+    data_pull.add_argument(
+        "selector",
+        nargs="?",
+        choices=["latest"],
+        help="Highest GW with a primary pointer at --checkpoint",
+    )
+    data_pull.add_argument("--gw", type=int, help="Gameweek (xor latest)")
+    data_pull.add_argument("--season", help="Season key (default: max under official/)")
+    data_pull.add_argument("--checkpoint", default="T-90m", help="Default: T-90m")
+    data_pull.add_argument("--line", help="Line filter (default: all at checkpoint)")
+    data_pull.add_argument("--data-dir", type=Path, help="Override FPLT_DATA_DIR")
     data_gates = data_sub.add_parser(
         "gates",
         parents=[log_flags],
@@ -2163,10 +2184,66 @@ def _data(args: argparse.Namespace) -> None:
     if command == "parity":
         _data_parity(args)
         return
+    if command == "pull":
+        _data_pull(args)
+        return
     if command == "gates":
         _data_gates(args)
         return
     raise SystemExit(_not_implemented(f"data {command}"))
+
+
+def _data_pull(args: argparse.Namespace) -> None:
+    from fplt.data.remote import RemoteError
+    from fplt.store.pull_official import (
+        OfficialPullError,
+        infer_official_season,
+        mirror_official_index,
+        pull_official,
+        require_data_remote,
+        resolve_latest_gw,
+    )
+
+    if not args.official:
+        print("fplt data pull: pass --official", file=sys.stderr)
+        raise SystemExit(2)
+    if (args.selector == "latest") == (args.gw is not None):
+        print(
+            "fplt data pull --official: pass exactly one of 'latest' or --gw",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    try:
+        remote = require_data_remote()
+        official_root = mirror_official_index(data_dir, remote)
+        season = infer_official_season(official_root, args.season)
+        gw = (
+            resolve_latest_gw(
+                official_root, season=season, checkpoint=str(args.checkpoint)
+            )
+            if args.selector == "latest"
+            else int(args.gw)
+        )
+        result = pull_official(
+            data_dir,
+            remote,
+            season=season,
+            gw=gw,
+            checkpoint=str(args.checkpoint),
+            line=args.line,
+        )
+    except (RemoteError, OfficialPullError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(
+        f"official pull: season={result.season} gw={result.gw} "
+        f"checkpoint={result.checkpoint} predict={list(result.predict_run_ids)} "
+        f"plan={list(result.plan_run_ids)} builds={list(result.build_ids)} "
+        f"new_files={result.n_written}"
+    )
 
 
 def _data_gates(args: argparse.Namespace) -> None:
