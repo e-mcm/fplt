@@ -28,6 +28,8 @@ class PlayersSchema(pa.DataFrameModel):
 
 
 class TeamsSchema(pa.DataFrameModel):
+    """One row per team per season, from the first snapshot that contained them."""
+
     season: str
     team_key: int
     team_id: int
@@ -42,6 +44,8 @@ class TeamsSchema(pa.DataFrameModel):
 
 
 class GameweeksSchema(pa.DataFrameModel):
+    """One row per gameweek per season with deadline and completion flags."""
+
     season: str
     gw: int = pa.Field(ge=1, le=38)
     deadline_time: datetime
@@ -56,6 +60,8 @@ class GameweeksSchema(pa.DataFrameModel):
 
 
 class FixturesSchema(pa.DataFrameModel):
+    """One row per fixture per season with kickoff, score, and finish state."""
+
     season: str
     fixture_id: int
     gw: int = pa.Field(ge=1, le=38)
@@ -158,6 +164,8 @@ class UnderstatTeamMatchSchema(pa.DataFrameModel):
 
 
 class PlayerFixtureStatsSchema(pa.DataFrameModel):
+    """One player's FPL match stats for a single fixture (player–fixture grain)."""
+
     season: str
     gw: int = pa.Field(ge=1, le=38)
     player_key: int

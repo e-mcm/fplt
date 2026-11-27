@@ -72,7 +72,38 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I", "UP", "D"]
+# AGENTS.md §5 enforces D101/D103 (Google). Other D codes stay ignored until
+# ratcheted separately (#311); D203/D213 conflict with Google convention.
+ignore = [
+    "D100",  # undocumented-public-module
+    "D102",  # undocumented-public-method
+    "D104",  # undocumented-public-package
+    "D105",  # undocumented-magic-method
+    "D106",  # undocumented-public-nested-class (pandera Config, etc.)
+    "D107",  # undocumented-public-init
+    "D200",
+    "D202",
+    "D203",
+    "D205",
+    "D212",
+    "D213",
+    "D301",
+    "D400",
+    "D401",
+    "D403",
+    "D404",
+    "D413",
+    "D415",
+    "D417",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Test functions need no module/class/function docstrings.
+"tests/**" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.13"
