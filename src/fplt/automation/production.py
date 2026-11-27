@@ -261,7 +261,9 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
 
     lines = _lines_from_mapping(raw, models=models, horizon=horizon)
     min_prior_raw = raw.get("min_prior_seasons", 3)
-    if isinstance(min_prior_raw, bool) or not isinstance(min_prior_raw, int | float | str):
+    if isinstance(min_prior_raw, bool) or not isinstance(
+        min_prior_raw, int | float | str
+    ):
         raise ValueError("min_prior_seasons must be an integer >= 1")
     min_prior = int(min_prior_raw)
     if min_prior < 1:

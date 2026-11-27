@@ -1,9 +1,12 @@
 """CI governance for production model and ops config changes (ops-09).
 
-Fails a PR that edits ``configs/ops/production.yaml`` or a ModelSpec listed
-in it unless the PR body links a promote-eval result (``promote-eval-run:``
-``<run_id>``) whose verdict is passing (``keep``). Production ModelSpecs are
-immutable: an in-place edit of a listed YAML always fails — bump the name.
+Fails a PR that retargets the live slate in ``configs/ops/production.yaml``
+(``models`` / ``plan_horizon`` / ``pipeline`` / ``lines``) or a ModelSpec
+listed in it unless the PR body links a promote-eval result
+(``promote-eval-run: <run_id>``) whose verdict is passing (``keep``).
+Additive ops keys (e.g. ``min_prior_seasons``) do not require a promote-eval.
+Production ModelSpecs are immutable: an in-place edit of a listed YAML
+always fails — bump the name.
 """
 
 from __future__ import annotations
@@ -200,6 +203,8 @@ def check_production_governance(
         changed=changed,
         listed_at_base=listed_at_base,
         listed_at_head=listed_at_head,
+        base_production_yaml=base_production_yaml,
+        head_production_yaml=head_production_yaml,
     )
 
     if not state.gated and not state.in_place:
@@ -294,13 +299,38 @@ def _collect_gated_paths(
     changed: set[str],
     listed_at_base: set[str],
     listed_at_head: set[str],
+    base_production_yaml: str | None,
+    head_production_yaml: str | None,
 ) -> None:
-    if PRODUCTION_RELPATH in changed:
+    if PRODUCTION_RELPATH in changed and _live_slate_changed(
+        base_production_yaml, head_production_yaml
+    ):
         state.gated.append(PRODUCTION_RELPATH)
     for name in sorted(listed_at_base | listed_at_head):
         rel = model_spec_relpath(name)
         if rel in changed and rel not in state.gated:
             state.gated.append(rel)
+
+
+_LIVE_SLATE_KEYS = frozenset({"models", "plan_horizon", "pipeline", "lines"})
+
+
+def _live_slate_changed(base_yaml: str | None, head_yaml: str | None) -> bool:
+    """True when live-slate keys differ between base and head production YAML."""
+    if base_yaml is None and head_yaml is None:
+        return False
+    if base_yaml is None or head_yaml is None:
+        return True
+    base_raw = yaml.safe_load(base_yaml)
+    head_raw = yaml.safe_load(head_yaml)
+    if not isinstance(base_raw, dict) or not isinstance(head_raw, dict):
+        return True
+    base_map = cast(dict[str, Any], base_raw)
+    head_map = cast(dict[str, Any], head_raw)
+    for key in _LIVE_SLATE_KEYS:
+        if base_map.get(key) != head_map.get(key):
+            return True
+    return False
 
 
 def _require_passing_promote_eval(

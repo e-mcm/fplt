@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fplt.automation.cycle import (
     PRODUCTION_MODELS,
