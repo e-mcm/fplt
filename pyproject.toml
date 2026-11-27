@@ -116,6 +116,9 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 # Test functions need no module/class/function docstrings; asserts OK (S101).
 "tests/**" = ["D", "S101", "S603", "S607"]
+# Native kernel tests: PT lives with the Python suite (#311); touching mc/**
+# without a wheel version bump fails version-guard.
+"mc/tests/**" = ["PT"]
 # CLI top-level except handlers re-raise SystemExit; logging.exception would
 # dump traces on every user-facing error. Keep logger.error; cover via e2e later.
 "src/fplt/cli.py" = ["TRY400"]
