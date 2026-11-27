@@ -262,7 +262,8 @@ def test_selection_payloads_read_and_empty_guards(tmp_path: Path) -> None:
             control="a",
             models=["a", "b", "c"],
         )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None
 
     empty = pl.DataFrame(schema={"model_id": pl.Utf8(), "actual_pts": pl.Float64()})
     with patch("fplt.backtest.bakeoff.read_predictions", return_value=empty):
@@ -272,7 +273,8 @@ def test_selection_payloads_read_and_empty_guards(tmp_path: Path) -> None:
             control="a",
             models=["a", "b", "c"],
         )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None
 
     ledger = pl.DataFrame({"model_id": ["a", "b", "c"], "actual_pts": [1.0, 1.0, 1.0]})
     with (
@@ -290,7 +292,8 @@ def test_selection_payloads_read_and_empty_guards(tmp_path: Path) -> None:
             control="a",
             models=["a", "b", "c"],
         )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None
 
     with (
         patch("fplt.backtest.bakeoff.read_predictions", return_value=ledger),
@@ -303,7 +306,8 @@ def test_selection_payloads_read_and_empty_guards(tmp_path: Path) -> None:
             control="a",
             models=["missing", "a", "b"],
         )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None
 
 
 def test_selection_payloads_control_missing_and_thin_arms(tmp_path: Path) -> None:
@@ -370,4 +374,5 @@ def test_selection_payloads_control_missing_and_thin_arms(tmp_path: Path) -> Non
             control="control",
             models=["control", "challenger", "empty"],
         )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None

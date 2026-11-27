@@ -351,7 +351,9 @@ def test_check_new_captures_latest_per_season_and_sync_hooks(
         sync_remote=True,
         available_at=_BAD_AT,
     )
-    assert "pull" in calls and "push" in calls and "history" in calls
+    assert "pull" in calls
+    assert "push" in calls
+    assert "history" in calls
     # Latest capture per season only (two stamps → one action).
     assert len(result.actions) == 1
     assert result.actions[0].report.passed

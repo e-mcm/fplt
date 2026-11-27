@@ -143,7 +143,8 @@ def test_realish_fixture_parses(tmp_path: Path) -> None:
     store = build_league(DataStore(tmp_path))
     # Real-shaped dump may not map to builder element ids; staging must not raise.
     payload = read_json_gz(_REALISH)
-    assert "meta" in payload and "data" in payload
+    assert "meta" in payload
+    assert "data" in payload
     assert payload["meta"].get("license")
     frame = stage_touchline_payload(store, payload, "2024-25", _CAPTURE)
     assert isinstance(frame, pl.DataFrame)

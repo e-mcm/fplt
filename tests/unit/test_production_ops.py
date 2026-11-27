@@ -145,7 +145,7 @@ def test_missing_or_invalid_yaml_raises(tmp_path: Path) -> None:
     empty_models.write_text(
         yaml.safe_dump({"models": [], "plan_horizon": 3}), encoding="utf-8"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="non-empty"):
         load_production_ops(empty_models)
 
 

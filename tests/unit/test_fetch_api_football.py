@@ -144,4 +144,5 @@ def test_capture_fixtures_writes_from_mock_http(tmp_path: Path) -> None:
     assert result.wrote is True
     assert result.kind == "fixtures"
     assert result.path == fixtures_path(tmp_path, season, 2, moment)
-    assert result.path is not None and result.path.exists()
+    assert result.path is not None
+    assert result.path.exists()

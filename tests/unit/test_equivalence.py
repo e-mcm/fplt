@@ -146,7 +146,8 @@ def test_compare_prediction_frames_identical_and_beyond() -> None:
     diff = compare_prediction_frames(left, moved, tol)
     assert not diff.identical
     assert diff.n_beyond_tolerance >= 1
-    assert diff.max_abs_diff is not None and diff.max_abs_diff >= 1.0e-3
+    assert diff.max_abs_diff is not None
+    assert diff.max_abs_diff >= 1.0e-3
     assert diff.top_offenders
 
 
@@ -209,10 +210,10 @@ def test_environment_loader_requires_packages_and_refs(tmp_path: Path) -> None:
 
 
 def test_equivalence_rejects_differing_model_names() -> None:
+    from fplt.backtest.promote_eval import EvalSpec
+
     payload = _env_payload(treatment="dc_layered_v1")
     with pytest.raises(ValidationError, match="control == treatment"):
-        from fplt.backtest.promote_eval import EvalSpec
-
         EvalSpec.model_validate(payload)
 
 
@@ -582,7 +583,8 @@ def test_interval_drop_for_frames_paths() -> None:
     drop, intervals = interval_drop_for_frames(
         control, treatment, control_id="c", treatment_id="t", actuals=None
     )
-    assert drop is False and intervals == []
+    assert drop is False
+    assert intervals == []
     empty_act = pl.DataFrame(
         {
             "target_season": pl.Series([], dtype=pl.Utf8),

@@ -172,7 +172,8 @@ def test_history_prior_moves_ratings_toward_market(tmp_path: Path) -> None:
         len(teams),
         1.0,
     )
-    assert a0 is not None and d0 is not None
+    assert a0 is not None
+    assert d0 is not None
     vanilla_a = np.array([vanilla._attack[team] for team in teams])
     history_a = np.array([history._attack[team] for team in teams])
     # Strong Gaussian pull should land nearer the market ratings than vanilla.

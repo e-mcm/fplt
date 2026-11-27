@@ -38,7 +38,8 @@ def test_committed_registry_loads_and_links_audits() -> None:
     assert {"primary", "confirm", "development", "protocol_confirm"} <= roles
     protocol = next(w for w in defcon.windows if w.role == "protocol_confirm")
     assert protocol.audit == "results/defcon_rate/protocol_confirm/audit.json"
-    assert protocol.from_gw == 20 and protocol.to_gw == 38
+    assert protocol.from_gw == 20
+    assert protocol.to_gw == 38
 
     price = entry_by_id(registry, "price_within_horizon")
     assert price.verdict == "keep"

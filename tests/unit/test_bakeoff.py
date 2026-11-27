@@ -307,7 +307,8 @@ def test_selection_payloads_needs_three_arms() -> None:
         control="a",
         models=["a", "b"],
     )
-    assert spa is None and mcs is None
+    assert spa is None
+    assert mcs is None
 
 
 def test_selection_payloads_skips_empty_arms(tmp_path: Path) -> None:
@@ -389,7 +390,8 @@ def test_selection_payloads_skips_empty_arms(tmp_path: Path) -> None:
             control="control",
             models=["control", "empty", "challenger", "third"],
         )
-    assert spa is not None and mcs is not None
+    assert spa is not None
+    assert mcs is not None
     assert spa["skipped_empty"] == ["empty"]
     assert mcs["skipped_empty"] == ["empty"]
     assert "empty" not in mcs["included"]

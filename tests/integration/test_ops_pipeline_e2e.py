@@ -283,7 +283,8 @@ def test_ops_pipeline_e2e_deterministic_xpts(
         )
         store = Store(data)
         plan_manifest = store.official(season=CURRENT_SEASON, gw=2, line=E2E_LINE)
-        assert plan_manifest is not None and plan_manifest.parent_run_id
+        assert plan_manifest is not None
+        assert plan_manifest.parent_run_id
         frame = (
             store.load("player_fixture", run=plan_manifest.parent_run_id)
             .collect()

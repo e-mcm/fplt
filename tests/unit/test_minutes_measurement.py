@@ -46,7 +46,8 @@ def test_weighted_brier_emphasises_high_xpts() -> None:
     # First row is a bad miss; second is a good call.
     equal = weighted_brier(probs, outcomes, np.array([1.0, 1.0]))
     heavy = weighted_brier(probs, outcomes, np.array([10.0, 1.0]))
-    assert equal is not None and heavy is not None
+    assert equal is not None
+    assert heavy is not None
     assert heavy > equal
 
 

@@ -33,7 +33,8 @@ def test_default_id_maps_path_and_empty_yaml(tmp_path: Path) -> None:
     empty = tmp_path / "empty.yaml"
     empty.write_text("", encoding="utf-8")
     players, teams = load_id_maps(empty)
-    assert players == {} and teams == {}
+    assert players == {}
+    assert teams == {}
     bad = tmp_path / "bad.yaml"
     bad.write_text("- not a map\n", encoding="utf-8")
     with pytest.raises(ValueError, match="mapping"):

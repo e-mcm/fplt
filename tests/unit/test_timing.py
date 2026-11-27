@@ -374,7 +374,8 @@ def test_walk_forward_logs_fit_predict_split_and_summary(
     assert len(summary_lines) == 1
     summary = summary_lines[0]
     assert "gws=2" in summary
-    assert "fit=" in summary and "predict=" in summary
+    assert "fit=" in summary
+    assert "predict=" in summary
     assert "%" in summary
     artifacts = list(timing_root(tmp_path).glob("walk_forward_*.json"))
     assert len(artifacts) == 1

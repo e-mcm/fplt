@@ -118,7 +118,8 @@ def test_board_deterministic_solves_pruned_empty_squad_h3() -> None:
         lineup_reopt=True,
     )
     assert plan.mip_status == "kOptimal"
-    assert plan.pool_size is not None and plan.pool_size < candidates.height
+    assert plan.pool_size is not None
+    assert plan.pool_size < candidates.height
 
 
 def test_board_deterministic_identical_across_reruns() -> None:

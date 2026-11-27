@@ -72,11 +72,12 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400", "S"]
+select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400", "S", "PT"]
 # AGENTS.md §5 enforces D101/D103 (Google). Other D codes stay ignored until
-# ratcheted separately (#311); D203/D213 conflict with Google convention.
+# ratcheted separately; D203/D213 conflict with Google convention.
 # Bandit: S101 fixed in src (asserts→exceptions); S603/S607 via resolved
 # executables. Other S* codes deferred (noisy false positives).
+# PT (pytest-style) applies to tests/; composite asserts and broad raises fixed.
 ignore = [
     "D100",  # undocumented-public-module
     "D102",  # undocumented-public-method

@@ -87,10 +87,13 @@ def test_paired_interval_positive_mean_and_seed_stable() -> None:
     b = paired_interval(d, metric="mae", bootstrap_reps=500, bootstrap_seed=7)
     assert a.n_gw == 8
     assert a.mean == pytest.approx(float(d.mean()))
-    assert a.hac_se is not None and a.hac_se > 0
+    assert a.hac_se is not None
+    assert a.hac_se > 0
     assert a.hac_pvalue is not None
-    assert a.hac_ci_low is not None and a.hac_ci_high is not None
-    assert a.bootstrap_ci_low is not None and a.bootstrap_ci_high is not None
+    assert a.hac_ci_low is not None
+    assert a.hac_ci_high is not None
+    assert a.bootstrap_ci_low is not None
+    assert a.bootstrap_ci_high is not None
     assert a.hac_ci_low < a.mean < a.hac_ci_high
     assert a.bootstrap_ci_low == b.bootstrap_ci_low
     assert a.bootstrap_ci_high == b.bootstrap_ci_high
