@@ -1535,7 +1535,10 @@ def main(argv: list[str] | None = None) -> None:
     perf = sub.add_parser(
         "perf-report",
         parents=[log_flags],
-        help="Rank wall-clock timing hotspots from data_dir/timing/*.json",
+        help=(
+            "Rank wall-clock timing hotspots from timing/*.json, "
+            "runs/*/logs/timing.json, and official/*/ops_timing.json"
+        ),
     )
     perf.add_argument(
         "--data-dir",
@@ -1551,6 +1554,8 @@ def main(argv: list[str] | None = None) -> None:
             "eval_board",
             "ingest",
             "remote",
+            "ops_tick",
+            "ops_catchup",
         ),
         help="Only include this timing kind",
     )
@@ -3460,7 +3465,7 @@ def _decisions(args: argparse.Namespace) -> None:
 
 
 def _perf_report(args: argparse.Namespace) -> None:
-    """Print a hotspot ranking from ``data_dir/timing/*.json``."""
+    """Print a hotspot ranking from timing JSON under ``data_dir``."""
     import json
 
     from fplt.utils.timing import (

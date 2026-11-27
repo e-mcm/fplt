@@ -36,9 +36,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from fplt.schemas.timing import TIMING_RECORD_SCHEMA_VERSION, TimingRecord
+
 logger = logging.getLogger(__name__)
 
-TIMING_SCHEMA_VERSION = 1
+TIMING_SCHEMA_VERSION = TIMING_RECORD_SCHEMA_VERSION
 
 # Phases that make up a gameweek / walk-forward wall-clock total and share line.
 TOP_LEVEL: tuple[str, ...] = ("setup", "fit", "predict", "write")
@@ -58,6 +60,34 @@ KIND_TOP_LEVEL: Mapping[str, tuple[str, ...]] = {
     "ingest": ("ingest",),
     "remote": ("remote/pull", "remote/push", "remote/check"),
 }
+
+# Nested names shared with walk-forward / plan; excluded from ops ``total_s``.
+SHARED_SUBPHASES: frozenset[str] = frozenset(
+    {
+        "fit/score",
+        "fit/minutes",
+        "fit/involvement",
+        "fit/other",
+        "predict/setup",
+        "predict/fixtures",
+        "plan/setup",
+        "plan/lineup",
+        "plan/chips",
+        "plan/write",
+        "optimise/milp",
+    }
+)
+
+OPS_TIMING_KINDS: frozenset[str] = frozenset({"ops_tick", "ops_catchup"})
+
+# Write-once relative paths under a run folder / official checkpoint.
+RUN_TIMING_RELATIVE = "logs/timing.json"
+OPS_TIMING_FILENAME = "ops_timing.json"
+
+
+class TimingExistsError(FileExistsError):
+    """Raised when a write-once timing path already exists."""
+
 
 _SAFE_META = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -224,6 +254,25 @@ def timing_root(data_dir: Path) -> Path:
     return Path(data_dir) / "timing"
 
 
+def run_timing_path(run_dir: Path) -> Path:
+    """Return ``run_dir/logs/timing.json`` (data model §3.3)."""
+    return Path(run_dir) / RUN_TIMING_RELATIVE
+
+
+def ops_timing_path(checkpoint_dir: Path) -> Path:
+    """Return ``checkpoint_dir/ops_timing.json`` under an official checkpoint."""
+    return Path(checkpoint_dir) / OPS_TIMING_FILENAME
+
+
+def ops_phase_total(phases: Mapping[str, float]) -> float:
+    """Sum ops top-level phases, excluding shared nested sub-phase names."""
+    return sum(
+        seconds
+        for name, seconds in phases.items()
+        if name not in SHARED_SUBPHASES and seconds > 0
+    )
+
+
 def build_timing_record(
     kind: str,
     session: TimingSession,
@@ -240,25 +289,29 @@ def build_timing_record(
         recorded_at: UTC timestamp; defaults to now.
 
     Returns:
-        A JSON-serialisable timing record.
+        A JSON-serialisable timing record validated by ``TimingRecord``.
     """
     top = KIND_TOP_LEVEL.get(kind)
     stamp = recorded_at if recorded_at is not None else datetime.now(UTC)
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=UTC)
+    stamp = stamp.astimezone(UTC)
     phases = session.phases()
-    if top is None:
+    if kind in OPS_TIMING_KINDS:
+        total = ops_phase_total(phases)
+    elif top is None:
         total = sum(phases.values())
     else:
         total = session.total(top)
-    return {
-        "schema_version": TIMING_SCHEMA_VERSION,
-        "kind": kind,
-        "recorded_at": stamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-        "meta": dict(meta or {}),
-        "phases": phases,
-        "total_s": round(total, 6),
-    }
+    record = TimingRecord(
+        schema_version=TIMING_SCHEMA_VERSION,
+        kind=kind,
+        recorded_at=stamp,
+        meta=dict(meta or {}),
+        phases=phases,
+        total_s=round(total, 6),
+    )
+    return record.model_dump_json_doc()
 
 
 def write_timing_record(
@@ -267,45 +320,75 @@ def write_timing_record(
     meta: Mapping[str, Any] | None = None,
     *,
     data_dir: Path | None = None,
+    path: Path | None = None,
 ) -> Path | None:
-    """Persist a timing JSON under ``…/timing/`` (never overwrite).
+    """Persist a timing JSON (never overwrite).
 
-    Empty sessions are skipped (returns ``None``). When ``data_dir`` is
-    omitted, uses the active ``timing_artifacts`` ContextVar root; if neither
-    is set, returns ``None`` without writing. Filenames include kind, optional
-    model slug, and a UTC timestamp so repeats do not collide.
+    Empty sessions are skipped (returns ``None``). When ``path`` is set, writes
+    that exact file once (run-folder ``logs/timing.json`` or official
+    ``ops_timing.json``). Otherwise writes under ``…/timing/`` with a
+    kind/model/timestamp filename. When ``data_dir`` is omitted for the
+    legacy layout, uses the active ``timing_artifacts`` ContextVar root; if
+    neither root nor ``path`` is set, returns ``None`` without writing.
 
     Args:
         kind: Surface label.
         session: Accumulated phases.
         meta: Optional run identity.
         data_dir: Install root override. Defaults to ``active_timing_dir()``.
+        path: Exact write-once destination. Mutually exclusive with relying on
+            a ``data_dir`` / ContextVar root for the legacy ``timing/`` layout.
 
     Returns:
         Path written, or ``None`` when nothing was recorded / no root set.
+
+    Raises:
+        TimingExistsError: ``path`` already exists (write-once).
+        ValueError: Both ``path`` and ``data_dir`` are set.
     """
+    if path is not None and data_dir is not None:
+        raise ValueError("pass path or data_dir, not both")
     if not session.phases():
         return None
+    record = build_timing_record(kind, session, meta)
+    if path is not None:
+        dest = Path(path)
+        if dest.exists():
+            raise TimingExistsError(f"timing path already exists: {dest}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        logger.info(
+            "timing artifact kind=%s path=%s total=%.1fs phases=%s",
+            kind,
+            dest,
+            float(record["total_s"]),
+            len(record["phases"]),
+        )
+        return dest
     root_dir = data_dir if data_dir is not None else active_timing_dir()
     if root_dir is None:
         return None
-    record = build_timing_record(kind, session, meta)
     root = timing_root(root_dir)
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     model = meta.get("model") if meta else None
     slug = _SAFE_META.sub("-", str(model))[:48] if model else "run"
-    path = root / f"{kind}_{slug}_{stamp}.json"
-    payload = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    path.write_text(payload, encoding="utf-8")
+    dest = root / f"{kind}_{slug}_{stamp}.json"
+    dest.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     logger.info(
         "timing artifact kind=%s path=%s total=%.1fs phases=%s",
         kind,
-        path,
+        dest,
         float(record["total_s"]),
         len(record["phases"]),
     )
-    return path
+    return dest
 
 
 def format_gw_breakdown(session: TimingSession, *, digits: int = 1) -> str:
@@ -461,6 +544,37 @@ def classify_phase(phase: str) -> str:
     return "other"
 
 
+def _discover_timing_paths(data_dir: Path) -> list[Path]:
+    """Collect legacy ``timing/*.json``, run ``logs/timing.json``, and ops files."""
+    root = Path(data_dir)
+    found: list[Path] = []
+    legacy = timing_root(root)
+    if legacy.is_dir():
+        found.extend(legacy.glob("*.json"))
+    runs = root / "runs"
+    if runs.is_dir():
+        found.extend(runs.glob("run=*/logs/timing.json"))
+    official = root / "official"
+    if official.is_dir():
+        found.extend(official.glob("season=*/gw=*/checkpoint=*/ops_timing.json"))
+    return found
+
+
+def _load_timing_file(path: Path) -> dict[str, Any] | None:
+    """Parse one timing JSON file; return ``None`` when unreadable."""
+    try:
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("skip unreadable timing artifact path=%s", path)
+        return None
+    if not isinstance(raw, dict):
+        return None
+    record = cast(dict[str, Any], raw)
+    record = dict(record)
+    record["_path"] = str(path)
+    return record
+
+
 def load_timing_records(
     data_dir: Path,
     *,
@@ -469,36 +583,31 @@ def load_timing_records(
 ) -> list[dict[str, Any]]:
     """Load timing JSON artifacts newest-first.
 
+    Reads ``data_dir/timing/*.json`` plus run-folder ``logs/timing.json`` and
+    official ``ops_timing.json`` so ``fplt perf-report`` aggregates walk-forward
+    and ops records together.
+
     Args:
-        data_dir: Install root containing ``timing/``.
+        data_dir: Install root containing ``timing/`` and/or ``runs/`` /
+            ``official/``.
         kind: Optional kind filter.
         limit: Max records to return (after filtering).
 
     Returns:
         Parsed records, newest ``recorded_at`` / mtime first.
     """
-    root = timing_root(data_dir)
-    if not root.exists():
-        return []
     paths = sorted(
-        root.glob("*.json"),
+        _discover_timing_paths(data_dir),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     records: list[dict[str, Any]] = []
     for path in paths:
-        try:
-            raw: object = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            logger.warning("skip unreadable timing artifact path=%s", path)
+        record = _load_timing_file(path)
+        if record is None:
             continue
-        if not isinstance(raw, dict):
-            continue
-        record = cast(dict[str, Any], raw)
         if kind is not None and record.get("kind") != kind:
             continue
-        record = dict(record)
-        record["_path"] = str(path)
         records.append(record)
         if limit is not None and len(records) >= limit:
             break

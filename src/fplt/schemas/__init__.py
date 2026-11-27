@@ -7,5 +7,5 @@ Data-model contracts: ``manifests`` (runs, builds, official including
 ``quarantine.QuarantineRecordSchema``. Ops-08 weekly report rows:
 ``weekly_report.WeeklyReportSchema``. Derived catalog:
 ``catalog.CatalogRunSchema`` (Stage C / step 8). Ops-10 health document:
-``status.StatusDocument``.
+``status.StatusDocument``. Timing JSON: ``timing.TimingRecord``.
 """
