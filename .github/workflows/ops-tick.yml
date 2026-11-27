@@ -37,6 +37,9 @@ jobs:
     timeout-minutes: 90
     environment: r2
     steps:
+      - name: Record job start
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -108,11 +111,13 @@ jobs:
           FPLT_PRODUCTION_MODELS: ${{ vars.FPLT_PRODUCTION_MODELS }}
           FPLT_PLAN_HORIZON: ${{ vars.FPLT_PLAN_HORIZON }}
           OPS_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.source || 'auto' }}
+          JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
         run: |
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           uv run fplt ops-tick --source "$OPS_SOURCE" --remote "$remote" --branch snapshots
+          # Timing table is appended to $GITHUB_STEP_SUMMARY by fplt.automation.ops_timing.
 
   alerts:
     needs: tick
