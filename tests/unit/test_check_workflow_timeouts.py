@@ -121,6 +121,27 @@ def test_ops_timeouts_exceed_solver_wall_clock() -> None:
     assert catchup_s > 15 * time_limit_s
 
 
+def test_reusable_workflow_call_skips_timeout_requirement(tmp_path: Path) -> None:
+    """Jobs that only ``uses:`` a reusable workflow cannot set timeout-minutes."""
+    wf = tmp_path / "call.yml"
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    wf.write_text(
+        "\n".join(
+            [
+                "name: call",
+                "on: workflow_dispatch",
+                "jobs:",
+                "  scan:",
+                f"    uses: org/repo/.github/workflows/scan.yml@{sha}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert missing_timeouts(tmp_path) == []
+    assert main(["--workflows-dir", str(tmp_path)]) == 0
+
+
 def test_main_fails_when_workflows_dir_missing(tmp_path: Path) -> None:
     """CLI exits 1 when the workflows directory does not exist."""
     assert main(["--workflows-dir", str(tmp_path / "nope")]) == 1

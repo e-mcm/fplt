@@ -68,6 +68,10 @@ def missing_timeouts(
     """
     violations: list[str] = []
     for path, job_id, body in iter_workflow_jobs(workflows_dir):
+        # Reusable workflow calls (`uses: org/repo/.github/workflows/…@sha`)
+        # cannot set timeout-minutes on the caller job (GitHub syntax).
+        if isinstance(body.get("uses"), str):
+            continue
         timeout = body.get("timeout-minutes")
         rel = path.name
         if timeout is None:

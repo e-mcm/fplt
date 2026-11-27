@@ -1,0 +1,3 @@
+# Intentionally vulnerable pin for #309 acceptance: introducing this in a PR
+# must fail dependency-audit / osv-scanner. Do not use in production.
+pyyaml==5.1

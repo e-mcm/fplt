@@ -1,0 +1,7 @@
+# Intentionally vulnerable fixture for #309 acceptance (check_osv_scanner_gate.py).
+# Ignore this directory in repo-wide scans so the fixture itself does not fail
+# dependency-audit / weekly SARIF. The gate script passes --config pointing at
+# the repo-root osv-scanner.toml so PackageOverrides here are bypassed.
+[[PackageOverrides]]
+ignore = true
+reason = "Acceptance fixture only; scanned by scripts/check_osv_scanner_gate.py"

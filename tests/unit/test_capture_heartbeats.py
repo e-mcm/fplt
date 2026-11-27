@@ -394,12 +394,22 @@ def test_capture_workflows_queue_without_cancel() -> None:
         assert conc["group"], name
 
 
-def test_every_scheduled_workflow_file_is_covered() -> None:
-    """Guardrail: any new cron workflow must appear in _SCHEDULED (or be CI).
+# Scheduled workflows that are not capture/ops heartbeats (no alerts job).
+_SCHEDULED_WITHOUT_HEARTBEAT = frozenset(
+    {
+        "ci.yml",  # nightly full matrix (#305); gate job owns notify
+        "codeql.yml",  # #309 weekly CodeQL
+        "dependency-audit.yml",  # #309 weekly osv-scanner SARIF
+    }
+)
 
-    ``ci.yml`` is scheduled for the nightly full matrix (#305) but uses the
-    ``gate`` job for notify/heartbeat rather than a capture-style ``alerts``
-    job, so it is excluded from ``_SCHEDULED``.
+
+def test_every_scheduled_workflow_file_is_covered() -> None:
+    """Guardrail: any new cron workflow must appear in _SCHEDULED (or be listed).
+
+    ``ci.yml``, ``codeql.yml``, and ``dependency-audit.yml`` are scheduled but
+    use non-capture notify paths (CI ``gate``, or security SARIF uploads), so
+    they are excluded from ``_SCHEDULED`` heartbeats.
     """
     scheduled: list[str] = []
     for path in sorted(_WORKFLOWS.glob("*.yml")):
@@ -407,7 +417,9 @@ def test_every_scheduled_workflow_file_is_covered() -> None:
         on = _on(doc)
         if "schedule" in on:
             scheduled.append(path.name)
-    expected = {n for n in _SCHEDULED if n != "ops-catchup.yml"} | {"ci.yml"}
+    expected = {
+        n for n in _SCHEDULED if n != "ops-catchup.yml"
+    } | _SCHEDULED_WITHOUT_HEARTBEAT
     assert set(scheduled) == expected, textwrap.dedent(
         f"""
         scheduled workflows drifted:
