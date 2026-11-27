@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -416,5 +416,5 @@ def _default_specs_dir() -> Path:
 def _package_version() -> str:
     try:
         return version("fplt")
-    except Exception:
+    except PackageNotFoundError:
         return "0.0.0"

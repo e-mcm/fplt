@@ -30,7 +30,7 @@ from fplt.scoring.rules import Rules
 from fplt.types import GWKey
 
 # Bench the CRN helper used by CompositePredictor (private module attribute).
-_sample_minutes_crn: Callable[..., np.ndarray] = getattr(
+_sample_minutes_crn: Callable[..., np.ndarray] = getattr(  # noqa: B009
     composite_mod, "_sample_minutes_crn"
 )
 

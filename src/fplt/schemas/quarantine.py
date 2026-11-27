@@ -32,4 +32,4 @@ class QuarantineRecordSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["capture_path", "gate", "available_at"]
+        unique = ["capture_path", "gate", "available_at"]  # noqa: RUF012

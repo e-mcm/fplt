@@ -276,7 +276,7 @@ def _empty() -> RunComponentTables:
 
 
 def _ok(schema: type[object], frame: pl.DataFrame) -> pl.DataFrame:
-    validate = getattr(schema, "validate")
+    validate = getattr(schema, "validate")  # noqa: B009 - schema is type[object]
     checked = validate(frame)
     assert isinstance(checked, pl.DataFrame)
     return checked

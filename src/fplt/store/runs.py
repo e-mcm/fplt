@@ -17,7 +17,7 @@ import secrets
 import shutil
 import subprocess
 from datetime import UTC, datetime
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Self, cast
 
@@ -130,7 +130,7 @@ def fplt_mc_version() -> str | None:
     """Installed ``fplt-mc`` version, or ``None`` when the package is absent."""
     try:
         return version("fplt-mc")
-    except Exception:
+    except PackageNotFoundError:
         return None
 
 

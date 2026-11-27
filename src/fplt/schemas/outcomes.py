@@ -36,7 +36,7 @@ class PlayerFixtureOutcomesSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["season", "fixture_id", "player_key"]
+        unique = ["season", "fixture_id", "player_key"]  # noqa: RUF012
 
 
 class FixtureOutcomesSchema(pa.DataFrameModel):
@@ -56,4 +56,4 @@ class FixtureOutcomesSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["season", "fixture_id"]
+        unique = ["season", "fixture_id"]  # noqa: RUF012

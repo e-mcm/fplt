@@ -25,7 +25,7 @@ class PredictionSampleSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id", "sim"]
+        unique = ["player_key", "fixture_id", "sim"]  # noqa: RUF012
 
 
 class ScenarioOutcomeSchema(pa.DataFrameModel):
@@ -45,4 +45,4 @@ class ScenarioOutcomeSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "sim"]
+        unique = ["player_key", "sim"]  # noqa: RUF012

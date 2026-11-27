@@ -6,6 +6,7 @@ import json
 
 import polars as pl
 import pytest
+from pandera.errors import SchemaError
 
 from fplt.backtest.forecast_optimiser_swap import (
     SwapArm,
@@ -167,7 +168,7 @@ def test_swap_projection_schema_rejects_dupes() -> None:
             "xpts": [1.0, 2.0],
         }
     )
-    with pytest.raises(Exception):
+    with pytest.raises(SchemaError):
         SwapProjectionSchema.validate(frame)
 
 

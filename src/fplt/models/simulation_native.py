@@ -99,7 +99,7 @@ def require_native_kernel() -> Any:
             "mc_backend=native requires the fplt-mc wheel "
             "(https://e-mcm.github.io/fplt/simple/); install via uv sync / CI artifact"
         ) from exc
-    api = int(getattr(module, "KERNEL_API"))
+    api = int(module.KERNEL_API)
     if api < _EXPECTED_KERNEL_API:
         raise RuntimeError(
             f"fplt-mc KERNEL_API={api} < {_EXPECTED_KERNEL_API}; "

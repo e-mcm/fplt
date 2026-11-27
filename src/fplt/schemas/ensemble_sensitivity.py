@@ -32,7 +32,12 @@ class EnsembleSensitivityRowSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["season", "gw", "control_model_id", "challenger_model_id"]
+        unique = [  # noqa: RUF012
+            "season",
+            "gw",
+            "control_model_id",
+            "challenger_model_id",
+        ]  # noqa: RUF012
 
 
 class EnsembleSensitivitySummarySchema(pa.DataFrameModel):
@@ -54,4 +59,4 @@ class EnsembleSensitivitySummarySchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["control_model_id", "challenger_model_id"]
+        unique = ["control_model_id", "challenger_model_id"]  # noqa: RUF012

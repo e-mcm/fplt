@@ -20,7 +20,7 @@ class ComponentRegretSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season", "gw"]
+        unique = ["model_id", "season", "gw"]  # noqa: RUF012
 
 
 class AttainableShareSchema(pa.DataFrameModel):
@@ -40,4 +40,4 @@ class AttainableShareSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season"]
+        unique = ["model_id", "season"]  # noqa: RUF012

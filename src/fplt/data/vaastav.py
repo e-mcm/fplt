@@ -164,7 +164,7 @@ def _read_optional(path: Path) -> pl.DataFrame | None:
 def _read_gw(path: Path) -> pl.DataFrame:
     try:
         return pl.read_csv(path, infer_schema_length=5000)
-    except Exception:
+    except pl.exceptions.PolarsError:
         return pl.read_csv(path, infer_schema_length=5000, encoding="latin1")
 
 

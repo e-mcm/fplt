@@ -30,7 +30,7 @@ class ThisWeekPlayersSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = False
         coerce = True
-        unique = ["player_key"]
+        unique = ["player_key"]  # noqa: RUF012
 
 
 class ThisWeekTransferSchema(pa.DataFrameModel):
@@ -74,7 +74,7 @@ class ThisWeekFixtureDetailSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012
 
 
 THIS_WEEK_PLAYERS_BASE_COLUMNS: dict[str, pl.DataType] = {

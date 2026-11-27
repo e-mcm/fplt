@@ -23,7 +23,7 @@ class InvolvementSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012
 
 
 class OtherPointsSchema(pa.DataFrameModel):
@@ -47,7 +47,7 @@ class OtherPointsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id", "minutes_bucket"]
+        unique = ["player_key", "fixture_id", "minutes_bucket"]  # noqa: RUF012
 
 
 INVOLVEMENT_COLUMNS: dict[str, pl.DataType] = {

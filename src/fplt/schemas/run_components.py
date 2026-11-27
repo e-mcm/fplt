@@ -31,13 +31,13 @@ class ComponentMinutesSchema(L2StandardKeys):
     p_60: float = pa.Field(ge=0, le=1)
 
     class Config(L2StandardKeys.Config):
-        unique = [
+        unique = [  # noqa: RUF012
             "run_id",
             "as_of_season",
             "as_of_gw",
             "player_key",
             "fixture_id",
-        ]
+        ]  # noqa: RUF012
 
 
 class ComponentScorelineSchema(L2TeamFixtureKeys):
@@ -54,13 +54,13 @@ class ComponentScorelineSchema(L2TeamFixtureKeys):
     p_cs: float = pa.Field(ge=0, le=1)
 
     class Config(L2TeamFixtureKeys.Config):
-        unique = [
+        unique = [  # noqa: RUF012
             "run_id",
             "as_of_season",
             "as_of_gw",
             "fixture_id",
             "team_key",
-        ]
+        ]  # noqa: RUF012
 
 
 class ComponentInvolvementSchema(L2StandardKeys):
@@ -78,13 +78,13 @@ class ComponentInvolvementSchema(L2StandardKeys):
     exp_goals_method: str = pa.Field(isin=list(EXP_GOALS_METHODS))
 
     class Config(L2StandardKeys.Config):
-        unique = [
+        unique = [  # noqa: RUF012
             "run_id",
             "as_of_season",
             "as_of_gw",
             "player_key",
             "fixture_id",
-        ]
+        ]  # noqa: RUF012
 
 
 COMPONENT_MINUTES_COLUMNS: dict[str, pl.DataType] = {

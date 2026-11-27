@@ -28,4 +28,4 @@ class PruningLossRowSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["scenario_id", "arm_id"]
+        unique = ["scenario_id", "arm_id"]  # noqa: RUF012

@@ -524,7 +524,7 @@ def selection_payloads(
     id_by_name = {run.model_name: run.spec.model_id for run in compare.runs}
     try:
         ledger = read_predictions(data_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001 - SPA/MCS is best-effort when ledger missing
         return None, None
     model_ids = {id_by_name[name] for name in models if name in id_by_name}
     scored = ledger.filter(pl.col("model_id").is_in(sorted(model_ids)))
@@ -532,7 +532,7 @@ def selection_payloads(
         return None, None
     try:
         scored = filter_decision_pool(scored, DataStore(data_dir))
-    except Exception:
+    except Exception:  # noqa: BLE001 - fall back to full ledger on any filter failure
         logger.warning(
             "bakeoff decision pool filter failed; SPA/MCS uses full ledger",
             exc_info=True,

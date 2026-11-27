@@ -72,7 +72,7 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "D"]
+select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400"]
 # AGENTS.md §5 enforces D101/D103 (Google). Other D codes stay ignored until
 # ratcheted separately (#311); D203/D213 conflict with Google convention.
 ignore = [

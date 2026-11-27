@@ -18,7 +18,7 @@ class ContextFeatureSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012
 
 
 class RollingFormSchema(pa.DataFrameModel):
@@ -43,7 +43,7 @@ class RollingFormSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012
 
 
 class OpponentStrengthSchema(pa.DataFrameModel):
@@ -58,7 +58,7 @@ class OpponentStrengthSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012
 
 
 class AvailabilityFeatureSchema(pa.DataFrameModel):
@@ -77,4 +77,4 @@ class AvailabilityFeatureSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "fixture_id"]
+        unique = ["player_key", "fixture_id"]  # noqa: RUF012

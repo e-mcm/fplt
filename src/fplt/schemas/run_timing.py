@@ -16,7 +16,7 @@ class RunTimingPhaseSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["phase"]
+        unique = ["phase"]  # noqa: RUF012
 
 
 class RunTimingTransferSchema(pa.DataFrameModel):
@@ -45,7 +45,7 @@ class RunTimingTrendSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = False
         coerce = True
-        unique = ["season", "gw", "checkpoint"]
+        unique = ["season", "gw", "checkpoint"]  # noqa: RUF012
 
 
 RUN_TIMING_PHASE_COLUMNS: dict[str, pl.DataType] = {

@@ -2665,7 +2665,7 @@ def _ingest_lineups(args: argparse.Namespace) -> None:
                 min_interval_seconds=settings.touchline_lineups_min_interval_seconds,
             )
         except (PredictedLineupsDisabled, PredictedLineupsRateLimit) as exc:
-            logger.error("%s", exc)
+            logger.exception("%s", exc)
             raise SystemExit(2) from exc
         logger.info(
             "touchline raw %s (%s)",
@@ -2714,7 +2714,7 @@ def _ingest_review(args: argparse.Namespace) -> None:
             as_of=as_of,
         )
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        logger.error("ingest-review failed: %s", exc)
+        logger.exception("ingest-review failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(f"staged {n} fpl_review rows into {out}")
@@ -2730,7 +2730,7 @@ def _predict(args: argparse.Namespace) -> None:
             gw=args.gw,
         )
     except (FileExistsError, FileNotFoundError, KeyError, ValueError) as exc:
-        logger.error("predict failed: %s", exc)
+        logger.exception("predict failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(path)
@@ -2751,7 +2751,7 @@ def _backtest(args: argparse.Namespace) -> None:
             steps=args.steps,
         )
     except (ValueError, KeyError) as exc:
-        logger.error("backtest failed: %s", exc)
+        logger.exception("backtest failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     for spec in ran:
@@ -2810,7 +2810,7 @@ def _compare(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (ValueError, KeyError, StaleLedgerCacheError) as exc:
-        logger.error("compare failed: %s", exc)
+        logger.exception("compare failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     for run in result.runs:
@@ -2844,7 +2844,7 @@ def _compare_experiment(args: argparse.Namespace, specs: list[str]) -> None:
             gw=int(args.gw) if args.gw is not None else None,
         )
     except (ValueError, FileNotFoundError) as exc:
-        logger.error("compare --spec failed: %s", exc)
+        logger.exception("compare --spec failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(f"experiment_id={result.experiment_id}")
@@ -2885,7 +2885,7 @@ def _exp_submit(args: argparse.Namespace) -> None:
             build_id=args.build_id,
         )
     except (ValueError, FileNotFoundError) as exc:
-        logger.error("exp submit failed: %s", exc)
+        logger.exception("exp submit failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(f"batch_id={result.batch_id}")
@@ -2957,7 +2957,7 @@ def _explain(args: argparse.Namespace) -> None:
             vs_player_key=(None if args.vs_player is None else int(args.vs_player)),
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
-        logger.error("explain failed: %s", exc)
+        logger.exception("explain failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(text, end="")
@@ -3045,7 +3045,7 @@ def _plan(args: argparse.Namespace) -> None:
         ValueError,
         FPLAPIError,
     ) as exc:
-        logger.error("plan failed: %s", exc)
+        logger.exception("plan failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(report, end="")
@@ -3065,7 +3065,7 @@ def _minutes_measure(args: argparse.Namespace) -> None:
             top_misses_per_gw=int(args.top_misses_per_gw),
         )
     except (ValueError, KeyError) as exc:
-        logger.error("minutes-measure failed: %s", exc)
+        logger.exception("minutes-measure failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_minutes_measurement_table(result.summary))
@@ -3085,7 +3085,7 @@ def _other_measure(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (ValueError, KeyError) as exc:
-        logger.error("other-measure failed: %s", exc)
+        logger.exception("other-measure failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_other_points_measurement_table(result.summary))
@@ -3105,7 +3105,7 @@ def _predicted_xi_audit(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (ValueError, KeyError) as exc:
-        logger.error("predicted-xi-audit failed: %s", exc)
+        logger.exception("predicted-xi-audit failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_predicted_xi_audit_table(result.summary))
@@ -3160,7 +3160,7 @@ def _eval_components(args: argparse.Namespace) -> None:
             steps=int(args.steps),
         )
     except (ValueError, KeyError, StaleLedgerCacheError) as exc:
-        logger.error("eval-components failed: %s", exc)
+        logger.exception("eval-components failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_component_table(result.summary))
@@ -3186,7 +3186,7 @@ def _horizon_skill(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (ValueError, KeyError, StaleLedgerCacheError) as exc:
-        logger.error("horizon-skill failed: %s", exc)
+        logger.exception("horizon-skill failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_skill_curve(result.curve))
@@ -3217,7 +3217,7 @@ def _ensemble_sensitivity(args: argparse.Namespace) -> None:
         )
         paths = write_ensemble_sensitivity_report(report, output_dir)
     except (KeyError, ValueError) as exc:
-        logger.error("ensemble-sensitivity failed: %s", exc)
+        logger.exception("ensemble-sensitivity failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_ensemble_sensitivity_board(report.summary))
@@ -3267,7 +3267,7 @@ def _pruning_loss(args: argparse.Namespace) -> None:
         )
         paths = write_pruning_loss_report(report, output_dir)
     except ValueError as exc:
-        logger.error("pruning-loss failed: %s", exc)
+        logger.exception("pruning-loss failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_pruning_loss_summary(report.summary))
@@ -3307,7 +3307,7 @@ def _promote_eval(args: argparse.Namespace) -> None:
             argv=sys.argv[1:],
         )
     except (FileNotFoundError, ValueError, KeyError) as exc:
-        logger.error("promote-eval failed: %s", exc)
+        logger.exception("promote-eval failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(result.recommendation, end="")
@@ -3370,7 +3370,7 @@ def _bakeoff(args: argparse.Namespace) -> None:
             openfpl_model_dir=args.openfpl_model_dir,
         )
     except (FileNotFoundError, ValueError, KeyError, StaleLedgerCacheError) as exc:
-        logger.error("bakeoff failed: %s", exc)
+        logger.exception("bakeoff failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(result.ranking, end="")
@@ -3401,7 +3401,7 @@ def _sim_season(args: argparse.Namespace) -> None:
             print(format_simulated_season_report(report))
             print()
     except (KeyError, ValueError) as exc:
-        logger.error("sim-season failed: %s", exc)
+        logger.exception("sim-season failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
 
@@ -3438,7 +3438,7 @@ def _regret_board(args: argparse.Namespace) -> None:
             policy_parquet=args.policy_parquet,
         )
     except (KeyError, ValueError) as exc:
-        logger.error("regret-board failed: %s", exc)
+        logger.exception("regret-board failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(result.report_md)
@@ -3463,7 +3463,7 @@ def _weekly_report(args: argparse.Namespace) -> None:
             settings=get_settings(),
         )
     except ValueError as exc:
-        logger.error("weekly-report failed: %s", exc)
+        logger.exception("weekly-report failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(result.report_md, end="")
@@ -3485,7 +3485,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 )
             )
         except (KeyError, ValueError) as exc:
-            logger.error("decisions explain failed: %s", exc)
+            logger.exception("decisions explain failed: %s", exc)
             print(str(exc), file=sys.stderr)
             raise SystemExit(2) from exc
         return
@@ -3547,7 +3547,7 @@ def _decisions(args: argparse.Namespace) -> None:
                 summary = enrich_decision_summary(summary, oracle)
             print(format_decision_scoreboard(summary))
     except (KeyError, ValueError) as exc:
-        logger.error("decisions failed: %s", exc)
+        logger.exception("decisions failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     path = data_dir / "ledger" / "decisions" / "part.parquet"
@@ -3635,7 +3635,7 @@ def _archive_benchmarks(args: argparse.Namespace) -> None:
         NotImplementedError,
         ValueError,
     ) as exc:
-        logger.error("archive-benchmarks failed: %s", exc)
+        logger.exception("archive-benchmarks failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(path)
@@ -3655,7 +3655,7 @@ def _archive_compare(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
         )
     except (KeyError, ValueError) as exc:
-        logger.error("archive-compare failed: %s", exc)
+        logger.exception("archive-compare failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_archive_board(result))
@@ -3729,7 +3729,7 @@ def _auth(args: argparse.Namespace) -> None:
                 )
             return
     except (BrowserAuthError, OSError, ValueError) as exc:
-        logger.error("auth failed: %s", exc)
+        logger.exception("auth failed: %s", exc)
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     raise SystemExit(_not_implemented(f"auth {command}"))

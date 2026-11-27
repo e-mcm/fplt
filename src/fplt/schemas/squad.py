@@ -19,7 +19,7 @@ class SquadPlayerSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key"]
+        unique = ["player_key"]  # noqa: RUF012
 
 
 class SquadPickSchema(pa.DataFrameModel):
@@ -37,7 +37,7 @@ class SquadPickSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key"]
+        unique = ["player_key"]  # noqa: RUF012
 
 
 class GameweekPointsSchema(pa.DataFrameModel):
@@ -49,4 +49,4 @@ class GameweekPointsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key"]
+        unique = ["player_key"]  # noqa: RUF012

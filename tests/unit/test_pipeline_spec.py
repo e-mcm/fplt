@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from fplt.automation.production import (
     ProductionOps,
@@ -234,7 +235,7 @@ def test_inline_model_spec_is_accepted_for_hashing() -> None:
 
 def test_production_ops_requires_pipeline_field() -> None:
     """Constructing ProductionOps without a pipeline fails validation."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ProductionOps(  # type: ignore[call-arg]
             models=["dc_layered_v4_native"],
             plan_horizon=3,

@@ -27,6 +27,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -1502,7 +1503,7 @@ def _actuals_for_equivalence(
     try:
         stats = store.read("player_fixture_stats")
         gws = store.read("gameweeks")
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional staged tables may be absent
         return None
     if stats.is_empty() or gws.is_empty():
         return None
@@ -3064,7 +3065,7 @@ def _member_prediction_keys(
         for path in pred_root.glob("as_of=*/part.parquet"):
             try:
                 frame = pl.read_parquet(path)
-            except Exception:
+            except Exception:  # noqa: BLE001 - skip corrupt/partial prediction parts
                 continue
             needed = {
                 "target_season",
@@ -3210,7 +3211,7 @@ def _check_leak(
     for path in feature_root.glob("**/part.parquet"):
         try:
             frame = pl.read_parquet(path)
-        except Exception:
+        except Exception:  # noqa: BLE001 - skip corrupt/partial feature parts
             continue
         if "fixture_id" not in frame.columns or "available_at" not in frame.columns:
             continue
@@ -3368,7 +3369,7 @@ def _prediction_deltas(
 
     try:
         ledger = read_predictions(data_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001 - intervals degrade when ledger missing
         deltas["per_gw_wins"] = {"control": 0, "treatment": 0, "ties": 0}
         return deltas
     model_ids = {control_id, treatment_id}
@@ -3378,7 +3379,7 @@ def _prediction_deltas(
         return deltas
     try:
         scored = filter_decision_pool(scored, DataStore(data_dir))
-    except Exception:
+    except Exception:  # noqa: BLE001 - fall back to full ledger on any filter failure
         logger.warning(
             "decision pool filter failed; intervals use full scored ledger",
             exc_info=True,
@@ -3511,7 +3512,7 @@ def _format_interval_lines(deltas: dict[str, Any]) -> list[str]:
 def _folds_from_compare(compare: CompareResult, data_dir: Path) -> list[dict[str, Any]]:
     try:
         ledger = read_predictions(data_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001 - folds optional when ledger missing
         return []
     if ledger.is_empty():
         return []
@@ -3623,7 +3624,7 @@ def _write_audit(
         }
     try:
         fplt_ver = package_version("fplt")
-    except Exception:
+    except PackageNotFoundError:
         fplt_ver = "0.0.0"
     lock_payload: str | dict[str, str | None]
     if is_equivalence_kind(spec.kind):
@@ -3677,7 +3678,7 @@ def _write_audit(
         from fplt.models.simulation_native import native_provenance
 
         payload["mc"] = native_provenance()
-    except Exception as exc:  # pragma: no cover - provenance must not fail the eval
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - must not fail eval
         payload["mc"] = {"error": str(exc)}
     (out / "audit.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",

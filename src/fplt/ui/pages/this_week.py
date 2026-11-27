@@ -240,7 +240,7 @@ def _render_plan(panel: object) -> None:
         f"Expected points (XI + captain − hit): "
         f"{getattr(panel, 'expected_points', 0):.2f}"
     )
-    transfers = getattr(panel, "transfers")
+    transfers = getattr(panel, "transfers")  # noqa: B009 - panel typed as object
     if transfers is not None and not transfers.is_empty():
         st.markdown("**Transfers**")
         st.dataframe(transfers, hide_index=True)  # pyright: ignore[reportUnknownMemberType]
@@ -252,10 +252,10 @@ def _render_plan(panel: object) -> None:
             f"**XI** (C: {getattr(panel, 'captain_key', None)}, "
             f"VC: {getattr(panel, 'vice_key', None)})"
         )
-        st.dataframe(getattr(panel, "xi"), hide_index=True)  # pyright: ignore[reportUnknownMemberType]
+        st.dataframe(getattr(panel, "xi"), hide_index=True)  # noqa: B009  # pyright: ignore[reportUnknownMemberType]
     with cols[1]:
         st.markdown("**Bench**")
-        st.dataframe(getattr(panel, "bench"), hide_index=True)  # pyright: ignore[reportUnknownMemberType]
+        st.dataframe(getattr(panel, "bench"), hide_index=True)  # noqa: B009  # pyright: ignore[reportUnknownMemberType]
 
 
 def _deadline(gameweeks: pl.DataFrame, season: str, gw: int) -> datetime | None:
