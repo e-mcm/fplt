@@ -262,20 +262,59 @@ jobs:
             --index-url "https://e-mcm.github.io/fplt/simple/" \
             --extra-index-url "https://pypi.org/simple/"
           uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
-      # Full suite (incl. slow) + xdist; pytest-cov combines worker coverage (#288).
+      # Full suite (incl. slow) + xdist; pytest-cov combines worker coverage (#288/#304).
       # No testmon / path skipping — every PR runs the full suite.
       # fail_under=90 is in pyproject.toml; diff-cover enforces ≥95% on PR diffs.
       - name: Pytest (fplt)
         run: >
           uv run pytest -n auto --cov=fplt --cov-branch
           --cov-report=xml --cov-report=term
+          --cov-report=html:htmlcov
           --durations=25
       - name: Diff coverage (≥95% on changed lines)
         if: github.event_name == 'pull_request'
-        run: >
-          uv run diff-cover coverage.xml
-          --compare-branch=origin/${{ github.base_ref }}
-          --fail-under=95
+        id: diffcover
+        run: |
+          set -uo pipefail
+          set +e
+          REPORT=$(uv run diff-cover coverage.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=95 2>&1)
+          status=$?
+          set -e
+          echo "$REPORT"
+          {
+            echo "## Diff coverage"
+            echo '```'
+            echo "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Coverage summary
+        if: always() && hashFiles('coverage.xml') != ''
+        run: |
+          set -euo pipefail
+          python3 <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("coverage.xml").getroot()
+          line_rate = float(root.attrib.get("line-rate", "0"))
+          branch_rate = float(root.attrib.get("branch-rate", "0"))
+          print("## Coverage")
+          print(f"- line-rate: **{line_rate * 100:.2f}%**")
+          print(f"- branch-rate: **{branch_rate * 100:.2f}%**")
+          print("- gate: `fail_under = 90` (combined line+branch in pyproject.toml)")
+          print("- artifact: `coverage-report` (coverage.xml + htmlcov/, 7 days)")
+          PY
+      - name: Upload coverage report
+        if: always() && hashFiles('coverage.xml') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 7
       - name: Pytest (fplt-mc smoke)
         if: needs.changes.outputs.mc == 'true'
         run: uv run pytest mc/tests -q
