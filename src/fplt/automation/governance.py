@@ -409,7 +409,8 @@ def _registry_verdict(
         return None
     try:
         registry = load_results_registry(path, require_audits=False)
-    except (OSError, ValueError, FileNotFoundError):
+    except (OSError, ValueError, FileNotFoundError, yaml.YAMLError):
+        # Corrupt / unreadable registry must not break PR governance lookup.
         return None
     for entry in registry.entries:
         if entry.id == run_id:
