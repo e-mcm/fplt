@@ -148,13 +148,7 @@ def test_l2_zero_players_copies_team_goals_to_missed() -> None:
         assister=np.zeros((2, 3)),
     )
     py = _allocate_side(
-        team_goals,
-        minutes,
-        gw,
-        aw,
-        0.05,
-        0.5,
-        np.random.default_rng(0),
+        team_goals, minutes, gw, aw, 0.05, 0.5, np.random.default_rng(0),
         uniforms=uniforms,
     )
     native = _native_allocate(team_goals, minutes, gw, aw, 0.05, 0.5, uniforms)
@@ -171,7 +165,9 @@ def test_l2_zero_players_copies_team_goals_to_missed() -> None:
 def _run_allocate(backend: str, **kwargs):  # type: ignore[no-untyped-def]
     uniforms = kwargs.pop("uniforms")
     if backend == "python":
-        return _allocate_side(**kwargs, rng=np.random.default_rng(0), uniforms=uniforms)
+        return _allocate_side(
+            **kwargs, rng=np.random.default_rng(0), uniforms=uniforms
+        )
     return _native_allocate(**kwargs, uniforms=uniforms)
 
 
@@ -214,10 +210,8 @@ def test_l1_zero_minute_players_never_score_or_assist(backend: str) -> None:
         p_assist=1.0,
         uniforms=uniforms,
     )
-    assert scored[0, 0] == 0
-    assert scored[2, 0] == 0
-    assert assisted[0, 0] == 0
-    assert assisted[2, 0] == 0
+    assert scored[0, 0] == 0 and scored[2, 0] == 0
+    assert assisted[0, 0] == 0 and assisted[2, 0] == 0
     assert scored[1, 0] + missed[0] == 4
 
 
@@ -287,11 +281,8 @@ def test_l3_native_invariants_under_philox(
     )
 
     np.testing.assert_array_equal(scored.sum(axis=0) + missed, team_goals)
-    assert np.isfinite(scored).all()
-    assert np.isfinite(assisted).all()
-    assert (scored >= 0).all()
-    assert (assisted >= 0).all()
-    assert (missed >= 0).all()
+    assert np.isfinite(scored).all() and np.isfinite(assisted).all()
+    assert (scored >= 0).all() and (assisted >= 0).all() and (missed >= 0).all()
 
     zero_min = minutes <= 0
     assert (scored[zero_min] == 0).all()
