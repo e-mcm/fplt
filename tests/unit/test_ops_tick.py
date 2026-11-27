@@ -70,6 +70,7 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("JOB_STARTED_AT", "1700000000")
     get_settings.cache_clear()
     calls: list[str] = []
     moment = datetime(2024, 8, 16, 9, 0, tzinfo=UTC)
@@ -141,6 +142,8 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
         f"pre_deadline:{moment.isoformat()}:['rolling_mean_v1']:3",
     ]
     assert notify_calls == ["sent"]
+    timing_files = list((tmp_path / "timing").glob("ops_tick_*.json"))
+    assert len(timing_files) == 1
     get_settings.cache_clear()
 
 
@@ -182,6 +185,7 @@ def test_run_ops_tick_propagates_fetch_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("JOB_STARTED_AT", "1000")
     get_settings.cache_clear()
 
     def boom(*_a: object, **_k: object) -> FeedRefreshResult:
@@ -198,6 +202,10 @@ def test_run_ops_tick_propagates_fetch_error(
     )
     with pytest.raises(SnapshotFetchError, match="missing"):
         run_ops_tick()
+    # Failed tick still writes a local timing artifact; never ops_timing.json.
+    timing_files = list((tmp_path / "timing").glob("ops_tick_*.json"))
+    assert len(timing_files) == 1
+    assert not list(tmp_path.glob("official/**/ops_timing.json"))
     get_settings.cache_clear()
 
 

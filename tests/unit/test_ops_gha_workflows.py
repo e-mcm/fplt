@@ -69,6 +69,20 @@ def test_ops_workflows_gate_on_ops_live_and_call_cli() -> None:
     assert "fplt ops-catchup" in run_catchup["run"]
 
 
+def test_ops_workflows_export_job_started_at() -> None:
+    for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
+        steps = _load(name)["jobs"][job]["steps"]
+        record = steps[0]
+        assert record.get("name") == "Record job start"
+        assert "JOB_STARTED_AT=" in record["run"]
+        run_step = next(
+            s for s in steps if str(s.get("name", "")).startswith("Run ops-")
+        )
+        assert (
+            run_step.get("env", {}).get("JOB_STARTED_AT") == "${{ env.JOB_STARTED_AT }}"
+        )
+
+
 def test_ops_workflows_checkout_prod_with_bootstrap() -> None:
     for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
         steps = _load(name)["jobs"][job]["steps"]

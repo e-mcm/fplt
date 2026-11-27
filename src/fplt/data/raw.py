@@ -15,6 +15,7 @@ from fplt.data.staging import stage_bootstrap, stage_event_live
 from fplt.data.store import DataStore
 from fplt.utils.timing import (
     TimingSession,
+    active_timing_session,
     format_kind_summary,
     timed_phase,
     timing_artifacts,
@@ -75,53 +76,21 @@ def ingest_raw(store: DataStore, raw_root: Path) -> int:
     """Stage every snapshot and checked live payload. Return files consumed.
 
     Captures listed in ``store.root/quarantine/`` (ops-06) are skipped so a
-    quarantined raw object never reaches ``staged/``.
+    quarantined raw object never reaches ``staged/``. When an outer timing
+    session is active (ops-tick / ops-catchup), ``ingest`` accumulates there
+    and no separate ingest artifact is written.
     """
     skipped = quarantined_capture_paths(store.root)
+    outer = active_timing_session()
+    if outer is not None:
+        with timed_phase("ingest"):
+            return _ingest_raw_body(store, raw_root, skipped)
+
     session = TimingSession()
     with timing_artifacts(store.root):
         with timing_session(session):
             with timed_phase("ingest"):
-                count = 0
-                for snap in iter_snapshots(raw_root):
-                    rel = capture_relpath(raw_root, snap.capture_dir)
-                    if rel in skipped:
-                        logger.info("skipping quarantined capture %s", rel)
-                        continue
-                    bootstrap: dict[str, Any] = read_json(snap.bootstrap_path)
-                    fixtures = cast(
-                        list[dict[str, Any]],
-                        read_json(snap.fixtures_path) if snap.fixtures_path else [],
-                    )
-                    frames = stage_bootstrap(
-                        bootstrap, fixtures, snap.captured_at, snap.season
-                    )
-                    for name, frame in frames.items():
-                        if frame.is_empty():
-                            continue
-                        store.write(name, frame)
-                    codes = {
-                        int(row["element_id"]): int(row["player_key"])
-                        for row in frames["players"].iter_rows(named=True)
-                    }
-                    live_root = (
-                        raw_root / "fpl_api" / f"season={snap.season}" / "event_live"
-                    )
-                    if live_root.exists():
-                        for path in sorted(
-                            live_root.glob("gw=*/captured_at=*/event_live.json.gz")
-                        ):
-                            gw = int(path.parents[1].name.removeprefix("gw="))
-                            captured = _stamp(
-                                path.parent.name.removeprefix("captured_at=")
-                            )
-                            stats = stage_event_live(
-                                read_json(path), snap.season, gw, captured, codes
-                            )
-                            if not stats.is_empty():
-                                store.write("player_fixture_stats", stats)
-                            count += 1
-                    count += 1
+                count = _ingest_raw_body(store, raw_root, skipped)
         meta = {
             "files": count,
             "raw_root": str(raw_root),
@@ -129,4 +98,41 @@ def ingest_raw(store: DataStore, raw_root: Path) -> int:
         }
         logger.info(format_kind_summary("ingest", session, meta=meta))
         write_timing_record("ingest", session, meta=meta)
+    return count
+
+
+def _ingest_raw_body(store: DataStore, raw_root: Path, skipped: frozenset[str]) -> int:
+    """Stage snapshots and live payloads; return files consumed."""
+    count = 0
+    for snap in iter_snapshots(raw_root):
+        rel = capture_relpath(raw_root, snap.capture_dir)
+        if rel in skipped:
+            logger.info("skipping quarantined capture %s", rel)
+            continue
+        bootstrap: dict[str, Any] = read_json(snap.bootstrap_path)
+        fixtures = cast(
+            list[dict[str, Any]],
+            read_json(snap.fixtures_path) if snap.fixtures_path else [],
+        )
+        frames = stage_bootstrap(bootstrap, fixtures, snap.captured_at, snap.season)
+        for name, frame in frames.items():
+            if frame.is_empty():
+                continue
+            store.write(name, frame)
+        codes = {
+            int(row["element_id"]): int(row["player_key"])
+            for row in frames["players"].iter_rows(named=True)
+        }
+        live_root = raw_root / "fpl_api" / f"season={snap.season}" / "event_live"
+        if live_root.exists():
+            for path in sorted(live_root.glob("gw=*/captured_at=*/event_live.json.gz")):
+                gw = int(path.parents[1].name.removeprefix("gw="))
+                captured = _stamp(path.parent.name.removeprefix("captured_at="))
+                stats = stage_event_live(
+                    read_json(path), snap.season, gw, captured, codes
+                )
+                if not stats.is_empty():
+                    store.write("player_fixture_stats", stats)
+                count += 1
+        count += 1
     return count

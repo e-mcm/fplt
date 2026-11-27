@@ -144,6 +144,34 @@ _active: ContextVar[TimingSession | None] = ContextVar(
 _artifact_root: ContextVar[Path | None] = ContextVar(
     "fplt_timing_artifacts", default=None
 )
+_clock: ContextVar[Callable[[], float] | None] = ContextVar(
+    "fplt_timing_clock", default=None
+)
+
+
+def _now() -> float:
+    """Return the active clock (``perf_counter`` unless a test clock is set)."""
+    clock = _clock.get()
+    return time.perf_counter() if clock is None else clock()
+
+
+@contextmanager
+def timing_clock(clock: Callable[[], float]) -> Iterator[None]:
+    """Install a deterministic clock for ``timed_phase`` (tests / fake clocks).
+
+    Args:
+        clock: Zero-arg callable returning monotonic seconds.
+    """
+    token = _clock.set(clock)
+    try:
+        yield
+    finally:
+        _clock.reset(token)
+
+
+def active_timing_session() -> TimingSession | None:
+    """Return the ContextVar-scoped ``TimingSession``, if any."""
+    return _active.get()
 
 
 @contextmanager
@@ -176,11 +204,11 @@ def timed_phase(name: str) -> Iterator[None]:
     Args:
         name: Phase label (top-level or nested ``parent/child``).
     """
-    start = time.perf_counter()
+    start = _now()
     try:
         yield
     finally:
-        elapsed = time.perf_counter() - start
+        elapsed = _now() - start
         bucket = _active.get()
         if bucket is not None:
             bucket.add(name, elapsed)

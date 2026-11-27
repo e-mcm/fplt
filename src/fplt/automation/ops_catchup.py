@@ -20,11 +20,13 @@ from fplt.automation.cycle import (
 )
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
+from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
+from fplt.utils.timing import timing_session
 
 logger = logging.getLogger(__name__)
 
@@ -99,42 +101,64 @@ def run_ops_catchup(
     root = cfg.data_dir if data_dir is None else data_dir
     chosen = PRODUCTION_MODELS if models is None else models
 
-    feeds = refresh_ops_feeds(
-        root,
-        source=source,
-        remote=remote,
-        branch=branch,
-        settings=cfg,
-    )
+    with timing_session() as timings:
+        record_job_setup(timings)
+        try:
+            feeds = refresh_ops_feeds(
+                root,
+                source=source,
+                remote=remote,
+                branch=branch,
+                settings=cfg,
+            )
 
-    logger.info("ops_catchup: catch_up models=%s horizon=%s", chosen, horizon)
-    done = catch_up(root, chosen, horizon=horizon)
-    if notify and done:
-        text = reports(root) or "No plan yet."
-        notify_recommendation(cfg, "fplt recommendation", text)
+            logger.info("ops_catchup: catch_up models=%s horizon=%s", chosen, horizon)
+            done = catch_up(root, chosen, horizon=horizon)
+            if notify and done:
+                text = reports(root) or "No plan yet."
+                notify_recommendation(cfg, "fplt recommendation", text)
 
-    waiting = pending_checked(DataStore(root), root, chosen, horizon)
-    result = OpsCatchupResult(
-        snapshots_fetched=feeds.snapshots_fetched,
-        staged_snapshots=feeds.staged_snapshots,
-        understat_matches=feeds.understat_matches,
-        api_football_captures=feeds.api_football_captures,
-        planned=done,
-        still_pending=waiting,
-        models=list(chosen),
-        horizon=horizon,
-    )
-    logger.info(
-        "ops_catchup done fetched=%s staged=%s understat=%s api_football=%s "
-        "planned=%s pending=%s",
-        result.snapshots_fetched,
-        result.staged_snapshots,
-        result.understat_matches,
-        result.api_football_captures,
-        [str(key) for key in result.planned],
-        [str(key) for key in result.still_pending],
-    )
-    return result
+            waiting = pending_checked(DataStore(root), root, chosen, horizon)
+            result = OpsCatchupResult(
+                snapshots_fetched=feeds.snapshots_fetched,
+                staged_snapshots=feeds.staged_snapshots,
+                understat_matches=feeds.understat_matches,
+                api_football_captures=feeds.api_football_captures,
+                planned=done,
+                still_pending=waiting,
+                models=list(chosen),
+                horizon=horizon,
+            )
+            logger.info(
+                "ops_catchup done fetched=%s staged=%s understat=%s api_football=%s "
+                "planned=%s pending=%s",
+                result.snapshots_fetched,
+                result.staged_snapshots,
+                result.understat_matches,
+                result.api_football_captures,
+                [str(key) for key in result.planned],
+                [str(key) for key in result.still_pending],
+            )
+            finalize_ops_timing(
+                "ops_catchup",
+                timings,
+                root,
+                meta={"models": list(chosen), "horizon": horizon},
+                succeeded=True,
+            )
+            return result
+        except Exception:
+            try:
+                finalize_ops_timing(
+                    "ops_catchup",
+                    timings,
+                    root,
+                    meta={"models": list(chosen), "horizon": horizon},
+                    succeeded=False,
+                )
+            except Exception:
+                logger.exception("failed to write partial ops-catchup timing")
+            raise
 
 
 def format_ops_catchup_status(result: OpsCatchupResult) -> str:
