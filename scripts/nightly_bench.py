@@ -377,7 +377,7 @@ def _push_bench_day(lab_dir: Path, day: str, settings: object) -> None:
     try:
         push(remote, src, f"bench/date={day}")  # type: ignore[arg-type]
     except (RemoteError, OSError, ValueError) as exc:
-        logger.error("push bench/date=%s failed: %s", day, exc)
+        logger.exception("push bench/date=%s failed: %s", day, exc)
         raise
     logger.info("pushed bench/date=%s", day)
 
