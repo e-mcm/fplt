@@ -11,17 +11,17 @@ This is the shortest path to a working weekly loop. It deliberately leaves out e
 3. **Prediction results are written to R2.** Official predict and plan runs, with **sub-model tables** (§3.1), land in `fplt-data/runs/`, with pointers under `fplt-data/official/`.
 4. **On the laptop:** `fplt data pull --official latest && fplt ui` opens a **This week** page showing this week's predictions and plan, with a per-player drill-down (minutes, xG/xA, clean sheet, points split, points distribution).
 
-## 2. Where things stand (2026-11-27, `main` at `299cbac`)
+## 2. Where things stand (2026-11-28, after #281 / #291 PRs 1–2)
 
 | Piece | State |
 |---|---|
-| Capture → R2 | Broken: no workflow declares `environment: r2`, so the R2 secrets are empty and uploads are soft-skipped (#278) |
-| Schedule | GitHub's cron runs `snapshot` / `ops-tick` only every ~6–9 h. Fix: an external clock (cron-job.org → `workflow_dispatch`); owner step M2 |
-| `ops-tick` | Built but gated off: logs `OPS_LIVE unset; scaffolding only` |
-| Run contents | Predict runs write only `predictions/player_fixture.parquet`, and plan runs only `plans/plan.parquet`. `Store.load` already knows `predictions/components/{minutes,scoreline,involvement,other}.parquet`, but nothing writes them |
-| Per-player detail | `fplt explain` / `build_player_depth` (`src/fplt/optimise/explain.py`) recompute depth from model artifacts at explain time; the UI can't use that |
-| Laptop pull | No `fplt data pull`; `fplt.data.remote.pull` exists |
-| UI | `fplt ui` has the Overview page only |
+| Capture → R2 | `#278` landed (`environment: r2`); owner checklist M1–M4 still needed for live secrets/clock |
+| Schedule | External clock (cron-job.org → `workflow_dispatch`) still owner step M2; GHA cron is backup |
+| `ops-tick` | Timing session + `JOB_STARTED_AT` / step summary wired (#291 PR2); official slate finalize still owner-gated (`OPS_LIVE`) |
+| Run contents | Layered predict runs write component tables (#279); plan runs write `plans/plan.parquet` |
+| Per-player detail | This-week drill-down reads stored component tables + board/PMF (#281) |
+| Laptop pull | `fplt data pull --official` (#280) |
+| UI | Overview + **This week** (#281). **Run timing** panel (#291 PR3) reads `ops_timing.json` when present |
 
 ## 3. Decisions
 
@@ -70,6 +70,7 @@ A new page in `fplt ui`, reading **only pulled local files** through `fplt.store
    - the **points distribution** for the next gameweek from `points_pmf_gw` when present (official runs), as a bar chart;
    - when component tables are missing, show the board and the distribution only, plus a note "no sub-model detail for this run".
 5. Player names and teams come from the curated `players` / `teams` tables of the run's `build_id`, never from the live API.
+6. **Run timing** (issue #291): when `official/…/ops_timing.json` is present for the selected checkpoint, show a stacked horizontal bar of top-level phases, an expander with nested sub-phases (fit components, plan/MILP), R2 transfer rows (files / bytes / throughput from `kind=remote` timing artifacts), and — if several gameweeks are pulled — a small trend of `total_s` and top phases. Logic in `fplt.analysis.run_timing`; the page only renders. Missing timing files render a caption, not an error (older checkpoints).
 
 ## 4. Sequence
 

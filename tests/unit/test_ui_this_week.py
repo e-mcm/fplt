@@ -56,6 +56,7 @@ def _seed(
     data_dir: Path,
     *,
     with_components: bool,
+    with_timing: bool = False,
 ) -> None:
     players = pl.DataFrame(
         {
@@ -319,13 +320,64 @@ def _seed(
         checkpoint="T-90m",
         record=AppliedRecord(line="v4_h3", plan_run_id=_PLAN, submitted_at=_TS),
     )
+    if with_timing:
+        import json
+
+        from fplt.schemas.timing import TimingRecord
+        from fplt.utils.timing import ops_timing_path
+
+        checkpoint = (
+            data_dir / "official" / f"season={_SEASON}" / "gw=13" / "checkpoint=T-90m"
+        )
+        path = ops_timing_path(checkpoint)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = TimingRecord(
+            kind="ops_tick",
+            recorded_at=_TS,
+            meta={"models": ["demo"]},
+            phases={
+                "setup": 1.0,
+                "ingest": 4.0,
+                "fit/score": 2.0,
+                "remote/push": 1.5,
+            },
+            total_s=6.5,
+        )
+        path.write_text(json.dumps(record.model_dump_json_doc()), encoding="utf-8")
+        # Second GW so the trend chart has ≥2 points.
+        other = (
+            data_dir
+            / "official"
+            / f"season={_SEASON}"
+            / "gw=12"
+            / "checkpoint=T-90m"
+            / "ops_timing.json"
+        )
+        other.parent.mkdir(parents=True, exist_ok=True)
+        other.write_text(
+            json.dumps(
+                TimingRecord(
+                    kind="ops_tick",
+                    recorded_at=_TS,
+                    phases={"ingest": 3.0, "setup": 1.0},
+                    total_s=4.0,
+                ).model_dump_json_doc()
+            ),
+            encoding="utf-8",
+        )
 
 
-@pytest.mark.parametrize("with_components", [True, False])
+@pytest.mark.parametrize(
+    ("with_components", "with_timing"),
+    [(True, False), (False, False), (True, True)],
+)
 def test_this_week_app_smoke(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_components: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_components: bool,
+    with_timing: bool,
 ) -> None:
-    _seed(tmp_path, with_components=with_components)
+    _seed(tmp_path, with_components=with_components, with_timing=with_timing)
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     try:
@@ -334,6 +386,14 @@ def test_this_week_app_smoke(
         assert not app.exception, app.exception
         titles = [str(item.value).lower() for item in app.title]
         assert any("this week" in value for value in titles)
+        headers = [str(item.value).lower() for item in app.subheader]
+        assert any("run timing" in value for value in headers)
         assert len(app.dataframe) >= 1
+        if with_timing:
+            captions = [str(item.value).lower() for item in app.caption]
+            assert any("total_s" in value for value in captions)
+        else:
+            captions = [str(item.value).lower() for item in app.caption]
+            assert any("no timing" in value for value in captions)
     finally:
         get_settings.cache_clear()

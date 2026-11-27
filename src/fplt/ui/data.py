@@ -21,8 +21,10 @@ from fplt.analysis.overview import (
     quarantine_summary_frame,
     runs_catalog_frame,
 )
+from fplt.analysis.run_timing import discover_ops_timing, load_ops_timing_file
 from fplt.data.quarantine import load_quarantine
 from fplt.schemas.manifests import AppliedRecord, OfficialPointer, RunManifest
+from fplt.schemas.timing import TimingRecord
 from fplt.settings import get_settings
 from fplt.store import Store
 from fplt.store.builds import CuratedBuildSource
@@ -30,6 +32,7 @@ from fplt.store.legacy import parse_as_of_dir
 from fplt.store.official import official_checkpoint_dir
 from fplt.store.push import load_run_manifest
 from fplt.store.runs import run_dir
+from fplt.utils.timing import load_timing_records, ops_timing_path
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +161,27 @@ class DashboardStore:
         except FileNotFoundError:
             return {name: pl.DataFrame() for name in names}
         return {name: source.table(name).collect() for name in names}
+
+    def ops_timing(
+        self, *, season: str, gw: int, checkpoint: str
+    ) -> TimingRecord | None:
+        """Load official ``ops_timing.json`` for a checkpoint, if present."""
+        path = ops_timing_path(
+            official_checkpoint_dir(
+                self.data_dir, season=season, gw=gw, checkpoint=checkpoint
+            )
+        )
+        return load_ops_timing_file(path)
+
+    def remote_timing_records(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent ``kind=remote`` timing artifacts for transfer rows."""
+        return load_timing_records(self.data_dir, kind="remote", limit=limit)
+
+    def ops_timing_history(
+        self, *, season: str | None = None, checkpoint: str | None = None
+    ) -> list[tuple[str, int, str, TimingRecord]]:
+        """Scan pulled ``ops_timing.json`` files for trend charts."""
+        return discover_ops_timing(self.data_dir, season=season, checkpoint=checkpoint)
 
     def _latest_plan_frame(self) -> pl.DataFrame:
         for run_id in reversed(_succeeded_run_ids(self.data_dir)):
