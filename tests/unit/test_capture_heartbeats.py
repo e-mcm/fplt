@@ -18,6 +18,7 @@ _SCHEDULED = (
     "understat.yml",
     "api_football.yml",
     "football_data.yml",
+    "vaastav.yml",
     "ops-tick.yml",
     "ops-catchup.yml",
     "raw_parity.yml",
@@ -30,6 +31,7 @@ _MAIN_JOB = {
     "understat.yml": "capture",
     "api_football.yml": "capture",
     "football_data.yml": "capture",
+    "vaastav.yml": "capture",
     "ops-tick.yml": "tick",
     "ops-catchup.yml": "catchup",
     "raw_parity.yml": "parity",
@@ -42,6 +44,7 @@ _PING_SECRETS = {
     "understat.yml": "HC_PING_URL_UNDERSTAT",
     "api_football.yml": "HC_PING_URL_API_FOOTBALL",
     "football_data.yml": "HC_PING_URL_FOOTBALL_DATA",
+    "vaastav.yml": "HC_PING_URL_VAASTAV",
     "ops-tick.yml": "HC_PING_URL_OPS_TICK",
     "ops-catchup.yml": "HC_PING_URL_OPS_CATCHUP",
     "raw_parity.yml": "HC_PING_URL_RAW_PARITY",
@@ -56,6 +59,7 @@ _PUSH_RAW_CAPTURE = frozenset(
         "understat.yml",
         "api_football.yml",
         "football_data.yml",
+        "vaastav.yml",
     }
 )
 
