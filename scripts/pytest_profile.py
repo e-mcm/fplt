@@ -8,7 +8,7 @@ can target real offenders without skipping tests or cutting coverage.
 
 Default invocation mirrors ``.github/workflows/ci.yml`` ``test-linux``::
 
-    uv run pytest -m "not slow" --cov=fplt --cov-report=xml
+    uv run pytest -n auto --cov=fplt --cov-branch --cov-report=xml
 
 Usage::
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_JUNIT = _REPO_ROOT / ".pytest_cache" / "pytest-profile-junit.xml"
-_CI_PYTEST_ARGS = ("-m", "not slow", "--cov=fplt", "--cov-report=xml")
+_CI_PYTEST_ARGS = ("-n", "auto", "--cov=fplt", "--cov-branch", "--cov-report=xml")
 
 
 @dataclass(frozen=True, slots=True)
