@@ -104,6 +104,32 @@ def test_changed_production_without_eval_link_fails() -> None:
     assert any("without a promote-eval link" in reason for reason in result.reasons)
 
 
+def test_additive_ops_key_without_slate_change_passes() -> None:
+    """ops-09: min_prior_seasons alone does not require a promote-eval (#285)."""
+    head = _PROD + "min_prior_seasons: 3\n"
+    result = check_production_governance(
+        changed_paths=[PRODUCTION_RELPATH],
+        base_production_yaml=_PROD,
+        head_production_yaml=head,
+        base_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        head_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        pr_body="Add history-guard threshold.",
+    )
+    assert result.passed
+    assert result.gated_paths == ()
+    assert result.reasons == ()
+
+
+def test_live_slate_changed_edge_cases() -> None:
+    from fplt.automation.governance import _live_slate_changed
+
+    assert _live_slate_changed(None, None) is False
+    assert _live_slate_changed(None, _PROD) is True
+    assert _live_slate_changed(_PROD, None) is True
+    assert _live_slate_changed("[]\n", _PROD) is True
+    assert _live_slate_changed(_PROD, _PROD) is False
+
+
 def test_changed_production_with_passing_eval_link_passes() -> None:
     head = _prod_retarget("dc_prod_v2")
     result = check_production_governance(

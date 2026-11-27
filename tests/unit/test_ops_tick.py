@@ -121,8 +121,16 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 3},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 3,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
 
     result = run_ops_tick(
@@ -170,8 +178,16 @@ def test_run_ops_tick_skips_notify_when_idle(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
 
     idle = run_ops_tick(models=["rolling_mean_v1"], horizon=1)
@@ -197,8 +213,16 @@ def test_run_ops_tick_propagates_fetch_error(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
     with pytest.raises(SnapshotFetchError, match="missing"):
         run_ops_tick()
@@ -324,8 +348,16 @@ def test_run_ops_tick_expired_token_keeps_planning_with_banner(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
 
     result = run_ops_tick(
@@ -402,3 +434,45 @@ def test_run_checkpoint_writes_ops_log_jsonl(
     assert "checkpoint" in body
     assert "T-6h" in body
     reset_logging_for_tests()
+
+
+def test_run_ops_tick_history_guard_fails_and_alerts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#285: thin history aborts before catch_up and alerts ops-12."""
+    from fplt.automation.history_guard import HistoryGuardError
+
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    catch_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.refresh_ops_feeds",
+        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.catch_up",
+        lambda *a, **k: catch_calls.append("catch_up") or [],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.load_production_ops",
+        lambda: type(
+            "Ops",
+            (),
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
+        )(),
+    )
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise HistoryGuardError("need 3 prior seasons, found 0")
+
+    monkeypatch.setattr("fplt.automation.ops_tick.enforce_training_history", boom)
+
+    with pytest.raises(HistoryGuardError, match="prior seasons"):
+        run_ops_tick(now=datetime(2024, 8, 16, 9, 0, tzinfo=UTC), notify=True)
+    assert catch_calls == []
+    get_settings.cache_clear()

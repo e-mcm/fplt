@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fplt.automation.cycle import (
@@ -18,9 +19,11 @@ from fplt.automation.cycle import (
     pending_checked,
     reports,
 )
+from fplt.automation.history_guard import enforce_training_history
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
+from fplt.automation.production import load_production_ops
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
@@ -112,13 +115,24 @@ def run_ops_catchup(
                 settings=cfg,
             )
 
+            store = DataStore(root)
+            ops = load_production_ops()
+            enforce_training_history(
+                store,
+                now=datetime.now(UTC),
+                min_prior_seasons=ops.min_prior_seasons,
+                settings=cfg,
+                notify=notify,
+                source="ops-catchup",
+            )
+
             logger.info("ops_catchup: catch_up models=%s horizon=%s", chosen, horizon)
             done = catch_up(root, chosen, horizon=horizon)
             if notify and done:
                 text = reports(root) or "No plan yet."
                 notify_recommendation(cfg, "fplt recommendation", text)
 
-            waiting = pending_checked(DataStore(root), root, chosen, horizon)
+            waiting = pending_checked(store, root, chosen, horizon)
             result = OpsCatchupResult(
                 snapshots_fetched=feeds.snapshots_fetched,
                 staged_snapshots=feeds.staged_snapshots,

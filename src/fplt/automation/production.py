@@ -81,6 +81,7 @@ class ProductionOps(BaseModel):
     plan_horizon: int = Field(ge=1)
     pipeline: PipelineSpec
     lines: list[OfficialLine] = Field(min_length=1)
+    min_prior_seasons: int = Field(ge=1, default=3)
 
     @field_validator("models")
     @classmethod
@@ -217,6 +218,7 @@ def load_production_ops(
         plan_horizon=new_horizon,
         pipeline=pipeline,
         lines=lines,
+        min_prior_seasons=ops.min_prior_seasons,
     )
 
 
@@ -258,8 +260,20 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
         raise ValueError("pipeline must be a mapping when set")
 
     lines = _lines_from_mapping(raw, models=models, horizon=horizon)
+    min_prior_raw = raw.get("min_prior_seasons", 3)
+    if isinstance(min_prior_raw, bool) or not isinstance(
+        min_prior_raw, int | float | str
+    ):
+        raise ValueError("min_prior_seasons must be an integer >= 1")
+    min_prior = int(min_prior_raw)
+    if min_prior < 1:
+        raise ValueError("min_prior_seasons must be >= 1")
     return ProductionOps(
-        models=models, plan_horizon=horizon, pipeline=pipeline, lines=lines
+        models=models,
+        plan_horizon=horizon,
+        pipeline=pipeline,
+        lines=lines,
+        min_prior_seasons=min_prior,
     )
 
 

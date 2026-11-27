@@ -1,3 +1,7 @@
+# Owner after #285 merges (do not run from agents — needs R2 write to fplt-data):
+#   gh workflow run vaastav.yml -f full=true
+#   rclone lsf fplt:fplt-data/raw/vaastav/ -R | head
+# Then confirm ops-tick history guard passes (ops-12).
 name: vaastav
 
 on:
