@@ -5,6 +5,12 @@
 # Existing baseline findings surface in Code Scanning via the weekly full scan
 # (fail-on-vuln: false) and should be triaged there or listed below.
 #
+# The intentional acceptance fixture under
+# ``tests/fixtures/security/vulnerable/`` carries its own
+# ``osv-scanner.toml`` with ``[[PackageOverrides]] ignore = true`` so repo-wide
+# scans stay clean. ``scripts/check_osv_scanner_gate.py`` passes
+# ``--config`` pointing at *this* file to bypass that local ignore.
+#
 # To accept a finding that would otherwise fail a PR (e.g. transitive, no
 # fixed release yet), add an entry:
 #

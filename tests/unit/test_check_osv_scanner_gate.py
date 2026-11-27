@@ -33,11 +33,13 @@ def test_scan_fixture_collects_vulnerabilities(tmp_path: Path) -> None:
             }
         ]
     }
+    argv_log = tmp_path / "argv.txt"
     fake = _write_exec(
         tmp_path / "osv-scanner",
         textwrap.dedent(
             f"""\
             #!/bin/sh
+            printf '%s\\n' "$*" > "{argv_log}"
             cat <<'EOF'
             {json.dumps(report)}
             EOF
@@ -47,6 +49,9 @@ def test_scan_fixture_collects_vulnerabilities(tmp_path: Path) -> None:
     vulns = scan_fixture(fake, tmp_path)
     assert len(vulns) == 1
     assert vulns[0]["id"] == "GHSA-test"
+    argv = argv_log.read_text(encoding="utf-8")
+    assert "--config" in argv
+    assert "osv-scanner.toml" in argv
 
 
 def test_scan_fixture_empty_report_is_empty_list(tmp_path: Path) -> None:

@@ -124,6 +124,7 @@ def test_ops_timeouts_exceed_solver_wall_clock() -> None:
 def test_reusable_workflow_call_skips_timeout_requirement(tmp_path: Path) -> None:
     """Jobs that only ``uses:`` a reusable workflow cannot set timeout-minutes."""
     wf = tmp_path / "call.yml"
+    sha = "0123456789abcdef0123456789abcdef01234567"
     wf.write_text(
         "\n".join(
             [
@@ -131,7 +132,7 @@ def test_reusable_workflow_call_skips_timeout_requirement(tmp_path: Path) -> Non
                 "on: workflow_dispatch",
                 "jobs:",
                 "  scan:",
-                "    uses: org/repo/.github/workflows/scan.yml@0123456789abcdef0123456789abcdef01234567",
+                f"    uses: org/repo/.github/workflows/scan.yml@{sha}",
                 "",
             ]
         ),

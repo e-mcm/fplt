@@ -78,12 +78,17 @@ def scan_fixture(binary: Path, fixture_dir: Path) -> list[dict[str, Any]]:
     Returns:
         Flattened list of vulnerability dicts from the JSON report.
     """
+    # Bypass the fixture-local osv-scanner.toml PackageOverrides (ignore=true)
+    # so repo-wide scans stay clean while this gate still sees the vulns.
+    root_config = _REPO_ROOT / "osv-scanner.toml"
     proc = subprocess.run(
         [
             str(binary),
             "scan",
             "source",
             str(fixture_dir),
+            "--config",
+            str(root_config),
             "--format",
             "json",
             "--verbosity",
