@@ -223,34 +223,44 @@ def test_format_summary_lists_rmse_before_mae() -> None:
 
 
 def test_cli_compare(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """CLI compare prints a summary; progress logs via the logging module.
+
+    Under pytest-xdist, library ``logging`` often bypasses ``capsys`` stderr, so
+    progress lines are asserted via ``caplog`` (regression for #288 xdist).
+    """
     _store(tmp_path)
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
-    main(
-        [
-            "compare",
-            "--season",
-            _TEST,
-            "--models",
-            "rolling_mean_v1",
-            "--test-from-gw",
-            "1",
-            "--test-to-gw",
-            "2",
-            "--seasons-back",
-            "2",
-            "--modes",
-            "fixed",
-        ]
-    )
+    with caplog.at_level(logging.INFO):
+        main(
+            [
+                "compare",
+                "--season",
+                _TEST,
+                "--models",
+                "rolling_mean_v1",
+                "--test-from-gw",
+                "1",
+                "--test-to-gw",
+                "2",
+                "--seasons-back",
+                "2",
+                "--modes",
+                "fixed",
+            ]
+        )
     captured = capsys.readouterr()
     assert "rolling_mean_v1 mode=fixed" in captured.out
     assert "summary.json" in captured.out
-    assert "compare 2024-25 gw 1-2" in captured.err
-    assert "fixed rolling_mean_v1 starting" in captured.err
-    assert "gw 1 (1/2) fitting" in captured.err
+    log_text = caplog.text
+    assert "compare 2024-25 gw 1-2" in log_text
+    assert "fixed rolling_mean_v1 starting" in log_text
+    assert "gw 1 (1/2) fitting" in log_text
     get_settings.cache_clear()
 
 

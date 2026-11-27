@@ -487,3 +487,351 @@ def test_repo_equivalence_examples_load() -> None:
         assert spec.control == spec.treatment
         assert spec.change.control_ref
         assert spec.change.treatment_ref
+
+
+def test_is_equivalence_kind_and_lock_edge_cases(tmp_path: Path) -> None:
+    from fplt.backtest.equivalence import (
+        direct_dependency_names,
+        is_equivalence_kind,
+        lock_sha_at,
+        lockfile_package_versions,
+    )
+
+    assert is_equivalence_kind("environment")
+    assert is_equivalence_kind("refactor")
+    assert not is_equivalence_kind("feature")
+    with pytest.raises(FileNotFoundError):
+        lockfile_package_versions(tmp_path / "missing.lock")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("name = 'x'\n", encoding="utf-8")
+    assert direct_dependency_names(pyproject) == set()
+    pyproject.write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    assert direct_dependency_names(pyproject) == set()
+    pyproject.write_text(
+        '[project]\nname = "x"\ndependencies = [1, "numpy>=1", "", "  "]\n',
+        encoding="utf-8",
+    )
+    assert direct_dependency_names(pyproject) == {"numpy"}
+    # lock_sha_at via uv_lock_sha256
+    lock = tmp_path / "uv.lock"
+    lock.write_text('[[package]]\nname = "a"\nversion = "1"\n', encoding="utf-8")
+    assert len(lock_sha_at(tmp_path)) == 64
+
+
+def test_diff_lockfiles_missing_files(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "x"\ndependencies = []\n', encoding="utf-8")
+    diff = diff_lockfiles(
+        tmp_path / "c.lock",
+        tmp_path / "t.lock",
+        pyproject=pyproject,
+        declared_packages=[],
+    )
+    assert diff.control_sha256 == "missing"
+    assert diff.treatment_sha256 == "missing"
+    assert diff.identical
+
+
+def test_compare_row_count_mismatch_and_empty() -> None:
+    tol = EquivalenceTolerance()
+    left = pl.DataFrame([_pred_row()])
+    right = pl.DataFrame([_pred_row(), _pred_row(player_key=2)])
+    report = compare_prediction_frames(left, right, tol)
+    assert not report.identical
+    assert report.top_offenders[0]["reason"] == "row_count_mismatch"
+    empty = pl.DataFrame([_pred_row()]).clear()
+    # Need schema-compatible empty — rebuild
+    empty = left.clear()
+    same_empty = compare_prediction_frames(empty, empty, tol)
+    assert same_empty.identical
+    assert same_empty.n_rows == 0
+
+
+def test_compare_missing_required_columns() -> None:
+    from fplt.backtest.equivalence import compare_prediction_frames
+
+    bad = pl.DataFrame({"xpts": [1.0]})
+    with pytest.raises(ValueError, match="missing columns"):
+        compare_prediction_frames(bad, bad, EquivalenceTolerance())
+
+
+def test_equivalence_verdict_and_load_arm_spec(tmp_path: Path) -> None:
+    from fplt.backtest.equivalence import load_arm_spec
+
+    # Real model name from configs
+    spec = load_arm_spec("rolling_mean_v1", models_dir=None)
+    assert spec.name == "rolling_mean_v1"
+    with pytest.raises(KeyError):
+        load_arm_spec("does_not_exist_zzz", models_dir=None)
+    # Worktree configs dir
+    models = tmp_path / "configs" / "models"
+    models.mkdir(parents=True)
+    (models / "toy.yaml").write_text(
+        "name: toy\nkind: rolling_mean\nparams:\n  window: 3\nseed: 0\n",
+        encoding="utf-8",
+    )
+    loaded = load_arm_spec("toy", models_dir=None, worktree=tmp_path)
+    assert loaded.name == "toy"
+
+
+def test_interval_drop_for_frames_paths() -> None:
+    from fplt.backtest.equivalence import interval_drop_for_frames
+
+    control = pl.DataFrame([_pred_row(xpts=1.0)])
+    treatment = pl.DataFrame([_pred_row(xpts=3.0)])
+    drop, intervals = interval_drop_for_frames(
+        control, treatment, control_id="c", treatment_id="t", actuals=None
+    )
+    assert drop is False and intervals == []
+    empty_act = pl.DataFrame(
+        {
+            "target_season": pl.Series([], dtype=pl.Utf8),
+            "target_gw": pl.Series([], dtype=pl.Int64),
+            "player_key": pl.Series([], dtype=pl.Int64),
+            "fixture_id": pl.Series([], dtype=pl.Int64),
+            "actual_pts": pl.Series([], dtype=pl.Int64),
+        }
+    )
+    drop2, _ = interval_drop_for_frames(
+        control, treatment, control_id="c", treatment_id="t", actuals=empty_act
+    )
+    assert drop2 is False
+    # All-null actuals
+    null_act = pl.DataFrame(
+        {
+            "target_season": ["2024-25"],
+            "target_gw": [1],
+            "player_key": [1],
+            "fixture_id": [10],
+            "actual_pts": [None],
+        }
+    )
+    drop3, ints3 = interval_drop_for_frames(
+        control, treatment, control_id="c", treatment_id="t", actuals=null_act
+    )
+    assert drop3 is False
+    # Real actuals → compute intervals (may or may not drop)
+    act = pl.DataFrame(
+        {
+            "target_season": ["2024-25"],
+            "target_gw": [1],
+            "player_key": [1],
+            "fixture_id": [10],
+            "actual_pts": [2],
+            "position": ["MID"],
+        }
+    )
+    drop4, ints4 = interval_drop_for_frames(
+        control, treatment, control_id="c", treatment_id="t", actuals=act
+    )
+    assert isinstance(drop4, bool)
+    assert isinstance(ints4, list)
+
+
+def test_resolve_git_sha_and_worktree_helpers(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from fplt.backtest.equivalence import (
+        add_worktree,
+        produce_ledger_in_worktree,
+        remove_worktree,
+        resolve_git_sha,
+        sync_frozen,
+    )
+
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R", (), {"stdout": "abc123\n", "returncode": 0, "stderr": ""}
+        )()
+        assert resolve_git_sha("HEAD", cwd=tmp_path) == "abc123"
+        run.assert_called()
+
+    dest = tmp_path / "wt"
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "", "stderr": ""}
+        )()
+        path = add_worktree(tmp_path, "HEAD", dest)
+        assert path == dest
+    # Exists → error
+    dest.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(FileExistsError):
+        add_worktree(tmp_path, "HEAD", dest)
+
+    # remove success
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "", "stderr": ""}
+        )()
+        remove_worktree(tmp_path, dest)
+    # remove missing path no-op
+    remove_worktree(tmp_path, tmp_path / "nope")
+    # remove with CalledProcessError → rmtree fallback
+    again = tmp_path / "wt2"
+    again.mkdir()
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        import subprocess as sp
+
+        run.side_effect = [
+            sp.CalledProcessError(1, "git"),
+            type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+        ]
+        remove_worktree(tmp_path, again)
+
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "", "stderr": ""}
+        )()
+        sync_frozen(tmp_path)
+
+    out = tmp_path / "arm.parquet"
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R",
+            (),
+            {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": "boom",
+            },
+        )()
+        with pytest.raises(RuntimeError, match="produce-ledger subprocess failed"):
+            produce_ledger_in_worktree(
+                tmp_path,
+                data_dir=tmp_path,
+                model_name="m",
+                season="2024-25",
+                mode="walk_forward",
+                test_from_gw=1,
+                test_to_gw=1,
+                fit_gw=None,
+                steps=1,
+                seasons_back=None,
+                out_parquet=out,
+                use_cache=False,
+            )
+
+    # Success via meta.json
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+
+        def _ok(*_a, **_k):
+            meta = out.with_suffix(".meta.json")
+            meta.write_text('{"rows": 1, "cache_hit": false}\n', encoding="utf-8")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        run.side_effect = _ok
+        meta = produce_ledger_in_worktree(
+            tmp_path,
+            data_dir=tmp_path,
+            model_name="m",
+            season="2024-25",
+            mode="walk_forward",
+            test_from_gw=1,
+            test_to_gw=1,
+            fit_gw=1,
+            steps=1,
+            seasons_back=2,
+            out_parquet=out,
+            use_cache=True,
+            models_dir=tmp_path / "models",
+        )
+        assert meta["rows"] == 1
+
+    # Success via stdout JSON line when meta missing
+    out2 = tmp_path / "arm2.parquet"
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"rows": 3}\n',
+                "stderr": "",
+            },
+        )()
+        # Remove meta if created
+        meta_path = out2.with_suffix(".meta.json")
+        if meta_path.exists():
+            meta_path.unlink()
+        meta2 = produce_ledger_in_worktree(
+            tmp_path,
+            data_dir=tmp_path,
+            model_name="m",
+            season="2024-25",
+            mode="fixed",
+            test_from_gw=1,
+            test_to_gw=1,
+            fit_gw=1,
+            steps=1,
+            seasons_back=None,
+            out_parquet=out2,
+            use_cache=False,
+        )
+        assert meta2["rows"] == 3
+
+    # No metadata at all
+    out3 = tmp_path / "arm3.parquet"
+    with patch("fplt.backtest.equivalence.subprocess.run") as run:
+        run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "\n", "stderr": ""}
+        )()
+        with pytest.raises(RuntimeError, match="no metadata"):
+            produce_ledger_in_worktree(
+                tmp_path,
+                data_dir=tmp_path,
+                model_name="m",
+                season="2024-25",
+                mode="walk_forward",
+                test_from_gw=1,
+                test_to_gw=1,
+                fit_gw=None,
+                steps=1,
+                seasons_back=None,
+                out_parquet=out3,
+                use_cache=False,
+            )
+
+
+def test_attach_actuals_helpers() -> None:
+    from fplt.backtest import equivalence as mod
+
+    preds = pl.DataFrame([_pred_row()])
+    actuals = pl.DataFrame(
+        {
+            "target_season": ["2024-25"],
+            "target_gw": [1],
+            "player_key": [1],
+            "fixture_id": [10],
+            "actual_pts": [5],
+        }
+    )
+    joined = mod._attach_actuals(preds, actuals)
+    assert "actual_pts" in joined.columns
+    assert joined["run_kind"][0] == "equivalence"
+    assert joined["horizon"][0] == 1
+    assert joined["position"][0] == "MID"
+    assert joined["actual_minutes"][0] is None
+
+
+def test_attach_actuals_preserves_existing_columns() -> None:
+    from fplt.backtest import equivalence as mod
+
+    preds = pl.DataFrame([_pred_row()]).with_columns(
+        pl.lit("custom").alias("run_kind"),
+        pl.lit(2).alias("horizon"),
+        pl.lit("FWD").alias("position"),
+        pl.lit(90).alias("actual_minutes"),
+    )
+    actuals = pl.DataFrame(
+        {
+            "target_season": ["2024-25"],
+            "target_gw": [1],
+            "player_key": [1],
+            "fixture_id": [10],
+            "actual_pts": [5],
+            "position": ["MID"],
+        }
+    )
+    joined = mod._attach_actuals(preds, actuals)
+    assert joined["run_kind"][0] == "custom"
+    assert joined["horizon"][0] == 2

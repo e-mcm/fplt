@@ -31,6 +31,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "diff-cover>=11.0.4",
     "hypothesis>=6.170.15",
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
@@ -87,3 +88,5 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+# Combined line+branch total (coverage.py percent_covered). AGENTS.md §3 / #288.
+fail_under = 90

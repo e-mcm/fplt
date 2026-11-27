@@ -1097,3 +1097,204 @@ def test_window_lengths_reject_below_two() -> None:
             window_lengths=(1, 2),
             keep_cheapest=0,
         )
+
+
+def test_validate_policy_edge_errors() -> None:
+    """Pos-count / window / empty-keep validators raise clearly."""
+    from fplt.optimise.candidate_prune import (
+        _validate_pos_counts,
+        _validate_window_lengths,
+    )
+
+    assert _validate_window_lengths(None) == ()
+    with pytest.raises(ValueError, match="missing position"):
+        _validate_pos_counts({"GK": 2, "DEF": 5, "MID": 5}, field_name="top_xpts")
+    with pytest.raises(ValueError, match="must be >= 0"):
+        _validate_pos_counts(
+            {"GK": -1, "DEF": 5, "MID": 5, "FWD": 3}, field_name="top_xpts"
+        )
+    with pytest.raises(ValueError, match="at least one active keep rule"):
+        CandidatePrunePolicy(
+            top_xpts={"GK": 0, "DEF": 0, "MID": 0, "FWD": 0},
+            top_value=None,
+            top_per_step=None,
+            top_window=None,
+            window_lengths=(),
+            keep_cheapest=0,
+        )
+
+
+def test_apply_rejects_bad_decay_missing_owned_and_empty() -> None:
+    """apply() validates decay, owned keys, and returns empty pools unchanged."""
+    players = _players().drop("sum_xpts")
+    points = _points(_players())
+    policy = _tight_policy()
+    with pytest.raises(ValueError, match="decay"):
+        policy.apply(players, points, decay=0.0)
+    with pytest.raises(ValueError, match="owned players are not in the pool"):
+        policy.apply(players, points, owned_keys=[999_999])
+    empty = players.clear()
+    assert policy.apply(empty, points).is_empty()
+
+
+def test_apply_skips_zero_quotas_and_legacy_conflicts() -> None:
+    """Zero quotas are skipped; policy+top_k conflict; default policy path."""
+    players = _players().drop("sum_xpts")
+    points = _points(_players())
+    policy = CandidatePrunePolicy(
+        top_xpts={"GK": 3, "DEF": 6, "MID": 0, "FWD": 4},
+        top_value={"GK": 2, "DEF": 5, "MID": 0, "FWD": 3},
+        top_per_step=None,
+        top_window=None,
+        window_lengths=(),
+        keep_cheapest=2,
+    )
+    pruned = policy.apply(players, points)
+    assert pruned.filter(pl.col("position") == "MID").height >= MIN_POS_POOL["MID"]
+
+    with pytest.raises(ValueError, match="not both"):
+        prune_candidates(players, points, policy=policy, top_k={"GK": 2})
+
+    defaulted = prune_candidates(players, points)
+    assert defaulted.height <= players.height
+    assert defaulted.height >= 15
+
+
+def test_rank_players_empty_points_and_errors() -> None:
+    """_rank_players handles empty points, missing columns, and step_weights."""
+    players = _players().drop("sum_xpts")
+    ranked = _rank_players(players, pl.DataFrame())
+    assert "sum_xpts" in ranked.columns
+    assert ranked["sum_xpts"].to_list() == [0.0] * players.height
+
+    with pytest.raises(ValueError, match="missing columns"):
+        _rank_players(players, pl.DataFrame({"player_key": [1]}))
+    with pytest.raises(ValueError, match="step"):
+        _rank_players(
+            players,
+            pl.DataFrame({"player_key": [1], "xpts": [1.0]}),
+            decay=0.9,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        _rank_players(
+            players,
+            pl.DataFrame({"player_key": [1], "step": [0], "xpts": [1.0]}),
+            step_weights=[1.0, 0.0],
+        )
+
+    flat = _rank_players(
+        players.head(2),
+        pl.DataFrame({"player_key": [1, 1, 2], "xpts": [1.0, 2.0, 3.0]}),
+    )
+    by_key = {
+        int(r["player_key"]): float(r["sum_xpts"]) for r in flat.iter_rows(named=True)
+    }
+    assert by_key[1] == pytest.approx(3.0)
+    assert by_key[2] == pytest.approx(3.0)
+
+
+def test_helper_early_exits_for_tops_and_cheapest() -> None:
+    """Private helpers return empty sets on empty / zero-quota inputs."""
+    from fplt.optimise.candidate_prune import (
+        _cheapest_keys,
+        _club_feasible_count,
+        _points_with_position,
+        _top_keys,
+        _top_keys_at_each_step,
+        _top_keys_at_windows,
+        _weakly_dominates,
+    )
+
+    players = _players().drop("sum_xpts")
+    ranked = _rank_players(players, _points(_players()))
+    assert _cheapest_keys(ranked, "GK", 0, min_p_60=0.5) == set()
+    assert _cheapest_keys(ranked.clear(), "GK", 2, min_p_60=0.5) == set()
+    assert _top_keys(ranked, "GK", 0, "sum_xpts") == set()
+
+    assert _points_with_position(players, pl.DataFrame()) is None
+    assert (
+        _points_with_position(players, pl.DataFrame({"player_key": [1], "xpts": [1.0]}))
+        is None
+    )
+    with pytest.raises(ValueError, match="missing columns"):
+        _points_with_position(players, pl.DataFrame({"player_key": [1], "step": [0]}))
+
+    assert (
+        _top_keys_at_each_step(
+            players, pl.DataFrame(), quotas=dict(DEFAULT_TOP_PER_STEP)
+        )
+        == set()
+    )
+    zero_quotas = {"GK": 0, "DEF": 0, "MID": 0, "FWD": 0}
+    pts = _points(_players())
+    assert _top_keys_at_each_step(players, pts, quotas=zero_quotas) == set()
+    gk_only = players.filter(pl.col("position") == "GK")
+    kept = _top_keys_at_each_step(
+        gk_only, pts, quotas={"GK": 1, "DEF": 1, "MID": 1, "FWD": 1}
+    )
+    assert kept.issubset(set(gk_only["player_key"].to_list()))
+    assert len(kept) == 1
+
+    assert (
+        _top_keys_at_windows(
+            players,
+            pl.DataFrame(),
+            quotas=dict(DEFAULT_TOP_WINDOW),
+            window_lengths=(2,),
+        )
+        == set()
+    )
+    assert (
+        _top_keys_at_windows(
+            players, pts, quotas=dict(DEFAULT_TOP_WINDOW), window_lengths=(99,)
+        )
+        == set()
+    )
+    assert (
+        _top_keys_at_windows(players, pts, quotas=zero_quotas, window_lengths=(2,))
+        == set()
+    )
+
+    assert _club_feasible_count([], 0) is True
+    assert _club_feasible_count([1, 1, 1, 1], 4) is False
+
+    assert (
+        _weakly_dominates(price_j=40, xpts_j=(2.0, 2.0), price_i=40, xpts_i=(2.0, 2.0))
+        is False
+    )
+    assert (
+        _weakly_dominates(price_j=50, xpts_j=(2.0,), price_i=40, xpts_i=(1.0,)) is False
+    )
+    with pytest.raises(ValueError, match="same steps"):
+        _weakly_dominates(price_j=40, xpts_j=(1.0,), price_i=50, xpts_i=(1.0, 2.0))
+
+
+def test_drop_dominated_empty_and_per_step_xpts_edges() -> None:
+    """drop_dominated on empty pool; _per_step_xpts missing columns / steps."""
+    from fplt.optimise.candidate_prune import _per_step_xpts
+
+    empty = _players().clear().drop("sum_xpts")
+    assert drop_dominated_players(empty, pl.DataFrame()).is_empty()
+
+    players = _players().drop("sum_xpts")
+    assert all(v == () for v in _per_step_xpts(players, pl.DataFrame()).values())
+    with pytest.raises(ValueError, match="missing columns"):
+        _per_step_xpts(players, pl.DataFrame({"player_key": [1], "step": [0]}))
+    assert all(
+        v == ()
+        for v in _per_step_xpts(
+            players, pl.DataFrame({"player_key": [], "step": [], "xpts": []})
+        ).values()
+    )
+
+
+def test_attach_par_value_empty_and_no_replacements() -> None:
+    """_attach_par_value covers empty ranked frames."""
+    from fplt.optimise.candidate_prune import _attach_par_value
+
+    empty = _players().clear().drop("sum_xpts")
+    out = _attach_par_value(
+        empty.with_columns(pl.lit(0.0).alias("sum_xpts")), min_p_60=0.5
+    )
+    assert "par_value" in out.columns
+    assert out.is_empty()
