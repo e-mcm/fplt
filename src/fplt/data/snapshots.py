@@ -153,6 +153,10 @@ def _copy_new(source: Path, dest: Path) -> list[Path]:
     football = source / "football_data"
     if football.exists():
         candidates.extend(football.rglob("E0.csv"))
+    vaastav = source / "vaastav"
+    if vaastav.exists():
+        # CSVs + _source.json under raw/vaastav/captured_at=…/
+        candidates.extend(path for path in vaastav.rglob("*") if path.is_file())
     for path in sorted(candidates):
         if not path.is_file():
             continue

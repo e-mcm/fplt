@@ -1,5 +1,6 @@
 """Vaastav seasons land in the same staged tables, with degraded availability."""
 
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import polars as pl
 
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.data.vaastav import import_available, import_season
+from fplt.data.vaastav import import_available, import_season, latest_season_dirs
 from fplt.types import GWKey
 
 _KICKOFF = datetime(2021, 8, 14, 14, 0, tzinfo=UTC)
@@ -298,13 +299,94 @@ def test_header_only_gameweek_writes_empty_tables(tmp_path: Path) -> None:
     assert store.read("player_fixture_stats").is_empty()
 
 
+def _raw_season(
+    data_dir: Path,
+    season: str,
+    *,
+    stamp: str = "2026-11-27T12-00-00Z",
+) -> Path:
+    """Place a minimal season under ``raw/vaastav/captured_at=…/data/<season>``."""
+    root = data_dir / "raw" / "vaastav" / f"captured_at={stamp}" / "data" / season
+    (root / "gws").mkdir(parents=True)
+    (root / "gws" / "merged_gw.csv").write_text("element,GW\n", encoding="utf-8")
+    return root
+
+
 def test_import_available_skips_early_seasons(tmp_path: Path) -> None:
-    early = tmp_path / "2020-21" / "gws"
-    early.mkdir(parents=True)
-    (early / "merged_gw.csv").write_text("element,GW\n1,1\n", encoding="utf-8")
-    later = tmp_path / "2024-25" / "gws"
-    later.mkdir(parents=True)
-    (later / "merged_gw.csv").write_text("element,GW\n", encoding="utf-8")
+    _raw_season(tmp_path, "2020-21")
+    _raw_season(tmp_path, "2024-25")
+    # Legacy data/<season>/ must be ignored.
+    legacy = tmp_path / "2023-24" / "gws"
+    legacy.mkdir(parents=True)
+    (legacy / "merged_gw.csv").write_text("element,GW\n1,1\n", encoding="utf-8")
     store = DataStore(tmp_path / "store")
     assert import_available(store, tmp_path) == ["2024-25"]
     assert store.read("players").is_empty()
+
+
+def test_import_available_uses_latest_capture_per_season(tmp_path: Path) -> None:
+    first = _raw_season(tmp_path, "2022-23", stamp="2025-01-01T00-00-00Z")
+    (first / "marker.txt").write_text("old", encoding="utf-8")
+    second = _raw_season(tmp_path, "2022-23", stamp="2026-06-01T00-00-00Z")
+    (second / "marker.txt").write_text("new", encoding="utf-8")
+    dirs = latest_season_dirs(tmp_path)
+    assert dirs["2022-23"] == second
+
+
+def test_raw_and_legacy_layout_stage_equivalently(tmp_path: Path) -> None:
+    """Same season files → same staged tables from legacy vs raw/vaastav."""
+    legacy_root = tmp_path / "legacy"
+    raw_root = tmp_path / "raw_layout"
+    legacy_season = _write_season(legacy_root)
+    raw_season = (
+        raw_root
+        / "raw"
+        / "vaastav"
+        / "captured_at=2026-11-01T00-00-00Z"
+        / "data"
+        / "2021-22"
+    )
+    raw_season.parent.mkdir(parents=True)
+    shutil.copytree(legacy_season, raw_season)
+
+    legacy_store = DataStore(tmp_path / "legacy_store")
+    import_season(legacy_store, legacy_season, "2021-22")
+    raw_store = DataStore(tmp_path / "raw_store")
+    assert import_available(raw_store, raw_root) == ["2021-22"]
+
+    for table in (
+        "players",
+        "teams",
+        "fixtures",
+        "gameweeks",
+        "player_status",
+        "player_fixture_stats",
+    ):
+        left = legacy_store.read(table).sort(legacy_store.read(table).columns)
+        right = raw_store.read(table).sort(raw_store.read(table).columns)
+        assert left.equals(right), table
+
+
+def test_pit_ignores_capture_stamp_for_history(tmp_path: Path) -> None:
+    """A late captured_at still exposes 2021-22 rows by row-level available_at."""
+    season = _write_season(tmp_path / "src")
+    dest = (
+        tmp_path
+        / "raw"
+        / "vaastav"
+        / "captured_at=2026-11-27T12-00-00Z"
+        / "data"
+        / "2021-22"
+    )
+    dest.parent.mkdir(parents=True)
+    shutil.copytree(season, dest)
+    store = DataStore(tmp_path / "store")
+    assert import_available(store, tmp_path) == ["2021-22"]
+    # Before kickoff+3h: results hidden; schedule visible at season_start.
+    early = PITData(store).view(GWKey("2021-22", 1))
+    assert early.table("player_fixture_stats").collect().is_empty()
+    assert not early.latest("fixtures", by=["fixture_id"]).collect().is_empty()
+    later = PITData(store).view(GWKey("2021-22", 2))
+    assert later.table("player_fixture_stats").collect()["total_points"].to_list() == [
+        8
+    ]

@@ -79,6 +79,38 @@ def test_fetch_copies_football_data_csv_once(tmp_path: Path) -> None:
     assert fetch_snapshots(dest, remote=str(remote)) == []
 
 
+def test_fetch_copies_vaastav_raw_once(tmp_path: Path) -> None:
+    remote = tmp_path / "remote"
+    capture = (
+        remote
+        / "data"
+        / "raw"
+        / "vaastav"
+        / "captured_at=2026-11-27T12-00-00Z"
+        / "data"
+        / "2024-25"
+        / "gws"
+    )
+    capture.mkdir(parents=True)
+    (capture / "merged_gw.csv").write_text("element,GW\n1,1\n", encoding="utf-8")
+    (
+        remote
+        / "data"
+        / "raw"
+        / "vaastav"
+        / "captured_at=2026-11-27T12-00-00Z"
+        / "_source.json"
+    ).write_text("{}", encoding="utf-8")
+    _commit(remote, "snapshots")
+    dest = tmp_path / "raw"
+    first = fetch_snapshots(dest, remote=str(remote))
+    names = sorted(path.name for path in first)
+    assert "merged_gw.csv" in names
+    assert "_source.json" in names
+    assert any("vaastav" in path.parts for path in first)
+    assert fetch_snapshots(dest, remote=str(remote)) == []
+
+
 def test_fetch_without_a_raw_directory_returns_nothing(tmp_path: Path) -> None:
     remote = tmp_path / "remote"
     remote.mkdir()

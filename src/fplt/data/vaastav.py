@@ -17,6 +17,7 @@ present (2022-23 onwards); earlier seasons leave them null.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -30,12 +31,59 @@ _RESULT_LAG = timedelta(hours=3)
 _MIN_SEASON = "2021-22"
 _POSITIONS = {"GK", "DEF", "MID", "FWD"}
 _UTC = pl.Datetime("us", "UTC")
+_CAP_RE = re.compile(r"^captured_at=(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)$")
+_SEASON_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 def season_start(season: str) -> datetime:
     """1 July of the first year in ``season``, used as the schedule timestamp."""
     year = int(season.split("-")[0])
     return datetime(year, 7, 1, tzinfo=UTC)
+
+
+def iter_vaastav_captures(raw_root: Path) -> list[Path]:
+    """Return ``raw_root/vaastav/captured_at=*`` dirs sorted by stamp ascending."""
+    base = raw_root / "vaastav"
+    if not base.is_dir():
+        return []
+    found: list[tuple[datetime, Path]] = []
+    for path in base.iterdir():
+        match = _CAP_RE.match(path.name)
+        if match is None or not path.is_dir():
+            continue
+        stamp = datetime.strptime(match.group(1), "%Y-%m-%dT%H-%M-%SZ").replace(
+            tzinfo=UTC
+        )
+        found.append((stamp, path))
+    return [path for _, path in sorted(found)]
+
+
+def latest_season_dirs(data_dir: Path) -> dict[str, Path]:
+    """Map season label → latest ``…/data/<season>`` under ``raw/vaastav/``.
+
+    ``captured_at`` is provenance only: a 2026 capture of 2022-23 is still the
+    source for a 2022-23 backtest. Callers apply row-level ``available_at`` via
+    ``PITView``; do not filter seasons by capture stamp.
+
+    Args:
+        data_dir: ``$FPLT_DATA_DIR`` (contains ``raw/``).
+
+    Returns:
+        Season folders from the newest capture that includes each season.
+    """
+    by_season: dict[str, Path] = {}
+    for capture in iter_vaastav_captures(data_dir / "raw"):
+        data = capture / "data"
+        if not data.is_dir():
+            continue
+        for path in data.iterdir():
+            if (
+                path.is_dir()
+                and _SEASON_RE.match(path.name)
+                and (path / "gws" / "merged_gw.csv").is_file()
+            ):
+                by_season[path.name] = path
+    return by_season
 
 
 def import_season(store: DataStore, season_dir: Path, season: str) -> None:
@@ -85,18 +133,25 @@ def import_season(store: DataStore, season_dir: Path, season: str) -> None:
 
 
 def import_available(store: DataStore, data_dir: Path) -> list[str]:
-    """Import every season directory under ``data_dir`` that has a merged gameweek file.
+    """Import vaastav seasons from the latest ``raw/vaastav/captured_at=…`` trees.
 
-    Seasons before 2021-22 are skipped. Returns the season labels that were imported.
+    Reads ``data_dir/raw/vaastav/`` only (not ``data_dir/<season>/``). For each
+    season, uses the newest capture that contains it. Seasons before 2021-22
+    are skipped at import time; raw may still hold earlier seasons forever.
+
+    Args:
+        store: Destination for staged parquet tables.
+        data_dir: ``$FPLT_DATA_DIR`` root containing ``raw/``.
+
+    Returns:
+        Season labels that were imported, sorted.
     """
-    if not data_dir.is_dir():
-        return []
     imported: list[str] = []
-    for path in sorted(item for item in data_dir.iterdir() if item.is_dir()):
-        if path.name < _MIN_SEASON or not (path / "gws" / "merged_gw.csv").exists():
+    for season, path in sorted(latest_season_dirs(data_dir).items()):
+        if season < _MIN_SEASON:
             continue
-        import_season(store, path, path.name)
-        imported.append(path.name)
+        import_season(store, path, season)
+        imported.append(season)
     return imported
 
 
