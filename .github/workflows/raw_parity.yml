@@ -29,6 +29,8 @@ jobs:
     environment: r2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - name: Simulate failure
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
         run: |
@@ -64,6 +66,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - name: Heartbeat
         if: needs.parity.result == 'success'
         uses: ./.github/actions/heartbeat

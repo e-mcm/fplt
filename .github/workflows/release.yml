@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 30
     environment: r2
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0  # zizmor: ignore[artipacked] job git-pushes with GITHUB_TOKEN
         with:
           fetch-depth: 0
           ref: ${{ inputs.ref }}
@@ -50,21 +50,25 @@ jobs:
 
       - name: Resolve candidate sha
         id: sha
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Candidate $SHA (ref=${{ inputs.ref }})"
+          echo "Candidate $SHA (ref=${INPUT_REF})"
 
       - name: Require CI green on candidate
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.sha.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          SHA="${{ steps.sha.outputs.sha }}"
+          SHA="$CANDIDATE_SHA"
           # Combined commit status (legacy) plus check-runs conclusion.
-          api="repos/${{ github.repository }}/commits/${SHA}/status"
+          api="repos/${REPOSITORY}/commits/${SHA}/status"
           state="$(gh api "$api" --jq '.state')"
           echo "commit status state=$state"
           if [ "$state" = "success" ]; then
@@ -82,7 +86,7 @@ jobs:
             exit 1
           fi
           # No combined status yet — look at the CI workflow run for this sha.
-          conclusion="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${SHA}&status=completed&per_page=20" \
+          conclusion="$(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${SHA}&status=completed&per_page=20" \
             --jq '[.workflow_runs[] | select(.name=="CI")] | .[0].conclusion // "missing"')"
           echo "CI workflow conclusion=$conclusion"
           if [ "$conclusion" = "success" ]; then
@@ -155,10 +159,11 @@ jobs:
         id: gates
         env:
           FPLT_DATA_DIR: ${{ github.workspace }}/data
+          CI_STATUS: ${{ steps.ci.outputs.ci_status }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          CI_STATUS="${{ steps.ci.outputs.ci_status }}"
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             uv run fplt release check --ref HEAD --ci-status "$CI_STATUS"
           else
             uv run fplt release promote --ref HEAD --ci-status "$CI_STATUS"
@@ -171,6 +176,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - name: Notify failure
         if: needs.release.result == 'failure'
         uses: ./.github/actions/notify-failure

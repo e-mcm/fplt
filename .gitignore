@@ -32,3 +32,6 @@ data/*
 mlflow.db
 .hydra/
 outputs/
+
+# Local tool caches (actionlint/zizmor binaries, etc.)
+.cache/

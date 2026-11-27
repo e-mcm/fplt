@@ -32,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Simulate failure
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
@@ -79,6 +80,8 @@ jobs:
     needs: changes
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
@@ -97,6 +100,8 @@ jobs:
         run: uv run python scripts/check_workflow_concurrency.py
       - name: Workflow action SHA-pin lint (#309)
         run: uv run python scripts/check_workflow_action_pins.py
+      - name: actionlint + zizmor (#309)
+        run: uv run python scripts/check_workflow_security_lints.py
       - name: clang-format (mc/)
         if: needs.changes.outputs.mc == 'true'
         run: |
@@ -112,6 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
@@ -136,9 +142,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Require version bump when mc/ changes
-        run: bash mc/scripts/version_guard.sh origin/${{ github.base_ref || 'main' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: bash mc/scripts/version_guard.sh "origin/${BASE_REF}"
 
   mc-build-linux:
     name: mc-build (linux-x86_64)
@@ -146,9 +155,11 @@ jobs:
     if: ${{ always() && needs.changes.outputs.mc == 'true' && needs.version-guard.result != 'failure' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    container: quay.io/pypa/manylinux_2_28_x86_64
+    container: quay.io/pypa/manylinux_2_28_x86_64@sha256:55a36963bc0504cdf004011001c1072306402f0b8b83be5a5eba7068f93eec53  # 2026.11.21-1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         id: wheel-cache
         with:
@@ -188,6 +199,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         id: wheel-cache
         with:
@@ -227,6 +240,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -254,6 +269,7 @@ jobs:
       # fetch-depth 0 so diff-cover can compare against origin/main (#288).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
@@ -304,11 +320,13 @@ jobs:
       - name: Diff coverage (≥95% on changed lines)
         if: github.event_name == 'pull_request'
         id: diffcover
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -uo pipefail
           set +e
           REPORT=$(uv run diff-cover coverage.xml \
-            --compare-branch=origin/${{ github.base_ref }} \
+            --compare-branch=origin/${BASE_REF} \
             --fail-under=95 2>&1)
           status=$?
           set -e
@@ -360,6 +378,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
@@ -404,6 +424,8 @@ jobs:
           echo "gate ok"
       # Alert on main push / nightly / dispatch — never on PRs (#287, #305).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
         if: >-
           always() &&
           github.ref == 'refs/heads/main' &&
