@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 from pathlib import Path
+from typing import ClassVar
 from urllib.request import Request
 
 import dagster as dg
@@ -18,7 +19,7 @@ from fplt.settings import Settings, get_settings
 class _FakeSmtp:
     """In-memory SMTP stand-in for :func:`email` tests."""
 
-    instances: list[_FakeSmtp] = []
+    instances: ClassVar[list[_FakeSmtp]] = []
 
     def __init__(self, host: str, port: int) -> None:
         self.host = host

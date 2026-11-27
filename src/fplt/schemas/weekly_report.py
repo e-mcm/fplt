@@ -29,7 +29,7 @@ class WeeklyDecisionScoreSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season", "gw"]
+        unique = ["model_id", "season", "gw"]  # noqa: RUF012
 
 
 class SeasonToDateSchema(pa.DataFrameModel):
@@ -51,4 +51,4 @@ class SeasonToDateSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season", "through_gw"]
+        unique = ["model_id", "season", "through_gw"]  # noqa: RUF012

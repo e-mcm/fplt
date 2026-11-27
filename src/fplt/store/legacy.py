@@ -499,7 +499,7 @@ def _code_sha_sidecar(folder: Path) -> str:
 def _deadline(data_dir: Path, season: str, gw: int, source: Path) -> AsOfDeadline:
     try:
         deadline = DataStore(data_dir).deadline(GWKey(season, gw))
-    except Exception:
+    except (KeyError, TypeError):
         mtime = source.stat().st_mtime if source.exists() else 0.0
         deadline = datetime.fromtimestamp(mtime, tz=UTC) if mtime > 0 else _EPOCH
     return AsOfDeadline(season=season, gw=gw, deadline_utc=deadline)

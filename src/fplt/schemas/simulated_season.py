@@ -22,7 +22,7 @@ class TruthRateSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["gw", "player_key"]
+        unique = ["gw", "player_key"]  # noqa: RUF012
 
 
 class JointTruthSimSchema(pa.DataFrameModel):
@@ -42,7 +42,7 @@ class JointTruthSimSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["sim", "gw", "player_key"]
+        unique = ["sim", "gw", "player_key"]  # noqa: RUF012
 
 
 class SimulatedPathActualsSchema(pa.DataFrameModel):
@@ -57,7 +57,7 @@ class SimulatedPathActualsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["path_id", "gw", "player_key"]
+        unique = ["path_id", "gw", "player_key"]  # noqa: RUF012
 
 
 class SimulatedSeasonPathSchema(pa.DataFrameModel):
@@ -74,7 +74,7 @@ class SimulatedSeasonPathSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["path_id", "policy_id"]
+        unique = ["path_id", "policy_id"]  # noqa: RUF012
 
 
 class PolicyDiffSESchema(pa.DataFrameModel):
@@ -95,4 +95,4 @@ class PolicyDiffSESchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["metric", "control_id", "treatment_id"]
+        unique = ["metric", "control_id", "treatment_id"]  # noqa: RUF012

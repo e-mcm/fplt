@@ -72,7 +72,7 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "D"]
+select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400"]
 # AGENTS.md §5 enforces D101/D103 (Google). Other D codes stay ignored until
 # ratcheted separately (#311); D203/D213 conflict with Google convention.
 ignore = [
@@ -104,6 +104,9 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 # Test functions need no module/class/function docstrings.
 "tests/**" = ["D"]
+# CLI top-level except handlers re-raise SystemExit; logging.exception would
+# dump traces on every user-facing error. Keep logger.error; cover via e2e later.
+"src/fplt/cli.py" = ["TRY400"]
 
 [tool.pyright]
 pythonVersion = "3.13"

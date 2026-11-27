@@ -35,3 +35,7 @@ outputs/
 
 # Local tool caches (actionlint/zizmor binaries, etc.)
 .cache/
+
+# Coverage artifacts
+.coverage
+coverage.xml

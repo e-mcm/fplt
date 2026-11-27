@@ -178,7 +178,7 @@ def enforce_training_history(
             min_prior_seasons=min_prior_seasons,
         )
     except HistoryGuardError as exc:
-        logger.error("%s: history guard failed: %s", source, exc)
+        logger.exception("%s: history guard failed: %s", source, exc)
         if notify:
             notify_recommendation(
                 settings,

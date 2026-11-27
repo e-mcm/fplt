@@ -22,7 +22,7 @@ class SwapProjectionSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["source", "as_of_gw", "target_gw", "player_key"]
+        unique = ["source", "as_of_gw", "target_gw", "player_key"]  # noqa: RUF012
 
 
 class SeasonPointsSchema(pa.DataFrameModel):
@@ -49,4 +49,4 @@ class SeasonPointsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["arm_id", "season"]
+        unique = ["arm_id", "season"]  # noqa: RUF012

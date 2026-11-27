@@ -19,4 +19,4 @@ class UnderstatShareSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["season", "gw", "player_key"]
+        unique = ["season", "gw", "player_key"]  # noqa: RUF012

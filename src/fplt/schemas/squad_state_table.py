@@ -34,4 +34,4 @@ class SquadStateTableSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["run_id", "as_of_season", "as_of_gw"]
+        unique = ["run_id", "as_of_season", "as_of_gw"]  # noqa: RUF012

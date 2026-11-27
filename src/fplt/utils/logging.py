@@ -47,7 +47,10 @@ CONTEXT_FIELDS: tuple[str, ...] = (
 )
 
 _LogContext = dict[str, str | int | None]
-_log_context: ContextVar[_LogContext] = ContextVar("fplt_log_context", default={})
+# B039: mutable ContextVar defaults are shared across contexts; use None.
+_log_context: ContextVar[_LogContext | None] = ContextVar(
+    "fplt_log_context", default=None
+)
 
 _REDACTED = "***"
 
@@ -184,10 +187,10 @@ class SecretRedactionFilter(logging.Filter):
 
 def get_log_context() -> _LogContext:
     """Return a shallow copy of the current log context mapping."""
-    return dict(_log_context.get())
+    return dict(_log_context.get() or {})
 
 
-def set_log_context(**fields: str | int | None) -> Token[_LogContext]:
+def set_log_context(**fields: str | int | None) -> Token[_LogContext | None]:
     """Merge identity fields into the contextvars log context.
 
     Only keys in ``CONTEXT_FIELDS`` are accepted; unknown keys raise
@@ -205,7 +208,7 @@ def set_log_context(**fields: str | int | None) -> Token[_LogContext]:
     unknown = set(fields) - set(CONTEXT_FIELDS)
     if unknown:
         raise TypeError(f"unknown log context fields: {sorted(unknown)}")
-    current = dict(_log_context.get())
+    current = dict(_log_context.get() or {})
     for key, value in fields.items():
         if value is None:
             current.pop(key, None)
@@ -214,12 +217,12 @@ def set_log_context(**fields: str | int | None) -> Token[_LogContext]:
     return _log_context.set(current)
 
 
-def reset_log_context(token: Token[_LogContext]) -> None:
+def reset_log_context(token: Token[_LogContext | None]) -> None:
     """Restore the log context to the state before ``set_log_context``."""
     _log_context.reset(token)
 
 
-def clear_log_context() -> Token[_LogContext]:
+def clear_log_context() -> Token[_LogContext | None]:
     """Clear all context fields; return a token to restore the prior map."""
     return _log_context.set({})
 
@@ -250,7 +253,7 @@ class ContextFilter(logging.Filter):
         Returns:
             Always ``True``.
         """
-        ctx = _log_context.get()
+        ctx = _log_context.get() or {}
         for name in CONTEXT_FIELDS:
             value = ctx.get(name)
             setattr(record, name, "" if value is None else value)
@@ -573,4 +576,4 @@ def reset_logging_for_tests() -> None:
     _redaction_filter = None
     _context_filter = None
     _configured = False
-    _log_context.set({})
+    _log_context.set(None)

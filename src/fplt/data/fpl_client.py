@@ -406,7 +406,7 @@ class FPLClient:
         try:
             response = self._client.get(url, params=params)
         except httpx.HTTPError as exc:
-            logger.error("FPL API request failed for %s: %s", path, exc)
+            logger.exception("FPL API request failed for %s: %s", path, exc)
             raise FPLAPIError(f"request failed for {path}: {exc}") from exc
         return self._parse_response(path, response, empty_ok=False)
 
@@ -418,7 +418,7 @@ class FPLClient:
         try:
             response = self._client.post(url, json=payload)
         except httpx.HTTPError as exc:
-            logger.error("FPL API POST failed for %s: %s", path, exc)
+            logger.exception("FPL API POST failed for %s: %s", path, exc)
             raise FPLAPIError(f"request failed for {path}: {exc}") from exc
         return self._parse_response(path, response, empty_ok=empty_ok)
 
@@ -448,7 +448,7 @@ class FPLClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            logger.error("FPL API returned non-JSON for %s", path)
+            logger.exception("FPL API returned non-JSON for %s", path)
             raise FPLAPIError(f"FPL API returned non-JSON for {path}") from exc
         if not isinstance(payload, dict):
             raise FPLAPIError(f"FPL API expected object for {path}")

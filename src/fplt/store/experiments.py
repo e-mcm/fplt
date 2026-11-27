@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+from pydantic import ValidationError
 
 from fplt.schemas.experiment_results import (
     ArmMetricsSchema,
@@ -171,7 +172,7 @@ def find_reusable_arm(data_dir: Path, key: ArmReuseKey) -> str | None:
             manifest = RunManifest.model_validate_json(
                 manifest_path.read_text(encoding="utf-8")
             )
-        except Exception:
+        except (OSError, UnicodeError, ValidationError, ValueError, TypeError):
             logger.debug("skip unreadable run manifest %s", manifest_path)
             continue
         if manifest.status != "succeeded":

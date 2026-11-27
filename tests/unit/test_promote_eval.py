@@ -6,7 +6,7 @@ import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import polars as pl
@@ -1186,7 +1186,7 @@ def test_execute_runs_compare_and_stays_inconclusive(tmp_path: Path) -> None:
             }
         )
         output_dir = out / "compare"
-        runs: list[Any] = []
+        runs: ClassVar[list[Any]] = []
         season = "2025-26"
         test_from_gw = 1
         test_to_gw = 1

@@ -35,13 +35,13 @@ class BenchmarkProjectionSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = [
+        unique = [  # noqa: RUF012
             "source",
             "as_of_season",
             "as_of_gw",
             "player_key",
             "fixture_id",
-        ]
+        ]  # noqa: RUF012
 
 
 BENCHMARK_COLUMNS: dict[str, pl.DataType] = {

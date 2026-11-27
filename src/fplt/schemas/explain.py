@@ -37,7 +37,7 @@ class ForecastBoardSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "target_gw"]
+        unique = ["player_key", "target_gw"]  # noqa: RUF012
 
 
 class TransferDeltaSchema(pa.DataFrameModel):
@@ -82,7 +82,7 @@ class PlayerDepthSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "target_gw", "fixture_id"]
+        unique = ["player_key", "target_gw", "fixture_id"]  # noqa: RUF012
 
 
 FORECAST_BOARD_COLUMNS: dict[str, pl.DataType] = {

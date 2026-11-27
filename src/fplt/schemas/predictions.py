@@ -28,13 +28,13 @@ class PredictionSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = [
+        unique = [  # noqa: RUF012
             "model_id",
             "as_of_season",
             "as_of_gw",
             "player_key",
             "fixture_id",
-        ]
+        ]  # noqa: RUF012
 
 
 PREDICTION_COLUMNS: dict[str, pl.DataType] = {

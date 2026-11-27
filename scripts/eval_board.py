@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             steps=args.steps,
         )
     except (ValueError, KeyError) as exc:
-        logger.error("eval_board failed: %s", exc)
+        logger.exception("eval_board failed: %s", exc)
         print(str(exc), file=sys.stderr)
         return 2
     for spec in result.specs:

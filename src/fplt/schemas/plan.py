@@ -18,7 +18,7 @@ class CandidateSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key"]
+        unique = ["player_key"]  # noqa: RUF012
 
 
 class ExpectedPointsSchema(pa.DataFrameModel):
@@ -31,7 +31,7 @@ class ExpectedPointsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "gw"]
+        unique = ["player_key", "gw"]  # noqa: RUF012
 
 
 class HorizonPointsSchema(pa.DataFrameModel):
@@ -44,7 +44,7 @@ class HorizonPointsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "step"]
+        unique = ["player_key", "step"]  # noqa: RUF012
 
 
 class PriceForecastSchema(pa.DataFrameModel):
@@ -61,7 +61,7 @@ class PriceForecastSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["player_key", "step"]
+        unique = ["player_key", "step"]  # noqa: RUF012
 
 
 class HorizonPickSchema(pa.DataFrameModel):
@@ -82,7 +82,7 @@ class HorizonPickSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["step", "player_key"]
+        unique = ["step", "player_key"]  # noqa: RUF012
 
 
 class PlanSchema(pa.DataFrameModel):
@@ -107,7 +107,13 @@ class PlanSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "as_of_season", "as_of_gw", "target_gw", "player_key"]
+        unique = [  # noqa: RUF012
+            "model_id",
+            "as_of_season",
+            "as_of_gw",
+            "target_gw",
+            "player_key",
+        ]  # noqa: RUF012
 
 
 class DecisionSchema(pa.DataFrameModel):
@@ -133,7 +139,7 @@ class DecisionSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season", "gw", "player_key"]
+        unique = ["model_id", "season", "gw", "player_key"]  # noqa: RUF012
 
 
 class ChipWindowsSchema(pa.DataFrameModel):
@@ -149,4 +155,4 @@ class ChipWindowsSchema(pa.DataFrameModel):
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
-        unique = ["model_id", "season", "gw"]
+        unique = ["model_id", "season", "gw"]  # noqa: RUF012
