@@ -69,6 +69,8 @@ jobs:
           uv run pyright
       - name: Workflow timeout-minutes lint (ops-11)
         run: uv run python scripts/check_workflow_timeouts.py
+      - name: Workflow R2 environment lint (#278)
+        run: uv run python scripts/check_workflow_r2_environment.py
       - name: clang-format (mc/)
         if: needs.changes.outputs.mc == 'true'
         run: |

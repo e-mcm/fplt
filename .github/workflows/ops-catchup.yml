@@ -36,6 +36,7 @@ jobs:
   catchup:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    environment: r2
     steps:
       - uses: actions/checkout@v4
         with:
