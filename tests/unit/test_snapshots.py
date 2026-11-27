@@ -173,10 +173,7 @@ def test_fetch_raw_source_bucket_requires_data_bucket(tmp_path: Path) -> None:
 def test_fetch_raw_auto_falls_back_to_branch_when_credentials_incomplete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """DATA_BUCKET set without R2 secrets must not fail auto fetch."""
-    # Soft-skip path: clear host GITHUB_REF so push-to-main CI does not raise.
-    monkeypatch.delenv("GITHUB_REF", raising=False)
-    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    """DATA_BUCKET set without R2 secrets must not fail auto fetch (#287)."""
     remote = tmp_path / "remote"
     raw = remote / "data" / "raw" / "fpl_api"
     raw.mkdir(parents=True)
@@ -199,11 +196,8 @@ def test_fetch_raw_auto_falls_back_to_branch_when_credentials_incomplete(
 
 def test_fetch_raw_source_bucket_requires_complete_credentials(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Soft-skip → SnapshotFetchError; isolate from push-to-main GITHUB_REF.
-    monkeypatch.delenv("GITHUB_REF", raising=False)
-    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    """source=bucket soft-skips to SnapshotFetchError off main (#287)."""
     with pytest.raises(SnapshotFetchError, match="complete R2 credentials"):
         fetch_raw(
             tmp_path / "raw",

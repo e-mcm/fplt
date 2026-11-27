@@ -103,9 +103,7 @@ def test_check_raw_parity_clone_failure(
     # cannot mask the clone-failure path under push-to-main GITHUB_REF.
     monkeypatch.setattr(
         "fplt.data.parity.Remote.from_settings",
-        lambda _s, bucket=None: Remote(
-            target="fplt:fplt-data", kind="data", env={}
-        ),
+        lambda _s, bucket=None: Remote(target="fplt:fplt-data", kind="data", env={}),
     )
     with pytest.raises(ParityError, match="(?i)(could not|fatal|not)"):
         check_raw_parity(settings, remote=str(missing), branch="snapshots")
