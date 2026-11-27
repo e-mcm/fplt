@@ -159,6 +159,7 @@ data/
 │   ├── weekly.parquet
 │   └── season_to_date.parquet   # running STD table under reports/
 └── timing/*.json                # wall-clock phase timings (`fplt.utils.timing`; `fplt perf-report`)
+                                 # also runs/run=*/logs/timing.json + official/…/ops_timing.json
 ```
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet. football-data E0 files are plain CSV (write-once) as published upstream.
