@@ -56,6 +56,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"
+          if [ -n "${FPLT_FPL_API_TOKEN:-}" ]; then
+            tok="${FPLT_FPL_API_TOKEN#Bearer }"
+            tok="${tok#bearer }"
+            echo "::add-mask::${tok}"
+            echo "::add-mask::Bearer ${tok}"
+          fi
           # Soft-skip when the secret is unset (scaffolding / CI forks).
           # Exit non-zero on expired / warn / malformed so the alerts job fires.
           # Missing with --allow-missing exits 0.

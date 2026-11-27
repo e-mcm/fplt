@@ -116,7 +116,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"
           source="${{ inputs.source }}"
+          if [ -n "${FPLT_FPL_API_TOKEN:-}" ]; then
+            tok="${FPLT_FPL_API_TOKEN#Bearer }"
+            tok="${tok#bearer }"
+            echo "::add-mask::${tok}"
+            echo "::add-mask::Bearer ${tok}"
+          fi
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          echo "::add-mask::${remote}"
           extra=()
           if [ "${{ inputs.no_notify }}" = "true" ]; then
             extra+=(--no-notify)

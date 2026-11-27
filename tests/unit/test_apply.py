@@ -510,6 +510,83 @@ def test_build_payload_missing_kept_element_raises() -> None:
         )
 
 
+def test_apply_plan_builds_client_from_secret_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unwrap SecretStr credentials when constructing ``FPLClient`` (#308)."""
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    owned = [pick.element for pick in team.picks]
+    _view(tmp_path, element_ids=owned)
+    write_plan(
+        tmp_path,
+        _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
+    )
+    created: dict[str, str | None] = {}
+
+    class _FakeClient:
+        def __init__(
+            self,
+            client: object = None,
+            *,
+            session: str | None = None,
+            api_token: str | None = None,
+            base_url: str = _API,
+        ) -> None:
+            created["session"] = session
+            created["api_token"] = api_token
+
+        def current_team(
+            self, entry_id: int, *, event: int | None = None
+        ) -> CurrentTeam:
+            return team
+
+        def submit_lineup(self, entry_id: int, body: dict[str, Any]) -> None:
+            return None
+
+        def submit_transfers(self, body: dict[str, Any]) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("fplt.optimise.apply.FPLClient", _FakeClient)
+    settings = Settings(
+        entry_id=42,
+        fpl_api_token="eyJfrom-settings",
+        fpl_session="cookie-value",
+    )
+    dry = apply_plan(
+        tmp_path,
+        _MODEL,
+        _SEASON,
+        _GW,
+        horizon=_HORIZON,
+        confirm=False,
+        settings=settings,
+        client=None,
+        team=None,
+    )
+    assert dry.mode == "dry_run"
+    assert created["api_token"] == "eyJfrom-settings"
+    assert created["session"] == "cookie-value"
+
+    created.clear()
+    confirmed = apply_plan(
+        tmp_path,
+        _MODEL,
+        _SEASON,
+        _GW,
+        horizon=_HORIZON,
+        confirm=True,
+        settings=settings,
+        client=None,
+        team=team,
+    )
+    assert confirmed.mode == "confirmed"
+    assert created["api_token"] == "eyJfrom-settings"
+    assert created["session"] == "cookie-value"
+
+
 def test_apply_plan_guardrails(tmp_path: Path) -> None:
     with pytest.raises(ApplyError, match="at most one"):
         apply_plan(

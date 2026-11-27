@@ -97,6 +97,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          echo "::add-mask::${remote}"
           uv run python -c "
           from pathlib import Path
           from fplt.automation.ops_feeds import refresh_ops_feeds

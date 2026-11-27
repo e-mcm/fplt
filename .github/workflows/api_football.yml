@@ -55,6 +55,9 @@ jobs:
             echo "No API-Football key in secrets (API_FOOTBALL_KEY / APISPORTS_KEY / FPLT_API_FOOTBALL_KEY); skipping."
             exit 0
           fi
+          # Prefer the same resolution order as scripts/fetch_api_football.py; mask it.
+          key="${FPLT_API_FOOTBALL_KEY:-${API_FOOTBALL_KEY:-${APISPORTS_KEY:-}}}"
+          echo "::add-mask::${key}"
           python scripts/fetch_api_football.py --out "$RUNNER_TEMP/raw"
 
       - name: Upload to R2

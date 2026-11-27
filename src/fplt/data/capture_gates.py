@@ -35,7 +35,7 @@ from fplt.data.quarantine import (
 )
 from fplt.data.raw import RawSnapshot, iter_snapshots, read_json
 from fplt.data.remote import Remote, RemoteError, pull
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, get_settings, secret_value
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ def check_new_captures(
             by_season[snap.season] = snap
         gated = list(by_season.values())
 
-    notify_url = cfg.ntfy_url if notify_alerts else None
+    notify_url = secret_value(cfg.ntfy_url) if notify_alerts else None
     actions: list[CaptureGateAction] = []
     alerted: list[str] = []
     for snap in gated:

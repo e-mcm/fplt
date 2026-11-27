@@ -19,7 +19,7 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
 from fplt.schemas.plan import PlanSchema
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, get_settings, secret_value
 from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
@@ -242,7 +242,9 @@ def apply_plan(
     cfg = settings if settings is not None else get_settings()
     if cfg.entry_id is None:
         raise ApplyError("set FPLT_ENTRY_ID to apply a plan")
-    if confirm and not cfg.fpl_api_token and client is None:
+    api_token = secret_value(cfg.fpl_api_token)
+    session = secret_value(cfg.fpl_session)
+    if confirm and not api_token and client is None:
         raise ApplyError(
             "confirm needs FPLT_FPL_API_TOKEN (Bearer from x-api-authorization)"
         )
@@ -261,7 +263,7 @@ def apply_plan(
     api = client
     if live is None:
         if api is None:
-            api = FPLClient(session=cfg.fpl_session, api_token=cfg.fpl_api_token)
+            api = FPLClient(session=session, api_token=api_token)
             owns_client = True
         try:
             live = api.current_team(cfg.entry_id, event=gameweek)
@@ -292,7 +294,7 @@ def apply_plan(
         )
 
     if api is None:
-        api = FPLClient(session=cfg.fpl_session, api_token=cfg.fpl_api_token)
+        api = FPLClient(session=session, api_token=api_token)
         owns_client = True
     posted_transfers = False
     posted_lineup = False

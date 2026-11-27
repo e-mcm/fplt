@@ -103,8 +103,10 @@ def _patch_tick_deps(
 
         raw = kwargs.get("priority")
         priority = raw if isinstance(raw, str) else None
+        from fplt.settings import secret_value
+
         return notify(
-            settings.ntfy_url,
+            secret_value(settings.ntfy_url),
             title,
             message,
             post=post,

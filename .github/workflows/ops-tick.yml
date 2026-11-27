@@ -115,7 +115,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"
+          # Mask derived forms GitHub would not auto-mask (Bearer strip, remote URL).
+          if [ -n "${FPLT_FPL_API_TOKEN:-}" ]; then
+            tok="${FPLT_FPL_API_TOKEN#Bearer }"
+            tok="${tok#bearer }"
+            echo "::add-mask::${tok}"
+            echo "::add-mask::Bearer ${tok}"
+          fi
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          echo "::add-mask::${remote}"
           uv run fplt ops-tick --source "$OPS_SOURCE" --remote "$remote" --branch snapshots
           # Timing table is appended to $GITHUB_STEP_SUMMARY by fplt.automation.ops_timing.
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, get_settings, secret_value
 from fplt.utils.timing import (
     TimingSession,
     active_timing_dir,
@@ -126,11 +126,11 @@ def github_requires_r2() -> bool:
 
 def r2_credentials_complete(settings: Settings) -> bool:
     """Return True when account id, access key, and secret are all set."""
-    if not settings.r2_account_id or not settings.r2_access_key_id:
+    if not settings.r2_account_id:
         return False
-    if settings.r2_secret_access_key is None:
+    if secret_value(settings.r2_access_key_id) is None:
         return False
-    return bool(settings.r2_secret_access_key.get_secret_value())
+    return secret_value(settings.r2_secret_access_key) is not None
 
 
 def _rclone_env(settings: Settings) -> dict[str, str]:
@@ -144,12 +144,12 @@ def _rclone_env(settings: Settings) -> dict[str, str]:
         env["RCLONE_CONFIG_FPLT_ENDPOINT"] = (
             f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
         )
-    if settings.r2_access_key_id:
-        env["RCLONE_CONFIG_FPLT_ACCESS_KEY_ID"] = settings.r2_access_key_id
-    if settings.r2_secret_access_key is not None:
-        env["RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY"] = (
-            settings.r2_secret_access_key.get_secret_value()
-        )
+    access_key = secret_value(settings.r2_access_key_id)
+    if access_key is not None:
+        env["RCLONE_CONFIG_FPLT_ACCESS_KEY_ID"] = access_key
+    secret_key = secret_value(settings.r2_secret_access_key)
+    if secret_key is not None:
+        env["RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY"] = secret_key
     return env
 
 
