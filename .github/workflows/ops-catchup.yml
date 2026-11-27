@@ -41,7 +41,7 @@ jobs:
       - name: Record job start
         run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0
 
@@ -68,7 +68,7 @@ jobs:
             echo "OPS_LIVE unset; scaffolding only (set repo variable OPS_LIVE=true to plan)"
           fi
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         if: steps.gate.outputs.enabled == 'true'
         with:
           enable-cache: true
@@ -83,7 +83,7 @@ jobs:
 
       - name: Restore ops state cache
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: |
             data/staged
@@ -137,8 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Heartbeat
         if: needs.catchup.result == 'success'
         uses: ./.github/actions/heartbeat
