@@ -88,12 +88,31 @@ def test_overview_app_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     try:
-        app = AppTest.from_file(str(_APP), default_timeout=10)
+        # Overview is no longer the default nav page; exercise it directly.
+        def _overview_only() -> None:
+            from fplt.ui.pages.overview import render
+
+            render()
+
+        app = AppTest.from_function(_overview_only, default_timeout=10)
         app.run()
         assert not app.exception
         titles = [item.value for item in app.title]
         assert any("overview" in str(value).lower() for value in titles)
         # Fixture plan + quarantine + status should surface as dataframes / code.
         assert len(app.dataframe) >= 2
+    finally:
+        get_settings.cache_clear()
+
+
+def test_app_navigation_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        app = AppTest.from_file(str(_APP), default_timeout=10)
+        app.run()
+        assert not app.exception
+        titles = [str(item.value).lower() for item in app.title]
+        assert any("this week" in value for value in titles)
     finally:
         get_settings.cache_clear()
