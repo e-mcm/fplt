@@ -14,6 +14,35 @@ def test_table_renderer_registered() -> None:
     assert renderers.get_renderer("table")(frame).equals(frame)
 
 
+def test_timing_renderers() -> None:
+    pytest.importorskip("plotly")
+    import plotly.graph_objects as go
+
+    phases = pl.DataFrame(
+        {
+            "phase": ["ingest", "setup"],
+            "seconds": [10.0, 2.0],
+            "share_pct": [80.0, 16.0],
+        }
+    )
+    stacked = renderers.get_renderer("timing_stacked_bar")(phases)
+    assert isinstance(stacked, go.Figure)
+    assert len(stacked.data) == 2
+    trend = pl.DataFrame(
+        {
+            "season": ["2026-27", "2026-27"],
+            "gw": [12, 13],
+            "checkpoint": ["T-90m", "T-90m"],
+            "total_s": [5.0, 8.0],
+            "ingest": [4.0, 6.0],
+        }
+    )
+    trend_fig = renderers.get_renderer("timing_trend")(trend)
+    assert isinstance(trend_fig, go.Figure)
+    assert "timing_stacked_bar" in renderers.registered_views()
+    assert "timing_trend" in renderers.registered_views()
+
+
 def test_points_pmf_bar_renderer() -> None:
     pytest.importorskip("plotly")
     frame = pl.DataFrame({"points_bin": [0, 5], "probability": [0.4, 0.6]})

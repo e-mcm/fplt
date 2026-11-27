@@ -99,3 +99,82 @@ def render_points_pmf_bar(frame: pl.DataFrame) -> Any:
         ],
         layout=go.Layout(xaxis_title="Points", yaxis_title="P"),
     )
+
+
+@renderer("timing_stacked_bar")
+def render_timing_stacked_bar(frame: pl.DataFrame) -> Any:
+    """Horizontal stacked bar of top-level ops timing phases.
+
+    Args:
+        frame: Columns ``phase``, ``seconds`` (``RunTimingPhaseSchema``).
+
+    Returns:
+        A Plotly ``Figure``.
+    """
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+
+    bars = [
+        go.Bar(
+            x=[float(row["seconds"])],
+            y=["ops"],
+            name=str(row["phase"]),
+            orientation="h",
+            hovertemplate=f"{row['phase']}: %{{x:.1f}}s<extra></extra>",
+        )
+        for row in frame.iter_rows(named=True)
+    ]
+    return go.Figure(
+        data=bars,
+        layout=go.Layout(
+            barmode="stack",
+            xaxis_title="Seconds",
+            yaxis_title="",
+            showlegend=True,
+            height=160,
+            margin={"l": 40, "r": 20, "t": 20, "b": 40},
+        ),
+    )
+
+
+@renderer("timing_trend")
+def render_timing_trend(frame: pl.DataFrame) -> Any:
+    """Line chart of ``total_s`` (and optional phase columns) across gameweeks.
+
+    Args:
+        frame: ``RunTimingTrendSchema`` plus optional phase second columns.
+
+    Returns:
+        A Plotly ``Figure``.
+    """
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+
+    x_labels = [f"GW{int(gw)}" for gw in frame["gw"].to_list()]
+    traces: list[Any] = [
+        go.Scatter(
+            x=x_labels,
+            y=frame["total_s"].to_list(),
+            mode="lines+markers",
+            name="total_s",
+        )
+    ]
+    skip = {"season", "gw", "checkpoint", "total_s"}
+    for column in frame.columns:
+        if column in skip:
+            continue
+        traces.append(
+            go.Scatter(
+                x=x_labels,
+                y=frame[column].to_list(),
+                mode="lines+markers",
+                name=str(column),
+            )
+        )
+    return go.Figure(
+        data=traces,
+        layout=go.Layout(
+            xaxis_title="Gameweek",
+            yaxis_title="Seconds",
+            height=280,
+            margin={"l": 40, "r": 20, "t": 20, "b": 40},
+        ),
+    )

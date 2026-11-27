@@ -275,3 +275,27 @@ def test_dashboard_store_this_week_loaders(tmp_path: Path) -> None:
     assert curated["players"].height == 1
     assert store.curated_tables(None)["players"].is_empty()
     assert store.curated_tables("nope")["players"].is_empty()
+    assert store.ops_timing(season="2025-26", gw=12, checkpoint="T-90m") is None
+    from fplt.schemas.timing import TimingRecord
+    from fplt.utils.timing import ops_timing_path
+
+    ops_path = ops_timing_path(
+        tmp_path / "official" / "season=2025-26" / "gw=12" / "checkpoint=T-90m"
+    )
+    ops_path.parent.mkdir(parents=True, exist_ok=True)
+    ops_path.write_text(
+        json.dumps(
+            TimingRecord(
+                kind="ops_tick",
+                recorded_at=_TS,
+                phases={"ingest": 2.0},
+                total_s=2.0,
+            ).model_dump_json_doc()
+        ),
+        encoding="utf-8",
+    )
+    loaded = store.ops_timing(season="2025-26", gw=12, checkpoint="T-90m")
+    assert loaded is not None
+    assert loaded.total_s == 2.0
+    assert len(store.ops_timing_history(season="2025-26")) == 1
+    assert store.remote_timing_records() == []

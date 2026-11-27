@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 import streamlit as st
 
+from fplt.analysis.run_timing import RunTimingPanel, run_timing_panel
 from fplt.analysis.this_week import (
     OfficialSelection,
     default_official_selection,
@@ -88,6 +89,7 @@ def render(store: DashboardStore | None = None) -> None:
         deadline_utc=deadline,
     )
     _render_header(header)
+    _render_run_timing(source, selection)
 
     predictions = source.load_table("player_fixture", run_id=selection.predict_run_id)
     plan = source.load_table("plan", run_id=selection.plan_run_id)
@@ -161,6 +163,53 @@ def render(store: DashboardStore | None = None) -> None:
     if not drill.points_pmf.is_empty():
         st.markdown("**Points distribution (next GW)**")
         fig = get_renderer("points_pmf_bar")(drill.points_pmf)
+        st.plotly_chart(fig, use_container_width=True)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _render_run_timing(source: DashboardStore, selection: OfficialSelection) -> None:
+    """Render the Run timing panel (stacked bar, sub-phases, transfers, trend)."""
+    st.subheader("Run timing")
+    ops = source.ops_timing(
+        season=selection.season, gw=selection.gw, checkpoint=selection.checkpoint
+    )
+    trend = source.ops_timing_history(
+        season=selection.season, checkpoint=selection.checkpoint
+    )
+    panel = run_timing_panel(
+        ops_record=ops,
+        remote_records=source.remote_timing_records(),
+        trend_records=trend,
+    )
+    _draw_timing_panel(panel)
+
+
+def _draw_timing_panel(panel: RunTimingPanel) -> None:
+    """Lay out timing widgets from a shaped ``RunTimingPanel``."""
+    if not panel.present:
+        st.caption(
+            "No timing for this checkpoint (older runs may lack ops_timing.json)."
+        )
+        if not panel.trend.is_empty() and panel.trend.height >= 2:
+            st.markdown("**Trend across pulled gameweeks**")
+            fig = get_renderer("timing_trend")(panel.trend)
+            st.plotly_chart(fig, use_container_width=True)  # pyright: ignore[reportUnknownMemberType]
+        return
+    st.caption(f"kind `{panel.kind}` · total_s **{panel.total_s:.1f}s**")
+    if not panel.top_phases.is_empty():
+        fig = get_renderer("timing_stacked_bar")(panel.top_phases)
+        st.plotly_chart(fig, use_container_width=True)  # pyright: ignore[reportUnknownMemberType]
+        st.dataframe(panel.top_phases, hide_index=True)  # pyright: ignore[reportUnknownMemberType]
+    with st.expander("Sub-phases (fit / plan / MILP)", expanded=False):
+        if panel.sub_phases.is_empty():
+            st.write("No nested sub-phases recorded.")
+        else:
+            st.dataframe(panel.sub_phases, hide_index=True)  # pyright: ignore[reportUnknownMemberType]
+    if not panel.transfers.is_empty():
+        st.markdown("**R2 transfers**")
+        st.dataframe(panel.transfers, hide_index=True)  # pyright: ignore[reportUnknownMemberType]
+    if not panel.trend.is_empty() and panel.trend.height >= 2:
+        st.markdown("**Trend across pulled gameweeks**")
+        fig = get_renderer("timing_trend")(panel.trend)
         st.plotly_chart(fig, use_container_width=True)  # pyright: ignore[reportUnknownMemberType]
 
 
