@@ -289,7 +289,11 @@ jobs:
       # Full suite (incl. slow) + xdist; pytest-cov combines worker coverage (#288/#304).
       # No testmon / path skipping — every PR runs the full suite.
       # fail_under=90 is in pyproject.toml; diff-cover enforces ≥95% on PR diffs.
+      # Isolation (#306): socket block / randomly / timeout via pyproject addopts;
+      # Hypothesis CI profile; pytest-randomly prints the seed in the log.
       - name: Pytest (fplt)
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: >
           uv run pytest -n auto --cov=fplt --cov-branch
           --cov-report=xml --cov-report=term

@@ -55,7 +55,10 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
   - **Overall line + branch coverage ≥ 90%**: `[tool.coverage.report] fail_under = 90` in `pyproject.toml` (coverage.py combined `percent_covered` with `branch = true`). The pytest step fails the job when under the floor.
 - Exclusions are rare. Use `# pragma: no cover` only for code that genuinely cannot run in tests, such as `if TYPE_CHECKING:` blocks or `__main__` entry points. Add a one-line comment giving the reason. Never exclude code just to hit the number.
 - Coverage is the floor, not the goal: assert on behaviour and values, not merely that code ran.
-- Tests never touch the network. Use recorded fixtures in `tests/fixtures/` (gzipped API JSON) or synthetic data builders in `tests/builders.py`.
+- Tests never touch the network. Enforced by `pytest-socket` (`--disable-socket --allow-unix-socket` in `[tool.pytest.ini_options] addopts`; unix sockets stay allowed for xdist). Opt in with `@pytest.mark.enable_socket` only for an explicit local stub. Use recorded fixtures in `tests/fixtures/` (gzipped API JSON) or synthetic data builders in `tests/builders.py`.
+- Test order is randomised by `pytest-randomly` (also reseeds `random` / numpy per test). CI prints the seed; reproduce with `uv run pytest --randomly-seed=<n>`.
+- Per-test timeouts via `pytest-timeout` (global 60s; unit tests 30s unless a test sets its own `@pytest.mark.timeout`). A hang fails that test with a stack dump instead of burning the job timeout.
+- Hypothesis profiles in `tests/conftest.py`: `ci` (`HYPOTHESIS_PROFILE=ci` in CI — `deadline=None`, `print_blob=True`, `max_examples=100`) and `dev` (default locally — fewer examples). Per-test `@settings(max_examples=…)` still wins.
 - Never assert model quality (MAE, RMSE, log-loss) in pytest. Quality is measured by the backtester and recorded in the ledger.
 - Unit tests in `tests/unit/`, contract tests in `tests/contracts/`, Dagster/end-to-end in `tests/integration/`. Mark anything slower than ~2 s with `@pytest.mark.slow`.
 - Optimiser tests check **constraint satisfaction** on small known problems, not solution optimality on real data.
