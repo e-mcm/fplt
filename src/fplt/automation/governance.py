@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +24,7 @@ from fplt.backtest.results_registry import (
     default_results_registry_path,
     load_results_registry,
 )
+from fplt.utils.process import run_command
 
 PRODUCTION_RELPATH = "configs/ops/production.yaml"
 MODELS_PREFIX = "configs/models/"
@@ -406,7 +406,7 @@ def _diff_snapshot(repo: Path, *, base_ref: str, head_ref: str) -> _DiffSnapshot
 
 
 def _git_diff_names(repo: Path, base_ref: str, head_ref: str) -> list[str]:
-    result = subprocess.run(
+    result = run_command(
         ["git", "diff", "--name-only", f"{base_ref}...{head_ref}"],
         cwd=repo,
         check=True,
@@ -417,7 +417,7 @@ def _git_diff_names(repo: Path, base_ref: str, head_ref: str) -> list[str]:
 
 
 def _git_show(repo: Path, ref: str, relpath: str) -> str | None:
-    result = subprocess.run(
+    result = run_command(
         ["git", "show", f"{ref}:{relpath}"],
         cwd=repo,
         check=False,

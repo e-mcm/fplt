@@ -17,6 +17,7 @@ from fplt.data.store import DataStore
 from fplt.models.distributions import ScorelineDist
 from fplt.models.spec import ModelSpec
 from fplt.schemas.ledger import COMPONENT_COLUMNS, ComponentSchema
+from fplt.utils.frames import require_dataframe
 
 
 class _ScoreComponent(Protocol):
@@ -82,7 +83,7 @@ def record_scorelines(
         pl.lit(None).cast(pl.Float64).alias("rps"),
     )
     checked = ComponentSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -91,7 +92,7 @@ def append_components(root: Path, frame: pl.DataFrame) -> None:
     if frame.is_empty():
         return
     checked = ComponentSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     path = component_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -174,7 +175,7 @@ def fill_scoreline_actuals(root: Path, store: DataStore) -> None:
         pl.when(pl.col("rps").is_nan()).then(None).otherwise(pl.col("rps")).alias("rps")
     )
     validated = ComponentSchema.validate(filled.select(list(COMPONENT_COLUMNS)))
-    assert isinstance(validated, pl.DataFrame)
+    validated = require_dataframe(validated)
     validated.write_parquet(path)
 
 

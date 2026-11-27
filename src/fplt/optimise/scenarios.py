@@ -22,6 +22,7 @@ from fplt.models.spec import ModelSpec, get_model
 from fplt.optimise.realised import score_gameweek
 from fplt.schemas.scenarios import PredictionSampleSchema, ScenarioOutcomeSchema
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 # Default SAA draw count when the caller does not override (full predict
@@ -78,7 +79,7 @@ def scenario_bundle_from_frame(frame: pl.DataFrame) -> ScenarioBundle:
         ValueError: Validation fails or sim coverage is incomplete.
     """
     checked = ScenarioOutcomeSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     if checked.is_empty():
         return ScenarioBundle(
             player_keys=np.zeros(0, dtype=np.int64),
@@ -130,7 +131,7 @@ def scenario_outcomes_from_samples(
         ValueError: Validation fails.
     """
     checked = PredictionSampleSchema.validate(samples)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     chosen = checked.filter(
         (pl.col("target_season") == season) & (pl.col("target_gw") == gw)
     )

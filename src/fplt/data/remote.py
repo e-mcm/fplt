@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Literal
 
 from fplt.settings import Settings, get_settings, secret_value
+from fplt.utils.process import run_command
 from fplt.utils.timing import (
     TimingSession,
     active_timing_dir,
@@ -416,7 +417,7 @@ def _rclone(args: list[str], *, env: dict[str, str]) -> None:
     """
     merged = {**os.environ, **env}
     try:
-        subprocess.run(
+        run_command(
             ["rclone", *args],
             check=True,
             capture_output=True,

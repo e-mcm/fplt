@@ -24,6 +24,7 @@ from fplt.optimise.season_optimiser import (
 )
 from fplt.optimise.state import SquadState
 from fplt.schemas.swap import SeasonPointsSchema, SwapProjectionSchema
+from fplt.utils.frames import require_dataframe
 
 DEFAULT_FORECAST_SOURCES: tuple[str, ...] = ("ours", "benchmark")
 DEFAULT_OPTIMISERS: tuple[SeasonOptimiser, ...] = (
@@ -115,7 +116,7 @@ def run_forecast_optimiser_swap(
     if not weeks:
         raise ValueError("gameweeks must be non-empty")
     checked = SwapProjectionSchema.validate(projections)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     arms = build_swap_arms(forecast_sources, optimisers)
     present = set(checked["source"].unique().to_list())
     missing = sorted({arm.forecast_source for arm in arms} - present)
@@ -217,7 +218,7 @@ def _per_gw_nets(raw: object) -> list[int]:
 
 def _season_points(frame: pl.DataFrame) -> pl.DataFrame:
     checked = SeasonPointsSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

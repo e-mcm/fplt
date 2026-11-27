@@ -16,6 +16,7 @@ import polars as pl
 from fplt.data.remote import Remote, RemoteError, copy_mutable
 from fplt.schemas.quarantine import QuarantineRecordSchema
 from fplt.settings import Settings, get_settings
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def load_quarantine(data_dir: Path) -> pl.DataFrame:
         return QuarantineRecordSchema.validate(pl.DataFrame(schema=_empty_schema()))
     frame = pl.read_parquet(path)
     checked = QuarantineRecordSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -52,7 +53,7 @@ def append_quarantine(data_dir: Path, frame: pl.DataFrame) -> pl.DataFrame:
     if frame.is_empty():
         return load_quarantine(data_dir)
     incoming = QuarantineRecordSchema.validate(frame)
-    assert isinstance(incoming, pl.DataFrame)
+    incoming = require_dataframe(incoming)
     path = quarantine_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():

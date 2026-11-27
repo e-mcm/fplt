@@ -39,6 +39,7 @@ from fplt.backtest.promote_eval import (
 )
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
+from fplt.utils.frames import require_not_none
 
 logger = logging.getLogger(__name__)
 
@@ -417,7 +418,7 @@ def execute_bakeoff(
         summaries.append(part.summary)
         compare_result = part
 
-    assert compare_result is not None
+    compare_result = require_not_none(compare_result, what="compare_result")
     summary = (
         pl.concat(summaries, how="diagonal_relaxed")
         if len(summaries) > 1

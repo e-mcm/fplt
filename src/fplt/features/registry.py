@@ -18,6 +18,7 @@ import polars as pl
 from fplt.data.pit import PITView
 from fplt.models.universe import player_fixtures
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 FeatureFn = Callable[..., pl.DataFrame]
 
@@ -175,7 +176,7 @@ def materialise_feature(view: PITView, name: str, version: int, root: Path) -> P
         raise RuntimeError("availability_v1 did not register")
     spec = get_feature(name, version)
     checked = spec.schema.validate(call_feature(spec, view))
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     stamp = f"as_of={view.as_of.season}_gw{view.as_of.gw:02d}"
     path = root / "features" / name / f"v={version}" / stamp / "part.parquet"
     if path.exists():

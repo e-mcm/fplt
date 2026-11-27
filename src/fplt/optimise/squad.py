@@ -16,6 +16,7 @@ import numpy as np
 import polars as pl
 
 from fplt.schemas.squad import GameweekPointsSchema, SquadPickSchema, SquadPlayerSchema
+from fplt.utils.frames import require_dataframe
 
 _Schema = type[GameweekPointsSchema] | type[SquadPickSchema] | type[SquadPlayerSchema]
 
@@ -266,5 +267,5 @@ def _row(
 
 def _checked(frame: pl.DataFrame, schema: _Schema) -> pl.DataFrame:
     checked = schema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

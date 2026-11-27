@@ -37,6 +37,7 @@ from fplt.schemas.other_points_measurement import (
 )
 from fplt.scoring.rules import MatchStats, Rules
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -784,13 +785,13 @@ def _empty_detail() -> pl.DataFrame:
 
 def _validated_summary(frame: pl.DataFrame) -> pl.DataFrame:
     checked = OtherPointsMeasurementSummarySchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _validated_captain(frame: pl.DataFrame) -> pl.DataFrame:
     checked = OtherPointsCaptainRegretSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

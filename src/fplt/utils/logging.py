@@ -542,7 +542,8 @@ def configure_logging(
         for handler in root.handlers:
             if handler.get_name() == _HANDLER_NAME:
                 handler.setFormatter(_make_formatter(fmt))
-    assert _redaction_filter is not None
+    if _redaction_filter is None:
+        raise RuntimeError("configure_logging must run before set_secrets")
     if secrets is not None:
         _redaction_filter.set_secrets(secrets)
     else:

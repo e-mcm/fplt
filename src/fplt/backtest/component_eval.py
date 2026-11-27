@@ -47,6 +47,7 @@ from fplt.schemas.component_eval import (
 )
 from fplt.schemas.horizon_skill import HORIZON_SKILL_COLUMNS
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe, require_not_none
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def run_component_eval(
         rows.extend(_eval_involvement(pit, as_ofs, specs[name], store))
 
     if sweep_ns:
-        assert layered_model is not None
+        layered_model = require_not_none(layered_model, what="layered_model")
         sims_frame = _sweep_n_sims(
             pit,
             specs[layered_model],
@@ -618,19 +619,19 @@ def _metric(
 
 def _validated_summary(frame: pl.DataFrame) -> pl.DataFrame:
     checked = ComponentEvalSummarySchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _validated_sims(frame: pl.DataFrame) -> pl.DataFrame:
     checked = SimsSweepSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _validated_per_match(frame: pl.DataFrame) -> pl.DataFrame:
     checked = ComponentEvalPerMatchSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

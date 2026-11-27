@@ -31,6 +31,7 @@ from fplt.automation.freeze import (
 )
 from fplt.automation.production import load_production_ops
 from fplt.models.spec import git_sha, load_model_specs
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,7 @@ def current_code_sha() -> str:
 
 
 def _git_rev_parse(ref: str, *, cwd: Path | None) -> str:
-    completed = subprocess.run(
+    completed = run_command(
         ["git", "rev-parse", f"{ref}^{{commit}}"],
         check=True,
         capture_output=True,
@@ -353,4 +354,4 @@ def _git_rev_parse(ref: str, *, cwd: Path | None) -> str:
 
 
 def _run_git(cmd: Sequence[str], *, cwd: Path | None) -> None:
-    subprocess.run(list(cmd), check=True, cwd=cwd)
+    run_command(list(cmd), check=True, cwd=cwd)

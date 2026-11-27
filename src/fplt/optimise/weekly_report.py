@@ -29,6 +29,7 @@ from fplt.schemas.weekly_report import (
     WeeklyDecisionScoreSchema,
 )
 from fplt.settings import Settings, get_settings
+from fplt.utils.frames import require_dataframe
 
 _Post = Callable[[Request], object]
 _SmtpFactory = Callable[[str, int], Any]
@@ -227,9 +228,9 @@ def write_weekly_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     season_dir.mkdir(parents=True, exist_ok=True)
     checked = WeeklyDecisionScoreSchema.validate(score)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     std = SeasonToDateSchema.validate(season_to_date)
-    assert isinstance(std, pl.DataFrame)
+    std = require_dataframe(std)
     checked.write_parquet(out_dir / "weekly.parquet")
     (out_dir / "weekly.md").write_text(report_md, encoding="utf-8")
     std.write_parquet(season_dir / "season_to_date.parquet")

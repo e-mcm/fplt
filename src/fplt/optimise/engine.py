@@ -20,6 +20,7 @@ from fplt.schemas.plan import (
     HorizonPickSchema,
     HorizonPointsSchema,
 )
+from fplt.utils.frames import require_dataframe
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ def horizon_points(
     """
     window = _window(gameweeks)
     scored = ExpectedPointsSchema.validate(expected_points)
-    assert isinstance(scored, pl.DataFrame)
+    scored = require_dataframe(scored)
     if scored.is_empty():
         return _empty_horizon()
     step_of = {gameweek: step for step, gameweek in enumerate(window)}
@@ -112,7 +113,7 @@ def horizon_points(
         .select("player_key", "step", "xpts")
     )
     checked = HorizonPointsSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -144,7 +145,7 @@ def optimize_transfers(
     """
     window = _window(gameweeks)
     pool = CandidateSchema.validate(candidates)
-    assert isinstance(pool, pl.DataFrame)
+    pool = require_dataframe(pool)
     state = apply_market_prices(state, market_prices_from_candidates(pool))
     solved = plan_squad(
         pool,
@@ -158,7 +159,7 @@ def optimize_transfers(
 
 def _from_plan(plan: GameweekPlan, gameweeks: Sequence[int]) -> TransferPlan:
     picks = HorizonPickSchema.validate(plan.picks)
-    assert isinstance(picks, pl.DataFrame)
+    picks = require_dataframe(picks)
     return TransferPlan(
         gameweeks=tuple(gameweeks),
         picks=picks,

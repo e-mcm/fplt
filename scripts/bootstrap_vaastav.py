@@ -14,12 +14,12 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
+from fplt.utils.process import run_command
 
 REPO_URL = "https://github.com/vaastav/Fantasy-Premier-League.git"
 _SOURCE = "_source.json"
@@ -69,8 +69,12 @@ def sha256_file(path: Path) -> str:
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
-    result = subprocess.run(
-        ["git", *args], cwd=cwd, check=False, capture_output=True, text=True
+    result = run_command(
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()

@@ -42,6 +42,7 @@ from fplt.schemas.ensemble_sensitivity import (
     EnsembleSensitivitySummarySchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +242,7 @@ def run_ensemble_sensitivity(
 
     frame = pl.DataFrame(rows)
     checked = EnsembleSensitivityRowSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     summary = summarise_ensemble_sensitivity(checked)
     return EnsembleSensitivityReport(
         rows=checked,
@@ -340,7 +341,7 @@ def summarise_ensemble_sensitivity(rows: pl.DataFrame) -> pl.DataFrame:
         One row per control × challenger with agree rates and move frequencies.
     """
     checked = EnsembleSensitivityRowSchema.validate(rows)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     if checked.is_empty():
         empty = pl.DataFrame(
             schema={
@@ -359,7 +360,7 @@ def summarise_ensemble_sensitivity(rows: pl.DataFrame) -> pl.DataFrame:
             }
         )
         validated_empty = EnsembleSensitivitySummarySchema.validate(empty)
-        assert isinstance(validated_empty, pl.DataFrame)
+        validated_empty = require_dataframe(validated_empty)
         return validated_empty
     summary = (
         checked.group_by("control_model_id", "challenger_model_id", maintain_order=True)
@@ -399,7 +400,7 @@ def summarise_ensemble_sensitivity(rows: pl.DataFrame) -> pl.DataFrame:
         .sort("challenger_model_id")
     )
     validated = EnsembleSensitivitySummarySchema.validate(summary)
-    assert isinstance(validated, pl.DataFrame)
+    validated = require_dataframe(validated)
     return validated
 
 

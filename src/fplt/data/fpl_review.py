@@ -22,6 +22,7 @@ from fplt.schemas.benchmark_projections import (
     BenchmarkProjectionSchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 _LOG = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ def load_fpl_review_drop(
     frame = frame.with_columns(pl.lit(SOURCE_FPL_REVIEW).alias("source"))
     ordered = frame.select(list(BENCHMARK_COLUMNS))
     checked = BenchmarkProjectionSchema.validate(ordered)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return _ensure_utc(checked)
 
 

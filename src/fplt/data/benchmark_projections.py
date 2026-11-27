@@ -30,6 +30,7 @@ from fplt.schemas.benchmark_projections import (
     BenchmarkProjectionSchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def write_benchmark_archive(data_dir: Path, as_of: GWKey, frame: pl.DataFrame) -
         FileExistsError: That deadline was already archived.
     """
     checked = BenchmarkProjectionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     path = benchmarks_path(data_dir, as_of)
     if path.exists():
         raise FileExistsError(path)
@@ -101,7 +102,7 @@ def merge_benchmark_source(data_dir: Path, as_of: GWKey, frame: pl.DataFrame) ->
         ValueError: ``frame`` is empty, mixes sources, or mismatches ``as_of``.
     """
     checked = BenchmarkProjectionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     checked = _ensure_utc(checked)
     if checked.is_empty():
         raise ValueError("cannot merge an empty benchmark frame")
@@ -122,7 +123,7 @@ def merge_benchmark_source(data_dir: Path, as_of: GWKey, frame: pl.DataFrame) ->
         kept = existing.filter(pl.col("source") != source)
         merged = pl.concat([kept, checked], how="vertical_relaxed")
     merged = BenchmarkProjectionSchema.validate(_ensure_utc(merged))
-    assert isinstance(merged, pl.DataFrame)
+    merged = require_dataframe(merged)
     path = benchmarks_path(data_dir, as_of)
     path.parent.mkdir(parents=True, exist_ok=True)
     merged.write_parquet(path)
@@ -388,7 +389,7 @@ def _from_predictions(
         pl.lit(quality_flag).cast(pl.Utf8).alias("quality_flag"),
     ).select(list(BENCHMARK_COLUMNS))
     checked = BenchmarkProjectionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

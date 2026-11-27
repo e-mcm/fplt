@@ -6,6 +6,7 @@ import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.schemas.components import InvolvementSchema
+from fplt.utils.frames import require_dataframe
 
 POSITIONS = ("GK", "DEF", "MID", "FWD")
 
@@ -163,5 +164,5 @@ def team_share(rate: str, total: str) -> pl.Expr:
 def validated_involvement(frame: pl.DataFrame) -> pl.DataFrame:
     """Validate an involvement frame against ``InvolvementSchema``."""
     checked = InvolvementSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

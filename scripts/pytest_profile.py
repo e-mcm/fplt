@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from fplt.utils.process import run_command
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_JUNIT = _REPO_ROOT / ".pytest_cache" / "pytest-profile-junit.xml"
@@ -207,7 +208,7 @@ def run_pytest_profile(
         *pytest_args,
     ]
     print("+", " ".join(cmd), flush=True)
-    completed = subprocess.run(cmd, cwd=repo_root, check=False)
+    completed = run_command(cmd, cwd=repo_root, check=False)
     return int(completed.returncode)
 
 

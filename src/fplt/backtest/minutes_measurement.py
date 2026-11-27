@@ -36,6 +36,7 @@ from fplt.schemas.minutes_measurement import (
     MinutesMissSchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -689,13 +690,13 @@ def _view(pit: PITData, as_of: GWKey, spec: ModelSpec) -> PITView:
 
 def _validated_summary(frame: pl.DataFrame) -> pl.DataFrame:
     checked = MinutesMeasurementSummarySchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _validated_misses(frame: pl.DataFrame) -> pl.DataFrame:
     checked = MinutesMissSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

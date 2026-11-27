@@ -22,6 +22,7 @@ import polars as pl
 from fplt.optimise.decisions import simulate_decisions
 from fplt.optimise.state import SquadState
 from fplt.schemas.plan import DecisionSchema
+from fplt.utils.frames import require_dataframe
 
 # Canonical chips-off decision-sim knobs. Bank / owned / free_transfers still
 # come from the caller's starting state; only rule hyperparameters freeze.
@@ -224,5 +225,5 @@ def validate_decisions(frame: pl.DataFrame) -> pl.DataFrame:
     if "chip" not in frame.columns:
         frame = frame.with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
     checked = DecisionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

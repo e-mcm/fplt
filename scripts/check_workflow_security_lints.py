@@ -117,7 +117,7 @@ def run_actionlint(binary: Path, workflows_dir: Path) -> int:
         Exit code from actionlint (0 = clean).
     """
     print("actionlint: scanning", workflows_dir, flush=True)
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603 - binary path resolved by caller
         [str(binary), "-color"],
         cwd=str(workflows_dir.parent.parent),
         check=False,
@@ -139,7 +139,7 @@ def run_zizmor(binary: Path, workflows_dir: Path) -> int:
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tmp:
         out_path = Path(tmp.name)
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603 - binary path resolved by caller
             [
                 str(binary),
                 str(workflows_dir),
@@ -224,10 +224,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.skip_download:
-        actionlint = Path(
-            subprocess.check_output(["which", "actionlint"], text=True).strip()
-        )
-        zizmor = Path(subprocess.check_output(["which", "zizmor"], text=True).strip())
+        from fplt.utils.process import resolve_executable
+
+        actionlint = Path(resolve_executable("actionlint"))
+        zizmor = Path(resolve_executable("zizmor"))
     else:
         actionlint = _ensure_binary(
             name="actionlint",

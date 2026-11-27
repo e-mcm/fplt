@@ -31,6 +31,7 @@ from fplt.optimise.highs_options import HighsSolveOptions
 from fplt.optimise.plan import GameweekPlan, plan_squad
 from fplt.optimise.state import OwnedPlayer, SquadState, rebuild_squad_state
 from fplt.schemas.pruning_loss import PruningLossRowSchema
+from fplt.utils.frames import require_dataframe
 
 _log = logging.getLogger(__name__)
 
@@ -387,7 +388,7 @@ def run_pruning_loss_harness(
 
     frame = pl.DataFrame(rows)
     checked = PruningLossRowSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     summary = summarise_pruning_loss(checked)
     return PruningLossReport(
         rows=checked,
@@ -408,7 +409,7 @@ def summarise_pruning_loss(rows: pl.DataFrame) -> pl.DataFrame:
         and ``mean_solve_elapsed``.
     """
     checked = PruningLossRowSchema.validate(rows)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return (
         checked.group_by("arm_id", maintain_order=True)
         .agg(

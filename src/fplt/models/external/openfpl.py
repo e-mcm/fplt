@@ -16,6 +16,7 @@ from fplt.models.predictions import prediction_frame
 from fplt.models.spec import ModelSpec, register_model, write_identity
 from fplt.models.universe import player_fixtures
 from fplt.types import GWKey
+from fplt.utils.process import run_command
 
 _RUNNER = Path("external") / "openfpl" / "predict.py"
 DEFAULT_MODEL_DIR = "external/openfpl/OpenFPL"
@@ -149,7 +150,7 @@ def _payload(
 def _invoke(
     spec: ModelSpec, payload: dict[str, list[dict[str, object]]]
 ) -> pl.DataFrame:
-    completed = subprocess.run(
+    completed = run_command(
         _command(spec),
         input=json.dumps(payload),
         capture_output=True,
@@ -233,7 +234,7 @@ def ensure_openfpl_checkout(dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info("fetching OpenFPL ensemble into %s", dest)
     try:
-        subprocess.run(
+        run_command(
             [
                 "git",
                 "clone",
@@ -246,7 +247,7 @@ def ensure_openfpl_checkout(dest: Path) -> Path:
             ],
             check=True,
         )
-        subprocess.run(
+        run_command(
             ["git", "sparse-checkout", "set", "models"],
             cwd=dest,
             check=True,
@@ -266,7 +267,7 @@ def _scoring_python() -> str:
         return str(venv_python)
     logger.info("installing OpenFPL runner environment in %s", root)
     try:
-        subprocess.run(["uv", "sync"], cwd=root, check=True)
+        run_command(["uv", "sync"], cwd=root, check=True)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(f"could not install the OpenFPL runner in {root}") from exc
     if not venv_python.is_file():

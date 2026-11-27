@@ -16,6 +16,7 @@ import polars as pl
 from fplt.schemas.catalog import CATALOG_RUN_COLUMNS, CatalogRunSchema
 from fplt.schemas.manifests import RunManifest
 from fplt.store.runs import run_dir
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def empty_runs_catalog() -> pl.DataFrame:
     """Empty ``CatalogRunSchema`` frame with typed columns."""
     frame = pl.DataFrame(schema=CATALOG_RUN_COLUMNS)
     checked = CatalogRunSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -113,7 +114,7 @@ def write_run_inbox_row(data_dir: Path, manifest: RunManifest) -> Path:
     """
     row = manifest_to_catalog_row(manifest)
     frame = CatalogRunSchema.validate(pl.DataFrame([row], schema=CATALOG_RUN_COLUMNS))
-    assert isinstance(frame, pl.DataFrame)
+    frame = require_dataframe(frame)
     inbox = catalog_inbox_dir(data_dir)
     inbox.mkdir(parents=True, exist_ok=True)
     path = inbox / f"run={manifest.run_id}.parquet"
@@ -178,7 +179,7 @@ def scan_succeeded_runs(data_dir: Path) -> pl.DataFrame:
         return empty_runs_catalog()
     frame = pl.DataFrame(rows, schema=CATALOG_RUN_COLUMNS)
     checked = CatalogRunSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked.sort("run_id")
 
 
@@ -225,7 +226,7 @@ def read_runs_catalog(data_dir: Path) -> pl.DataFrame:
     checked = CatalogRunSchema.validate(
         merged.select(list(CATALOG_RUN_COLUMNS)).sort("run_id")
     )
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

@@ -20,6 +20,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fplt.schemas.plan import CandidateSchema
+from fplt.utils.frames import require_dataframe
 
 # Minimum pool depth so a legal 15 can still be formed after pruning.
 # Also the squad quota *q* used by exact dominance.
@@ -338,7 +339,7 @@ class CandidatePrunePolicy(BaseModel):
         if step_weights is None and not 0.0 < decay <= 1.0:
             raise ValueError(f"decay must be in (0, 1], got {decay}")
         checked = CandidateSchema.validate(players.sort("player_key"))
-        assert isinstance(checked, pl.DataFrame)
+        checked = require_dataframe(checked)
         pool = checked
         if pool.is_empty():
             return pool
@@ -437,7 +438,7 @@ def drop_dominated_players(
         A ``CandidateSchema`` subset of ``players``, sorted by ``player_key``.
     """
     checked = CandidateSchema.validate(players.sort("player_key"))
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     if checked.is_empty():
         return checked
     protected = {int(key) for key in owned_keys}

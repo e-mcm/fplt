@@ -39,6 +39,7 @@ from fplt.store.experiments import (
 from fplt.store.push import load_run_manifest
 from fplt.store.runs import list_succeeded_predict_run_ids, run_dir
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +322,7 @@ class Store:
             .select(list(LEDGER_COLUMNS))
         )
         checked = LedgerSchema.validate(align_ledger_columns(joined))
-        assert isinstance(checked, pl.DataFrame)
+        checked = require_dataframe(checked)
         return checked
 
     def _official_plan_run_id(

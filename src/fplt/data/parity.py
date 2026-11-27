@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fplt.data.remote import Remote, RemoteError, check_one_way
 from fplt.settings import Settings, get_settings
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def check_raw_parity(
     with tempfile.TemporaryDirectory() as tmp:
         clone = Path(tmp) / "repo"
         try:
-            subprocess.run(
+            run_command(
                 [
                     "git",
                     "clone",

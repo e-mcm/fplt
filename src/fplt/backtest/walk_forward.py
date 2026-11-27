@@ -17,6 +17,7 @@ from fplt.models.contracts import PointsPredictor
 from fplt.models.spec import ModelSpec
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 from fplt.utils.timing import (
     TimingSession,
     format_gw_breakdown,
@@ -160,7 +161,7 @@ def walk_forward(
         else pl.concat(frames, how="vertical")
     )
     checked = LedgerSchema.validate(combined)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

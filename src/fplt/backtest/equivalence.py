@@ -31,6 +31,7 @@ from fplt.backtest.intervals import (
 )
 from fplt.backtest.produce_ledger import produce_ledger, uv_lock_sha256
 from fplt.models.spec import ModelSpec, load_model_specs
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ def diff_lockfiles(
 
 def resolve_git_sha(ref: str, *, cwd: Path | None = None) -> str:
     """Resolve a git ref to a full SHA."""
-    completed = subprocess.run(
+    completed = run_command(
         ["git", "rev-parse", "--verify", ref],
         check=True,
         capture_output=True,
@@ -246,7 +247,7 @@ def add_worktree(repo: Path, ref: str, path: Path) -> Path:
     if path.exists():
         raise FileExistsError(f"worktree path already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    run_command(
         ["git", "worktree", "add", "--detach", str(path), ref],
         check=True,
         capture_output=True,
@@ -261,7 +262,7 @@ def remove_worktree(repo: Path, path: Path) -> None:
     if not path.exists():
         return
     try:
-        subprocess.run(
+        run_command(
             ["git", "worktree", "remove", "--force", str(path)],
             check=True,
             capture_output=True,
@@ -270,7 +271,7 @@ def remove_worktree(repo: Path, path: Path) -> None:
         )
     except subprocess.CalledProcessError:
         shutil.rmtree(path, ignore_errors=True)
-        subprocess.run(
+        run_command(
             ["git", "worktree", "prune"],
             check=False,
             capture_output=True,
@@ -282,7 +283,7 @@ def remove_worktree(repo: Path, path: Path) -> None:
 def sync_frozen(worktree: Path) -> None:
     """Run ``uv sync --frozen`` inside ``worktree``."""
     logger.info("uv sync --frozen in %s", worktree)
-    subprocess.run(
+    run_command(
         ["uv", "sync", "--frozen"],
         check=True,
         capture_output=True,
@@ -364,7 +365,7 @@ def produce_ledger_in_worktree(
         str(request_path),
     ]
     logger.info("producing arm in worktree %s model=%s", worktree, model_name)
-    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    completed = run_command(cmd, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(
             "produce-ledger subprocess failed "

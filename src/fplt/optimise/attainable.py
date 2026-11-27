@@ -53,6 +53,7 @@ from fplt.optimise.state import (
 from fplt.schemas.attainable import AttainableShareSchema, ComponentRegretSchema
 from fplt.scoring.chips import ChipRules, empty_remaining
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 ORACLE_MODEL_ID = "hindsight_oracle_v1"
 _SCORING_CHIPS = frozenset({"bboost", "3xc"})
@@ -1127,11 +1128,11 @@ def _empty_share() -> pl.DataFrame:
 
 def _regret_frame(frame: pl.DataFrame) -> pl.DataFrame:
     checked = ComponentRegretSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _share_frame(frame: pl.DataFrame) -> pl.DataFrame:
     checked = AttainableShareSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

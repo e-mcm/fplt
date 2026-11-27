@@ -23,6 +23,7 @@ from fplt.schemas.predicted_xi_audit import (
     PredictedXiAuditDetailSchema,
     PredictedXiAuditSummarySchema,
 )
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,9 @@ def run_predicted_xi_audit(
     )
     summary = summarise_audit(detail, store, season, from_gw=from_gw, to_gw=to_gw)
     checked_summary = PredictedXiAuditSummarySchema.validate(summary)
-    assert isinstance(checked_summary, pl.DataFrame)
+    checked_summary = require_dataframe(checked_summary)
     checked_detail = PredictedXiAuditDetailSchema.validate(detail)
-    assert isinstance(checked_detail, pl.DataFrame)
-
+    checked_detail = require_dataframe(checked_detail)
     overall = checked_summary.filter(
         (pl.col("metric") == "start_precision") & (pl.col("slice") == "all")
     )

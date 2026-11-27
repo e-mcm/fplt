@@ -43,6 +43,7 @@ from fplt.schemas.status import (
     TokenExpiryStatus,
 )
 from fplt.settings import Settings, get_settings
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -592,7 +593,7 @@ def _quarantines(data_dir: Path) -> list[QuarantineStatusItem]:
 def _prod_sha(repo_root: Path | None) -> tuple[str | None, str | None]:
     cwd = Path.cwd() if repo_root is None else repo_root
     try:
-        completed = subprocess.run(
+        completed = run_command(
             ["git", "rev-parse", "prod"],
             check=True,
             capture_output=True,

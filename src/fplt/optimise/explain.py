@@ -46,6 +46,7 @@ from fplt.schemas.explain import (
 from fplt.schemas.plan import PlanSchema
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe, require_not_none
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ def build_forecast_board(
             raise ValueError(f"top_n must be positive, got {top_n}")
         board = board.head(top_n)
     checked = ForecastBoardSchema.validate(board.select(list(FORECAST_BOARD_COLUMNS)))
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -209,7 +210,7 @@ def format_forecast_board(
         Markdown text including a short note on the residual column.
     """
     checked = ForecastBoardSchema.validate(board)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     lines = [
         "### Forecast board",
         "",
@@ -664,7 +665,7 @@ def run_explain(
         if not path.exists():
             raise FileNotFoundError(f"plan not found: {path}")
         raw = PlanSchema.validate(pl.read_parquet(path))
-        assert isinstance(raw, pl.DataFrame)
+        raw = require_dataframe(raw)
         candidates = candidates_as_of(view)
         plan_frame = raw
         solved = _gameweek_plan_from_table(raw, candidates, state)
@@ -1194,7 +1195,7 @@ def _format_depth_table(
     names: Mapping[int, str] | None,
 ) -> str:
     checked = PlayerDepthSchema.validate(depth)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     if checked.is_empty():
         return "_No fixture rows_\n"
     lines = [
@@ -1245,7 +1246,7 @@ def _empty_player_depth() -> pl.DataFrame:
 
 def _checked_player_depth(frame: pl.DataFrame) -> pl.DataFrame:
     checked = PlayerDepthSchema.validate(frame.select(list(PLAYER_DEPTH_COLUMNS)))
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -1271,8 +1272,11 @@ def _decompose_rows(frame: pl.DataFrame, rules: Rules) -> pl.DataFrame:
         if None in (p_played, p_60, p_goal, p_assist, p_cs):
             appearance = goals = assists = cs = residual = None
         else:
-            assert p_played is not None and p_60 is not None
-            assert p_goal is not None and p_assist is not None and p_cs is not None
+            p_played = require_not_none(p_played, what="p_played")
+            p_60 = require_not_none(p_60, what="p_60")
+            p_goal = require_not_none(p_goal, what="p_goal")
+            p_assist = require_not_none(p_assist, what="p_assist")
+            p_cs = require_not_none(p_cs, what="p_cs")
             p_long = max(0.0, min(1.0, p_60))
             p_short = max(0.0, min(1.0, p_played) - p_long)
             appearance = p_short * short + p_long * long
@@ -1342,7 +1346,7 @@ def _transfer_deltas(part: pl.DataFrame, *, is_draft: bool) -> pl.DataFrame:
     checked = TransferDeltaSchema.validate(
         pl.DataFrame(rows, schema=TRANSFER_DELTA_COLUMNS)
     )
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -1396,7 +1400,7 @@ def _gameweek_plan_from_table(
 ) -> GameweekPlan:
     """Rebuild a ``GameweekPlan`` from a saved ``PlanSchema`` frame."""
     checked = PlanSchema.validate(plan)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     steps = [int(step) for step in checked["step"].unique().sort().to_list()]
     hits: list[float] = []
     for step in steps:
@@ -1450,7 +1454,7 @@ def _player_names(view: PITView) -> dict[int, str]:
 def _empty_forecast_board() -> pl.DataFrame:
     empty = pl.DataFrame(schema=FORECAST_BOARD_COLUMNS)
     checked = ForecastBoardSchema.validate(empty)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

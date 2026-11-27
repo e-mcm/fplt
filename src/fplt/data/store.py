@@ -10,6 +10,7 @@ import polars as pl
 
 from fplt.schemas.staged import POLARS_SCHEMAS, STAGED_SCHEMAS, TABLE_KEYS
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 
 def _ensure_utc(frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -73,7 +74,7 @@ class DataStore:
         schema = STAGED_SCHEMAS[name]
         frame = _ensure_utc(_with_schema_columns(frame, name).lazy()).collect()
         checked = schema.validate(frame)
-        assert isinstance(checked, pl.DataFrame)
+        checked = require_dataframe(checked)
         checked = _ensure_utc(checked.lazy()).collect()
         order = list(POLARS_SCHEMAS[name])
         checked = checked.select(order)
@@ -134,5 +135,5 @@ def validate_table(name: str, frame: pl.DataFrame) -> pl.DataFrame:
     """Validate ``frame`` against the staged schema for ``name``."""
     schema: type[pa.DataFrameModel] = STAGED_SCHEMAS[name]
     checked = schema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
