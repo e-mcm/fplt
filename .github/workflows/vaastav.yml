@@ -1,0 +1,115 @@
+name: vaastav
+
+on:
+  schedule:
+    # Weekly after weekend results settle (UTC Monday morning).
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Capture every season (first seed / force full mirror)
+        type: boolean
+        default: false
+      simulate_failure:
+        description: Force a failure to test the ntfy alert (ops-03 / A7)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: r2
+    outputs:
+      uploaded: ${{ steps.upload.outputs.uploaded }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Capture needs fplt.schemas only — skip the native fplt-mc wheel.
+      - name: Install Python deps (fplt-mc-free)
+        run: uv sync --frozen --no-install-package fplt-mc
+
+      - name: Capture vaastav into raw/
+        run: |
+          set -euo pipefail
+          FULL_FLAG=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+            && [ "${{ inputs.full }}" = "true" ]; then
+            FULL_FLAG="--full"
+          fi
+          uv run python scripts/bootstrap_vaastav.py \
+            --out "$RUNNER_TEMP/raw" \
+            $FULL_FLAG
+
+      - name: Upload to R2
+        id: upload
+        if: always()
+        uses: ./.github/actions/push-raw
+        with:
+          src: ${{ runner.temp }}/raw
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+
+      - name: Publish to the snapshots branch
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -z "$(find "$RUNNER_TEMP/raw" -type f -name '_source.json' 2>/dev/null | head -n 1)" ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git fetch origin snapshots || true
+          if git rev-parse --verify origin/snapshots >/dev/null 2>&1; then
+            git checkout --track origin/snapshots
+          else
+            git checkout --orphan snapshots
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p data
+          cp -a "$RUNNER_TEMP/raw/." data/raw/
+          git add data/raw
+          if git diff --cached --quiet; then
+            echo "vaastav snapshots already present"
+            exit 0
+          fi
+          git commit -m "Capture vaastav raw seasons"
+          git push origin HEAD:snapshots
+
+  # Separate job: publish may check out the snapshots branch and drop .github/actions.
+  alerts:
+    needs: capture
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Heartbeat
+        if: needs.capture.result == 'success' && needs.capture.outputs.uploaded == 'true'
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_VAASTAV }}
+
+      - name: Notify failure
+        if: needs.capture.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}
