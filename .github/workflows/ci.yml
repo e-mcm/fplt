@@ -318,3 +318,11 @@ jobs:
             exit 1
           fi
           echo "gate ok"
+      # Alert only on push-to-main so PR noise stays out of ntfy (#287).
+      - uses: actions/checkout@v4
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Notify failure
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}
