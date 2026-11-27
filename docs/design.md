@@ -647,7 +647,7 @@ Live unattended models and planner horizon come from `configs/ops/production.yam
 
 - Unit and contract tests use synthetic data or recorded API fixtures under `tests/fixtures/`. **No network access in tests.**
 - Never assert model quality (MAE etc.) in pytest; that is the backtester's job.
-- `pytest -m "not slow"` must run in under 60 s.
+- `make check` keeps local iteration fast with `pytest -n auto -m "not slow"`. CI `test-linux` runs the full suite (including slow) under xdist with coverage gates (AGENTS.md §3 / #288).
 
 ### 9.2 Test suites
 
@@ -664,7 +664,7 @@ Live unattended models and planner horizon come from `configs/ops/production.yam
 
 ### 9.3 Coverage
 
-`pytest-cov` writes `coverage.xml` (for Coverage Gutters) and a terminal report. `fail_under = 70` initially; the target is meaningful coverage of contracts, scoring, simulation and optimiser, not a vanity number.
+`pytest-cov` writes `coverage.xml` (for Coverage Gutters) and a terminal report. CI enforces `[tool.coverage.report] fail_under = 90` (combined line+branch) and PR `diff-cover --fail-under=95`; see AGENTS.md §3. The target remains meaningful coverage of contracts, scoring, simulation and optimiser, not a vanity number.
 
 ---
 

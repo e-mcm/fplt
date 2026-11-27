@@ -49,9 +49,10 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Every function and class you add or change needs tests in the same PR. Write the tests alongside the code. Do not leave them for a later PR.
 - Bug fixes must include a unit test that would have failed before the fix (see Engineering habits above).
 - Aim for full line and branch coverage of each function and class. Cover the normal path, edge cases (empty frames, double/blank gameweeks, missing players, zero minutes) and error paths (invalid input raises the documented exception).
-- Coverage gates, enforced in CI:
-  - **Diff coverage ≥ 95%** on changed lines, measured with `diff-cover` against `coverage.xml`.
-  - **Overall line + branch coverage ≥ 90%** (`fail_under = 90` in `pyproject.toml`).
+- Coverage gates, enforced in CI (`test-linux` in `.github/workflows/ci.yml`):
+  - **Diff coverage ≥ 95%** on changed lines: `uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=95` (PRs only; `actions/checkout` with `fetch-depth: 0`).
+  - **Overall line + branch coverage ≥ 90%**: `[tool.coverage.report] fail_under = 90` in `pyproject.toml` (coverage.py combined `percent_covered` with `branch = true`). The pytest step fails the job when under the floor.
+- CI runs the **full** suite (including `@pytest.mark.slow`) under `pytest-xdist` (`-n auto`) with `--cov=fplt --cov-branch --cov-report=xml --durations=25`. Do not use testmon or path-based skipping of Python tests on PRs.
 - Exclusions are rare. Use `# pragma: no cover` only for code that genuinely cannot run in tests, such as `if TYPE_CHECKING:` blocks or `__main__` entry points. Add a one-line comment giving the reason. Never exclude code just to hit the number.
 - Coverage is the floor, not the goal: assert on behaviour and values, not merely that code ran.
 - Tests never touch the network. Use recorded fixtures in `tests/fixtures/` (gzipped API JSON) or synthetic data builders in `tests/builders.py`.
@@ -62,8 +63,9 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 ## 4. Workflow
  
 - Commands (see `Makefile`):
-  - `make check` — ruff lint (including docstring rules) + format check, pyright, fast tests, diff coverage. Must pass before finishing any task.
-  - `make test` — full test suite with coverage (`coverage.xml` for Coverage Gutters) and the overall coverage gate.
+  - `make check` — ruff lint (including docstring rules) + format check, pyright, workflow lints, then fast tests (`pytest -n auto -m "not slow"`). Must pass before finishing any task. Diff-cover runs in CI on PRs, not in `make check`.
+  - `make test` — full suite (incl. slow) with xdist, coverage XML/term, `--durations=25`, and `fail_under = 90`.
+  - `make pytest-profile` — rank slowest pytest cases (CI-shaped by default; see `scripts/pytest_profile.py`).
   - `make dagster-dev` — local Dagster UI.
   - `make mc-dev` / `mc-test` / `mc-format` / `mc-bench` — native `fplt-mc` kernel under `mc/` (C++ editors only).
 - **`fplt-mc` / cloud agents:** `uv sync --frozen` must **never** compile the kernel. Wheels publish to the **public** GitHub Pages simple index (`https://e-mcm.github.io/fplt/simple/`; no `UV_INDEX` credentials). Root `pyproject.toml` pins `fplt-mc` with `no-build-package = ["fplt-mc"]` so a missing wheel fails fast. Live PRODUCTION is `dc_layered_v4_native` (`mc_backend: native`) — missing import raises; no silent Python MC fallback. Experiment VMs and cloud agents install the locked wheel only; do not run `make mc-dev` there. Prefer GHA for release wheels. See `mc/README.md`.

@@ -469,3 +469,115 @@ def test_cli_bakeoff_dry_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         },
     ):
         assert main(["bakeoff", "--bakeoff", "demo_championship"]) is None
+
+
+def test_bakeoff_rejects_blank_question_and_duplicate_models() -> None:
+    with pytest.raises(ValidationError, match="question"):
+        BakeoffSpec.model_validate(_base_payload(question="   "))
+    with pytest.raises(ValidationError, match="unique"):
+        BakeoffSpec.model_validate(
+            _base_payload(
+                models=[
+                    "rolling_mean_v1",
+                    "dc_layered_v2",
+                    "rolling_mean_v1",
+                ]
+            )
+        )
+
+
+def test_load_bakeoff_spec_error_paths(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        load_bakeoff_spec("missing", directory=tmp_path)
+    bad = tmp_path / "not_map.yaml"
+    bad.write_text("- just a list\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        load_bakeoff_spec("not_map", directory=tmp_path)
+    _write_bakeoff(tmp_path, "wrong_stem", _base_payload(name="other_name"))
+    with pytest.raises(ValueError, match="does not match"):
+        load_bakeoff_spec("wrong_stem", directory=tmp_path)
+
+
+def test_plan_bakeoff_warnings_components_and_pairwise(tmp_path: Path) -> None:
+    models = tmp_path / "models"
+    models.mkdir()
+    evals = tmp_path / "evals"
+    evals.mkdir()
+    spec = BakeoffSpec.model_validate(
+        _base_payload(
+            suites={"prediction": False, "components": True, "decisions": False},
+            pairwise_evals=["dose_missing"],
+            window={
+                "seasons": ["2024-25", "2023-24"],
+                "from_gw": 1,
+                "to_gw": 5,
+                "modes": ["walk_forward"],
+            },
+        )
+    )
+    with patch(
+        "fplt.backtest.bakeoff.load_model_specs",
+        return_value={"rolling_mean_v1": MagicMock()},
+    ):
+        plan = plan_bakeoff(spec, models_dir=models)
+    assert any("not found" in w for w in plan.warnings)
+    assert any("dose_missing" in w for w in plan.warnings)
+    assert any("components suite" in c for c in plan.commands)
+    assert any("promote-eval" in c for c in plan.commands)
+    text = format_bakeoff_plan(plan)
+    assert "warnings:" in text
+    assert "ModelSpec" in text
+
+
+def test_plan_bakeoff_rejects_inverted_window() -> None:
+    spec = BakeoffSpec.model_validate(_base_payload())
+    with (
+        patch(
+            "fplt.backtest.bakeoff.load_model_specs",
+            return_value={
+                "rolling_mean_v1": MagicMock(),
+                "dc_layered_v2": MagicMock(),
+                "lgbm_direct_v1": MagicMock(),
+            },
+        ),
+        pytest.raises(ValueError, match="from_gw"),
+    ):
+        plan_bakeoff(spec, from_gw=10, to_gw=1)
+
+
+def test_execute_bakeoff_preflight_failure(tmp_path: Path) -> None:
+    spec = BakeoffSpec.model_validate(_base_payload())
+    with patch(
+        "fplt.backtest.bakeoff.load_model_specs",
+        return_value={"rolling_mean_v1": MagicMock()},
+    ):
+        result = execute_bakeoff(spec, data_dir=tmp_path, dry_run=False)
+    assert result.exit_code == 2
+    ranking = (result.output_dir / "ranking.md").read_text(encoding="utf-8")
+    assert "preflight failed" in ranking
+
+
+
+def test_render_ranking_empty_summary_and_no_selection() -> None:
+    spec = BakeoffSpec.model_validate(_base_payload())
+    with patch(
+        "fplt.backtest.bakeoff.load_model_specs",
+        return_value={
+            "rolling_mean_v1": MagicMock(),
+            "dc_layered_v2": MagicMock(),
+            "lgbm_direct_v1": MagicMock(),
+        },
+    ):
+        plan = plan_bakeoff(spec)
+    text = render_ranking(
+        spec,
+        plan,
+        summary=pl.DataFrame(),
+        spa=None,
+        mcs=None,
+        pairwise=[],
+    )
+    assert "_No scored rows._" in text
+    assert "SPA/MCS unavailable" in text
+
+

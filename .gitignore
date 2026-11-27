@@ -8,6 +8,10 @@ __pycache__/
 external/openfpl/OpenFPL/
 *.egg-info/
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 dist/
 build/
 mlruns/
