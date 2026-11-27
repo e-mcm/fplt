@@ -34,6 +34,7 @@ from fplt.models.universe import player_fixtures
 from fplt.schemas.scenarios import PredictionSampleSchema
 from fplt.scoring.rules import Rules
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 from fplt.utils.rng import (
     active_eval_seed,
     eval_seed_for,
@@ -407,7 +408,7 @@ def _fixture_samples(
             }
         )
     checked = PredictionSampleSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -518,7 +519,6 @@ def _simulate_fixture(
             match_other=drawn.match_other,
             return_samples=True,
         )
-        assert isinstance(result, MatchSimulation)
         return drawn.players, drawn.minutes, result
     result = simulate_match(
         drawn.scorelines,

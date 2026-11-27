@@ -40,6 +40,7 @@ from fplt.schemas.benchmark_projections import (
 )
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +298,7 @@ def benchmarks_to_ledger(
         )
     )
     checked = LedgerSchema.validate(out)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

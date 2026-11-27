@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from fplt.types import GWKey
+from fplt.utils.process import run_command
 
 _EXTENDS_KEYS = frozenset({"name", "extends", "overrides"})
 
@@ -398,7 +399,7 @@ def save_spec(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
 def git_sha() -> str:
     """Current ``HEAD`` commit, or ``unknown`` when git cannot answer."""
     try:
-        completed = subprocess.run(
+        completed = run_command(
             ["git", "rev-parse", "HEAD"],
             check=True,
             capture_output=True,

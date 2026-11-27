@@ -84,6 +84,8 @@ from fplt.models.spec import (
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.scoring.rules import Rules
+from fplt.utils.frames import require_not_none
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -738,7 +740,7 @@ def plan_to_json(plan: PromoteEvalPlan) -> str:
 def git_is_dirty(*, cwd: Path | None = None) -> bool:
     """Return whether the working tree has uncommitted changes."""
     try:
-        completed = subprocess.run(
+        completed = run_command(
             ["git", "status", "--porcelain"],
             check=True,
             capture_output=True,
@@ -1432,7 +1434,7 @@ def _execute_equivalence(
         remove_worktree(root, control_wt)
         remove_worktree(root, treatment_wt)
 
-    assert eq_diff is not None
+    eq_diff = require_not_none(eq_diff, what="eq_diff")
     recommendation = render_recommendation(
         spec,
         plan,
@@ -2100,7 +2102,7 @@ def _check_equivalence_preflight(
 
 def _git_show_file(ref: str, path: str, *, cwd: Path) -> str | None:
     try:
-        completed = subprocess.run(
+        completed = run_command(
             ["git", "show", f"{ref}:{path}"],
             check=True,
             capture_output=True,

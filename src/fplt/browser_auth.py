@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from fplt.auth import AuthStatus, inspect_token, set_credentials
+from fplt.utils.frames import require_not_none
 
 logger = logging.getLogger(__name__)
 
@@ -298,9 +299,9 @@ def _extract_chromium(profile: BrowserProfile, *, copy_locked: bool) -> OidcSess
         )
     live.sort(key=lambda rec: rec.leveldb_seq_number, reverse=True)
     best = live[0]
-    assert best.value is not None
+    value = require_not_none(best.value, what="oidc cookie value")
     return parse_oidc_user_value(
-        best.value,
+        value,
         source=f"{profile.browser}/{profile.label}:{best.script_key}",
     )
 

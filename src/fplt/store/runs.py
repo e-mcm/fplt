@@ -36,6 +36,8 @@ from fplt.schemas.manifests import (
     SquadMode,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_not_none
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +139,7 @@ def fplt_mc_version() -> str | None:
 def _git_is_dirty(*, cwd: Path | None = None) -> bool:
     """Return whether the working tree has uncommitted changes."""
     try:
-        completed = subprocess.run(
+        completed = run_command(
             ["git", "status", "--porcelain"],
             check=True,
             capture_output=True,
@@ -431,8 +433,7 @@ class RunWriter:
 
     def _finalize(self, status: RunStatus) -> RunManifest:
         if self._finalized:
-            assert self._manifest is not None
-            return self._manifest
+            return require_not_none(self._manifest, what="manifest")
         self._require_open()
         finished = datetime.now(UTC)
         self._manifest = self._build_manifest(status=status, finished_at=finished)

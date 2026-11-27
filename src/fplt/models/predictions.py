@@ -9,6 +9,7 @@ import polars as pl
 from fplt.models.spec import ModelSpec
 from fplt.schemas.predictions import PREDICTION_COLUMNS, PredictionSchema
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 
 def empty_predictions() -> pl.DataFrame:
@@ -107,7 +108,7 @@ def prediction_frame(
         .select(list(PREDICTION_COLUMNS))
     )
     checked = PredictionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -135,7 +136,7 @@ def write_predictions(
         FileExistsError: That model and deadline were already written.
     """
     checked = PredictionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     path = predictions_path(data_dir, spec, as_of)
     if path.exists():
         raise FileExistsError(path)

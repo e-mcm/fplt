@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import subprocess
 import sys
 from getpass import getpass
 from pathlib import Path
@@ -118,6 +117,7 @@ from fplt.optimise.state import load_squad_state, rebuild_squad_state
 from fplt.settings import get_settings, secret_value
 from fplt.types import GWKey
 from fplt.utils.logging import configure_logging
+from fplt.utils.process import run_command
 
 _REFITS = ("every_gw", "every_n_gw", "never")
 _COMPARE_MODES = ("walk_forward", "fixed")
@@ -2089,7 +2089,7 @@ def _ui(args: argparse.Namespace) -> int:
         f"(data_dir={get_settings().data_dir})",
         flush=True,
     )
-    return int(subprocess.call(argv))
+    return int(run_command(argv).returncode)
 
 
 def _preflight(args: argparse.Namespace) -> None:

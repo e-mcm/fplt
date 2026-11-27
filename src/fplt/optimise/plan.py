@@ -89,6 +89,7 @@ from fplt.schemas.plan import (
     PriceForecastSchema,
 )
 from fplt.scoring.chips import ChipName, ChipRules, ChipWindow
+from fplt.utils.frames import require_dataframe
 from fplt.utils.timing import timed_phase
 
 _Schema = (
@@ -1929,5 +1930,5 @@ def _label(player_key: int, names: Mapping[int, str] | None) -> str:
 
 def _frame(frame: pl.DataFrame, schema: _Schema) -> pl.DataFrame:
     checked = schema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

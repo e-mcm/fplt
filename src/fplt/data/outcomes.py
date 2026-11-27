@@ -15,6 +15,7 @@ import polars as pl
 from fplt.data.store import DataStore
 from fplt.schemas.l2 import SCHEMA_VERSION
 from fplt.schemas.outcomes import FixtureOutcomesSchema, PlayerFixtureOutcomesSchema
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def build_player_fixture_outcomes(store: DataStore) -> pl.DataFrame:
         )
     )
     checked_frame = PlayerFixtureOutcomesSchema.validate(frame)
-    assert isinstance(checked_frame, pl.DataFrame)
+    checked_frame = require_dataframe(checked_frame)
     return checked_frame
 
 
@@ -112,7 +113,7 @@ def build_fixture_outcomes(store: DataStore) -> pl.DataFrame:
         )
     )
     checked_frame = FixtureOutcomesSchema.validate(frame)
-    assert isinstance(checked_frame, pl.DataFrame)
+    checked_frame = require_dataframe(checked_frame)
     return checked_frame
 
 

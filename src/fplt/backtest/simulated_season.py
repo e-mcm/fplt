@@ -64,6 +64,7 @@ from fplt.schemas.simulated_season import (
     TruthRateSchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe, require_not_none
 
 ORACLE_PATH_MODEL_ID = "hindsight_oracle_sim_v1"
 _CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
@@ -130,7 +131,7 @@ def path_actuals_from_joint_sims(frame: pl.DataFrame) -> pl.DataFrame:
     if frame.is_empty():
         raise ValueError("joint truth frame must be non-empty")
     checked = JointTruthSimSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     mapped = checked.select(
         pl.col("sim").cast(pl.Int64).alias("path_id"),
         pl.col("gw").cast(pl.Int64),
@@ -176,7 +177,7 @@ def draw_truth_paths(
             pl.lit(None).cast(pl.Float64).alias("minutes_rate")
         )
     checked = TruthRateSchema.validate(prepared)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     rows: list[dict[str, object]] = []
     base = checked.select("gw", "player_key", "rate", "minutes_rate").sort(
         "gw", "player_key"
@@ -225,7 +226,7 @@ def paired_policy_se(
         ValueError: Unknown metric, missing policy, or empty paired set.
     """
     checked = SimulatedSeasonPathSchema.validate(paths)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     if metric == "season_points":
         column = "total_points"
     elif metric == "share_of_attainable":
@@ -297,7 +298,7 @@ def policy_diff_board(
         ValueError: Fewer than two policies when ``pairs`` is omitted.
     """
     checked = SimulatedSeasonPathSchema.validate(paths)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     policy_ids = sorted(checked["policy_id"].unique().to_list())
     if pairs is not None:
         chosen = list(pairs)
@@ -367,7 +368,7 @@ def truth_rates_from_actuals(actuals: pl.DataFrame) -> pl.DataFrame:
         pl.col("minutes_rate").max(),
     )
     checked = TruthRateSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -551,7 +552,7 @@ def run_simulated_season_eval(
         )
         attainable: int | None = None
         if with_attainable:
-            assert resolved_pin is not None
+            resolved_pin = require_not_none(resolved_pin, what="resolved_pin")
             oracle = simulate_hindsight_oracle(
                 candidates,
                 actuals,
@@ -766,7 +767,7 @@ def format_simulated_season_report(report: SimulatedSeasonReport) -> str:
 def mean_policy_totals(paths: pl.DataFrame) -> Mapping[str, float]:
     """Mean season points per policy across paths (descriptive, not an SE)."""
     checked = SimulatedSeasonPathSchema.validate(paths)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     grouped = (
         checked.group_by("policy_id")
         .agg(pl.col("total_points").mean().alias("mean_points"))
@@ -798,19 +799,19 @@ def _resolve_paths(
 
 def _path_actuals(frame: pl.DataFrame) -> pl.DataFrame:
     checked = SimulatedPathActualsSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _season_paths(frame: pl.DataFrame) -> pl.DataFrame:
     checked = SimulatedSeasonPathSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
 def _diffs(frame: pl.DataFrame) -> pl.DataFrame:
     checked = PolicyDiffSESchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

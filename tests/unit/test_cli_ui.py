@@ -18,11 +18,11 @@ def test_ui_cli_invokes_streamlit_localhost(
     get_settings.cache_clear()
     calls: list[list[str]] = []
 
-    def fake_call(argv: list[str]) -> int:
+    def fake_run_command(argv: list[str], **_kwargs: object) -> SimpleNamespace:
         calls.append(list(argv))
-        return 0
+        return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("fplt.cli.subprocess.call", fake_call)
+    monkeypatch.setattr("fplt.cli.run_command", fake_run_command)
     try:
         with pytest.raises(SystemExit) as excinfo:
             main(["ui", "--port", "8502"])

@@ -28,6 +28,7 @@ from fplt.schemas.run_components import (
     ComponentScorelineSchema,
 )
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 
 @dataclass(frozen=True)
@@ -278,5 +279,5 @@ def _empty() -> RunComponentTables:
 def _ok(schema: type[object], frame: pl.DataFrame) -> pl.DataFrame:
     validate = getattr(schema, "validate")  # noqa: B009 - schema is type[object]
     checked = validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

@@ -72,9 +72,11 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400"]
+select = ["E", "F", "I", "UP", "D", "B", "BLE", "RUF012", "TRY400", "S"]
 # AGENTS.md §5 enforces D101/D103 (Google). Other D codes stay ignored until
 # ratcheted separately (#311); D203/D213 conflict with Google convention.
+# Bandit: S101 fixed in src (asserts→exceptions); S603/S607 via resolved
+# executables. Other S* codes deferred (noisy false positives).
 ignore = [
     "D100",  # undocumented-public-module
     "D102",  # undocumented-public-method
@@ -96,14 +98,23 @@ ignore = [
     "D413",
     "D415",
     "D417",
+    "S105",  # hardcoded-password-string (token field names / fixtures)
+    "S106",  # hardcoded-password-func-arg
+    "S108",  # hardcoded-temp-file (/tmp in scripts/tests)
+    "S112",  # try-except-continue
+    "S301",  # pickle
+    "S310",  # urllib
+    "S314",  # xml
+    "S324",  # hashlib md5 (non-crypto digests)
+    "S608",  # SQL string (static offline queries)
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Test functions need no module/class/function docstrings.
-"tests/**" = ["D"]
+# Test functions need no module/class/function docstrings; asserts OK (S101).
+"tests/**" = ["D", "S101", "S603", "S607"]
 # CLI top-level except handlers re-raise SystemExit; logging.exception would
 # dump traces on every user-facing error. Keep logger.error; cover via e2e later.
 "src/fplt/cli.py" = ["TRY400"]

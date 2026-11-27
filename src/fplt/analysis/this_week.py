@@ -21,6 +21,7 @@ from fplt.schemas.this_week import (
     ThisWeekTransferSchema,
 )
 from fplt.scoring.rules import Rules
+from fplt.utils.frames import require_dataframe
 
 _PLACEHOLDER = "Unknown"
 _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
@@ -470,7 +471,7 @@ def _pair_transfers(
     checked = ThisWeekTransferSchema.validate(
         pl.DataFrame(rows, schema=THIS_WEEK_TRANSFER_COLUMNS)
     )
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -563,7 +564,7 @@ def _fixture_detail_rows(
             ["target_gw", "fixture_id"]
         )
     )
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

@@ -18,6 +18,7 @@ from typing import Literal
 
 from fplt.data.remote import Remote, pull
 from fplt.settings import Settings, get_settings
+from fplt.utils.process import run_command
 
 RawSource = Literal["auto", "bucket", "branch"]
 
@@ -138,7 +139,7 @@ def is_football_data_raw(path: Path) -> bool:
 
 
 def _git(args: list[str]) -> None:
-    subprocess.run(
+    run_command(
         ["git", *args],
         check=True,
         capture_output=True,

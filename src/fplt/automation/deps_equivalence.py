@@ -31,6 +31,7 @@ from fplt.backtest.promote_eval import (
     execute_promote_eval,
     load_eval_spec,
 )
+from fplt.utils.process import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -539,9 +540,8 @@ def materialise_lock_from_git(
     Raises:
         RuntimeError: ``git show`` failed.
     """
-    import subprocess
 
-    completed = subprocess.run(
+    completed = run_command(
         ["git", "show", f"{ref}:{path}"],
         check=False,
         capture_output=True,

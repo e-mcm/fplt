@@ -21,6 +21,7 @@ from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parqu
 from fplt.schemas.plan import PlanSchema
 from fplt.settings import Settings, get_settings, secret_value
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ def build_apply_payload(
         ApplyError: Draft plan, unequal buy/sell counts, or missing map/price.
     """
     checked = PlanSchema.validate(plan)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     step0 = checked.filter(pl.col("step") == 0)
     if step0.is_empty():
         raise ApplyError("plan has no step 0 rows")

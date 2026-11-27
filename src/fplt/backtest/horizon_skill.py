@@ -18,6 +18,7 @@ import polars as pl
 from fplt.backtest.compare import CompareMode, CompareResult, compare_models
 from fplt.backtest.horizons import DEFAULT_PROJECTION_HORIZON, DEFAULT_SKILL_STEPS
 from fplt.schemas.horizon_skill import HORIZON_SKILL_COLUMNS, HorizonSkillSchema
+from fplt.utils.frames import require_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +278,7 @@ def _write_curve(
 
 def _validated(frame: pl.DataFrame) -> pl.DataFrame:
     checked = HorizonSkillSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

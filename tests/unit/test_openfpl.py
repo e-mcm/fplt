@@ -318,7 +318,8 @@ def test_scoring_python_installs_the_runner_env(
     def fake_run(
         argv: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
-        assert argv == ["uv", "sync"]
+        assert Path(argv[0]).name == "uv"
+        assert argv[1:] == ["sync"]
         venv_python.parent.mkdir(parents=True)
         venv_python.write_text("", encoding="utf-8")
         return subprocess.CompletedProcess(argv, 0)

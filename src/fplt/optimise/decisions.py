@@ -80,6 +80,7 @@ from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings
 from fplt.store.runs import write_plan_run
 from fplt.types import GWKey
+from fplt.utils.frames import require_dataframe, require_not_none
 from fplt.utils.timing import (
     TimingSession,
     binds_timing_artifacts,
@@ -179,7 +180,7 @@ def candidates_as_of(view: PITView) -> pl.DataFrame:
     checked = CandidateSchema.validate(
         joined.select("player_key", "position", "team_key", "price")
     )
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -336,7 +337,7 @@ def simulate_decisions(
         current = apply_market_prices(current, market_prices_from_candidates(pool))
         active_windows = static_windows
         if schedule_each_week:
-            assert rules is not None
+            rules = require_not_none(rules, what="rules")
             with timed_phase("plan/chips"):
                 active_windows = _scheduled_windows(
                     fixtures=fixtures,
@@ -1675,7 +1676,7 @@ def _price_forecast_for_deadline(
     """Build a PIT list-price forecast for one planning deadline."""
     if method is None:
         return None
-    assert store is not None
+    store = require_not_none(store, what="store")
     view = PITData(store).view(GWKey(season, gameweek))
     as_of = market_prices_from_candidates(pool)
     return forecast_list_prices_from_view(view, as_of, horizon, method=method)
@@ -1976,7 +1977,7 @@ def _empty_chip_windows() -> pl.DataFrame:
 
 def _chip_windows(frame: pl.DataFrame) -> pl.DataFrame:
     checked = ChipWindowsSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
@@ -2028,5 +2029,5 @@ def _decisions(frame: pl.DataFrame) -> pl.DataFrame:
     if "chip" not in frame.columns:
         frame = frame.with_columns(pl.lit(None).cast(pl.Utf8).alias("chip"))
     checked = DecisionSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked

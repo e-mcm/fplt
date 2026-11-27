@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fplt.schemas.l2 import SCHEMA_VERSION
 from fplt.schemas.quarantine import QuarantineRecordSchema
+from fplt.utils.frames import require_dataframe
 
 _DEFAULT_PATH = (
     Path(__file__).resolve().parents[3] / "configs" / "ops" / "data_gates.yaml"
@@ -157,7 +158,7 @@ def quarantine_records(
         ]
     )
     checked = QuarantineRecordSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

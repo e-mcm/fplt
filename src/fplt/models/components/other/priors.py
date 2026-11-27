@@ -22,6 +22,7 @@ from fplt.schemas.components import (
     OtherPointsSchema,
 )
 from fplt.scoring.rules import MatchStats, Rules
+from fplt.utils.frames import require_dataframe
 
 _POSITIONS = frozenset({"GK", "DEF", "MID", "FWD"})
 _Points = tuple[float, float, float, float, float]
@@ -174,7 +175,7 @@ def _row(
 
 def _validated(frame: pl.DataFrame) -> pl.DataFrame:
     checked = OtherPointsSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 

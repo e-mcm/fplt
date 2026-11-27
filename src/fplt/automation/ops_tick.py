@@ -56,6 +56,7 @@ from fplt.data.store import DataStore
 from fplt.settings import Settings, get_settings
 from fplt.store.official import official_checkpoint_dir
 from fplt.types import GWKey
+from fplt.utils.frames import require_not_none
 from fplt.utils.logging import (
     capture_ops_log,
     log_context,
@@ -197,8 +198,10 @@ def run_ops_tick(
             caught = catch_up(root, chosen, horizon=steps)
 
             if upcoming is not None:
-                assert upcoming_key is not None
-                assert upcoming_deadline is not None
+                upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
+                upcoming_deadline = require_not_none(
+                    upcoming_deadline, what="upcoming_deadline"
+                )
                 deadline = upcoming_deadline
                 state = resolve_checkpoint_state(root, upcoming_key, deadline)
                 due = due_checkpoints(moment, deadline, state.done)

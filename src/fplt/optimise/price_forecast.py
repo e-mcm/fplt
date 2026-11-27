@@ -17,6 +17,7 @@ import polars as pl
 
 from fplt.data.pit import PITView
 from fplt.schemas.plan import PriceForecastSchema
+from fplt.utils.frames import require_dataframe
 
 PriceForecastMethod = Literal["flat", "mean_gw_delta"]
 
@@ -153,7 +154,7 @@ def forecast_list_prices(
             )
     frame = pl.DataFrame(rows)
     checked = PriceForecastSchema.validate(frame)
-    assert isinstance(checked, pl.DataFrame)
+    checked = require_dataframe(checked)
     return checked
 
 
