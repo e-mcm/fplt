@@ -1,0 +1,9 @@
+# Tiny official-slate ModelSpec for the ops pipeline e2e (#307).
+# Python MC + small n_sims keeps CI under the slow-test budget; not production.
+name: dc_layered_v4_e2e
+extends: dc_layered_v4
+overrides:
+  params:
+    n_sims: 32
+    mc_backend: python
+  seed: 0
