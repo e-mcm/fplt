@@ -12,6 +12,7 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 | `bootstrap_vaastav.py` | Historical seasons from vaastav | `make bootstrap-vaastav` |
 | `eval_board.py` | Multi-model ledger helper | `make eval-board SEASON=…` |
 | `perf_report.py` | Rank `$FPLT_DATA_DIR/timing` hotspots | `make perf-report` |
+| `pytest_profile.py` | Rank pytest case durations (CI-shaped JUnit) | `make pytest-profile` |
 | `mc_bench.py` | Per-step MC micro-bench (§1.1) | `make mc-bench` |
 | `check_workflow_timeouts.py` | Fail if any GHA job lacks `timeout-minutes` (ops-11) | `make check` / CI lint |
 | `check_workflow_r2_environment.py` | Fail if a job reads `secrets.R2_` without `environment: r2` (#278) | `make check` / CI lint |
