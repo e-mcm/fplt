@@ -82,7 +82,7 @@ def test_load_reference_board_rejects_bad_yaml(tmp_path: Path) -> None:
 
 def test_reference_board_rejects_unknown_chip_arm() -> None:
     """Extra chip arms are refused at validation time."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="off"):
         ReferenceBoard(
             version=1,
             horizon=3,

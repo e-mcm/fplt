@@ -411,7 +411,8 @@ def test_tier_s1_fails_squad_points_claim(tmp_path: Path) -> None:
     plan = plan_promote_eval(spec, dry_run=True, tier="S1")
     assert plan.suites.decisions is False
     fails = decisions_claim_failures(spec, decisions_enabled=plan.suites.decisions)
-    assert fails and "claim=squad_points" in fails[0]
+    assert fails
+    assert "claim=squad_points" in fails[0]
     with patch("fplt.backtest.promote_eval.git_is_dirty", return_value=False):
         result = preflight_promote_eval(spec, plan, data_dir=tmp_path)
     assert not result.ok
@@ -685,7 +686,8 @@ def test_scoreline_execute_writes_per_match(
         score_models = kwargs.get("score_models")
         assert score_models == ["dixon_coles_cs_v1", "dixon_coles_odds_v1"]
         extra = kwargs.get("extra_score_specs")
-        assert isinstance(extra, list) and len(extra) == 1
+        assert isinstance(extra, list)
+        assert len(extra) == 1
         assert extra[0].name == "raw_de_vig_1x2"
         assert extra[0].kind == "odds_1x2"
         assert "odds_poisson" not in str(extra[0].kind)
@@ -2773,7 +2775,8 @@ def test_check_equivalence_preflight_helpers() -> None:
         control,
         treatment,  # type: ignore[arg-type]
     )
-    assert fails and "require change.control_ref" in fails[0]
+    assert fails
+    assert "require change.control_ref" in fails[0]
     assert warns == []
     assert meta == {}
 

@@ -49,7 +49,8 @@ def test_locked_fifteen_issue_reports_gk1_mid6() -> None:
     )
     issue = locked_fifteen_issue(squad)
     assert issue is not None
-    assert "GK" in issue and "1" in issue
+    assert "GK" in issue
+    assert "1" in issue
     assert squad_position_counts(squad) == {
         "GK": 1,
         "DEF": 5,

@@ -323,7 +323,8 @@ def test_run_official_checkpoint_happy_path(
             plan_run_id="plan-run",
         ),
     )
-    assert finalized and pushed == [("2024-25", 2)]
+    assert finalized
+    assert pushed == [("2024-25", 2)]
 
 
 def test_official_predict_writes_run(

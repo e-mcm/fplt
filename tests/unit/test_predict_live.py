@@ -72,11 +72,11 @@ def test_resolve_as_of_picks_the_next_deadline(tmp_path: Path) -> None:
     assert resolve_as_of(store, season=_SEASON, gw=1) == GWKey(_SEASON, 1)
     with pytest.raises(ValueError, match="together"):
         resolve_as_of(store, season=_SEASON)
+    store.write(
+        "gameweeks",
+        store.read("gameweeks").with_columns(pl.lit(True).alias("data_checked")),
+    )
     with pytest.raises(ValueError, match="no upcoming"):
-        store.write(
-            "gameweeks",
-            store.read("gameweeks").with_columns(pl.lit(True).alias("data_checked")),
-        )
         resolve_as_of(store, now=_AFTER_ALL)
 
 
@@ -128,6 +128,6 @@ def test_bad_predict_requests_are_rejected(tmp_path: Path) -> None:
         run_predict(tmp_path, "rolling_mean_v1", 0, season=_SEASON, gw=2)
     with pytest.raises(ValueError, match="unknown model"):
         run_predict(tmp_path, "missing", 1, season=_SEASON, gw=2)
+    run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
     with pytest.raises(FileExistsError):
-        run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
         run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)

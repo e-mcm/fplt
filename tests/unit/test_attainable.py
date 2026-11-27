@@ -678,14 +678,16 @@ def test_market_for_gw_helpers_and_attach() -> None:
     gw_m = pl.DataFrame({"gw": [1, 2], "player_key": [1, 2], "price": [40, 50]})
     assert mod._market_for_gw(gw_m, 9) is None
     part = mod._market_for_gw(gw_m, 1)
-    assert part is not None and part.height == 1
+    assert part is not None
+    assert part.height == 1
     # Attach market fields when part lacks them.
     lean = pl.DataFrame({"player_key": [1], "actual_pts": [3]})
     market = pl.DataFrame(
         {"player_key": [1], "price": [55], "team_key": [3], "position": ["MID"]}
     )
     attached = mod._attach_market_fields(lean, market)
-    assert "price" in attached.columns and int(attached["price"][0]) == 55
+    assert "price" in attached.columns
+    assert int(attached["price"][0]) == 55
     assert mod._attach_market_fields(lean, lean) is lean or mod._attach_market_fields(
         lean, pl.DataFrame({"player_key": [1]})
     ).equals(lean)
@@ -703,7 +705,8 @@ def test_actual_maps_and_team_key_expr() -> None:
     )
     market = pl.DataFrame({"player_key": [2], "actual_pts": [7]})
     pts, mins = mod._actual_maps(part, market)
-    assert pts[1] == 0 and pts[2] == 7
+    assert pts[1] == 0
+    assert pts[2] == 7
     assert mins[1] == 0
     frame = pl.DataFrame({"player_key": [1001, 2002]})
     expr = mod._team_key_expr(frame)
@@ -738,7 +741,9 @@ def test_pre_transfer_state_bought_and_sold() -> None:
     )
     owned, bank = mod._pre_transfer_state(part)
     keys = {p.player_key for p in owned}
-    assert 1 in keys and 3 in keys and 2 not in keys
+    assert 1 in keys
+    assert 3 in keys
+    assert 2 not in keys
     assert bank == 0
 
 

@@ -72,7 +72,8 @@ def test_walk_forward_logs_each_deadline(
     assert "rolling_mean 2024-25 gw 1 (1/2) fitting" in caplog.text
     assert "rolling_mean 2024-25 gw 2 (2/2) fitting" in caplog.text
     assert "gw 1 done in" in caplog.text
-    assert "fit=" in caplog.text and "predict=" in caplog.text
+    assert "fit=" in caplog.text
+    assert "predict=" in caplog.text
     assert "walk_forward timing model=rolling_mean" in caplog.text
 
 

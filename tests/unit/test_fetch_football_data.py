@@ -11,7 +11,8 @@ import pytest
 
 _PATH = Path(__file__).parents[2] / "scripts" / "fetch_football_data.py"
 _SPEC = importlib.util.spec_from_file_location("fplt_fetch_football_data", _PATH)
-assert _SPEC is not None and _SPEC.loader is not None
+assert _SPEC is not None
+assert _SPEC.loader is not None
 fetch = importlib.util.module_from_spec(_SPEC)
 sys.modules["fplt_fetch_football_data"] = fetch
 _SPEC.loader.exec_module(fetch)

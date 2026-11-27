@@ -14,7 +14,8 @@ import pytest
 
 _PATH = Path(__file__).parents[2] / "scripts" / "fetch_understat.py"
 _SPEC = importlib.util.spec_from_file_location("fplt_fetch_understat", _PATH)
-assert _SPEC is not None and _SPEC.loader is not None
+assert _SPEC is not None
+assert _SPEC.loader is not None
 fetch = importlib.util.module_from_spec(_SPEC)
 sys.modules["fplt_fetch_understat"] = fetch
 _SPEC.loader.exec_module(fetch)
@@ -53,7 +54,8 @@ def test_dates_from_league_data_ajax_fixture() -> None:
     assert len(dates) >= 2
     assert fetch.finished_match_ids(dates) == [28778, 28779]
     teams = fetch.teams_from_league_data(payload)
-    assert "87" in teams and "73" in teams
+    assert "87" in teams
+    assert "73" in teams
 
 
 def test_old_html_parser_fails_on_ajax_league_data_fixture() -> None:

@@ -102,7 +102,8 @@ def test_high_confidence_map_entries_and_yaml(tmp_path: Path) -> None:
         )
     ]
     hits = suggest_matches(unmapped, targets, min_score=0.5, high_confidence=0.9)
-    assert hits and hits[0].high_confidence
+    assert hits
+    assert hits[0].high_confidence
     assert high_confidence_map_entries(hits) == {42: 4001}
 
     out = tmp_path / "candidates.yaml"
@@ -246,7 +247,8 @@ def test_score_pair_dob_match_and_mismatch() -> None:
         )
     ]
     hits = suggest_matches(unmapped_ok, targets, min_score=0.5, high_confidence=0.9)
-    assert hits and "dob" in hits[0].reason
+    assert hits
+    assert "dob" in hits[0].reason
     assert "dob_mismatch" not in hits[0].reason
 
     unmapped_bad = [
@@ -260,7 +262,8 @@ def test_score_pair_dob_match_and_mismatch() -> None:
     hits_bad = suggest_matches(
         unmapped_bad, targets, min_score=0.5, high_confidence=0.9
     )
-    assert hits_bad and "dob_mismatch" in hits_bad[0].reason
+    assert hits_bad
+    assert "dob_mismatch" in hits_bad[0].reason
 
 
 def test_collect_understat_unmapped(tmp_path: Path) -> None:

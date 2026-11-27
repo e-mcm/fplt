@@ -179,9 +179,9 @@ def test_invalid_minutes_are_refused() -> None:
         MinutesDist(pl.DataFrame({"fixture_id": [1]}), MINUTE_BINS, pmf)
     with pytest.raises(ValueError, match="shape"):
         _minutes(np.ones((1, 3)))
+    bad = pmf.copy()
+    bad[0, 0] = -1
     with pytest.raises(ValueError, match="non-negative"):
-        bad = pmf.copy()
-        bad[0, 0] = -1
         _minutes(bad)
     with pytest.raises(ValueError, match="positive"):
         _minutes(np.zeros((1, len(MINUTE_BINS))))

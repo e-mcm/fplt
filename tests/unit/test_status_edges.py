@@ -127,7 +127,8 @@ def test_format_status_human_rich_fields(tmp_path: Path) -> None:
 
 def test_unknown_model_and_bad_plan_dirs(tmp_path: Path) -> None:
     plans = _last_plans(tmp_path, ["definitely_not_a_model"], 1)
-    assert plans[0].reason and "not registered" in plans[0].reason
+    assert plans[0].reason
+    assert "not registered" in plans[0].reason
 
     base = tmp_path / "plans" / "mid"
     (base / "as_of=not-a-stamp").mkdir(parents=True)
@@ -177,8 +178,10 @@ def test_checkpoint_probe_failure(
     done, due, reason = _checkpoint_state(
         tmp_path, _NOW, _NOW + timedelta(days=1), season="2024-25", gw=1
     )
-    assert done is None and due is None
-    assert reason and "probe failed" in reason
+    assert done is None
+    assert due is None
+    assert reason
+    assert "probe failed" in reason
 
 
 def test_token_expiry_missing_claim(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +193,8 @@ def test_token_expiry_missing_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     status = _token_expiry(_NOW)
     assert status.expires_at is None
-    assert status.reason and "expiry claim" in status.reason
+    assert status.reason
+    assert "expiry claim" in status.reason
 
 
 def test_prod_sha_empty_and_last_error_unreadable(
@@ -202,14 +206,16 @@ def test_prod_sha_empty_and_last_error_unreadable(
     )
     sha, reason = _prod_sha(tmp_path)
     assert sha is None
-    assert reason and "empty" in reason
+    assert reason
+    assert "empty" in reason
 
     path = last_error_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not-json", encoding="utf-8")
     err, reason = _last_error(tmp_path)
     assert err is None
-    assert reason and "unreadable" in reason
+    assert reason
+    assert "unreadable" in reason
 
 
 def test_latest_capture_edges(tmp_path: Path) -> None:
@@ -225,7 +231,9 @@ def test_latest_capture_edges(tmp_path: Path) -> None:
     e0.parent.mkdir(parents=True)
     e0.write_text("Div\nE0\n", encoding="utf-8")
     stamp, path, reason = _latest_capture(raw, "football_data")
-    assert stamp is not None and path is not None and reason is None
+    assert stamp is not None
+    assert path is not None
+    assert reason is None
 
     dated = (
         raw

@@ -848,20 +848,20 @@ def test_run_chip_arm_sim_season_rejects_empty_actuals(tmp_path) -> None:
                 }
             ),
         ),
-        pytest.raises(ValueError, match="no ledger actuals"),
     ):
         pit_cls.return_value.view.return_value = object()
-        run_chip_arm_sim_season(
-            tmp_path,
-            "rolling_mean_v1",
-            "2025-26",
-            1,
-            2,
-            1,
-            arms=("off",),
-            n_paths=1,
-            seed=0,
-        )
+        with pytest.raises(ValueError, match="no ledger actuals"):
+            run_chip_arm_sim_season(
+                tmp_path,
+                "rolling_mean_v1",
+                "2025-26",
+                1,
+                2,
+                1,
+                arms=("off",),
+                n_paths=1,
+                seed=0,
+            )
 
 
 def test_policy_force_play_and_horizon_forwarded_to_simulate() -> None:

@@ -13,7 +13,8 @@ import httpx
 
 _PATH = Path(__file__).parents[2] / "scripts" / "snapshot.py"
 _SPEC = importlib.util.spec_from_file_location("fplt_snapshot", _PATH)
-assert _SPEC is not None and _SPEC.loader is not None
+assert _SPEC is not None
+assert _SPEC.loader is not None
 snapshot = importlib.util.module_from_spec(_SPEC)
 sys.modules["fplt_snapshot"] = snapshot
 _SPEC.loader.exec_module(snapshot)

@@ -95,10 +95,14 @@ def test_due_checkpoints_double_gameweek_one_deadline() -> None:
 
 def test_checkpoint_actions_match_spec() -> None:
     by_id = {cp.id: cp for cp in CHECKPOINTS}
-    assert by_id["T-24h"].plan and not by_id["T-24h"].notify
-    assert by_id["T-6h"].plan and by_id["T-6h"].notify
-    assert by_id["T-90m"].refresh and by_id["T-90m"].apply
-    assert by_id["T-30m"].refresh and not by_id["T-30m"].apply
+    assert by_id["T-24h"].plan
+    assert not by_id["T-24h"].notify
+    assert by_id["T-6h"].plan
+    assert by_id["T-6h"].notify
+    assert by_id["T-90m"].refresh
+    assert by_id["T-90m"].apply
+    assert by_id["T-30m"].refresh
+    assert not by_id["T-30m"].apply
     assert by_id["T-90m"].offset == timedelta(minutes=90)
     assert by_id["T-30m"].offset == timedelta(minutes=30)
 
