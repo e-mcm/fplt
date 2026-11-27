@@ -231,8 +231,8 @@ jobs:
           enable-cache: true
       - name: Sync locked deps (no compile of fplt-mc)
         run: uv sync --frozen
-      - name: Install rclone
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+      - name: Install rclone (pinned static binary, cached)
+        uses: ./.github/actions/install-rclone
       - name: Download freshly built fplt-mc wheel
         if: needs.changes.outputs.mc == 'true'
         uses: actions/download-artifact@v4
@@ -259,8 +259,14 @@ jobs:
             --index-url "https://e-mcm.github.io/fplt/simple/" \
             --extra-index-url "https://pypi.org/simple/"
           uv run python -c "import fplt_mc; print(fplt_mc.build_info())"
+      # Full suite (incl. slow) + xdist; pytest-cov combines worker coverage (#288).
+      # No testmon / path skipping — every PR runs the full suite.
+      # Coverage fail_under / diff-cover gates land in a follow-up PR after this speed work.
       - name: Pytest (fplt)
-        run: uv run pytest -m "not slow" --cov=fplt --cov-report=xml
+        run: >
+          uv run pytest -n auto --cov=fplt --cov-branch
+          --cov-report=xml --cov-report=term
+          --durations=25
       - name: Pytest (fplt-mc smoke)
         if: needs.changes.outputs.mc == 'true'
         run: uv run pytest mc/tests -q
