@@ -1,0 +1,44 @@
+name: install-rclone
+description: Install a pinned rclone static binary (cached)
+inputs:
+  version:
+    description: rclone release version without leading v
+    required: false
+    default: "1.69.1"
+runs:
+  using: composite
+  steps:
+    - name: Cache rclone binary
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/rclone-bin
+        key: rclone-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+    - name: Download rclone static binary
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        RCLONE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64) asset="rclone-v${RCLONE_VERSION}-linux-amd64" ;;
+          Linux-ARM64) asset="rclone-v${RCLONE_VERSION}-linux-arm64" ;;
+          macOS-ARM64) asset="rclone-v${RCLONE_VERSION}-osx-arm64" ;;
+          macOS-X64) asset="rclone-v${RCLONE_VERSION}-osx-amd64" ;;
+          *)
+            echo "unsupported runner: ${{ runner.os }}-${{ runner.arch }}"
+            exit 1
+            ;;
+        esac
+        mkdir -p "${{ runner.temp }}/rclone-bin"
+        url="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/${asset}.zip"
+        curl -fsSL "$url" -o /tmp/rclone.zip
+        unzip -o /tmp/rclone.zip -d /tmp
+        install -m 755 "/tmp/${asset}/rclone" "${{ runner.temp }}/rclone-bin/rclone"
+    - name: Add rclone to PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "${{ runner.temp }}/rclone-bin" >> "$GITHUB_PATH"
+        "${{ runner.temp }}/rclone-bin/rclone" version
