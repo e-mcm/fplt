@@ -1,0 +1,26 @@
+# Nightly performance monitoring (#312). Thresholds live here, not in code.
+# Alert only — never fail PRs / CI on timing.
+
+# Rolling median window (nights) computed at read time.
+baseline_window: 14
+
+# Alert when a tracked phase is more than this percent slower than baseline.
+regression_pct: 50.0
+
+# Require this many consecutive nights above the threshold before alerting.
+consecutive_nights: 3
+
+# Ops tick WARNING when total_s exceeds this fraction of the workflow timeout.
+ops_budget_pct: 50.0
+
+# Default ops-tick job timeout (minutes); overridden by OPS_TIMEOUT_MINUTES.
+ops_timeout_minutes: 90
+
+# Phases compared against the rolling median baseline.
+tracked_phases:
+  - fit
+  - predict
+  - plan
+  - optimise/milp
+  - mc_bench_total
+  - pytest_suite

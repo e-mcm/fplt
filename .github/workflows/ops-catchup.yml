@@ -114,6 +114,7 @@ jobs:
           FPLT_PLAN_HORIZON: ${{ vars.FPLT_PLAN_HORIZON }}
           FPLT_LOG_FORMAT: json
           JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
+          OPS_TIMEOUT_MINUTES: "180"
         run: |
           set -euo pipefail
           mkdir -p "$FPLT_DATA_DIR"

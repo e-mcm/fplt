@@ -42,7 +42,7 @@ PUSHABLE: dict[str, frozenset[str]] = {
     "data": frozenset(
         {"raw", "curated", "specs", "runs", "official", "catalog", "status"}
     ),
-    "lab": frozenset({"runs", "experiments", "batches", "specs", "catalog"}),
+    "lab": frozenset({"runs", "experiments", "batches", "specs", "catalog", "bench"}),
 }
 
 

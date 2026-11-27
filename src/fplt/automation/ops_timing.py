@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from fplt.automation.bench import ops_budget_status
 from fplt.utils.timing import (
     SHARED_SUBPHASES,
     TimingSession,
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _JOB_STARTED_AT = "JOB_STARTED_AT"
 _STEP_SUMMARY = "GITHUB_STEP_SUMMARY"
+_OPS_TIMEOUT_MINUTES = "OPS_TIMEOUT_MINUTES"
 
 
 def record_job_setup(
@@ -57,8 +59,18 @@ def record_job_setup(
     session.add("setup", end - started)
 
 
-def format_ops_step_summary(record: Mapping[str, Any]) -> str:
-    """Render a markdown table of ops top-level phases for Actions summaries."""
+def format_ops_step_summary(
+    record: Mapping[str, Any],
+    *,
+    timeout_minutes: int | None = None,
+) -> str:
+    """Render a markdown table of ops top-level phases for Actions summaries.
+
+    When ``total_s`` exceeds the configured share of the workflow timeout
+    (``configs/ops/bench.yaml`` / ``OPS_TIMEOUT_MINUTES``), appends a
+    **WARNING** line so operators see budget pressure before a deadline run
+    times out (#312).
+    """
     phases_obj: object = record.get("phases", {})
     phases: dict[str, float] = {}
     if isinstance(phases_obj, dict):
@@ -87,6 +99,25 @@ def format_ops_step_summary(record: Mapping[str, Any]) -> str:
     total = float(record.get("total_s", ops_phase_total(phases)) or 0.0)
     lines.append(f"| **total_s** | {total:.1f} |")
     lines.append("")
+    minutes = timeout_minutes
+    if minutes is None:
+        raw_timeout = os.environ.get(_OPS_TIMEOUT_MINUTES)
+        if raw_timeout is not None and raw_timeout.strip() != "":
+            try:
+                minutes = int(raw_timeout)
+            except ValueError:
+                logger.warning(
+                    "ignoring invalid %s=%r",
+                    _OPS_TIMEOUT_MINUTES,
+                    raw_timeout,
+                )
+                minutes = None
+    status = ops_budget_status(total, timeout_minutes=minutes)
+    warning = status.warning_line
+    if warning is not None:
+        lines.append(warning)
+        lines.append("")
+        logger.warning("%s", warning.replace("**", ""))
     return "\n".join(lines)
 
 

@@ -1585,6 +1585,19 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit ranked hotspots as JSON instead of text",
     )
+    perf.add_argument(
+        "--trend",
+        action="store_true",
+        help=(
+            "Summarise nightly bench history under lab_dir/bench/ "
+            "(rolling median baseline; see configs/ops/bench.yaml)"
+        ),
+    )
+    perf.add_argument(
+        "--lab-dir",
+        type=Path,
+        help="Lab root for --trend (default: FPLT_LAB_DIR or ./lab)",
+    )
     data = sub.add_parser(
         "data",
         parents=[log_flags],
@@ -3555,14 +3568,35 @@ def _decisions(args: argparse.Namespace) -> None:
 
 
 def _perf_report(args: argparse.Namespace) -> None:
-    """Print a hotspot ranking from timing JSON under ``data_dir``."""
+    """Print a hotspot ranking or nightly bench trend under ``data_dir``."""
     import json
+    import os
 
     from fplt.utils.timing import (
         format_hotspot_report,
         load_timing_records,
         rank_hotspots,
     )
+
+    if bool(getattr(args, "trend", False)):
+        from fplt.automation.bench import format_trend_report, list_bench_results
+
+        lab_dir = (
+            Path(args.lab_dir)
+            if getattr(args, "lab_dir", None)
+            else Path(os.environ.get("FPLT_LAB_DIR", "lab"))
+        )
+        history = list_bench_results(lab_dir, limit=int(args.limit) or None)
+        if bool(args.json):
+            payload = {
+                "lab_dir": str(lab_dir),
+                "n_nights": len(history),
+                "nights": [item.model_dump_json_doc() for item in history],
+            }
+            print(json.dumps(payload, indent=2))
+            return
+        print(format_trend_report(history, limit=int(args.limit) or 14))
+        return
 
     data_dir = Path(args.data_dir) if args.data_dir else get_settings().data_dir
     records = load_timing_records(

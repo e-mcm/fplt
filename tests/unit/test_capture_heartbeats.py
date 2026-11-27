@@ -24,6 +24,7 @@ _SCHEDULED = (
     "raw_parity.yml",
     "secret-rotation-reminder.yml",
     "auth-check.yml",
+    "bench.yml",
 )
 
 _MAIN_JOB = {
@@ -37,6 +38,7 @@ _MAIN_JOB = {
     "raw_parity.yml": "parity",
     "secret-rotation-reminder.yml": "remind",
     "auth-check.yml": "check",
+    "bench.yml": "bench",
 }
 
 _PING_SECRETS = {
@@ -50,6 +52,7 @@ _PING_SECRETS = {
     "raw_parity.yml": "HC_PING_URL_RAW_PARITY",
     "secret-rotation-reminder.yml": "HC_PING_URL_SECRET_ROTATION",
     "auth-check.yml": "HC_PING_URL_AUTH_CHECK",
+    "bench.yml": "HC_PING_URL_BENCH",
 }
 
 # Capture workflows that dual-write via push-raw: heartbeat only when uploaded.

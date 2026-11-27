@@ -185,6 +185,15 @@ Never paste raw secrets into issues, PR comments, or `set -x` shell traces. Lint
 
 PR scans only fail on **newly introduced** vulns (reusable-pr workflow). Weekly scans report the full baseline without failing `main`. The intentional fixture under `tests/fixtures/security/vulnerable/` is ignored in repo-wide scans via a local `osv-scanner.toml` `PackageOverrides`; `scripts/check_osv_scanner_gate.py` still proves the scanner fails on that pin. Owner must enable GitHub **Dependabot alerts**, **secret scanning**, and **push protection** in repo settings (not automated here).
 
+### ops-13: Performance regression
+
+| | |
+|---|---|
+| **Means** | Nightly `bench.yml` found a tracked phase (fit / predict / plan / mc-bench / pytest) more than X% slower than the rolling median baseline for K consecutive nights (`configs/ops/bench.yaml`). Ops ticks may also WARN in the Actions step summary when `total_s` exceeds `ops_budget_pct` of the job timeout. |
+| **Urgency** | **Info** — timing never fails PRs. Escalate if an ops tick is approaching its workflow timeout before a deadline. |
+| **Fix** | 1. `uv run fplt perf-report --trend --lab-dir <lab-mirror>` (or read `fplt-lab/bench/date=*/results.json`). 2. Confirm a real step-change vs shared-runner noise. 3. Profile (`fplt perf-report`, `make mc-bench`, `make pytest-profile`) and fix, or let quieter nights refill the baseline window. |
+
+
 ---
 
 ## Recommendation

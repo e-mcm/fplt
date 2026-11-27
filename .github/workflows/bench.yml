@@ -1,0 +1,135 @@
+name: bench
+
+# Nightly performance monitoring on a fixed fixture world (#312).
+# Schedule + dispatch, main only. Writes fplt-lab/bench/date=<UTC>/results.json
+# (write-once). Timing regressions alert via ntfy and never fail the assemble
+# step; real failures (fixture crash, R2 push) still fail + notify.
+
+on:
+  schedule:
+    # 04:27 UTC — offset from CI nightly (05:17) and capture crons.
+    - cron: "27 4 * * *"
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: Force a failure to test the ntfy alert (ops-03)
+        type: boolean
+        default: false
+      skip_fixture:
+        description: Skip the e2e fixture tick (mc-bench + pytest only)
+        type: boolean
+        default: false
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    # Schedule always targets the default branch; dispatch must be on main.
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: r2
+    steps:
+      - name: Record job start
+        run: echo "JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Simulate failure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
+        run: |
+          echo "simulate_failure requested"
+          exit 1
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          enable-cache: true
+
+      - name: Install Python deps
+        run: uv sync --frozen
+
+      - name: Install rclone (pinned static binary, cached)
+        uses: ./.github/actions/install-rclone
+
+      - name: mc-bench JSON
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bench"
+          uv run python scripts/mc_bench.py --json > "$RUNNER_TEMP/bench/mc.json"
+
+      - name: Pytest suite timings (top-25)
+        # Record durations even when individual tests fail — never gate on timing.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          uv run pytest -n auto -m "not slow" \
+            --junitxml="$RUNNER_TEMP/bench/junit.xml" \
+            --durations=25 \
+            || true
+
+      - name: Fixture world + assemble + push
+        env:
+          FPLT_R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          FPLT_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          FPLT_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FPLT_LAB_BUCKET: ${{ vars.LAB_BUCKET }}
+          FPLT_NTFY_URL: ${{ secrets.FPLT_NTFY_URL }}
+          GITHUB_SHA: ${{ github.sha }}
+          JOB_STARTED_AT: ${{ env.JOB_STARTED_AT }}
+        run: |
+          set -euo pipefail
+          LAB="$RUNNER_TEMP/lab"
+          mkdir -p "$LAB"
+          EXTRA=(--pull-history --push --exist-ok)
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_fixture }}" = "true" ]; then
+            EXTRA+=(--skip-fixture)
+          else
+            EXTRA+=(--run-fixture)
+          fi
+          DAY=$(date -u +%F)
+          JUNIT_ARGS=()
+          if [ -f "$RUNNER_TEMP/bench/junit.xml" ]; then
+            JUNIT_ARGS=(--junit "$RUNNER_TEMP/bench/junit.xml")
+          fi
+          uv run python scripts/nightly_bench.py \
+            --lab-dir "$LAB" \
+            --mc-json "$RUNNER_TEMP/bench/mc.json" \
+            --date "$DAY" \
+            --git-sha "$GITHUB_SHA" \
+            "${JUNIT_ARGS[@]}" \
+            "${EXTRA[@]}"
+          {
+            echo "### Nightly bench ($DAY)"
+            echo ""
+            echo '```'
+            uv run fplt perf-report --trend --lab-dir "$LAB" --limit 14
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  alerts:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Heartbeat
+        if: needs.bench.result == 'success'
+        uses: ./.github/actions/heartbeat
+        with:
+          ping_url: ${{ secrets.HC_PING_URL_BENCH }}
+
+      - name: Notify failure
+        if: needs.bench.result == 'failure'
+        uses: ./.github/actions/notify-failure
+        with:
+          ntfy_url: ${{ secrets.NTFY_URL }}

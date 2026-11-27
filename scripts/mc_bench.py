@@ -182,13 +182,23 @@ def run_bench(*, n_sims: int, repeats: int) -> list[tuple[str, float]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the micro-bench and print a table to stdout."""
+    """Run the micro-bench and print a table (or JSON) to stdout."""
+    import json
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit {step: best_ms} JSON for the nightly bench assembler",
+    )
     args = parser.parse_args(argv)
     rows = run_bench(n_sims=args.n_sims, repeats=args.repeats)
     total = sum(ms for _, ms in rows)
+    if args.json:
+        print(json.dumps({name: ms for name, ms in rows}, indent=2))
+        return 0
     print(f"mc-bench  n_sims={args.n_sims}  repeats={args.repeats}  (best of)")
     print(f"{'step':<36} {'ms':>10} {'share':>8}")
     for name, ms in rows:

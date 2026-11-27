@@ -308,7 +308,7 @@ lines:
 | Bucket | Prefixes | Writers | Lock |
 |---|---|---|---|
 | `fplt-data` | `raw/`, `curated/`, `runs/` (official only), `official/`, `catalog/` | GHA capture (raw), ops job and owner token | indefinite on everything except `catalog/` and `status/` |
-| `fplt-lab` | `runs/` (adhoc, experiment, benchmark), `experiments/`, `catalog/` | owner, agents, Modal | indefinite on `runs/` and `experiments/` |
+| `fplt-lab` | `runs/` (adhoc, experiment, benchmark), `experiments/`, `catalog/`, `bench/` (nightly perf #312) | owner, agents, Modal | indefinite on `runs/`, `experiments/`, `bench/` |
 | `fplt-public` | whitelisted JSON for the website | publish step only | none (regenerable from official runs) |
 
 - **The 90-day scratch expiry is dropped.** Ad hoc and A/B runs are kept forever as you asked. The lab bucket is separate only so agent tokens can never touch official data.
