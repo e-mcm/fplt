@@ -104,6 +104,9 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 # Test functions need no module/class/function docstrings.
 "tests/**" = ["D"]
+# CLI top-level except handlers re-raise SystemExit; logging.exception would
+# dump traces on every user-facing error. Keep logger.error; cover via e2e later.
+"src/fplt/cli.py" = ["TRY400"]
 
 [tool.pyright]
 pythonVersion = "3.13"

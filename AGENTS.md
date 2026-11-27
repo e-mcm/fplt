@@ -88,7 +88,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
  
 - Python 3.12+. Type-annotate all public functions; pyright in standard mode must pass.
 - `ruff` handles lint and format. Do not hand-format.
-- Enabled ruff lint groups (see `[tool.ruff.lint]` in `pyproject.toml`): `E`, `F`, `I`, `UP`, `D` (pydocstyle, Google convention), `B` (bugbear), `BLE`, `RUF012`, `TRY400`. Further groups (`S`, `PT`) are ratcheted in #311.
+- Enabled ruff lint groups (see `[tool.ruff.lint]` in `pyproject.toml`): `E`, `F`, `I`, `UP`, `D` (pydocstyle, Google convention), `B` (bugbear), `BLE`, `RUF012`, `TRY400` (`src/fplt/cli.py` keeps `logger.error` via per-file ignore). Further groups (`S`, `PT`) are ratcheted in #311.
 - **Every public free function and every public class has a docstring.** "Public" means the name doesn't start with `_`. This is enforced by ruff's pydocstyle rules (`D101`, `D103`; Google convention). Other `D*` codes and all `D` in `tests/` are ignored until separately ratcheted.
   - Start with a one-line summary in the imperative mood ("Fit the Dixon-Coles parameters.").
   - Then document `Args`, `Returns` and `Raises` wherever they are not obvious from the signature.
