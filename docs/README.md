@@ -70,6 +70,7 @@ Specs-only plans committed from the Project store. Not yet design-canonical — 
 | [`proposals/ops-hardening-issues.md`](proposals/ops-hardening-issues.md) | Live ops hardening issue list (GHA-first) |
 | [`proposals/fplt-experiments.md`](proposals/fplt-experiments.md) | Experiments platform / harness design |
 | [`proposals/fplt-ui-design.md`](proposals/fplt-ui-design.md) | UI / dashboard design proposal |
+| [`proposals/weekly-ui-milestone.md`](proposals/weekly-ui-milestone.md) | Milestone: scheduled ingest → weekly official runs → R2 → laptop UI |
 
 ## Standing rules (agents)
 
