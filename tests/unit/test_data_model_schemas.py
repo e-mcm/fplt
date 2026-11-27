@@ -9,7 +9,12 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from fplt.schemas.l2 import SCHEMA_VERSION, L2StandardKeys
+from fplt.schemas.l2 import (
+    SCHEMA_VERSION,
+    L2AsOfTargetKeys,
+    L2StandardKeys,
+    L2TeamFixtureKeys,
+)
 from fplt.schemas.manifests import (
     AppliedRecord,
     AsOfDeadline,
@@ -189,6 +194,10 @@ def test_l2_standard_keys_mixin_validates_and_exports_schema_version() -> None:
     )
     checked = L2StandardKeys.validate(frame)
     assert checked["schema_version"].to_list() == [1]
+    as_of = frame.drop("player_key", "team_key")
+    L2AsOfTargetKeys.validate(as_of)
+    team = as_of.with_columns(pl.lit(7).cast(pl.Int64).alias("team_key"))
+    L2TeamFixtureKeys.validate(team)
 
 
 def test_player_fixture_outcomes_schema() -> None:

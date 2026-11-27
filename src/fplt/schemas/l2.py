@@ -19,12 +19,12 @@ import pandera.polars as pa
 SCHEMA_VERSION = 1
 
 
-class L2StandardKeys(pa.DataFrameModel):
-    """Mixin: standard keys on every player–fixture L2 run table.
+class L2AsOfTargetKeys(pa.DataFrameModel):
+    """Mixin: as-of / target / fixture keys shared by every L2 run table.
 
-    Grain-specific columns (for example ``step`` on plans) are added by the
-    concrete table schema. Inherit this mixin rather than re-declaring the
-    keys so new L2 tables stay aligned with §3.4.
+    Player–fixture tables add ``player_key`` via :class:`L2StandardKeys`.
+    Team–fixture tables (scoreline) add only ``team_key`` via
+    :class:`L2TeamFixtureKeys`.
     """
 
     run_id: str
@@ -35,10 +35,36 @@ class L2StandardKeys(pa.DataFrameModel):
     target_gw: int = pa.Field(ge=1, le=38)
     horizon: int = pa.Field(ge=0)
     fixture_id: int
-    player_key: int
-    team_key: int
     schema_version: int = pa.Field(ge=1)
 
     class Config(pa.DataFrameModel.Config):
         strict = True
         coerce = True
+
+
+class L2StandardKeys(L2AsOfTargetKeys):
+    """Mixin: standard keys on every player–fixture L2 run table.
+
+    Grain-specific columns (for example ``step`` on plans) are added by the
+    concrete table schema. Inherit this mixin rather than re-declaring the
+    keys so new L2 tables stay aligned with §3.4.
+    """
+
+    player_key: int
+    team_key: int
+
+    class Config(L2AsOfTargetKeys.Config):
+        pass
+
+
+class L2TeamFixtureKeys(L2AsOfTargetKeys):
+    """Mixin: standard keys on every team–fixture L2 run table.
+
+    Used by ``predictions/components/scoreline.parquet`` (two rows per
+    fixture). ``player_key`` is absent at this grain.
+    """
+
+    team_key: int
+
+    class Config(L2AsOfTargetKeys.Config):
+        pass
