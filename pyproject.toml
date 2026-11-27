@@ -41,6 +41,9 @@ dev = [
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-cov>=7.1.0",
+    "pytest-randomly>=5.1.0",
+    "pytest-socket>=0.8.1",
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.7",
     "streamlit>=1.67.0",
@@ -79,7 +82,18 @@ include = ["src", "scripts"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["slow: tests slower than about 2 seconds"]
+# Isolation (#306): block network (unix sockets kept for xdist), random order,
+# per-test timeout. Reproduce a CI shuffle with --randomly-seed=<n>.
+addopts = [
+    "--disable-socket",
+    "--allow-unix-socket",
+    "--timeout=60",
+]
+timeout_method = "thread"
+markers = [
+    "slow: tests slower than about 2 seconds",
+    "enable_socket: allow network sockets for this test (pytest-socket)",
+]
 
 [tool.coverage.run]
 source = ["fplt"]

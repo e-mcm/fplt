@@ -1,6 +1,6 @@
 # tests/
 
-Everything that lands on `main` is exercised here. Tests **never** touch the network.
+Everything that lands on `main` is exercised here. Tests **never** touch the network — enforced with `pytest-socket`, randomised order (`pytest-randomly`; reproduce with `--randomly-seed=<n>`), per-test timeouts (`pytest-timeout`), and Hypothesis `ci`/`dev` profiles (`HYPOTHESIS_PROFILE`). See `AGENTS.md` §3.
 
 | Path | Role |
 |---|---|

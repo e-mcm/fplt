@@ -119,21 +119,22 @@ def test_app_navigation_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_ui_app_main_configures_navigation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """main() sets page config and runs This-week + Overview navigation."""
-    import importlib
-    import sys
+    """main() sets page config and runs This-week + Overview navigation.
+
+    Patch ``app.st`` in place — do not swap ``sys.modules['streamlit']`` or
+    ``importlib.reload`` the app module, which left a mocked Streamlit bound
+    for later AppTest runs under random order (#306).
+    """
     from types import SimpleNamespace
     from unittest.mock import MagicMock
+
+    import fplt.ui.app as app
 
     fake_st = MagicMock()
     page = object()
     fake_st.Page = MagicMock(return_value=page)
     nav = MagicMock()
     fake_st.navigation = MagicMock(return_value=nav)
-    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
-    import fplt.ui.app as app
-
-    importlib.reload(app)
     monkeypatch.setattr(app, "st", fake_st)
     monkeypatch.setattr(app, "overview", SimpleNamespace(render=lambda: None))
     monkeypatch.setattr(app, "this_week", SimpleNamespace(render=lambda: None))

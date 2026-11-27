@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from hypothesis import settings as hypothesis_settings
 
 from fplt.settings import get_settings
 
@@ -24,22 +25,50 @@ _NEEDS_VAASTAV = {
 # removing the fixture fails even when the host shell has no GITHUB_* / CI (#287).
 HOST_CI_ENV_STRIP_STATE: dict[str, bool] = {"ok": False}
 
+# Hypothesis profiles (#306). CI sets HYPOTHESIS_PROFILE=ci; local defaults to
+# ``dev`` (fewer examples). Per-test ``@settings(max_examples=…)`` still wins.
+hypothesis_settings.register_profile(
+    "ci",
+    deadline=None,
+    print_blob=True,
+    derandomize=False,
+    max_examples=100,
+)
+hypothesis_settings.register_profile(
+    "dev",
+    deadline=None,
+    print_blob=False,
+    derandomize=False,
+    max_examples=25,
+)
+hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
+
+# Unit tests get a tighter wall than the global 60s (#306).
+_UNIT_TIMEOUT_S = 30
+
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Skip tests that read the gitignored vaastav checkout when it is absent.
+    """Skip missing-vaastav tests and apply a tighter unit-test timeout.
 
     CI does not have ``data/<season>/``. Local runs that have downloaded it
-    still execute these tests.
+    still execute those tests. Unit tests get ``timeout=30`` unless a test
+    already sets its own timeout marker (global default remains 60s).
     """
     del config
-    if _DATA.exists():
-        return
-    skip = pytest.mark.skip(reason="vaastav CSVs are not in this checkout")
+    unit_timeout = pytest.mark.timeout(_UNIT_TIMEOUT_S)
+    skip_vaastav = None
+    if not _DATA.exists():
+        skip_vaastav = pytest.mark.skip(reason="vaastav CSVs are not in this checkout")
     for item in items:
-        if Path(str(item.fspath)).name in _NEEDS_VAASTAV:
-            item.add_marker(skip)
+        path = Path(str(item.fspath))
+        if skip_vaastav is not None and path.name in _NEEDS_VAASTAV:
+            item.add_marker(skip_vaastav)
+        if path.parent.name == "unit" and not any(
+            marker.name == "timeout" for marker in item.iter_markers()
+        ):
+            item.add_marker(unit_timeout)
 
 
 @pytest.fixture(autouse=True)
