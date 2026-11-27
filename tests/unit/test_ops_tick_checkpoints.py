@@ -58,8 +58,16 @@ def _patch_tick_deps(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
 
     calls = plan_calls if plan_calls is not None else []
@@ -286,8 +294,16 @@ def test_ops_tick_skips_urgent_when_retry_creates_plan(
         lambda: type(
             "Ops",
             (),
-            {"models": ["rolling_mean_v1"], "plan_horizon": 1},
+            {
+                "models": ["rolling_mean_v1"],
+                "plan_horizon": 1,
+                "min_prior_seasons": 3,
+            },
         )(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.enforce_training_history",
+        lambda *a, **k: None,
     )
     notify_calls: list[str] = []
     monkeypatch.setattr(

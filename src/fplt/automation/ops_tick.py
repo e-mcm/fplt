@@ -40,6 +40,7 @@ from fplt.automation.cycle import (
     pre_deadline,
     reports,
 )
+from fplt.automation.history_guard import enforce_training_history
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.official_slate import (
     OfficialCheckpointResult,
@@ -181,6 +182,16 @@ def run_ops_tick(
                 allow_missing=True,
             )
             _notify_auth_check(cfg, auth, notify=notify)
+
+            # #285: abort before catch-up / official pointers when history is thin.
+            enforce_training_history(
+                store,
+                now=moment,
+                min_prior_seasons=ops.min_prior_seasons,
+                settings=cfg,
+                notify=notify,
+                source="ops-tick",
+            )
 
             logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
             caught = catch_up(root, chosen, horizon=steps)

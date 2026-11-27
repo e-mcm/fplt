@@ -167,6 +167,15 @@ Inventory and cadence: [`../deploy/README.md`](../deploy/README.md).
 
 Never paste raw secrets into issues, PR comments, or `set -x` shell traces. Lint: `scripts/check_workflow_secret_xtrace.py`.
 
+### ops-12: History guard
+
+| | |
+|---|---|
+| **Means** | Staged training history at the next deadline is thinner than `min_prior_seasons` in `configs/ops/production.yaml`, or a finished current-season gameweek has no `player_fixture_stats`. Usually `raw/vaastav/` was never captured into R2, or the weekly vaastav job is behind. Ops aborts before catch-up / official pointers. |
+| **Urgency** | **Urgent** before the first live run and inside T−6h. Otherwise **high** until history is restored. |
+| **Fix** | Confirm `rclone lsf fplt:fplt-data/raw/vaastav/ -R \| head` shows captures, then `gh workflow run vaastav.yml -f full=true` once (owner). Re-run `gh workflow run ops-tick.yml -f force_live=true` after staging sees ≥ `min_prior_seasons` prior seasons. |
+
+
 ---
 
 ## Recommendation

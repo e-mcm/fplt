@@ -110,6 +110,10 @@ def test_run_ops_catchup_calls_existing_library_steps(
     monkeypatch.setattr("fplt.automation.ops_catchup.pending_checked", pending)
     monkeypatch.setattr("fplt.automation.ops_catchup.reports", lambda _d: "# GW 1\nok")
     monkeypatch.setattr("fplt.automation.ops_catchup.notify_recommendation", notify)
+    monkeypatch.setattr(
+        "fplt.automation.ops_catchup.enforce_training_history",
+        lambda *a, **k: None,
+    )
 
     result = run_ops_catchup(
         models=["rolling_mean_v1"],
@@ -153,6 +157,10 @@ def test_run_ops_catchup_skips_notify_when_nothing_planned_or_disabled(
     monkeypatch.setattr(
         "fplt.automation.ops_catchup.notify_recommendation",
         lambda *a, **k: notify_calls.append("sent") or True,
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_catchup.enforce_training_history",
+        lambda *a, **k: None,
     )
 
     empty = run_ops_catchup(models=["rolling_mean_v1"], horizon=1)

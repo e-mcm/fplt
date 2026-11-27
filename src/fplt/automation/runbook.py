@@ -22,9 +22,10 @@ OPS_08_WEEKLY_REPORT = "docs/ops-runbook.md#ops-08-weekly-report"
 OPS_09_MODEL_DRIFT = "docs/ops-runbook.md#ops-09-model-drift"
 OPS_10_STATUS = "docs/ops-runbook.md#ops-10-status"
 OPS_11_SECRET_ROTATION = "docs/ops-runbook.md#ops-11-secret-rotation"
+OPS_12_HISTORY_GUARD = "docs/ops-runbook.md#ops-12-history-guard"
 RECOMMENDATION = "docs/ops-runbook.md#recommendation"
 
-# Every ops-01..ops-11 alert anchor (heartbeat shares ops-03's pair).
+# Every ops-01..ops-12 alert anchor (heartbeat shares ops-03's pair).
 ALERT_ANCHORS: tuple[str, ...] = (
     OPS_01_TOKEN_EXPIRY,
     OPS_02_NO_PLAN,
@@ -38,6 +39,7 @@ ALERT_ANCHORS: tuple[str, ...] = (
     OPS_09_MODEL_DRIFT,
     OPS_10_STATUS,
     OPS_11_SECRET_ROTATION,
+    OPS_12_HISTORY_GUARD,
 )
 
 

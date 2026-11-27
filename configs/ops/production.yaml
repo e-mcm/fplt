@@ -29,6 +29,10 @@
 models:
   - dc_layered_v4_native
 plan_horizon: 3
+# Training-history guard (#285): fail ops-tick / catch_up when staged
+# history at the deadline has fewer completed prior seasons than this,
+# or when a finished current-season GW lacks player_fixture_stats.
+min_prior_seasons: 3
 
 lines:
   - {line: v4_h3, spec: dc_layered_v4_native, horizon: 3, role: primary}
