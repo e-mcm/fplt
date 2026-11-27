@@ -116,3 +116,29 @@ def test_app_navigation_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         assert any("this week" in value for value in titles)
     finally:
         get_settings.cache_clear()
+
+
+def test_ui_app_main_configures_navigation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() sets page config and runs This-week + Overview navigation."""
+    import importlib
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    fake_st = MagicMock()
+    page = object()
+    fake_st.Page = MagicMock(return_value=page)
+    nav = MagicMock()
+    fake_st.navigation = MagicMock(return_value=nav)
+    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
+    import fplt.ui.app as app
+
+    importlib.reload(app)
+    monkeypatch.setattr(app, "st", fake_st)
+    monkeypatch.setattr(app, "overview", SimpleNamespace(render=lambda: None))
+    monkeypatch.setattr(app, "this_week", SimpleNamespace(render=lambda: None))
+    app.main()
+    fake_st.set_page_config.assert_called_once()
+    assert fake_st.Page.call_count == 2
+    fake_st.navigation.assert_called_once()
+    nav.run.assert_called_once()

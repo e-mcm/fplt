@@ -400,11 +400,14 @@ def run_hindsight_oracle(
     )
     if actuals.is_empty():
         raise ValueError(f"no oracle actuals for season={season}")
-    fixtures = (
-        store.read("fixtures").filter(pl.col("season") == season)
-        if chip_arm != "off"
-        else None
-    )
+    fixtures: pl.DataFrame | None = None
+    if chip_arm != "off":
+        fixtures_raw = store.read("fixtures")
+        fixtures = (
+            fixtures_raw.filter(pl.col("season") == season)
+            if not fixtures_raw.is_empty() and "season" in fixtures_raw.columns
+            else fixtures_raw
+        )
     if chip_arm != "off" and (fixtures is None or fixtures.is_empty()):
         raise ValueError(f"chip_arm={chip_arm!r} requires staged fixtures for {season}")
     frame = simulate_hindsight_oracle(

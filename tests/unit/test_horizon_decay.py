@@ -163,3 +163,98 @@ def test_skill_config_yaml_roundtrip(tmp_path: Path) -> None:
     assert cfg.season == "2024-25"
     assert cfg.model == "dc_layered_v4"
     assert cfg.rmse_vs_h1 == pytest.approx((1.0, 1.1, 1.2))
+
+
+def test_skill_weight_config_rejects_bad_ratios() -> None:
+    from pydantic import ValidationError
+
+    from fplt.optimise.horizon_decay import SkillWeightConfig
+
+    with pytest.raises(ValidationError, match="positive"):
+        SkillWeightConfig.model_validate({"rmse_vs_h1": [1.0, 0.0]})
+    with pytest.raises(ValidationError, match="1.0"):
+        SkillWeightConfig.model_validate({"rmse_vs_h1": [1.1, 1.2]})
+
+
+def test_geometric_and_skill_validation_branches() -> None:
+    with pytest.raises(ValueError, match="decay must be"):
+        geometric_step_weights(0.0, 2)
+    with pytest.raises(ValueError, match="decay must be"):
+        geometric_step_weights(1.5, 2)
+    with pytest.raises(ValueError, match="horizon must be"):
+        geometric_step_weights(0.9, 0)
+
+    with pytest.raises(ValueError, match="horizon must be"):
+        skill_step_weights([1.0], horizon=0)
+    with pytest.raises(ValueError, match="power must be"):
+        skill_step_weights([1.0], horizon=1, power=0.0)
+    with pytest.raises(ValueError, match="non-empty"):
+        skill_step_weights([], horizon=1)
+    with pytest.raises(ValueError, match="positive"):
+        skill_step_weights([1.0, -0.5], horizon=2)
+
+
+def test_weights_from_skill_curve_errors() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        weights_from_skill_curve(pl.DataFrame(), horizon=1)
+    with pytest.raises(ValueError, match="missing"):
+        weights_from_skill_curve(pl.DataFrame({"horizon": [1]}), horizon=1)
+
+    curve = pl.DataFrame(
+        {
+            "model_id": ["a", "a", "b", "b"],
+            "horizon": [1, 2, 1, 2],
+            "rmse_vs_h1": [1.0, 1.2, 1.0, 1.5],
+        }
+    )
+    with pytest.raises(ValueError, match="no model_id"):
+        weights_from_skill_curve(
+            curve.select("horizon", "rmse_vs_h1"),
+            horizon=2,
+            model_id="a",
+        )
+    with pytest.raises(ValueError, match="no skill rows"):
+        weights_from_skill_curve(curve, horizon=2, model_id="missing")
+    assert weights_from_skill_curve(curve, horizon=2, model_id="b") == pytest.approx(
+        (1.0, 1.0 / 1.5)
+    )
+
+    gap = pl.DataFrame({"horizon": [1, 3], "rmse_vs_h1": [1.0, 1.2]})
+    with pytest.raises(ValueError, match="contiguous"):
+        weights_from_skill_curve(gap, horizon=2)
+
+
+def test_load_skill_config_rejects_non_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("- just a list\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        load_skill_weight_config(path)
+
+
+def test_resolve_step_weights_skill_paths() -> None:
+    with pytest.raises(ValueError, match="unknown horizon decay"):
+        resolve_step_weights(2, decay=0.9, method="nope")  # type: ignore[arg-type]
+
+    explicit = resolve_step_weights(
+        3,
+        decay=0.9,
+        method="skill",
+        skill_rmse_vs_h1=[1.0, 2.0, 4.0],
+        power=2.0,
+    )
+    assert explicit == pytest.approx((1.0, 0.25, 0.0625))
+
+    from fplt.optimise.horizon_decay import SkillWeightConfig
+
+    cfg = SkillWeightConfig(rmse_vs_h1=(1.0, 1.25), power=1.0)
+    from_cfg = resolve_step_weights(2, decay=0.9, method="skill", skill_config=cfg)
+    assert from_cfg == pytest.approx((1.0, 0.8))
+    overridden = resolve_step_weights(
+        2, decay=0.9, method="skill", skill_config=cfg, power=2.0
+    )
+    assert overridden == pytest.approx((1.0, 0.64))
+
+    # Falls back to committed YAML when neither ratios nor config given.
+    defaulted = resolve_step_weights(2, decay=0.9, method="skill")
+    assert defaulted[0] == pytest.approx(1.0)
+    assert len(defaulted) == 2

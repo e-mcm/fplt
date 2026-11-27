@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from fplt.automation.governance import (
     PRODUCTION_RELPATH,
+    GovernanceResult,
+    check_git_production_governance,
     check_production_governance,
     extract_promote_eval_runs,
     model_spec_relpath,
@@ -165,3 +168,212 @@ def test_resolve_verdict_missing(tmp_path: Path) -> None:
 def test_parse_production_models_rejects_empty() -> None:
     with pytest.raises(ValueError, match="models"):
         parse_production_models("plan_horizon: 3\n")
+
+
+def test_parse_production_models_rejects_non_mapping() -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        parse_production_models("- just a list\n")
+
+
+def test_parse_production_models_rejects_blank_names() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        parse_production_models("models:\n  - ''\n")
+
+
+def test_governance_result_failures_property() -> None:
+    ok = GovernanceResult(passed=True, reasons=("ignored",))
+    assert ok.failures == ()
+    bad = GovernanceResult(passed=False, reasons=("boom",))
+    assert bad.failures == ("boom",)
+
+
+def test_default_verdict_lookup_used_when_gated(
+    tmp_path: Path,
+) -> None:
+    run_id = "pe-from-data"
+    summary = tmp_path / "runs" / f"run={run_id}" / "summary.json"
+    summary.parent.mkdir(parents=True)
+    summary.write_text('{"verdict": "KEEP"}\n', encoding="utf-8")
+    head = _prod_retarget("dc_prod_v2")
+    result = check_production_governance(
+        changed_paths=[PRODUCTION_RELPATH],
+        base_production_yaml=_PROD,
+        head_production_yaml=head,
+        base_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        head_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        pr_body=f"promote-eval-run: {run_id}\n",
+        data_dir=tmp_path,
+    )
+    assert result.passed
+
+
+def test_missing_verdict_details_fail() -> None:
+    head = _prod_retarget("dc_prod_v2")
+    result = check_production_governance(
+        changed_paths=[PRODUCTION_RELPATH],
+        base_production_yaml=_PROD,
+        head_production_yaml=head,
+        base_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        head_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        pr_body="promote-eval-run: pe-gone\n",
+        verdict_for_run=lambda _run_id: None,
+    )
+    assert not result.passed
+    assert any("pe-gone=missing" in reason for reason in result.reasons)
+
+
+def test_in_place_skips_when_base_spec_missing() -> None:
+    rel = model_spec_relpath("dc_prod_v1")
+    result = check_production_governance(
+        changed_paths=[rel],
+        base_production_yaml=_PROD,
+        head_production_yaml=_PROD,
+        base_model_specs={},
+        head_model_specs={rel: _SPEC_V1_EDITED},
+        pr_body="promote-eval-run: pe-keep-1\n",
+        verdict_for_run=lambda _run_id: "keep",
+    )
+    # Gated (listed at head/base) but not in-place without a base text.
+    assert result.gated_paths == (rel,)
+    assert result.in_place_edits == ()
+    assert result.passed
+
+
+def test_deleted_listed_spec_counts_as_in_place() -> None:
+    rel = model_spec_relpath("dc_prod_v1")
+    result = check_production_governance(
+        changed_paths=[rel],
+        base_production_yaml=_PROD,
+        head_production_yaml=_PROD,
+        base_model_specs={rel: _SPEC_V1},
+        head_model_specs={},
+        pr_body="promote-eval-run: pe-keep-1\n",
+        verdict_for_run=lambda _run_id: "keep",
+    )
+    assert not result.passed
+    assert result.in_place_edits == (rel,)
+
+
+def test_resolve_verdict_from_registry_yaml(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.yaml"
+    registry.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "entries:",
+                "  - id: pe-reg-1",
+                "    date: '2026-01-01'",
+                "    path: modelspec",
+                "    verdict: keep",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert resolve_promote_eval_verdict("pe-reg-1", registry_path=registry) == "keep"
+    assert resolve_promote_eval_verdict("other", registry_path=registry) is None
+
+
+def test_resolve_verdict_bad_registry_returns_none(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.yaml"
+    registry.write_text("not: valid: registry\n", encoding="utf-8")
+    assert resolve_promote_eval_verdict("x", registry_path=registry) is None
+
+
+def test_resolve_verdict_from_promote_eval_tree(tmp_path: Path) -> None:
+    run_id = "pe-nested"
+    summary = tmp_path / "promote_eval" / "board" / run_id / "summary.json"
+    summary.parent.mkdir(parents=True)
+    summary.write_text('{"verdict": "keep"}\n', encoding="utf-8")
+    assert resolve_promote_eval_verdict(run_id, data_dir=tmp_path) == "keep"
+
+
+def test_resolve_verdict_ignores_invalid_summary(tmp_path: Path) -> None:
+    run_id = "pe-bad-summary"
+    summary = tmp_path / "runs" / f"run={run_id}" / "summary.json"
+    summary.parent.mkdir(parents=True)
+    summary.write_text("[1, 2, 3]\n", encoding="utf-8")
+    assert resolve_promote_eval_verdict(run_id, data_dir=tmp_path) is None
+    summary.write_text('{"verdict": ""}\n', encoding="utf-8")
+    assert resolve_promote_eval_verdict(run_id, data_dir=tmp_path) is None
+    summary.write_text("{not-json", encoding="utf-8")
+    assert resolve_promote_eval_verdict(run_id, data_dir=tmp_path) is None
+
+
+def _init_git_repo(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_check_git_production_governance_on_temp_repo(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    prod = repo / PRODUCTION_RELPATH
+    prod.parent.mkdir(parents=True)
+    prod.write_text(_PROD, encoding="utf-8")
+    spec = repo / model_spec_relpath("dc_prod_v1")
+    spec.parent.mkdir(parents=True)
+    spec.write_text(_SPEC_V1, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # Unrelated change → pass.
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "docs"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    ok = check_git_production_governance(
+        repo=repo,
+        base_ref=base,
+        head_ref="HEAD",
+        pr_body="",
+    )
+    assert ok.passed
+
+    # Production retarget without promote-eval link → fail.
+    prod.write_text(_prod_retarget("dc_prod_v2"), encoding="utf-8")
+    (repo / model_spec_relpath("dc_prod_v2")).write_text(_SPEC_V2, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "prod"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    bad = check_git_production_governance(
+        repo=repo,
+        base_ref=base,
+        head_ref="HEAD",
+        pr_body="no link",
+        verdict_for_run=lambda _rid: "keep",
+    )
+    assert not bad.passed
+    assert any("without a promote-eval link" in r for r in bad.reasons)

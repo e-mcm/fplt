@@ -361,3 +361,271 @@ def test_cli_preflight_exits_nonzero_on_missing_season(
     assert "FAIL" in out
     assert "scoring_rules" in out
     del store
+
+
+def test_preflight_report_failures_property() -> None:
+    from fplt.ops.preflight import CheckResult, PreflightReport
+
+    report = PreflightReport(
+        season=_SEASON,
+        checks=(
+            CheckResult("a", True, "ok"),
+            CheckResult("b", False, "warn only", severity="warn"),
+            CheckResult("c", False, "hard fail", severity="fail"),
+        ),
+    )
+    assert report.ok is False
+    assert [c.name for c in report.failures] == ["c"]
+
+
+def test_load_preflight_config_errors(tmp_path: Path) -> None:
+    from fplt.ops.preflight import load_preflight_config
+
+    missing = tmp_path / "missing.yaml"
+    with pytest.raises(FileNotFoundError, match="preflight config"):
+        load_preflight_config(missing)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("[1, 2]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        load_preflight_config(bad)
+
+
+def test_run_preflight_rejects_bad_season() -> None:
+    with pytest.raises(ValueError, match="file name"):
+        run_preflight("../evil", skip_plan=True)
+
+
+def test_missing_chip_rules_fails(tmp_path: Path) -> None:
+    from fplt.ops.preflight import check_chip_rules
+
+    chips = tmp_path / "chips"
+    chips.mkdir()
+    result = check_chip_rules(_SEASON, chips_dir=chips)
+    assert result.ok is False
+    assert "no chip rules" in result.detail
+
+
+def test_team_maps_empty_season_and_count_mismatch(tmp_path: Path) -> None:
+    understat, api, fd = _write_maps(
+        tmp_path,
+        understat_teams={83: 3},
+        api_teams={42: 3},
+        fd_teams={"Arsenal": 3},
+    )
+    empty_season = pl.DataFrame(
+        {
+            "season": ["2098-99"],
+            "team_key": [3],
+            "team_id": [1],
+            "name": ["Arsenal"],
+            "short_name": ["ARS"],
+            "available_at": [_TS],
+            "source": ["fpl_api"],
+        }
+    )
+    result = check_team_maps(
+        _SEASON,
+        empty_season,
+        config=_cfg(),
+        understat_maps=understat,
+        api_football_maps=api,
+        football_data_maps=fd,
+    )
+    assert result.ok is False
+    assert "no staged teams" in result.detail
+
+    frames = _season_frames()
+    result_count = check_team_maps(
+        _SEASON,
+        frames["teams"],
+        config=_cfg(expected_team_count=20),
+        understat_maps=understat,
+        api_football_maps=api,
+        football_data_maps=fd,
+    )
+    assert result_count.ok is False
+    assert "expected 20 teams" in result_count.detail
+
+
+def test_unmapped_players_no_rows_for_season() -> None:
+    from fplt.ops.preflight import check_unmapped_players
+
+    other = pl.DataFrame(
+        {
+            "season": ["2098-99"],
+            "match_id": [1],
+            "understat_player_id": [1],
+            "player_key": [None],
+            "team_key": [3],
+            "xg": [0.1],
+            "xa": [0.0],
+            "shots": [1],
+            "key_passes": [0],
+            "xg_chain": [0.1],
+            "xg_buildup": [0.0],
+            "minutes": [90],
+            "available_at": [_TS],
+            "source": ["understat"],
+        }
+    ).with_columns(pl.col("player_key").cast(pl.Int64))
+    result = check_unmapped_players(
+        _SEASON,
+        understat_player_matches=other,
+        player_injuries=None,
+        player_status=None,
+        config=_cfg(),
+    )
+    assert "no rows for season" in result.detail
+
+
+def test_gw1_deadline_error_paths() -> None:
+    from datetime import datetime
+
+    from fplt.ops.preflight import check_gw1_deadline
+
+    no_gw1 = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "gw": [2],
+            "deadline_time": [_GW1],
+            "finished": [False],
+            "data_checked": [False],
+            "available_at": [_TS],
+            "source": ["fpl_api"],
+        }
+    )
+    assert check_gw1_deadline(_SEASON, no_gw1).ok is False
+
+    not_dt = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "gw": [1],
+            "deadline_time": ["2099-08-15"],
+            "finished": [False],
+            "data_checked": [False],
+            "available_at": [_TS],
+            "source": ["fpl_api"],
+        }
+    )
+    assert "not a datetime" in check_gw1_deadline(_SEASON, not_dt).detail
+
+    naive = pl.DataFrame(
+        {
+            "season": [_SEASON],
+            "gw": [1],
+            "deadline_time": [datetime(2099, 8, 15, 17, 30)],
+            "finished": [False],
+            "data_checked": [False],
+            "available_at": [_TS],
+            "source": ["fpl_api"],
+        }
+    )
+    assert "timezone" in check_gw1_deadline(_SEASON, naive).detail
+
+
+def test_model_specs_and_structural_dry_run_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.ops.preflight import check_dry_run_plan, check_model_specs
+
+    monkeypatch.setattr(
+        "fplt.ops.preflight.load_production_ops",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no ops")),
+    )
+    assert check_model_specs(_SEASON).ok is False
+
+    monkeypatch.setattr(
+        "fplt.ops.preflight.load_production_ops",
+        lambda *_a, **_k: type("Ops", (), {"models": ["missing_model"]})(),
+    )
+    monkeypatch.setattr("fplt.ops.preflight.load_model_specs", lambda *_a, **_k: {})
+    missing = check_model_specs(_SEASON)
+    assert missing.ok is False
+    assert "missing specs" in missing.detail
+
+    frames = _season_frames(include_unmapped=False)
+    # Structural path: specs fail → dry_run fails.
+    bad_specs = check_dry_run_plan(
+        _SEASON,
+        gameweeks=frames["gameweeks"],
+        players=frames["players"],
+        fixtures=frames["fixtures"],
+        plan_probe=None,
+    )
+    assert bad_specs.ok is False
+
+    monkeypatch.setattr(
+        "fplt.ops.preflight.check_model_specs",
+        lambda *_a, **_k: type(
+            "C", (), {"ok": True, "detail": "ok", "name": "model_specs"}
+        )(),
+    )
+    no_players = check_dry_run_plan(
+        _SEASON,
+        gameweeks=frames["gameweeks"],
+        players=None,
+        fixtures=frames["fixtures"],
+        plan_probe=None,
+    )
+    assert "no staged players" in no_players.detail
+
+    no_fixtures = check_dry_run_plan(
+        _SEASON,
+        gameweeks=frames["gameweeks"],
+        players=frames["players"],
+        fixtures=None,
+        plan_probe=None,
+    )
+    assert "no staged fixtures" in no_fixtures.detail
+
+    ok = check_dry_run_plan(
+        _SEASON,
+        gameweeks=frames["gameweeks"],
+        players=frames["players"],
+        fixtures=frames["fixtures"],
+        plan_probe=None,
+    )
+    assert ok.ok is True
+    assert "structural dry-run ok" in ok.detail
+
+
+def test_table_helpers_and_build_fpl_targets(tmp_path: Path) -> None:
+    from fplt.ops.preflight import (
+        _optional_status,
+        _table,
+        build_fpl_targets,
+    )
+
+    assert _table(None, "teams", None) is None
+    override = pl.DataFrame({"x": [1]})
+    assert _table(None, "teams", override) is override
+    assert _optional_status(None) is None
+
+    store = DataStore(tmp_path)
+    assert _table(store, "teams", None) is None
+    assert _optional_status(store) is None
+
+    frames = _season_frames(include_unmapped=False)
+    targets = build_fpl_targets(
+        frames["players"],
+        season=_SEASON,
+        bootstrap_elements=[
+            {
+                "code": 100,
+                "first_name": "Ada",
+                "second_name": "Lovelace",
+                "web_name": "A",
+                "birth_date": "1990-01-02",
+            },
+            {
+                "code": 200,
+                "web_name": "B",
+                "dob": "",
+            },
+        ],
+    )
+    assert len(targets) == 2
+    by_key = {t.player_key: t for t in targets}
+    assert by_key[100].full_name == "Ada Lovelace"
+    assert by_key[100].dob is not None
+    assert by_key[200].full_name == "B"
