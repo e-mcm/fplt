@@ -322,27 +322,41 @@ def latest_build_id(data_dir: Path) -> str | None:
     return best_id
 
 
-def hydrate_staged_from_build(data_dir: Path, build_id: str) -> list[str]:
+def hydrate_staged_from_build(
+    data_dir: Path,
+    build_id: str,
+    *,
+    tables: frozenset[str] | set[str] | None = None,
+) -> list[str]:
     """Copy curated table parquet files into ``staged/<table>/part.parquet``.
 
     Replaces any existing staged tree for tables present in the build so an
     incremental curate can append new captures onto the previous snapshot.
+    When ``tables`` is set, only those names are copied (#346 required-tables
+    hydrate).
 
     Args:
         data_dir: Local data root holding ``curated/`` and ``staged/``.
         build_id: Curated build to materialise.
+        tables: Optional allow-list of table names. ``None`` hydrates every
+            table named in the manifest.
 
     Returns:
         Sorted table names written.
 
     Raises:
         FileNotFoundError: Manifest or a referenced table sha is missing.
+        KeyError: A requested table is absent from the build manifest.
     """
     import shutil
 
     manifest = load_build_manifest(data_dir, build_id)
     written: list[str] = []
-    for name, entry in sorted(manifest.tables.items()):
+    wanted = set(manifest.tables) if tables is None else set(tables)
+    for name in sorted(wanted):
+        entry = manifest.tables.get(name)
+        if entry is None:
+            raise KeyError(f"table {name!r} missing from build {build_id}")
         src = table_sha_path(data_dir, name, entry.sha)
         if not src.is_file():
             raise FileNotFoundError(src)

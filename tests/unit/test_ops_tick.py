@@ -1,22 +1,45 @@
-"""ops-tick wraps feed refresh → catch_up → pre_deadline."""
+"""ops-tick wraps curated hydrate → catch_up → pre_deadline (#346)."""
 
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_tick import (
     OpsTickResult,
     format_ops_tick_status,
     run_ops_tick,
 )
+from fplt.automation.production import OfficialLine, ProductionOps
 from fplt.cli import main
 from fplt.data.snapshots import SnapshotFetchError
+from fplt.models.pipeline_spec import live_pipeline_defaults
 from fplt.settings import get_settings
 from fplt.types import GWKey
+from tests.unit._ops_tick_curated import patch_curated_ops_path
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+
+def _ops(*, horizon: int = 3) -> ProductionOps:
+    pipeline = live_pipeline_defaults(model="rolling_mean_v1", horizon=horizon)
+    return ProductionOps(
+        models=["rolling_mean_v1"],
+        plan_horizon=horizon,
+        pipeline=pipeline,
+        lines=[
+            OfficialLine(
+                line="primary",
+                spec="rolling_mean_v1",
+                horizon=horizon,
+                role="primary",
+                squad_mode="real",
+            )
+        ],
+        min_prior_seasons=3,
+        min_run_interval_minutes=60,
+        max_build_age_minutes=30,
+    )
 
 
 def test_format_ops_tick_status_lists_catch_up_and_pre_deadline() -> None:
@@ -74,17 +97,7 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
     get_settings.cache_clear()
     calls: list[str] = []
     moment = datetime(2024, 8, 16, 9, 0, tzinfo=UTC)
-
-    def refresh(
-        data_dir: Path | None = None,
-        *,
-        source: str = "auto",
-        remote: str = "origin",
-        branch: str = "snapshots",
-        settings: object = None,
-    ) -> FeedRefreshResult:
-        calls.append(f"refresh:{source}:{remote}:{branch}")
-        return FeedRefreshResult(1, 2, 3, 4)
+    patch_curated_ops_path(monkeypatch)
 
     def catch_up(
         data_dir: Path,
@@ -107,7 +120,6 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
 
     notify_calls: list[str] = []
 
-    monkeypatch.setattr("fplt.automation.ops_tick.refresh_ops_feeds", refresh)
     monkeypatch.setattr("fplt.automation.ops_tick.catch_up", catch_up)
     monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", pre)
     monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])
@@ -116,18 +128,7 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
         "fplt.automation.ops_tick.notify_recommendation",
         lambda *a, **k: notify_calls.append("sent") or True,
     )
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.load_production_ops",
-        lambda: type(
-            "Ops",
-            (),
-            {
-                "models": ["rolling_mean_v1"],
-                "plan_horizon": 3,
-                "min_prior_seasons": 3,
-            },
-        )(),
-    )
+    monkeypatch.setattr("fplt.automation.ops_tick.load_production_ops", _ops)
     monkeypatch.setattr(
         "fplt.automation.ops_tick.enforce_training_history",
         lambda *a, **k: None,
@@ -141,11 +142,10 @@ def test_run_ops_tick_calls_catch_up_and_pre_deadline(
     )
     assert result.catch_up_planned == [GWKey("2024-25", 1)]
     assert result.pre_deadline_planned == GWKey("2024-25", 2)
-    assert result.snapshots_fetched == 1
+    assert result.snapshots_fetched == 0  # curated path; never pulls raw/
     assert result.models == ["rolling_mean_v1"]
     assert result.horizon == 3
     assert calls == [
-        "refresh:branch:/tmp/remote:snapshots",
         "catch_up:['rolling_mean_v1']:3",
         f"pre_deadline:{moment.isoformat()}:['rolling_mean_v1']:3",
     ]
@@ -161,11 +161,8 @@ def test_run_ops_tick_skips_notify_when_idle(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     notify_calls: list[str] = []
+    patch_curated_ops_path(monkeypatch)
 
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
     monkeypatch.setattr("fplt.automation.ops_tick.catch_up", lambda *a, **k: [])
     monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", lambda *a, **k: None)
     monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])
@@ -174,16 +171,7 @@ def test_run_ops_tick_skips_notify_when_idle(
         lambda *a, **k: notify_calls.append("sent") or True,
     )
     monkeypatch.setattr(
-        "fplt.automation.ops_tick.load_production_ops",
-        lambda: type(
-            "Ops",
-            (),
-            {
-                "models": ["rolling_mean_v1"],
-                "plan_horizon": 1,
-                "min_prior_seasons": 3,
-            },
-        )(),
+        "fplt.automation.ops_tick.load_production_ops", lambda: _ops(horizon=1)
     )
     monkeypatch.setattr(
         "fplt.automation.ops_tick.enforce_training_history",
@@ -197,36 +185,22 @@ def test_run_ops_tick_skips_notify_when_idle(
     get_settings.cache_clear()
 
 
-def test_run_ops_tick_propagates_fetch_error(
+def test_run_ops_tick_propagates_curated_load_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("JOB_STARTED_AT", "1000")
     get_settings.cache_clear()
 
-    def boom(*_a: object, **_k: object) -> FeedRefreshResult:
-        raise SnapshotFetchError("missing")
+    def boom(*_a: object, **_k: object) -> object:
+        raise RuntimeError("curated pull failed")
 
-    monkeypatch.setattr("fplt.automation.ops_tick.refresh_ops_feeds", boom)
+    monkeypatch.setattr("fplt.automation.ops_tick.load_ops_build_context", boom)
     monkeypatch.setattr(
-        "fplt.automation.ops_tick.load_production_ops",
-        lambda: type(
-            "Ops",
-            (),
-            {
-                "models": ["rolling_mean_v1"],
-                "plan_horizon": 1,
-                "min_prior_seasons": 3,
-            },
-        )(),
+        "fplt.automation.ops_tick.load_production_ops", lambda: _ops(horizon=1)
     )
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.enforce_training_history",
-        lambda *a, **k: None,
-    )
-    with pytest.raises(SnapshotFetchError, match="missing"):
+    with pytest.raises(RuntimeError, match="curated pull failed"):
         run_ops_tick()
-    # Failed tick still writes a local timing artifact; never ops_timing.json.
     timing_files = list((tmp_path / "timing").glob("ops_tick_*.json"))
     assert len(timing_files) == 1
     assert not list(tmp_path.glob("official/**/ops_timing.json"))
@@ -306,13 +280,10 @@ def test_run_ops_tick_expired_token_keeps_planning_with_banner(
     )
     monkeypatch.setenv("FPLT_FPL_API_TOKEN", f"{header}.{payload}.sig")
     get_settings.cache_clear()
+    patch_curated_ops_path(monkeypatch)
 
     bodies: list[str] = []
 
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
     monkeypatch.setattr(
         "fplt.automation.ops_tick.catch_up",
         lambda *a, **k: [GWKey("2024-25", 1)],
@@ -344,16 +315,7 @@ def test_run_ops_tick_expired_token_keeps_planning_with_banner(
         capture_notify,
     )
     monkeypatch.setattr(
-        "fplt.automation.ops_tick.load_production_ops",
-        lambda: type(
-            "Ops",
-            (),
-            {
-                "models": ["rolling_mean_v1"],
-                "plan_horizon": 1,
-                "min_prior_seasons": 3,
-            },
-        )(),
+        "fplt.automation.ops_tick.load_production_ops", lambda: _ops(horizon=1)
     )
     monkeypatch.setattr(
         "fplt.automation.ops_tick.enforce_training_history",
@@ -371,7 +333,6 @@ def test_run_ops_tick_expired_token_keeps_planning_with_banner(
     assert result.auth_manual_apply is True
     assert any(MANUAL_APPLY_BANNER in body for body in bodies)
     assert any("plan report body" in body for body in bodies)
-    # Auth alert + plan recommendation (at least two notify calls).
     assert len(bodies) >= 2
     get_settings.cache_clear()
 
@@ -403,7 +364,6 @@ def test_run_checkpoint_writes_ops_log_jsonl(
         lambda _d: "report",
     )
     key = GWKey("2026-27", 12)
-    # Non-T-90m path exercises plan_deadline + ops_log without official slate.
     checkpoint = Checkpoint(
         id="T-6h",
         offset=timedelta(hours=6),
@@ -445,26 +405,14 @@ def test_run_ops_tick_history_guard_fails_and_alerts(
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
     catch_calls: list[str] = []
+    patch_curated_ops_path(monkeypatch)
 
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
     monkeypatch.setattr(
         "fplt.automation.ops_tick.catch_up",
         lambda *a, **k: catch_calls.append("catch_up") or [],
     )
     monkeypatch.setattr(
-        "fplt.automation.ops_tick.load_production_ops",
-        lambda: type(
-            "Ops",
-            (),
-            {
-                "models": ["rolling_mean_v1"],
-                "plan_horizon": 1,
-                "min_prior_seasons": 3,
-            },
-        )(),
+        "fplt.automation.ops_tick.load_production_ops", lambda: _ops(horizon=1)
     )
 
     def boom(*_a: object, **_k: object) -> None:

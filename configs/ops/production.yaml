@@ -33,6 +33,12 @@ plan_horizon: 3
 # history at the deadline has fewer completed prior seasons than this,
 # or when a finished current-season GW lacks player_fixture_stats.
 min_prior_seasons: 3
+# #346 run identity: outside checkpoints, at most one run per line per
+# this many minutes (price/news churn must not re-predict every tick).
+min_run_interval_minutes: 60
+# #346 freshness: T−90m / T−30m refuse a curated build older than this
+# and ntfy instead of planning on stale data.
+max_build_age_minutes: 30
 
 lines:
   - {line: v4_h3, spec: dc_layered_v4_native, horizon: 3, role: primary}

@@ -191,12 +191,30 @@ def component_builder_for(
 
 
 def fit_or_load_predictor(
-    data_dir: Path, spec: ModelSpec, as_of: GWKey, view: PITView
+    data_dir: Path,
+    spec: ModelSpec,
+    as_of: GWKey,
+    view: PITView,
+    *,
+    fit_fp: str | None = None,
 ) -> PointsPredictor:
-    """Load an existing artifact for ``as_of``, or fit and save a new one."""
+    """Load an existing artifact for ``as_of``, or fit and save a new one.
+
+    When ``fit_fp`` is set (#346), artifacts live under
+    ``artifacts/<model_id>/as_of=…/fit_fp=<fp>/`` so a matching fingerprint
+    reuses the fit and a changed fingerprint never overwrites the prior one.
+    """
     dest = artifact_dir(data_dir, spec, as_of)
+    if fit_fp is not None:
+        dest = dest / f"fit_fp={fit_fp}"
     cls = get_model(spec.kind)
     if (dest / "spec.json").exists():
+        if fit_fp is not None:
+            recorded = (dest / "fit_fp.txt").read_text(encoding="utf-8").strip()
+            if recorded != fit_fp:
+                raise RuntimeError(
+                    f"artifact fit_fp mismatch at {dest}: {recorded!r} != {fit_fp!r}"
+                )
         logger.info("loading artifact from %s", dest)
         loaded: PointsPredictor = cls.load(dest, spec)
         return loaded
@@ -204,6 +222,8 @@ def fit_or_load_predictor(
     model: PointsPredictor = cls(spec)
     model.fit(view)
     model.save(dest)
+    if fit_fp is not None:
+        (dest / "fit_fp.txt").write_text(fit_fp + "\n", encoding="utf-8")
     return model
 
 

@@ -82,6 +82,10 @@ class ProductionOps(BaseModel):
     pipeline: PipelineSpec
     lines: list[OfficialLine] = Field(min_length=1)
     min_prior_seasons: int = Field(ge=1, default=3)
+    # #346: outside checkpoints, at most one run per line per this interval.
+    min_run_interval_minutes: int = Field(ge=1, default=60)
+    # #346: T−90m / T−30m refuse builds older than this (ntfy instead).
+    max_build_age_minutes: int = Field(ge=1, default=30)
 
     @field_validator("models")
     @classmethod
@@ -219,6 +223,8 @@ def load_production_ops(
         pipeline=pipeline,
         lines=lines,
         min_prior_seasons=ops.min_prior_seasons,
+        min_run_interval_minutes=ops.min_run_interval_minutes,
+        max_build_age_minutes=ops.max_build_age_minutes,
     )
 
 
@@ -268,13 +274,32 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
     min_prior = int(min_prior_raw)
     if min_prior < 1:
         raise ValueError("min_prior_seasons must be >= 1")
+    min_interval = _positive_int(
+        raw.get("min_run_interval_minutes", 60),
+        name="min_run_interval_minutes",
+    )
+    max_age = _positive_int(
+        raw.get("max_build_age_minutes", 30),
+        name="max_build_age_minutes",
+    )
     return ProductionOps(
         models=models,
         plan_horizon=horizon,
         pipeline=pipeline,
         lines=lines,
         min_prior_seasons=min_prior,
+        min_run_interval_minutes=min_interval,
+        max_build_age_minutes=max_age,
     )
+
+
+def _positive_int(raw: object, *, name: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+        raise ValueError(f"{name} must be an integer >= 1")
+    value = int(raw)
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1")
+    return value
 
 
 def _lines_from_mapping(

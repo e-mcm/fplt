@@ -98,6 +98,16 @@ def test_run_manifest_allows_pre_build_staged_digests() -> None:
     assert manifest.staged_digests["players"] == "d" * 64
 
 
+def test_run_manifest_stores_fp_and_build_id() -> None:
+    """#346: ops identity fields on every run manifest."""
+    digest = "f" * 64
+    manifest = RunManifest.model_validate(_run_kwargs(fp=digest, build_id="build_cafe"))
+    assert manifest.fp == digest
+    assert manifest.build_id == "build_cafe"
+    restored = RunManifest.model_validate(manifest.model_dump(mode="json"))
+    assert restored.fp == digest
+
+
 def test_run_manifest_rejects_succeeded_without_finished_at() -> None:
     with pytest.raises(ValidationError, match="finished_at"):
         RunManifest.model_validate(_run_kwargs(finished_at=None, status="succeeded"))

@@ -192,6 +192,7 @@ class RunWriter:
         raw_manifest_hash: str | None = None,
         staged_digests: dict[str, str] | None = None,
         build_id: str | None = None,
+        fp: str | None = None,
         started_at: datetime | None = None,
         experiment_id: str | None = None,
         arm: str | None = None,
@@ -230,6 +231,8 @@ class RunWriter:
             build_id: Curated build id. When ``auto_build_id`` is true and this
                 is ``None``, defaults to ``latest_build_id``; when
                 ``auto_build_id`` is false, ``None`` is stored as-is.
+            fp: Run identity fingerprint (#346). Written to the manifest and,
+                on success, to ``runs/by_fp/fp=<fp>.json``.
             started_at: Manifest start time; defaults to now (UTC).
             experiment_id: Owning experiment when ``kind="experiment"``.
             arm: Arm name within that experiment (control / treatment / …).
@@ -283,6 +286,7 @@ class RunWriter:
             self._build_id = latest_build_id(data_dir)
         else:
             self._build_id = None
+        self._fp = fp
         self._started_at = _aware(
             started_at if started_at is not None else datetime.now(UTC)
         )
@@ -444,6 +448,17 @@ class RunWriter:
             from fplt.store.catalog import write_run_inbox_row
 
             write_run_inbox_row(self.data_dir, self._manifest)
+            if self._fp is not None:
+                from fplt.store.fingerprint import write_fp_index
+
+                try:
+                    write_fp_index(self.data_dir, self._fp, self.run_id)
+                except FileExistsError:
+                    logger.info(
+                        "by_fp already present for fp=%s run_id=%s",
+                        self._fp[:12],
+                        self.run_id,
+                    )
         self._finalized = True
         logger.info(
             "run finished run_id=%s status=%s",
@@ -512,6 +527,7 @@ class RunWriter:
             fplt_mc_version=self._fplt_mc_version,
             lockfile_hash=self._lockfile_hash,
             build_id=self._build_id,
+            fp=self._fp,
             raw_manifest_hash=self._raw_manifest_hash,
             staged_digests=self._staged_digests,
             as_of=self._as_of,
@@ -570,6 +586,9 @@ def write_predict_run(
     checkpoint: str | None = None,
     components_for_run_id: object | None = None,
     points_pmf_for_run_id: object | None = None,
+    build_id: str | None = None,
+    fp: str | None = None,
+    prod_tag: str | None = None,
 ) -> RunManifest:
     """Dual-write a live predict table into a new run folder.
 
@@ -593,6 +612,9 @@ def write_predict_run(
         checkpoint: Ops checkpoint label (e.g. ``T-90m``) for official runs.
         components_for_run_id: Optional builder stamped with ``writer.run_id``.
         points_pmf_for_run_id: Optional official PMF builder.
+        build_id: Curated build id for the manifest (#346).
+        fp: Run fingerprint for skip-if-done (#346).
+        prod_tag: Moving ops tag label when known.
 
     Returns:
         The succeeded ``RunManifest``.
@@ -615,6 +637,10 @@ def write_predict_run(
         purpose=purpose or f"predict {spec.name} {as_of.season} gw{as_of.gw}",
         seeds=_seed_from_spec(spec),
         checkpoint=checkpoint,
+        build_id=build_id,
+        fp=fp,
+        prod_tag=prod_tag,
+        auto_build_id=build_id is None,
     ) as writer:
         writer.write_parquet("predictions/player_fixture.parquet", frame)
         _write_component_tables(writer, components_for_run_id)
@@ -678,6 +704,9 @@ def write_plan_run(
     checkpoint: str | None = None,
     line: str | None = None,
     squad_mode: SquadMode | None = None,
+    build_id: str | None = None,
+    fp: str | None = None,
+    prod_tag: str | None = None,
 ) -> RunManifest:
     """Dual-write a plan table into a new run folder.
 
@@ -694,6 +723,9 @@ def write_plan_run(
         checkpoint: Ops checkpoint label for official runs.
         line: Official line name when ``kind="official"``.
         squad_mode: ``real`` / ``virtual`` for official plan runs.
+        build_id: Curated build id for the manifest (#346).
+        fp: Run fingerprint for skip-if-done (#346).
+        prod_tag: Moving ops tag label when known.
 
     Returns:
         The succeeded ``RunManifest``.
@@ -720,6 +752,10 @@ def write_plan_run(
         checkpoint=checkpoint,
         line=line,
         squad_mode=squad_mode,
+        build_id=build_id,
+        fp=fp,
+        prod_tag=prod_tag,
+        auto_build_id=build_id is None,
     ) as writer:
         writer.write_parquet("plans/plan.parquet", frame)
     _push_if_configured(data_dir, writer.run_id)
