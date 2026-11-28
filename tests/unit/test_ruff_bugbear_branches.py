@@ -142,12 +142,8 @@ def test_actuals_for_equivalence_when_store_read_fails(tmp_path: Path) -> None:
         assert _actuals_for_equivalence(tmp_path, _plan()) is None
 
 
-def test_member_prediction_keys_skips_corrupt_parquet(tmp_path: Path) -> None:
-    member = ModelSpec(name="m", kind="rolling_mean", params={"window": 5})
-    root = tmp_path / "predictions" / member.model_id / "as_of=x"
-    root.mkdir(parents=True)
-    (root / "part.parquet").write_bytes(b"not-parquet")
-    scored = pl.DataFrame(
+def _empty_scored() -> pl.DataFrame:
+    return pl.DataFrame(
         {
             "season": pl.Series([], dtype=pl.Utf8),
             "gw": pl.Series([], dtype=pl.Int64),
@@ -155,9 +151,95 @@ def test_member_prediction_keys_skips_corrupt_parquet(tmp_path: Path) -> None:
             "fixture_id": pl.Series([], dtype=pl.Int64),
         }
     )
-    keys, source = _member_prediction_keys(tmp_path, member, scored)
+
+
+def _predict_run_parquet(data_dir: Path, member: ModelSpec) -> Path:
+    """Write a succeeded predict run and return its player_fixture path."""
+    from fplt.store.catalog import scan_succeeded_runs
+    from fplt.store.runs import run_dir, write_predict_run
+    from fplt.types import GWKey
+
+    write_predict_run(
+        data_dir,
+        spec=member,
+        as_of=GWKey("2025-26", 1),
+        deadline_utc=_TS,
+        horizon=1,
+        frame=pl.DataFrame(
+            {
+                "model_id": [member.model_id],
+                "run_kind": ["live"],
+                "as_of_season": ["2025-26"],
+                "as_of_gw": [1],
+                "target_season": ["2025-26"],
+                "target_gw": [1],
+                "horizon": [0],
+                "player_key": [1],
+                "position": ["MID"],
+                "fixture_id": [10],
+                "xpts": [2.5],
+                "xpts_sd": [0.5],
+                "p_played": [None],
+                "p_60": [None],
+                "p_goal": [None],
+                "p_assist": [None],
+                "p_cs": [None],
+                "p_haul": [None],
+                "actual_pts": [None],
+                "actual_minutes": [None],
+                "actual_goals": [None],
+                "actual_assists": [None],
+                "actual_cs": [None],
+            }
+        ),
+    )
+    run_id = scan_succeeded_runs(data_dir)["run_id"][0]
+    return run_dir(data_dir, str(run_id)) / "predictions" / "player_fixture.parquet"
+
+
+def test_member_prediction_keys_skips_corrupt_parquet(tmp_path: Path) -> None:
+    member = ModelSpec(name="m", kind="rolling_mean", params={"window": 5})
+    path = _predict_run_parquet(tmp_path, member)
+    path.write_bytes(b"not-parquet")
+    keys, source = _member_prediction_keys(tmp_path, member, _empty_scored())
     assert keys.is_empty()
-    assert isinstance(source, str)
+    assert source == "universe"
+
+
+def test_member_prediction_keys_skips_missing_and_noxpts(tmp_path: Path) -> None:
+    """Missing parquet and parquet without xpts are skipped (runs/ layout)."""
+    member = ModelSpec(name="m", kind="rolling_mean", params={"window": 5})
+    path = _predict_run_parquet(tmp_path, member)
+    path.unlink()
+    keys, source = _member_prediction_keys(tmp_path, member, _empty_scored())
+    assert keys.is_empty()
+    assert source == "universe"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame({"player_key": [1], "fixture_id": [10]}).write_parquet(path)
+    keys, source = _member_prediction_keys(tmp_path, member, _empty_scored())
+    assert keys.is_empty()
+    assert source == "universe"
+
+
+def test_member_prediction_keys_reads_season_gw_columns(tmp_path: Path) -> None:
+    """Predict-run frames with season/gw columns contribute coverage keys."""
+    member = ModelSpec(name="m", kind="rolling_mean", params={"window": 5})
+    path = _predict_run_parquet(tmp_path, member)
+    pl.DataFrame(
+        {
+            "season": ["2025-26"],
+            "gw": [1],
+            "player_key": [7],
+            "fixture_id": [11],
+            "xpts": [3.0],
+        }
+    ).write_parquet(path)
+    keys, source = _member_prediction_keys(tmp_path, member, _empty_scored())
+    assert source == "predictions"
+    assert keys.to_dicts() == [
+        {"season": "2025-26", "gw": 1, "player_key": 7, "fixture_id": 11}
+    ]
 
 
 def test_check_leak_skips_corrupt_feature_parquet(tmp_path: Path) -> None:
