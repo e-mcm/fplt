@@ -159,7 +159,8 @@ def test_push_raw_soft_skips_when_r2_secrets_unset_off_main(tmp_path: Path) -> N
     assert "soft skip" in result.stdout
     out = (tmp_path / "out").read_text(encoding="utf-8")
     assert "skip=true" in out
-    assert "uploaded=false" in out
+    # uploaded is set by the result step after the gate, not here (#340).
+    assert "uploaded=" not in out
 
 
 def test_push_raw_fails_on_main_when_r2_secrets_unset(tmp_path: Path) -> None:
@@ -211,7 +212,35 @@ def test_push_raw_soft_skips_on_pull_request_even_when_ref_main(tmp_path: Path) 
     )
     assert result.returncode == 0
     assert "soft skip" in result.stdout
-    assert "uploaded=false" in (tmp_path / "out").read_text(encoding="utf-8")
+    assert "skip=true" in (tmp_path / "out").read_text(encoding="utf-8")
+
+
+def test_push_raw_gate_does_not_claim_uploaded_when_creds_present(
+    tmp_path: Path,
+) -> None:
+    """Credentials alone must not set uploaded=true before rclone (#340)."""
+    script = _push_raw_gate_script()
+    env = {
+        "R2_ACCOUNT_ID": "acct",
+        "R2_ACCESS_KEY_ID": "key",
+        "R2_SECRET_ACCESS_KEY": "secret",
+        "DATA_BUCKET": "fplt-data",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_OUTPUT": str(tmp_path / "out"),
+        "PATH": "/usr/bin:/bin",
+    }
+    (tmp_path / "out").write_text("", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    out = (tmp_path / "out").read_text(encoding="utf-8")
+    assert "skip=false" in out
+    assert "uploaded=" not in out
 
 
 def test_push_raw_exposes_uploaded_output() -> None:
@@ -220,6 +249,19 @@ def test_push_raw_exposes_uploaded_output() -> None:
         (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
     )
     assert "uploaded" in doc.get("outputs", {})
+    assert doc["outputs"]["uploaded"]["value"] == (
+        "${{ steps.result.outputs.uploaded }}"
+    )
+
+
+def test_push_raw_uses_install_rclone_not_apt() -> None:
+    """push-raw must install the pinned rclone action, not apt (#340)."""
+    text = (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
+    assert "apt-get install" not in text
+    assert "install-rclone" in text
+    doc = yaml.safe_load(text)
+    uses = [s.get("uses") for s in doc["runs"]["steps"] if "uses" in s]
+    assert "./.github/actions/install-rclone" in uses
 
 
 def test_notify_failure_soft_skips_when_ntfy_url_unset() -> None:

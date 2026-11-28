@@ -186,7 +186,7 @@ named `r2` — every job that reads them must set `environment: r2` (lint:
 |---|---|---|
 | `.github/actions/heartbeat` | `alerts` job when the main job succeeded | `curl` the check's ping URL |
 | `.github/actions/notify-failure` | `alerts` job when the main job failed | ntfy POST with workflow, job, and run URL (no log excerpts) |
-| `.github/actions/push-raw` | capture jobs after raw write | rclone copy to R2; soft-skips off main when secrets unset; fails on main; exposes `uploaded` |
+| `.github/actions/push-raw` | capture jobs after raw write | pinned rclone copy+check to R2; soft-skips off main when secrets unset; fails on main; `uploaded=true` only after success |
 
 `alerts` is a separate job (`needs: <main>`, `if: always()`) with a fresh
 checkout. Capture jobs may switch to the `snapshots` branch for publish, which

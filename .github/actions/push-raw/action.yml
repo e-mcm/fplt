@@ -7,9 +7,9 @@ inputs:
 outputs:
   uploaded:
     description: >
-      true when R2 credentials were present and the upload step ran
-      (including "nothing new"); false on soft-skip off main
-    value: ${{ steps.gate.outputs.uploaded }}
+      true only after rclone copy (and check) exit 0, or when there is
+      nothing new to upload; false on soft-skip off main or upload failure
+    value: ${{ steps.result.outputs.uploaded }}
 runs:
   using: composite
   steps:
@@ -33,16 +33,14 @@ runs:
           fi
           echo "soft skip: R2 credentials or DATA_BUCKET unset (configure R2_* secrets and DATA_BUCKET)"
           echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "uploaded=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         echo "skip=false" >> "$GITHUB_OUTPUT"
-        echo "uploaded=true" >> "$GITHUB_OUTPUT"
     - name: Install rclone
       if: steps.gate.outputs.skip != 'true'
-      shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+      uses: ./.github/actions/install-rclone
     - name: Upload raw captures
+      id: upload
       if: steps.gate.outputs.skip != 'true'
       shell: bash
       env:
@@ -51,13 +49,28 @@ runs:
         RCLONE_CONFIG_FPLT_NO_CHECK_BUCKET: "true"
       run: |
         set -euo pipefail
-        src="${{ inputs.src }}"
-        if [ ! -d "$src" ] || [ -z "$(find "$src" -type f | head -n 1)" ]; then
-          echo "nothing new to upload"
-          exit 0
-        fi
         export RCLONE_CONFIG_FPLT_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
         export RCLONE_CONFIG_FPLT_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
         export RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-        rclone copy "$src" "fplt:${DATA_BUCKET}/raw" \
-          --immutable --fast-list --stats-one-line -v
+        bash "${{ github.workspace }}/scripts/push_raw_upload.sh" \
+          "${{ inputs.src }}" \
+          "fplt:${DATA_BUCKET}/raw"
+    - name: Record uploaded outcome
+      id: result
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ steps.gate.outputs.skip }}" = "true" ]; then
+          echo "uploaded=false" >> "$GITHUB_OUTPUT"
+        elif [ "${{ steps.upload.outcome }}" = "success" ]; then
+          # Prefer the helper's explicit flag when present; else trust outcome.
+          helper="${{ steps.upload.outputs.uploaded }}"
+          if [ -n "$helper" ]; then
+            echo "uploaded=${helper}" >> "$GITHUB_OUTPUT"
+          else
+            echo "uploaded=true" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "uploaded=false" >> "$GITHUB_OUTPUT"
+        fi

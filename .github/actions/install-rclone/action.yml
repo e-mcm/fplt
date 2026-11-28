@@ -1,10 +1,12 @@
 name: install-rclone
-description: Install a pinned rclone static binary (cached)
+description: Install a pinned rclone static binary (checksum-verified, cached)
 inputs:
   version:
-    description: rclone release version without leading v
+    description: >
+      rclone release version without leading v. Default matches the pin in
+      docs/ops-runbook.md (Tooling pins). Keep those in sync.
     required: false
-    default: "1.69.1"
+    default: "1.76.0"
 runs:
   using: composite
   steps:
@@ -32,8 +34,23 @@ runs:
             ;;
         esac
         mkdir -p "${{ runner.temp }}/rclone-bin"
-        url="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/${asset}.zip"
-        curl -fsSL "$url" -o /tmp/rclone.zip
+        base="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}"
+        curl -fsSL "${base}/${asset}.zip" -o /tmp/rclone.zip
+        curl -fsSL "${base}/SHA256SUMS" -o /tmp/rclone-SHA256SUMS
+        # SHA256SUMS is PGP-clearsigned; extract the matching zip line and verify.
+        sum_line="$(grep -E "[[:space:]]${asset}\\.zip\$" /tmp/rclone-SHA256SUMS | tail -n 1)"
+        if [ -z "$sum_line" ]; then
+          echo "::error::no SHA256SUMS entry for ${asset}.zip"
+          exit 1
+        fi
+        expected="$(printf '%s\n' "$sum_line" | awk '{print $1}')"
+        actual="$(sha256sum /tmp/rclone.zip | awk '{print $1}')"
+        if [ "$expected" != "$actual" ]; then
+          echo "::error::rclone zip checksum mismatch for ${asset}.zip"
+          echo "expected=${expected}"
+          echo "actual=${actual}"
+          exit 1
+        fi
         unzip -o /tmp/rclone.zip -d /tmp
         install -m 755 "/tmp/${asset}/rclone" "${{ runner.temp }}/rclone-bin/rclone"
     - name: Add rclone to PATH
