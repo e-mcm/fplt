@@ -131,8 +131,18 @@ def _not_implemented(name: str) -> int:
 
 
 def _exit_config_error(exc: BaseException) -> None:
-    """Log a config error and exit 2 without a traceback."""
-    logger.error("%s", exc)
+    """Log a config error and exit 2 without a traceback.
+
+    Disables ``logging.raiseExceptions`` for the emit so a broken handler
+    (seen under xdist + caplog) cannot dump ``--- Logging error ---`` plus
+    the exception class name onto operator stderr.
+    """
+    previous = logging.raiseExceptions
+    logging.raiseExceptions = False
+    try:
+        logger.error("%s", exc)
+    finally:
+        logging.raiseExceptions = previous
     print(str(exc), file=sys.stderr)
     raise SystemExit(2) from None
 
