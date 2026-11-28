@@ -1,5 +1,8 @@
 """Catch-up plans a skipped week. The deadline sensor fires inside three hours."""
 
+from __future__ import annotations
+
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,7 +28,7 @@ from fplt.backtest.ledger import align_ledger_columns
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, write_plan
 from fplt.optimise.state import SquadState
 from fplt.orchestration import defs
 from fplt.orchestration.assets import recommendation_report
@@ -38,6 +41,23 @@ from fplt.types import GWKey
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
 _ROOT = Path(__file__).resolve().parents[2]
+_MODEL = "rolling_mean_v1"
+
+
+@pytest.fixture(scope="module")
+def _league_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the synthetic league once per worker; tests copy into tmp_path."""
+    root = tmp_path_factory.mktemp("cycle_league")
+    _league(root)
+    return root
+
+
+@pytest.fixture
+def league_dir(tmp_path: Path, _league_template: Path) -> Path:
+    """Fresh data dir with the shared synthetic league copied in."""
+    dest = tmp_path / "data"
+    shutil.copytree(_league_template, dest)
+    return dest
 
 
 def test_production_models_are_dc_layered_v4_native_at_default_horizon() -> None:
@@ -57,48 +77,46 @@ def test_production_models_are_dc_layered_v4_native_at_default_horizon() -> None
     assert plans_exist.__defaults__[-1] is None
 
 
-def test_a_deadline_is_due_only_inside_three_hours(tmp_path: Path) -> None:
-    store = _league(tmp_path)
+def test_a_deadline_is_due_only_inside_three_hours(league_dir: Path) -> None:
+    store = DataStore(league_dir)
     assert due_gameweek(store, _GW3 - timedelta(hours=4)) is None
     assert due_gameweek(store, _GW3 + timedelta(minutes=1)) is None
     due = due_gameweek(store, _GW3 - timedelta(hours=1))
     assert due is not None
     assert due.gw == 3
-    waiting = pending_checked(store, tmp_path, ["rolling_mean_v1"], horizon=1)
+    waiting = pending_checked(store, league_dir, [_MODEL], horizon=1)
     assert [key.gw for key in waiting] == [1, 2]
-    assert plans_exist(tmp_path, ["rolling_mean_v1"], GWKey("2024-25", 1), 0) is False
+    assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 0) is False
 
 
 def test_catch_up_plans_a_skipped_checked_week(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _league(tmp_path)
+    """Real predict+plan path: catch-up writes reports for skipped checked weeks."""
     monkeypatch.setattr(
         "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
     )
-    done = catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
+    done = catch_up(league_dir, [_MODEL], horizon=1)
     assert [key.gw for key in done] == [1, 2]
-    assert catch_up(tmp_path, ["rolling_mean_v1"], horizon=1) == []
-    text = reports(tmp_path)
+    assert catch_up(league_dir, [_MODEL], horizon=1) == []
+    text = reports(league_dir)
     assert "GW 1" in text
     assert "GW 2" in text
     moment = _GW3 - timedelta(hours=1)
-    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is not None
-    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is None
+    assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is not None
+    assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is None
 
 
 def test_pre_deadline_refreshes_when_availability_signal_is_newer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _league(tmp_path)
-    monkeypatch.setattr(
-        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
-    )
+    """Refresh wiring only: stub predict/plan; assert stale signal triggers rebuild."""
+    _stub_predict_and_plan(monkeypatch)
     moment = _GW3 - timedelta(hours=1)
-    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is not None
-    assert pre_deadline(tmp_path, moment, ["rolling_mean_v1"], horizon=1) is None
+    assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is not None
+    assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is None
 
-    store = DataStore(tmp_path)
+    store = DataStore(league_dir)
     store.write(
         "player_status",
         pl.DataFrame(
@@ -122,12 +140,12 @@ def test_pre_deadline_refreshes_when_availability_signal_is_newer(
         lambda _path: moment - timedelta(hours=2),
     )
     later = moment + timedelta(minutes=10)
-    assert pre_deadline(tmp_path, later, ["rolling_mean_v1"], horizon=1) is not None
+    assert pre_deadline(league_dir, later, [_MODEL], horizon=1) is not None
     assert (
         pre_deadline(
-            tmp_path,
+            league_dir,
             later,
-            ["rolling_mean_v1"],
+            [_MODEL],
             horizon=1,
             refresh_if_stale=False,
         )
@@ -136,9 +154,9 @@ def test_pre_deadline_refreshes_when_availability_signal_is_newer(
 
 
 def test_catch_up_passes_live_squad_when_entry_id_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _league(tmp_path)
+    """Entry-id wiring: catch-up must pass the live squad into run_plan."""
     monkeypatch.setenv("FPLT_ENTRY_ID", "42")
     monkeypatch.setenv("FPLT_FPL_SESSION", "cookie")
     get_settings.cache_clear()
@@ -148,33 +166,13 @@ def test_catch_up_passes_live_squad_when_entry_id_set(
     def load_team(**_: object) -> CurrentTeam:
         return team
 
-    def spy_plan(
-        data_dir: Path,
-        model_name: str,
-        season: str,
-        gameweek: int,
-        horizon: int,
-        entry_json: Path | None = None,
-        squad: SquadState | None = None,
-    ):
-        seen.append(squad)
-        from fplt.optimise.decisions import run_plan as real
-
-        return real(
-            data_dir,
-            model_name,
-            season,
-            gameweek,
-            horizon,
-            entry_json=entry_json,
-            squad=squad,
-        )
-
     monkeypatch.setattr("fplt.optimise.decisions.load_current_team", load_team)
-    monkeypatch.setattr("fplt.automation.cycle.run_plan", spy_plan)
+    _stub_predict_and_plan(monkeypatch, seen=seen)
     try:
-        done = catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
+        done = catch_up(league_dir, [_MODEL], horizon=1)
         assert [key.gw for key in done] == [1, 2]
+        # Regression: stubbed path still must receive a resolved live squad
+        # (bank / selling price / 15 owned) — not an empty YAML draft.
         assert len(seen) == 2
         for squad in seen:
             assert squad is not None
@@ -182,14 +180,16 @@ def test_catch_up_passes_live_squad_when_entry_id_set(
             assert len(squad.owned) == 15
             assert squad.owned[0].selling_price == 46
             assert squad.free_transfers == 1
+        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
+        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 2), 1)
     finally:
         get_settings.cache_clear()
 
 
 def test_catch_up_without_entry_id_keeps_yaml_draft(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _league(tmp_path)
+    """YAML-draft wiring: without entry id, run_plan sees empty owned + bank 1000."""
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     monkeypatch.delenv("FPLT_FPL_SESSION", raising=False)
     get_settings.cache_clear()
@@ -198,44 +198,36 @@ def test_catch_up_without_entry_id_keeps_yaml_draft(
     def boom(**_: object) -> CurrentTeam:
         raise AssertionError("load_current_team must not run without entry id")
 
-    def spy_plan(
-        data_dir: Path,
-        model_name: str,
-        season: str,
-        gameweek: int,
-        horizon: int,
-        entry_json: Path | None = None,
-        squad: SquadState | None = None,
-    ):
-        seen.append(squad)
-        from fplt.optimise.decisions import run_plan as real
-
-        return real(
-            data_dir,
-            model_name,
-            season,
-            gameweek,
-            horizon,
-            entry_json=entry_json,
-            squad=squad,
-        )
-
     monkeypatch.setattr("fplt.optimise.decisions.load_current_team", boom)
-    monkeypatch.setattr("fplt.automation.cycle.run_plan", spy_plan)
+    _stub_predict_and_plan(monkeypatch, seen=seen)
     try:
-        catch_up(tmp_path, ["rolling_mean_v1"], horizon=1)
+        catch_up(league_dir, [_MODEL], horizon=1)
+        # Regression: stubbed path must still see YAML draft squad state.
         assert seen
         assert all(squad is not None and squad.owned == [] for squad in seen)
         assert all(squad is not None and squad.bank == 1000 for squad in seen)
+        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
     finally:
         get_settings.cache_clear()
 
 
+def test_stub_plan_writer_marks_plans_exist(league_dir: Path) -> None:
+    """Stub helper writes a plan parquet that ``plans_exist`` recognises.
+
+    Guards against a stub that records squad kwargs but forgets to satisfy
+    the catch-up / pre-deadline completion check (assertion weakening).
+    """
+    path = _write_stub_plan(league_dir, _MODEL, "2024-25", 1, 1)
+    assert path.exists()
+    assert (path.parent / "report.md").read_text(encoding="utf-8")
+    assert "GW 1" in (path.parent / "report.md").read_text(encoding="utf-8")
+    assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is True
+
+
 def test_sensors_request_a_run_and_then_skip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _use(tmp_path, monkeypatch)
-    _league(tmp_path)
+    _use(league_dir, monkeypatch)
     catch = catchup_sensor.evaluate_tick(dg.build_sensor_context())
     assert catch.run_requests[0].run_key == "catchup-2024-25-1"
     moment = _GW3 - timedelta(hours=1)
@@ -262,10 +254,9 @@ def test_deploy_templates_name_the_dagster_processes() -> None:
 
 @pytest.mark.slow
 def test_materialize_attaches_the_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _use(tmp_path, monkeypatch)
-    _league(tmp_path)
+    _use(league_dir, monkeypatch)
     # Synthetic league has rolling-mean ledger rows only; keep the asset path
     # under that model and H=1 so the report-attachment check stays cheap.
     from fplt.models.pipeline_spec import live_pipeline_defaults
@@ -273,15 +264,15 @@ def test_materialize_attaches_the_report(
     monkeypatch.setattr(
         "fplt.automation.cycle.load_production_ops",
         lambda: ProductionOps(
-            models=["rolling_mean_v1"],
+            models=[_MODEL],
             plan_horizon=1,
             pipeline=live_pipeline_defaults(
-                model="rolling_mean_v1", horizon=1, mc_backend="python"
+                model=_MODEL, horizon=1, mc_backend="python"
             ),
             lines=[
                 OfficialLine(
                     line="primary",
-                    spec="rolling_mean_v1",
+                    spec=_MODEL,
                     horizon=1,
                     role="primary",
                 )
@@ -297,9 +288,77 @@ def test_materialize_attaches_the_report(
     get_settings.cache_clear()
 
 
-def _use(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+def _use(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FPLT_DATA_DIR", str(data_dir))
     get_settings.cache_clear()
+
+
+def _stub_predict_and_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seen: list[SquadState | None] | None = None,
+) -> None:
+    """Skip real backtest/MILP; write a tiny plan so ``plans_exist`` succeeds."""
+    monkeypatch.setattr(
+        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.cycle.run_backtest", lambda *a, **k: None)
+
+    def fake_run_plan(
+        data_dir: Path,
+        model_name: str,
+        season: str,
+        gameweek: int,
+        horizon: int,
+        entry_json: Path | None = None,
+        squad: SquadState | None = None,
+        **_: object,
+    ) -> tuple[None, Path, str, str]:
+        if seen is not None:
+            seen.append(squad)
+        path = _write_stub_plan(data_dir, model_name, season, gameweek, horizon)
+        report = (path.parent / "report.md").read_text(encoding="utf-8")
+        return None, path, report, "stub-run"
+
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", fake_run_plan)
+
+
+def _write_stub_plan(
+    data_dir: Path,
+    model_name: str,
+    season: str,
+    gameweek: int,
+    horizon: int,
+) -> Path:
+    """Write a minimal plan parquet (+ report) for one deadline/horizon."""
+    model_id = load_model_specs()[model_name].model_id
+    weeks = covered_horizon(gameweek, horizon)
+    rows = [
+        {
+            "model_id": model_id,
+            "as_of_season": season,
+            "as_of_gw": gameweek,
+            "target_gw": gameweek + step,
+            "step": step,
+            "player_key": 1,
+            "position": "MID",
+            "team_key": 1,
+            "in_xi": True,
+            "captain": True,
+            "vice": False,
+            "bought": False,
+            "sold": False,
+            "xpts": 1.0,
+            "hit": 0.0,
+        }
+        for step in range(weeks)
+    ]
+    path = write_plan(data_dir, pl.DataFrame(rows), code_sha="stub")
+    (path.parent / "report.md").write_text(
+        f"# {season}\n\nGW {gameweek}\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _live_payload() -> dict[str, object]:
@@ -429,7 +488,7 @@ def _predictions(root: Path, players: list[dict[str, object]]) -> None:
     The synthetic league has no ``player_fixture_stats``, so walk-forward
     rolling-mean xPts are zero; this run supplies usable rows for ``run_plan``.
     """
-    spec = load_model_specs()["rolling_mean_v1"]
+    spec = load_model_specs()[_MODEL]
     records: list[dict[str, object]] = []
     for gameweek in (1, 2, 3):
         for row in players:
