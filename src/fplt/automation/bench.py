@@ -53,14 +53,21 @@ class BenchConfig(BaseModel):
     consecutive_nights: int = Field(default=3, ge=1)
     ops_budget_pct: float = Field(default=50.0, gt=0.0, le=100.0)
     ops_timeout_minutes: int = Field(default=90, ge=1)
+    runner_memory_gb: float = Field(default=16.0, gt=0.0)
+    rss_warn_pct: float = Field(default=70.0, gt=0.0, le=100.0)
     tracked_phases: tuple[str, ...] = (
         "fit",
         "predict",
         "plan",
+        "points_pmf",
         "optimise/milp",
         "mc_bench_total",
         "pytest_suite",
     )
+
+    def rss_warn_kb(self) -> int:
+        """Absolute KiB ceiling for peak-RSS WARN (#372)."""
+        return int(self.runner_memory_gb * self.rss_warn_pct / 100.0 * 1024 * 1024)
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,6 +533,9 @@ def consolidate_fixture_phases(
         # Keep MILP even though it is a shared nested name elsewhere.
         if name == "optimise/milp":
             out["optimise/milp"] = out.get("optimise/milp", 0.0) + value
+            continue
+        if name == "points_pmf":
+            out["points_pmf"] = out.get("points_pmf", 0.0) + value
             continue
         if name in SHARED_SUBPHASES:
             continue

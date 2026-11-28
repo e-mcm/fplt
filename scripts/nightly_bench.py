@@ -165,6 +165,15 @@ def _mc_bench_payload(*, n_sims: int, repeats: int) -> dict[str, float]:
     return {name: float(ms) for name, ms in rows}
 
 
+def _points_pmf_bench_payload() -> dict[str, float]:
+    """Synthetic horizon-9 streaming PMF wall time (#372)."""
+    from fplt.store.points_pmf import run_points_pmf_memory_bench
+    from fplt.utils.timing import timing_session
+
+    with timing_session():
+        return run_points_pmf_memory_bench()
+
+
 def _pytest_top25(junit: Path, *, top: int = 25) -> tuple[float, list[dict[str, Any]]]:
     from scripts.pytest_profile import parse_junit_durations
 
@@ -230,6 +239,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-mc",
         action="store_true",
         help="Skip mc-bench collection",
+    )
+    parser.add_argument(
+        "--skip-points-pmf",
+        action="store_true",
+        help="Skip synthetic horizon-9 points_pmf memory bench (#372)",
     )
     parser.add_argument("--mc-n-sims", type=int, default=10_000)
     parser.add_argument("--mc-repeats", type=int, default=3)
@@ -307,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
         mc_bench = _mc_bench_payload(n_sims=args.mc_n_sims, repeats=args.mc_repeats)
     if mc_bench:
         phases["mc_bench_total"] = sum(mc_bench.values()) / 1000.0  # ms → s
+
+    if not args.skip_points_pmf:
+        logger.info("running points_pmf horizon-9 memory bench")
+        phases.update(_points_pmf_bench_payload())
 
     pytest_top25: list[dict[str, Any]] = []
     if args.junit is not None:

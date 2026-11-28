@@ -13,6 +13,7 @@ decided by the caller via ``runs/by_fp/``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,10 +48,11 @@ from fplt.store.official import (
     finalize_official_checkpoint,
     official_checkpoint_dir,
 )
-from fplt.store.points_pmf import points_pmf_from_draws
+from fplt.store.points_pmf import points_pmf_tables_from_sample
 from fplt.store.push import maybe_push_official
 from fplt.store.runs import write_plan_run, write_predict_run
 from fplt.types import GWKey
+from fplt.utils.timing import timed_phase
 
 logger = logging.getLogger(__name__)
 
@@ -315,56 +317,57 @@ def _official_predict(
     build: BuildManifest,
 ) -> str:
     """Fit/load, predict, write official run with components and points PMFs."""
-    specs = load_model_specs()
-    if model_name not in specs:
-        raise ValueError(f"unknown model spec {model_name!r}")
-    spec = specs[model_name]
-    store = DataStore(data_dir)
-    pit = PITData(store)
-    seasons = allowed_seasons(key, spec.train_window.seasons_back)
-    view = pit.view(key).within_seasons(seasons)
-    completed = last_completed_gw(store.read("gameweeks"))
-    fit_fp = fit_fingerprint(spec=spec, build=build, last_completed=completed)
-    model = fit_or_load_predictor(data_dir, spec, key, view, fit_fp=fit_fp)
-    predicted = model.predict(view, horizon_for(key, horizon))
-    require_scored_predictions(predicted, model_name)
-    try:
-        write_predictions(data_dir, spec, key, predicted)
-    except FileExistsError as exc:
-        logger.info(
-            "official_slate: legacy predictions exist for %s; continuing (%s)",
-            key,
-            exc,
+    with timed_phase("predict"):
+        specs = load_model_specs()
+        if model_name not in specs:
+            raise ValueError(f"unknown model spec {model_name!r}")
+        spec = specs[model_name]
+        store = DataStore(data_dir)
+        pit = PITData(store)
+        seasons = allowed_seasons(key, spec.train_window.seasons_back)
+        view = pit.view(key).within_seasons(seasons)
+        completed = last_completed_gw(store.read("gameweeks"))
+        fit_fp = fit_fingerprint(spec=spec, build=build, last_completed=completed)
+        model = fit_or_load_predictor(data_dir, spec, key, view, fit_fp=fit_fp)
+        predicted = model.predict(view, horizon_for(key, horizon))
+        require_scored_predictions(predicted, model_name)
+        try:
+            write_predictions(data_dir, spec, key, predicted)
+        except FileExistsError as exc:
+            logger.info(
+                "official_slate: legacy predictions exist for %s; continuing (%s)",
+                key,
+                exc,
+            )
+        rows = ledger_rows(predicted, view, key, "live")
+        deadline_utc = store.deadline(key)
+        n_sims = n_sims_of(spec) or 100
+        pmf_builder = _pmf_builder(
+            model,
+            view,
+            as_of=key,
+            deadline_utc=deadline_utc,
+            horizon=horizon,
+            n_sims=n_sims,
         )
-    rows = ledger_rows(predicted, view, key, "live")
-    deadline_utc = store.deadline(key)
-    n_sims = n_sims_of(spec) or 100
-    pmf_builder = _pmf_builder(
-        model,
-        view,
-        as_of=key,
-        deadline_utc=deadline_utc,
-        horizon=horizon,
-        n_sims=n_sims,
-    )
-    run = write_predict_run(
-        data_dir,
-        spec=spec,
-        as_of=key,
-        deadline_utc=deadline_utc,
-        horizon=horizon,
-        frame=rows,
-        kind="official",
-        checkpoint=checkpoint,
-        purpose=f"official {checkpoint} {spec.name} {key.season} gw{key.gw}",
-        components_for_run_id=component_builder_for(
-            model, view, as_of=key, deadline_utc=deadline_utc, horizon=horizon
-        ),
-        points_pmf_for_run_id=pmf_builder,
-        build_id=build_id,
-        fp=fp,
-        prod_tag=prod_tag,
-    )
+        run = write_predict_run(
+            data_dir,
+            spec=spec,
+            as_of=key,
+            deadline_utc=deadline_utc,
+            horizon=horizon,
+            frame=rows,
+            kind="official",
+            checkpoint=checkpoint,
+            purpose=f"official {checkpoint} {spec.name} {key.season} gw{key.gw}",
+            components_for_run_id=component_builder_for(
+                model, view, as_of=key, deadline_utc=deadline_utc, horizon=horizon
+            ),
+            points_pmf_for_run_id=pmf_builder,
+            build_id=build_id,
+            fp=fp,
+            prod_tag=prod_tag,
+        )
     logger.info(
         "official_slate: predict run_id=%s spec=%s fp=%s",
         run.run_id,
@@ -391,57 +394,60 @@ def _official_plan(
     """Plan one official line; dual-write even when legacy plan already exists."""
     if not isinstance(squad, SquadState):
         raise TypeError(f"expected SquadState, got {type(squad).__name__}")
-    try:
-        _plan, _path, _report, run_id = run_plan(
-            data_dir,
-            line.spec,
-            key.season,
-            key.gw,
-            line.horizon,
-            squad=squad,
-            squad_source=squad_source,
-            chip_arm=chip_arm,  # type: ignore[arg-type]
-            run_kind="official",
-            checkpoint=checkpoint,
-            line=line.line,
-            squad_mode=line.squad_mode,
-            parent_run_id=parent_run_id,
-            build_id=build_id,
-            fp=fp,
-            prod_tag=prod_tag,
-        )
-        return run_id
-    except PlanExistsError as exc:
-        logger.info(
-            "official_slate: legacy plan exists for %s h=%s; writing official run",
-            key,
-            line.horizon,
-        )
-        frame = pl.read_parquet(Path(str(exc)))
-        spec = load_model_specs()[line.spec]
-        store = DataStore(data_dir)
-        run = write_plan_run(
-            data_dir,
-            spec=spec,
-            as_of=key,
-            deadline_utc=store.deadline(key),
-            horizon=line.horizon,
-            frame=frame,
-            kind="official",
-            checkpoint=checkpoint,
-            line=line.line,
-            squad_mode=line.squad_mode,
-            parent_run_id=parent_run_id,
-            purpose=(
-                f"official {checkpoint} {line.line} {key.season} gw{key.gw} "
-                f"h{line.horizon}"
-            ),
-            build_id=build_id,
-            fp=fp,
-            prod_tag=prod_tag,
-            tags=({"squad_source": squad_source} if squad_source is not None else None),
-        )
-        return run.run_id
+    with timed_phase("plan"):
+        try:
+            _plan, _path, _report, run_id = run_plan(
+                data_dir,
+                line.spec,
+                key.season,
+                key.gw,
+                line.horizon,
+                squad=squad,
+                squad_source=squad_source,
+                chip_arm=chip_arm,  # type: ignore[arg-type]
+                run_kind="official",
+                checkpoint=checkpoint,
+                line=line.line,
+                squad_mode=line.squad_mode,
+                parent_run_id=parent_run_id,
+                build_id=build_id,
+                fp=fp,
+                prod_tag=prod_tag,
+            )
+            return run_id
+        except PlanExistsError as exc:
+            logger.info(
+                "official_slate: legacy plan exists for %s h=%s; writing official run",
+                key,
+                line.horizon,
+            )
+            frame = pl.read_parquet(Path(str(exc)))
+            spec = load_model_specs()[line.spec]
+            store = DataStore(data_dir)
+            run = write_plan_run(
+                data_dir,
+                spec=spec,
+                as_of=key,
+                deadline_utc=store.deadline(key),
+                horizon=line.horizon,
+                frame=frame,
+                kind="official",
+                checkpoint=checkpoint,
+                line=line.line,
+                squad_mode=line.squad_mode,
+                parent_run_id=parent_run_id,
+                purpose=(
+                    f"official {checkpoint} {line.line} {key.season} gw{key.gw} "
+                    f"h{line.horizon}"
+                ),
+                build_id=build_id,
+                fp=fp,
+                prod_tag=prod_tag,
+                tags=(
+                    {"squad_source": squad_source} if squad_source is not None else None
+                ),
+            )
+            return run.run_id
 
 
 def _pmf_builder(
@@ -453,7 +459,7 @@ def _pmf_builder(
     horizon: int,
     n_sims: int,
 ):
-    """Return ``run_id -> (points_pmf, points_pmf_gw)`` from MC ``sample()``."""
+    """Return ``run_id -> (points_pmf, points_pmf_gw)`` streaming per GW (#372)."""
 
     def _build(run_id: str) -> tuple[pl.DataFrame, pl.DataFrame]:
         if not isinstance(model, SampledPointsPredictor):
@@ -461,54 +467,26 @@ def _pmf_builder(
                 "official predict requires SampledPointsPredictor.sample() "
                 f"for points PMFs; got {type(model).__name__}"
             )
+        sampled: SampledPointsPredictor = model
         keys = horizon_for(as_of, horizon)
-        samples = model.sample(view, keys, n_sims)
-        if samples.is_empty():
-            raise ValueError(
-                f"official predict sample() returned no rows for {as_of} "
-                f"horizon={horizon}; cannot write points_pmf"
-            )
         players: pl.DataFrame = (
             view.latest("players", by=["season", "player_key"])
             .select("player_key", "team_key")
             .unique(subset=["player_key"], keep="last")
             .collect()
         )
-        draws = (
-            samples.join(players, on="player_key", how="left")
-            .with_columns(
-                pl.col("sim").alias("draw_id"),
-                (pl.col("target_gw") - as_of.gw).cast(pl.Int64).alias("horizon"),
+
+        def _sample(chunk: Sequence[GWKey]) -> pl.DataFrame:
+            return sampled.sample(view, list(chunk), n_sims)
+
+        with timed_phase("points_pmf"):
+            return points_pmf_tables_from_sample(
+                _sample,
+                horizon_keys=keys,
+                players=players,
+                run_id=run_id,
+                as_of=as_of,
+                deadline_utc=deadline_utc,
             )
-            .select(
-                "player_key",
-                "team_key",
-                "fixture_id",
-                "target_season",
-                "target_gw",
-                "horizon",
-                "draw_id",
-                "points",
-            )
-        )
-        if draws["team_key"].null_count() > 0:
-            raise ValueError("points_pmf draws missing team_key after player join")
-        fx = points_pmf_from_draws(
-            draws,
-            run_id=run_id,
-            as_of_season=as_of.season,
-            as_of_gw=as_of.gw,
-            deadline_utc=deadline_utc,
-            grain="fixture",
-        )
-        gw = points_pmf_from_draws(
-            draws,
-            run_id=run_id,
-            as_of_season=as_of.season,
-            as_of_gw=as_of.gw,
-            deadline_utc=deadline_utc,
-            grain="gameweek",
-        )
-        return fx, gw
 
     return _build

@@ -27,6 +27,8 @@ import inspect
 import json
 import logging
 import re
+import resource
+import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -41,6 +43,9 @@ from fplt.schemas.timing import TIMING_RECORD_SCHEMA_VERSION, TimingRecord
 logger = logging.getLogger(__name__)
 
 TIMING_SCHEMA_VERSION = TIMING_RECORD_SCHEMA_VERSION
+
+# ContextVar-scoped RSS warn threshold (KiB). None → no WARN (#372).
+_rss_warn_kb: ContextVar[int | None] = ContextVar("fplt_rss_warn_kb", default=None)
 
 # Phases that make up a gameweek / walk-forward wall-clock total and share line.
 TOP_LEVEL: tuple[str, ...] = ("setup", "fit", "predict", "write")
@@ -70,6 +75,7 @@ SHARED_SUBPHASES: frozenset[str] = frozenset(
         "fit/other",
         "predict/setup",
         "predict/fixtures",
+        "points_pmf",  # nested under official predict (#372)
         "plan/setup",
         "plan/lineup",
         "plan/chips",
@@ -92,11 +98,59 @@ class TimingExistsError(FileExistsError):
 _SAFE_META = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def current_max_rss_kb() -> int:
+    """Return process high-water RSS in KiB (Linux KB; Darwin bytes→KiB)."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        return int(usage) // 1024
+    return int(usage)
+
+
+def configure_rss_warn_kb(threshold_kb: int | None) -> None:
+    """Set the ContextVar RSS WARN threshold in KiB (``None`` disables)."""
+    _rss_warn_kb.set(threshold_kb)
+
+
+@contextmanager
+def rss_warn_threshold(threshold_kb: int | None) -> Iterator[int | None]:
+    """Install an RSS WARN threshold (KiB) for nested ``timed_phase`` calls.
+
+    Args:
+        threshold_kb: Absolute KiB ceiling; WARN when a phase's peak meets or
+            exceeds it. ``None`` disables warnings.
+
+    Yields:
+        The active threshold.
+    """
+    token = _rss_warn_kb.set(threshold_kb)
+    try:
+        yield threshold_kb
+    finally:
+        _rss_warn_kb.reset(token)
+
+
+def maybe_warn_peak_rss(phase: str, rss_kb: int) -> None:
+    """Log a WARNING when ``rss_kb`` meets the configured threshold (#372)."""
+    threshold = _rss_warn_kb.get()
+    if threshold is None or rss_kb < threshold:
+        return
+    logger.warning(
+        "peak RSS for phase=%s is %d KiB (%.1f GiB), at/above warn threshold "
+        "%d KiB (%.1f GiB)",
+        phase,
+        rss_kb,
+        rss_kb / (1024 * 1024),
+        threshold,
+        threshold / (1024 * 1024),
+    )
+
+
 @dataclass
 class TimingSession:
-    """Mutable bag of named wall-clock seconds."""
+    """Mutable bag of named wall-clock seconds and peak RSS."""
 
     seconds: dict[str, float] = field(default_factory=dict[str, float])
+    peak_rss_kb: dict[str, int] = field(default_factory=dict[str, int])
 
     def add(self, name: str, elapsed: float) -> None:
         """Add ``elapsed`` seconds under ``name`` (ignore non-positive)."""
@@ -104,10 +158,20 @@ class TimingSession:
             return
         self.seconds[name] = self.seconds.get(name, 0.0) + elapsed
 
+    def record_peak_rss(self, name: str, rss_kb: int) -> None:
+        """Keep the max process high-water RSS (KiB) seen for ``name``."""
+        if rss_kb <= 0:
+            return
+        previous = self.peak_rss_kb.get(name, 0)
+        if rss_kb > previous:
+            self.peak_rss_kb[name] = rss_kb
+
     def merge(self, other: TimingSession) -> None:
-        """Fold another session's durations into this one."""
+        """Fold another session's durations and peak RSS into this one."""
         for name, value in other.seconds.items():
             self.add(name, value)
+        for name, rss_kb in other.peak_rss_kb.items():
+            self.record_peak_rss(name, rss_kb)
 
     def get(self, name: str) -> float:
         """Seconds recorded for ``name``, or ``0.0``."""
@@ -134,6 +198,14 @@ class TimingSession:
         return {
             name: float(value)
             for name, value in sorted(self.seconds.items())
+            if value > 0
+        }
+
+    def peak_rss(self) -> dict[str, int]:
+        """Positive peak-RSS entries (KiB), sorted by phase name."""
+        return {
+            name: int(value)
+            for name, value in sorted(self.peak_rss_kb.items())
             if value > 0
         }
 
@@ -195,11 +267,12 @@ def timing_session(session: TimingSession | None = None) -> Iterator[TimingSessi
 
 @contextmanager
 def timed_phase(name: str) -> Iterator[None]:
-    """Accumulate wall time for ``name`` into the active session, if any.
+    """Accumulate wall time (and peak RSS) for ``name`` into the session.
 
     When no session is active the block still runs; nothing is recorded.
     Nested phases (for example ``fit/score`` inside ``fit``) are stored as
-    separate keys so parents keep the full inclusive duration.
+    separate keys so parents keep the full inclusive duration. Peak RSS is
+    the process high-water mark (KiB) at phase end (#372).
 
     Args:
         name: Phase label (top-level or nested ``parent/child``).
@@ -209,9 +282,12 @@ def timed_phase(name: str) -> Iterator[None]:
         yield
     finally:
         elapsed = _now() - start
+        rss_kb = current_max_rss_kb()
+        maybe_warn_peak_rss(name, rss_kb)
         bucket = _active.get()
         if bucket is not None:
             bucket.add(name, elapsed)
+            bucket.record_peak_rss(name, rss_kb)
 
 
 def active_timing_dir() -> Path | None:
@@ -337,6 +413,7 @@ def build_timing_record(
         recorded_at=stamp,
         meta=dict(meta or {}),
         phases=phases,
+        peak_rss_kb=session.peak_rss(),
         total_s=round(total, 6),
     )
     return record.model_dump_json_doc()
