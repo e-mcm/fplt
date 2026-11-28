@@ -9,9 +9,12 @@ minutes are caught up on the next tick (ops-02).
 and the build manifest, skips when ``runs/by_fp/`` already has the fingerprint,
 and otherwise pulls only ``required_tables(spec)`` into ``staged/``.
 
-Official T−90m runs ``ProductionOps.official_slate`` via
-``fplt.automation.official_slate.run_official_checkpoint`` (pulled curated
-``build_id``, predict + points PMF, plan per line, finalize pointers, push).
+#374: non-checkpoint fingerprint changes run a light ``kind=adhoc``
+``purpose=fingerprint`` predict+plan for the primary line only (no PMF,
+lab bucket, ``by_fp``). Quiet window
+(``ops.background_quiet_minutes``) skips that work near a checkpoint.
+Official T−90m / ``run_now`` keep the full slate via
+``run_official_checkpoint`` (PMF, all lines, official pointers).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from fplt.automation.checkpoints import (
     due_checkpoints,
     due_missing_official_slate_alarm,
     due_no_plan_alarms,
+    in_background_quiet_window,
     next_upcoming_deadline,
     push_alarm_markers,
     push_checkpoint_markers,
@@ -85,7 +89,7 @@ from fplt.utils.logging import (
     log_context,
     write_ops_log_once,
 )
-from fplt.utils.timing import rss_warn_threshold, timing_session
+from fplt.utils.timing import rss_warn_threshold, timed_phase, timing_session
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +256,25 @@ def run_ops_tick(
             squad_digest = (
                 safe_entry_state_digest(cfg) if upcoming_key is not None else None
             )
+            primary = ops.primary_line()
+            primary_line = primary.line
+            # #374: mid-week idle / fingerprint use adhoc primary-only fps;
+            # checkpoints / run_now use official full-slate fps (kind in hash).
+            fingerprint_decisions = (
+                decisions_for_slate(
+                    ops,
+                    ctx.build,
+                    upcoming_key,
+                    data_dir=root,
+                    prod_tag=prod_tag,
+                    remote_by_fp=ctx.remote_by_fp,
+                    squad_digest=squad_digest,
+                    kind="adhoc",
+                    lines=(primary,),
+                )
+                if upcoming_key is not None
+                else []
+            )
             slate_decisions = (
                 decisions_for_slate(
                     ops,
@@ -261,20 +284,21 @@ def run_ops_tick(
                     prod_tag=prod_tag,
                     remote_by_fp=ctx.remote_by_fp,
                     squad_digest=squad_digest,
+                    kind="official",
                 )
                 if upcoming_key is not None
                 else []
             )
-            all_fps_done = bool(slate_decisions) and all(
-                item.skip for item in slate_decisions
+            all_fps_done = bool(fingerprint_decisions) and all(
+                item.skip for item in fingerprint_decisions
             )
 
             # Resolve checkpoint / alarm due-ness before pulling full tables.
             due: list[Checkpoint] = []
-            primary_line = ops.primary_line().line
             slate_lines = tuple(line.line for line in ops.lines)
             done: frozenset[str] = frozenset()
             alarms_done: frozenset[str] = frozenset()
+            quiet = False
             if upcoming is not None:
                 upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
                 upcoming_deadline = require_not_none(
@@ -288,6 +312,12 @@ def run_ops_tick(
                     settings=cfg,
                 )
                 due = list(due_checkpoints(moment, upcoming_deadline, done))
+                quiet = in_background_quiet_window(
+                    moment,
+                    upcoming_deadline,
+                    done,
+                    timedelta(minutes=ops.background_quiet_minutes),
+                )
 
             # run_now always continues: reuse by_fp runs but write a new
             # manual-* pointer even when fingerprints are unchanged (#364).
@@ -365,12 +395,15 @@ def run_ops_tick(
                 logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
                 caught = catch_up(root, chosen, horizon=steps)
 
-                # Mid-week: ensure predict/plan runs for the current fp (throttled).
-                # Does not write official/ pointers — checkpoints do that.
+                # Mid-week light fingerprint (#374): adhoc primary-only,
+                # no PMF / official pointers. Skip inside the quiet window
+                # before a checkpoint so background work never collides.
                 if (
                     upcoming_key is not None
-                    and slate_decisions
-                    and not all(item.skip for item in slate_decisions)
+                    and fingerprint_decisions
+                    and not due
+                    and not quiet
+                    and not all(item.skip for item in fingerprint_decisions)
                     and any(
                         throttle_allows(
                             root,
@@ -381,24 +414,36 @@ def run_ops_tick(
                             ),
                             checkpoint=False,
                         )
-                        for item in slate_decisions
+                        for item in fingerprint_decisions
                         if not item.skip
                     )
                 ):
                     logger.info(
-                        "ops_tick: fingerprint run for %s (non-checkpoint)",
+                        "ops_tick: fingerprint run for %s (adhoc primary, no PMF)",
                         upcoming_key,
                     )
-                    ensure_slate_runs(
-                        root,
-                        ops,
-                        upcoming_key,
-                        settings=cfg,
-                        build_id=ctx.build.build_id,
-                        prod_tag=prod_tag,
-                        decisions=slate_decisions,
-                        checkpoint=None,
-                        now=moment,
+                    with timed_phase("fingerprint"):
+                        ensure_slate_runs(
+                            root,
+                            ops,
+                            upcoming_key,
+                            settings=cfg,
+                            build_id=ctx.build.build_id,
+                            prod_tag=prod_tag,
+                            decisions=fingerprint_decisions,
+                            checkpoint=None,
+                            now=moment,
+                            slate="fingerprint",
+                        )
+                elif (
+                    quiet
+                    and fingerprint_decisions
+                    and not all(item.skip for item in fingerprint_decisions)
+                ):
+                    logger.info(
+                        "ops_tick: skipping fingerprint run — quiet window "
+                        "(%s min before next checkpoint)",
+                        ops.background_quiet_minutes,
                     )
 
                 if upcoming is not None:

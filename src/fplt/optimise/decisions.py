@@ -644,6 +644,7 @@ def run_plan(
     build_id: str | None = None,
     fp: str | None = None,
     prod_tag: str | None = None,
+    purpose: str | None = None,
 ) -> tuple[GameweekPlan, Path, str, str]:
     """Build a plan from the ledger and write the parquet and the report.
 
@@ -693,6 +694,7 @@ def run_plan(
         build_id: Curated build id recorded on the plan run (#346).
         fp: Run fingerprint for skip-if-done (#346).
         prod_tag: Moving ops tag label when known.
+        purpose: Optional free-text purpose (e.g. ``fingerprint`` for #374).
 
     Returns:
         The plan, the parquet path, the markdown report, and the dual-write
@@ -896,6 +898,7 @@ def run_plan(
                 line=line,
                 squad_mode=cast(SquadMode | None, squad_mode),
                 parent_run_id=parent_run_id,
+                purpose=purpose or "",
                 build_id=build_id,
                 fp=fp,
                 prod_tag=prod_tag,

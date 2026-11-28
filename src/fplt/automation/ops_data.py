@@ -26,7 +26,7 @@ from fplt.automation.production import OfficialLine, ProductionOps
 from fplt.data.fpl_client import FPLAPIError, FPLClient
 from fplt.data.remote import Remote, RemoteError, lsf
 from fplt.models.spec import ModelSpec, load_model_specs
-from fplt.schemas.manifests import BuildManifest, CuratedLatestPointer
+from fplt.schemas.manifests import BuildManifest, CuratedLatestPointer, RunKind
 from fplt.settings import Settings, get_settings, secret_value
 from fplt.store.builds import (
     build_manifest_path,
@@ -298,12 +298,16 @@ def decisions_for_slate(
     remote_by_fp: frozenset[str] | set[str] | None = None,
     specs: dict[str, ModelSpec] | None = None,
     squad_digest: str | None = None,
+    kind: RunKind = "official",
+    lines: tuple[OfficialLine, ...] | list[OfficialLine] | None = None,
 ) -> list[LineFpDecision]:
-    """Compute predict/plan fingerprints for every official line.
+    """Compute predict/plan fingerprints for slate lines.
 
     Predict fingerprints are per spec (one predict at the longest horizon).
     Plan fingerprints add ``plan_identity(line, squad_digest)`` so the four
     official lines never share a plan run and a changed squad re-plans (#380).
+    ``kind`` is hashed into every fp (#374) so adhoc fingerprint runs do not
+    collide with official T−90m reuse.
 
     Args:
         ops: Production slate.
@@ -314,14 +318,21 @@ def decisions_for_slate(
         remote_by_fp: Optional remote listing of ``runs/by_fp/``.
         specs: Optional preloaded ModelSpecs.
         squad_digest: ``entry_state_digest`` output (``None`` without an entry).
+        kind: Run kind hashed into ``fp`` (#374). Official checkpoints use
+            ``official``; mid-week fingerprint runs use ``adhoc``.
+        lines: Lines to decide. Defaults to every ``ops.lines``; fingerprint
+            path passes the primary only.
 
     Returns:
-        One decision per official line.
+        One decision per selected line.
     """
     loaded = load_model_specs() if specs is None else specs
     listing = set(remote_by_fp) if remote_by_fp is not None else None
+    selected: tuple[OfficialLine, ...] | list[OfficialLine] = (
+        ops.lines if lines is None else lines
+    )
     out: list[LineFpDecision] = []
-    for line in ops.lines:
+    for line in selected:
         spec = loaded[line.spec]
         predict_fp = run_fingerprint(
             spec=spec,
@@ -329,6 +340,7 @@ def decisions_for_slate(
             target_gw=key,
             run_type="predict",
             prod_tag=prod_tag,
+            kind=kind,
         )
         plan_fp = run_fingerprint(
             spec=spec,
@@ -336,6 +348,7 @@ def decisions_for_slate(
             target_gw=key,
             run_type="plan",
             prod_tag=prod_tag,
+            kind=kind,
             extra=plan_identity(line, squad_digest),
         )
         pred_done = fp_index_exists(data_dir, predict_fp, remote_listing=listing)
@@ -357,13 +370,29 @@ def decisions_for_slate(
 
 
 def tables_for_slate(
-    ops: ProductionOps, specs: dict[str, ModelSpec] | None = None
+    ops: ProductionOps,
+    specs: dict[str, ModelSpec] | None = None,
+    *,
+    lines: tuple[OfficialLine, ...] | list[OfficialLine] | None = None,
 ) -> set[str]:
-    """Union of ``required_tables`` across every distinct slate spec."""
+    """Union of ``required_tables`` across distinct specs in the slate.
+
+    Args:
+        ops: Production config.
+        specs: Optional preloaded ModelSpecs.
+        lines: Restrict to these lines (fingerprint path: primary only).
+    """
     loaded = load_model_specs() if specs is None else specs
+    selected: tuple[OfficialLine, ...] | list[OfficialLine] = (
+        ops.lines if lines is None else lines
+    )
     tables: set[str] = set()
-    for name in ops.predict_groups():
-        tables |= required_tables(loaded[name])
+    seen: set[str] = set()
+    for line in selected:
+        if line.spec in seen:
+            continue
+        seen.add(line.spec)
+        tables |= required_tables(loaded[line.spec])
     return tables
 
 

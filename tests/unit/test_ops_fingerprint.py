@@ -265,7 +265,15 @@ def test_ops_tick_idle_no_table_pull(
     )
 
     key = GWKey("2024-25", 3)
-    decisions = decisions_for_slate(ops, build, key, data_dir=tmp_path)
+    # #374: idle skip uses adhoc primary fingerprint fps, not official.
+    decisions = decisions_for_slate(
+        ops,
+        build,
+        key,
+        data_dir=tmp_path,
+        kind="adhoc",
+        lines=(ops.primary_line(),),
+    )
     write_fp_index(tmp_path, decisions[0].predict_fp, "r_pred")
     write_fp_index(tmp_path, decisions[0].plan_fp, "r_plan")
 
@@ -580,6 +588,7 @@ def test_ops_tick_ensure_when_fp_missing(
     )
     result = run_ops_tick(tmp_path, now=deadline - timedelta(hours=12), notify=False)
     assert ensures
+    assert ensures[0].get("slate") == "fingerprint"
     assert result.checkpoints_run == []
     get_settings.cache_clear()
 

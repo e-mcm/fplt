@@ -196,6 +196,43 @@ def due_checkpoints(
     return due
 
 
+def in_background_quiet_window(
+    now: datetime,
+    deadline: datetime | None,
+    done: frozenset[str] | set[str],
+    quiet: timedelta,
+) -> bool:
+    """Return whether mid-week fingerprint runs should stay quiet (#374).
+
+    True when a not-yet-done checkpoint's fire time is within ``quiet`` of
+    ``now`` (including already-due checkpoints). Background adhoc fingerprint
+    work must not collide with T−24h / T−6h / T−90m / T−30m.
+
+    Args:
+        now: Clock reading.
+        deadline: Upcoming deadline, or ``None`` when there is none.
+        done: Checkpoint ids already completed for this deadline.
+        quiet: Quiet window length (``ops.background_quiet_minutes``).
+
+    Returns:
+        True when background fingerprint runs should be skipped.
+    """
+    if deadline is None:
+        return False
+    moment = _aware(now)
+    cut = _aware(deadline)
+    if moment >= cut:
+        return False
+    finished = set(done)
+    for checkpoint in CHECKPOINTS:
+        if checkpoint.id in finished:
+            continue
+        fire_at = cut - checkpoint.offset
+        if fire_at <= moment + quiet:
+            return True
+    return False
+
+
 def due_no_plan_alarms(
     now: datetime,
     deadline: datetime | None,
