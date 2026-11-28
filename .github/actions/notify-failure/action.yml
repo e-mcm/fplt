@@ -1,8 +1,12 @@
 name: notify-failure
-description: POST a short ntfy alert on job failure (no log excerpts)
+description: POST a short ntfy alert on job failure or cancel (no log excerpts)
 inputs:
   ntfy_url:
     description: ntfy topic URL (store as a repo secret; never log it)
+    required: false
+    default: ""
+  result:
+    description: Upstream job result (failure or cancelled; empty means failure)
     required: false
     default: ""
 runs:
@@ -14,6 +18,7 @@ runs:
         NTFY_URL: ${{ inputs.ntfy_url }}
         WORKFLOW: ${{ github.workflow }}
         JOB: ${{ github.job }}
+        RESULT: ${{ inputs.result }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         set -euo pipefail
@@ -21,9 +26,19 @@ runs:
           echo "soft skip: NTFY_URL unset (configure NTFY_URL secret)"
           exit 0
         fi
-        title="fplt ${WORKFLOW} failed"
+        result="${RESULT:-failure}"
+        if [ "$result" = "cancelled" ]; then
+          title="fplt ${WORKFLOW} cancelled"
+          # Cancelled often means runner OOM / shutdown / job timeout (#373).
+          detail="cancelled: runner shutdown or timeout"
+        else
+          title="fplt ${WORKFLOW} failed"
+          detail="failed"
+          result="failure"
+        fi
         # Runbook: docs/ops-runbook.md#ops-03-workflow-failure
-        body="job=${JOB}
+        body="job=${JOB} result=${result}
+        ${detail}
         run=${RUN_URL}
 
         Runbook: docs/ops-runbook.md#ops-03-workflow-failure"
@@ -37,7 +52,7 @@ runs:
             -- "$NTFY_URL" 2>/dev/null || echo "000"
         )"
         if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "202" ]; then
-          echo "ntfy failure alert sent (http ${code})"
+          echo "ntfy ${result} alert sent (http ${code})"
         else
-          echo "ntfy failure alert failed (http ${code}; non-fatal)"
+          echo "ntfy ${result} alert failed (http ${code}; non-fatal)"
         fi

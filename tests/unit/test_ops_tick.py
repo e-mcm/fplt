@@ -65,7 +65,7 @@ def test_format_ops_tick_status_lists_catch_up_and_pre_deadline() -> None:
     assert "pre_deadline:      2024-25 gw2" in text
     assert "upcoming deadline: 2024-25 gw2" in text
     assert "checkpoints run:   T-6h" in text
-    assert "no-plan alarms:    none" in text
+    assert "alarms:            none" in text
     assert "dc_layered_v4_native / H=3" in text
     assert text.endswith("\n")
 

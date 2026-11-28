@@ -12,6 +12,7 @@ RUNBOOK_PATH = "docs/ops-runbook.md"
 # Stable anchors — keep in sync with headings in docs/ops-runbook.md.
 OPS_01_TOKEN_EXPIRY = "docs/ops-runbook.md#ops-01-token-expiry"
 OPS_02_NO_PLAN = "docs/ops-runbook.md#ops-02-no-plan"
+OPS_02_OFFICIAL_SLATE_MISSING = "docs/ops-runbook.md#ops-02-official-slate-missing"
 OPS_03_WORKFLOW_FAILURE = "docs/ops-runbook.md#ops-03-workflow-failure"
 OPS_03_HEARTBEAT_MISSING = "docs/ops-runbook.md#ops-03-heartbeat-missing"
 OPS_04_BAD_RELEASE = "docs/ops-runbook.md#ops-04-bad-release"
@@ -30,6 +31,7 @@ RECOMMENDATION = "docs/ops-runbook.md#recommendation"
 ALERT_ANCHORS: tuple[str, ...] = (
     OPS_01_TOKEN_EXPIRY,
     OPS_02_NO_PLAN,
+    OPS_02_OFFICIAL_SLATE_MISSING,
     OPS_03_WORKFLOW_FAILURE,
     OPS_03_HEARTBEAT_MISSING,
     OPS_04_BAD_RELEASE,

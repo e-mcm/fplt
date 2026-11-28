@@ -189,7 +189,8 @@ jobs:
           persist-credentials: false
 
       - name: Notify failure
-        if: needs.release.result == 'failure'
+        if: needs.release.result == 'failure' || needs.release.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.release.result }}

@@ -1,9 +1,9 @@
-"""Cheap idempotent ops tick: curated hydrate, catch up, checkpoints, alarm.
+"""Cheap idempotent ops tick: curated hydrate, catch up, checkpoints, alarms.
 
 GitHub Actions runs this on an offset cron ``7,22,37,52`` (see ``ops-tick.yml``).
-Extra ticks are safe: ``catch_up``, deadline checkpoints, and the no-plan
-alarm no-op when nothing is due. Missed checkpoint minutes are caught up on
-the next tick (ops-02).
+Extra ticks are safe: ``catch_up``, deadline checkpoints, and the no-plan /
+missing-official-slate alarms no-op when nothing is due. Missed checkpoint
+minutes are caught up on the next tick (ops-02).
 
 #346: ops never pulls ``raw/``. Each tick reads ``status/curated/latest.json``
 and the build manifest, skips when ``runs/by_fp/`` already has the fingerprint,
@@ -25,8 +25,10 @@ from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
 from fplt.automation.bench import load_bench_config
 from fplt.automation.checkpoints import (
     Checkpoint,
+    MissingOfficialSlateAlarm,
     NoPlanAlarm,
     due_checkpoints,
+    due_missing_official_slate_alarm,
     due_no_plan_alarms,
     next_upcoming_deadline,
     push_alarm_markers,
@@ -65,7 +67,11 @@ from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
 from fplt.automation.production import ProductionOps, load_production_ops
 from fplt.automation.release import resolve_prod_tag_label
-from fplt.automation.runbook import OPS_01_TOKEN_EXPIRY, OPS_02_NO_PLAN
+from fplt.automation.runbook import (
+    OPS_01_TOKEN_EXPIRY,
+    OPS_02_NO_PLAN,
+    OPS_02_OFFICIAL_SLATE_MISSING,
+)
 from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
 from fplt.data.store import DataStore
@@ -113,7 +119,8 @@ class OpsTickResult:
         catch_up_planned: Checked gameweeks planned by ``catch_up`` this run.
         pre_deadline_planned: Deadline planned by the 3h ``pre_deadline`` path.
         checkpoints_run: Checkpoint ids completed this tick.
-        no_plan_alarms: No-plan alarm ids fired this tick (``retry`` / ``urgent``).
+        no_plan_alarms: Alarm ids fired this tick (``retry`` / ``urgent`` /
+            ``missing_official_slate``).
         still_pending: Checked gameweeks still missing a plan after the run.
         models: Spec names used for planning.
         horizon: Plan horizon used.
@@ -487,6 +494,31 @@ def run_ops_tick(
                         write_alarm_marker(root, upcoming_key, alarm.id)
                         push_alarm_markers(root, upcoming_key, settings=cfg)
                         alarm_ids.append(alarm.id)
+
+                    # Refresh done sets after no-plan markers / T−90m writes.
+                    done_after, alarms_done = resolve_done_sets(
+                        root,
+                        upcoming_key,
+                        primary_line=primary_line,
+                        slate_lines=slate_lines,
+                        settings=cfg,
+                    )
+                    slate_alarm = due_missing_official_slate_alarm(
+                        moment,
+                        deadline,
+                        has_official_slate="T-90m" in done_after,
+                        alarms_done=alarms_done,
+                    )
+                    if slate_alarm is not None:
+                        _run_missing_official_slate_alarm(
+                            upcoming_key,
+                            slate_alarm,
+                            settings=cfg,
+                            notify=notify_live,
+                        )
+                        write_alarm_marker(root, upcoming_key, slate_alarm.id)
+                        push_alarm_markers(root, upcoming_key, settings=cfg)
+                        alarm_ids.append(slate_alarm.id)
 
                 logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
                 due_gw = pre_deadline(root, moment, chosen, horizon=steps)
@@ -902,6 +934,31 @@ def _run_no_plan_alarm(
         )
 
 
+def _run_missing_official_slate_alarm(
+    key: GWKey,
+    alarm: MissingOfficialSlateAlarm,
+    *,
+    settings: Settings,
+    notify: bool,
+) -> None:
+    """Urgent-notify at T−60m when the T−90m official slate is still missing."""
+    message = (
+        f"URGENT: official slate missing for {key.season} gw{key.gw} at T−60m "
+        f"(alarm={alarm.id}, no T−90m line pointers). "
+        "Run `gh workflow run ops-tick.yml -f force_live=true` or "
+        "`fplt ops-catchup` / `make ops-catchup`."
+    )
+    logger.error("ops_tick: %s", message)
+    if notify:
+        notify_recommendation(
+            settings,
+            f"fplt OFFICIAL SLATE MISSING {key.season} gw{key.gw}",
+            message,
+            priority="5",
+            runbook_anchor=OPS_02_OFFICIAL_SLATE_MISSING,
+        )
+
+
 def format_ops_tick_status(result: OpsTickResult) -> str:
     """Render a human-readable status block for ``run_ops_tick``.
 
@@ -945,7 +1002,7 @@ def format_ops_tick_status(result: OpsTickResult) -> str:
         f"  catch_up planned:  {caught}",
         f"  upcoming deadline: {upcoming}",
         f"  checkpoints run:   {checkpoints}",
-        f"  no-plan alarms:    {alarms}",
+        f"  alarms:            {alarms}",
         f"  pre_deadline:      {due}",
         f"  still pending:     {pending}",
     ]

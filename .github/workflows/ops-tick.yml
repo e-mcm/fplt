@@ -1,9 +1,10 @@
 name: ops-tick
 
-# Cheap idempotent tick with deadline checkpoints + no-plan alarm (ops-02).
+# Cheap idempotent tick with deadline checkpoints + alarms (ops-02).
 # Offset minutes avoid top-of-hour GHA congestion. concurrency: ops so ticks
-# never overlap. Alarm/retry lives in `fplt ops-tick` (deadline-aware), not a
-# separate workflow step. Set OPS_LIVE=true before enabling live planning.
+# never overlap. Alarm/retry / missing-slate lives in `fplt ops-tick`
+# (deadline-aware), not a separate workflow step. Set OPS_LIVE=true before
+# enabling live planning.
 
 on:
   schedule:
@@ -175,7 +176,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_OPS_TICK }}
 
       - name: Notify failure
-        if: needs.tick.result == 'failure'
+        if: needs.tick.result == 'failure' || needs.tick.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.tick.result }}

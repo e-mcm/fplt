@@ -254,6 +254,100 @@ def test_ops_tick_runs_missed_checkpoint_on_late_tick(
     get_settings.cache_clear()
 
 
+def test_ops_tick_missing_official_slate_alarm_at_t60m(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T−60m urgent alarm when T−90m slate pointers are still missing (#373)."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _league(tmp_path)
+    sent = _patch_tick_deps(
+        monkeypatch,
+        plans_exist_impl=lambda *a, **k: True,
+    )
+
+    def stale(*_a: object, **_k: object) -> None:
+        from fplt.automation.ops_data import StaleBuildError
+
+        raise StaleBuildError("curated build too old for test")
+
+    monkeypatch.setattr("fplt.automation.ops_tick.enforce_build_freshness", stale)
+    _seed_done(tmp_path, checkpoints=frozenset({"T-24h", "T-6h"}))
+    settings = Settings(data_dir=tmp_path, ntfy_url="https://ntfy.sh/fplt-test")
+
+    # Before T−60m: T−90m is due but skipped (stale); slate alarm not yet due.
+    before = run_ops_tick(
+        tmp_path,
+        now=_DEADLINE - timedelta(minutes=61),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings,
+        notify=True,
+    )
+    assert "missing_official_slate" not in before.no_plan_alarms
+    assert len(sent) == 0
+
+    at_t60 = run_ops_tick(
+        tmp_path,
+        now=_DEADLINE - timedelta(minutes=60),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings,
+        notify=True,
+    )
+    assert at_t60.no_plan_alarms == ["missing_official_slate"]
+    assert len(sent) == 1
+    assert sent[0].get_header("Priority") == "5"
+    marker = (
+        tmp_path
+        / "official"
+        / "season=2024-25"
+        / "gw=3"
+        / "alarms"
+        / "missing_official_slate.json"
+    )
+    assert marker.is_file()
+
+    sent.clear()
+    again = run_ops_tick(
+        tmp_path,
+        now=_DEADLINE - timedelta(minutes=50),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings,
+        notify=True,
+    )
+    assert again.no_plan_alarms == []
+    assert len(sent) == 0
+    get_settings.cache_clear()
+
+
+def test_ops_tick_no_missing_slate_alarm_when_t90m_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pointers present → T−60m missing-slate alarm stays quiet."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _league(tmp_path)
+    sent = _patch_tick_deps(
+        monkeypatch,
+        plans_exist_impl=lambda *a, **k: True,
+    )
+    _seed_done(tmp_path, checkpoints=frozenset({"T-24h", "T-6h", "T-90m", "T-30m"}))
+    settings = Settings(data_dir=tmp_path, ntfy_url="https://ntfy.sh/fplt-test")
+    result = run_ops_tick(
+        tmp_path,
+        now=_DEADLINE - timedelta(minutes=45),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings,
+        notify=True,
+    )
+    assert result.no_plan_alarms == []
+    assert len(sent) == 0
+    get_settings.cache_clear()
+
+
 def test_ops_tick_no_plan_retry_then_urgent_alarm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

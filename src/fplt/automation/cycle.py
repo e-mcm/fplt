@@ -22,20 +22,24 @@ Horizon stays ``DEFAULT_PLAN_HORIZON`` (3).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
 
 from fplt.automation.late_refresh import plans_stale_vs_signals, retire_plans
+from fplt.automation.plan_index import catalog_has_plans, resolve_plan_catalog
 from fplt.automation.production import load_production_ops
 from fplt.backtest.run import run_backtest
 from fplt.data.benchmark_projections import archive_if_missing
 from fplt.data.pit import PITData
+from fplt.data.remote import Remote
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import resolve_squad_state, run_plan
 from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.settings import Settings
 from fplt.types import GWKey
 
 # Live list / horizon come from ``configs/ops/production.yaml`` (or env).
@@ -80,12 +84,21 @@ def pending_checked(
     root: Path,
     models: list[str] | None = None,
     horizon: int | None = None,
+    *,
+    settings: Settings | None = None,
+    remotes: Sequence[Remote] | None = None,
+    remote_catalog: pl.DataFrame | None = None,
 ) -> list[GWKey]:
     """Current-season checked gameweeks that are still missing a plan.
 
     Only the current season (``current_season``) from
     ``ProductionOps.catch_up_from_gw`` onwards is considered: catch-up fills
     weeks live ops missed, it does not backtest staged history (#369).
+
+    Local ``plans/`` is the fast path. When a data bucket is configured,
+    gameweeks that look pending locally are checked against the durable R2
+    plan catalog so a cold ``plans/`` cache does not re-play finished weeks
+    (#371).
 
     Args:
         store: Staged tables, including ``gameweeks``.
@@ -94,10 +107,15 @@ def pending_checked(
             ``load_production_ops().models``.
         horizon: Weeks the missing plan would cover. Defaults to
             ``load_production_ops().plan_horizon``.
+        settings: Process settings for remote consultation; defaults to
+            ``get_settings()``.
+        remotes: Optional pre-built remotes (tests).
+        remote_catalog: Optional preloaded ``CatalogRunSchema`` frame so a
+            batch of lookups shares one pull (tests / callers).
 
     Returns:
-        Deadlines whose ``data_checked`` flag is set and whose plan is absent,
-        earliest first.
+        Deadlines whose ``data_checked`` flag is set and whose plan is absent
+        both locally and in the remote plan index, earliest first.
     """
     ops = load_production_ops()
     chosen = ops.models if models is None else models
@@ -110,14 +128,26 @@ def pending_checked(
         & (pl.col("season") == season)
         & (pl.col("gw") >= ops.catch_up_from_gw)
     )
-    waiting: list[GWKey] = []
+    local_pending: list[GWKey] = []
     seen: set[GWKey] = set()
-    for season, gameweek in frame.select("season", "gw").iter_rows():
-        key = GWKey(str(season), int(gameweek))
-        if key in seen or plans_exist(root, chosen, key, steps):
+    for season_key, gameweek in frame.select("season", "gw").iter_rows():
+        key = GWKey(str(season_key), int(gameweek))
+        if key in seen:
             continue
         seen.add(key)
-        waiting.append(key)
+        if _local_plans_exist(root, chosen, key, steps):
+            continue
+        local_pending.append(key)
+    if not local_pending:
+        return []
+    catalog = resolve_plan_catalog(
+        settings=settings, remotes=remotes, remote_catalog=remote_catalog
+    )
+    waiting = [
+        key
+        for key in local_pending
+        if not catalog_has_plans(catalog, chosen, key, steps)
+    ]
     return sorted(waiting)
 
 
@@ -331,8 +361,16 @@ def plans_exist(
     models: list[str] | None,
     key: GWKey,
     horizon: int | None = None,
+    *,
+    settings: Settings | None = None,
+    remotes: Sequence[Remote] | None = None,
+    remote_catalog: pl.DataFrame | None = None,
 ) -> bool:
     """Whether every model already has a plan for ``key`` at ``horizon``.
+
+    Local ``plans/`` is checked first. When a data bucket is configured and
+    the local parquet is missing, the durable R2 plan catalog is consulted
+    (#371).
 
     Args:
         root: Data directory that contains ``plans/``.
@@ -340,20 +378,35 @@ def plans_exist(
         key: Deadline to look up.
         horizon: Weeks the plan covers. Weeks past 38 are not part of the file.
             Defaults to ``load_production_ops().plan_horizon``.
+        settings: Process settings for remote consultation; defaults to
+            ``get_settings()``.
+        remotes: Optional pre-built remotes (tests).
+        remote_catalog: Optional preloaded catalog frame (tests / batch).
 
     Returns:
-        True when each model's parquet is already on disk.
+        True when each model's parquet is already on disk, or when the remote
+        plan index records a matching succeeded plan run for every model.
     """
     ops = load_production_ops()
     chosen = ops.models if models is None else models
     steps = ops.plan_horizon if horizon is None else horizon
-    weeks = covered_horizon(key.gw, steps)
+    if _local_plans_exist(root, chosen, key, steps):
+        return True
+    catalog = resolve_plan_catalog(
+        settings=settings, remotes=remotes, remote_catalog=remote_catalog
+    )
+    return catalog_has_plans(catalog, chosen, key, steps)
+
+
+def _local_plans_exist(root: Path, models: list[str], key: GWKey, horizon: int) -> bool:
+    """Whether every model already has a local plan parquet for ``key``."""
+    weeks = covered_horizon(key.gw, horizon)
     if weeks < 1:
         return False
     specs = load_model_specs()
     return all(
         plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks).exists()
-        for name in chosen
+        for name in models
     )
 
 
