@@ -11,7 +11,15 @@ import pytest
 from pydantic import SecretStr
 
 from fplt.data import remote as remote_mod
-from fplt.data.remote import PUSHABLE, Remote, RemoteError, pull, push, push_replace
+from fplt.data.remote import (
+    PUSHABLE,
+    Remote,
+    RemoteError,
+    lsf,
+    pull,
+    push,
+    push_replace,
+)
 from fplt.settings import Settings, get_settings
 from fplt.utils.timing import (
     TimingSession,
@@ -199,6 +207,27 @@ def test_push_refuses_non_whitelisted_prefix() -> None:
     assert "raw" not in PUSHABLE["lab"]
     assert "bench" in PUSHABLE["lab"]
     assert "bench" not in PUSHABLE["data"]
+
+
+def test_lsf_missing_prefix_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("directory not found")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", missing)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    assert lsf(remote, "official/season=2099-00/gw=1") == []
+
+
+def test_lsf_other_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("permission denied")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", boom)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(RemoteError, match="permission"):
+        lsf(remote, "official/season=2024-25/gw=1")
 
 
 def test_push_replace_status_omits_immutable(

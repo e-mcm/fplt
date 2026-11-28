@@ -16,12 +16,14 @@ from fplt.automation.checkpoints import (
     due_no_plan_alarms,
     list_official_gw_outputs,
     next_upcoming_deadline,
+    push_alarm_markers,
+    push_checkpoint_markers,
     resolve_done_sets,
     write_alarm_marker,
     write_notified_marker,
     write_plan_checkpoint_marker,
 )
-from fplt.data.remote import Remote
+from fplt.data.remote import Remote, RemoteError
 from fplt.data.store import DataStore
 from fplt.settings import Settings
 from fplt.types import GWKey
@@ -232,3 +234,70 @@ def test_list_official_gw_outputs_via_local_remote(tmp_path: Path) -> None:
         remote=remote,
     )
     assert f"checkpoint=T-24h/line={_PRIMARY}.json" in listing
+
+
+def test_list_official_rejects_lab_remote(tmp_path: Path) -> None:
+    key = GWKey("2024-25", 3)
+    lab = Remote(target="fplt:fplt-lab", kind="lab", env={})
+    with pytest.raises(ValueError, match="data bucket"):
+        list_official_gw_outputs(tmp_path, key, remote=lab)
+
+
+def test_list_official_falls_back_locally_on_lsf_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = GWKey("2024-25", 3)
+    write_plan_checkpoint_marker(tmp_path, key, "T-24h", primary_line=_PRIMARY)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+
+    def boom(*_a: object, **_k: object) -> list[str]:
+        raise RemoteError("rclone exploded")
+
+    monkeypatch.setattr("fplt.data.remote.lsf", boom)
+    listing = list_official_gw_outputs(tmp_path, key, remote=remote)
+    assert f"checkpoint=T-24h/line={_PRIMARY}.json" in listing
+
+
+def test_push_checkpoint_markers_immutable_and_other_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = GWKey("2024-25", 3)
+    write_plan_checkpoint_marker(tmp_path, key, "T-24h", primary_line=_PRIMARY)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+
+    def immutable(*_a: object, **_k: object) -> None:
+        raise RemoteError("immutable file modified")
+
+    monkeypatch.setattr("fplt.store.push.push_official", immutable)
+    assert push_checkpoint_markers(tmp_path, key, "T-24h", remote=remote) is True
+
+    def other(*_a: object, **_k: object) -> None:
+        raise RemoteError("network down")
+
+    monkeypatch.setattr("fplt.store.push.push_official", other)
+    assert push_checkpoint_markers(tmp_path, key, "T-24h", remote=remote) is False
+
+
+def test_push_alarm_markers_empty_immutable_and_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = GWKey("2024-25", 3)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    assert push_alarm_markers(tmp_path, key, remote=remote) is False
+
+    write_alarm_marker(tmp_path, key, "retry")
+
+    monkeypatch.setattr("fplt.data.remote.push", lambda *_a, **_k: None)
+    assert push_alarm_markers(tmp_path, key, remote=remote) is True
+
+    def immutable(*_a: object, **_k: object) -> None:
+        raise RemoteError("Already exists / immutable")
+
+    monkeypatch.setattr("fplt.data.remote.push", immutable)
+    assert push_alarm_markers(tmp_path, key, remote=remote) is True
+
+    def other(*_a: object, **_k: object) -> None:
+        raise ValueError("bad prefix")
+
+    monkeypatch.setattr("fplt.data.remote.push", other)
+    assert push_alarm_markers(tmp_path, key, remote=remote) is False
