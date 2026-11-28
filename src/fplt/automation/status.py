@@ -538,8 +538,9 @@ def _checkpoint_state(
     try:
         from fplt.automation.checkpoints import (
             due_checkpoints,
-            resolve_checkpoint_state,
+            resolve_done_sets,
         )
+        from fplt.automation.production import load_production_ops
         from fplt.types import GWKey
     except ImportError:
         return (
@@ -549,9 +550,15 @@ def _checkpoint_state(
         )
     try:
         key = GWKey(season, gw)
-        state = resolve_checkpoint_state(data_dir, key, deadline)
-        due = due_checkpoints(now, deadline, state.done)
-        done = [str(item) for item in state.done]
+        ops = load_production_ops()
+        done_set, _alarms = resolve_done_sets(
+            data_dir,
+            key,
+            primary_line=ops.primary_line().line,
+            slate_lines=tuple(line.line for line in ops.lines),
+        )
+        due = due_checkpoints(now, deadline, done_set)
+        done = sorted(done_set)
         due_ids = [cp.id for cp in due]
         return done, due_ids, None
     except Exception as exc:  # noqa: BLE001 — tolerate sibling-ops probes

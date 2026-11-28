@@ -36,7 +36,7 @@ _RCLONE_INSTALL_HINT = (
     "`brew install rclone` or `sudo apt-get install -y rclone`"
 )
 
-_RemoteOp = Literal["pull", "push", "check"]
+_RemoteOp = Literal["pull", "push", "check", "lsf"]
 
 PUSHABLE: dict[str, frozenset[str]] = {
     "data": frozenset(
@@ -303,6 +303,50 @@ def push_replace(remote: Remote, src: Path, object_key: str) -> None:
     )
 
 
+def lsf(remote: Remote, prefix: str, *, recursive: bool = True) -> list[str]:
+    """List relative object paths under ``prefix`` via ``rclone lsf``.
+
+    Args:
+        remote: rclone target (R2 or a local directory in tests).
+        prefix: Object prefix under the bucket (e.g. ``official/season=…/gw=…``).
+        recursive: When True, pass ``-R`` so nested keys are returned.
+
+    Returns:
+        Relative paths (files only), sorted. Empty when the prefix is missing.
+
+    Raises:
+        RemoteError: rclone failed for a reason other than a missing prefix.
+    """
+    source = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
+    args = ["lsf", source]
+    if recursive:
+        args.append("-R")
+    start = time.perf_counter()
+    try:
+        with timed_phase("remote/lsf"):
+            stdout = _rclone_stdout(args, env=remote.env)
+    except RemoteError as exc:
+        detail = str(exc).lower()
+        if "directory not found" in detail or "not found" in detail:
+            return []
+        raise
+    elapsed = time.perf_counter() - start
+    paths = sorted(
+        line.strip().rstrip("/")
+        for line in stdout.splitlines()
+        if line.strip() and not line.strip().endswith("/")
+    )
+    _emit_remote_timing(
+        "lsf",
+        remote=remote,
+        prefix=prefix,
+        elapsed=elapsed,
+        n_objects=len(paths),
+        nbytes=0,
+    )
+    return paths
+
+
 def check_one_way(src: Path, remote: Remote, prefix: str) -> None:
     """Assert every file under ``src`` exists under ``prefix`` with the same size.
 
@@ -415,9 +459,18 @@ def _rclone(args: list[str], *, env: dict[str, str]) -> None:
     Raises:
         RemoteError: The binary is missing or exits non-zero.
     """
+    _rclone_stdout(args, env=env)
+
+
+def _rclone_stdout(args: list[str], *, env: dict[str, str]) -> str:
+    """Run ``rclone`` and return stdout text.
+
+    Raises:
+        RemoteError: The binary is missing or exits non-zero.
+    """
     merged = {**os.environ, **env}
     try:
-        run_command(
+        completed = run_command(
             ["rclone", *args],
             check=True,
             capture_output=True,
@@ -429,3 +482,4 @@ def _rclone(args: list[str], *, env: dict[str, str]) -> None:
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         raise RemoteError(detail or f"rclone {' '.join(args)} failed") from exc
+    return str(completed.stdout or "")

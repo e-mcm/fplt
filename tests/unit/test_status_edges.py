@@ -172,7 +172,7 @@ def test_checkpoint_probe_failure(
 
     monkeypatch.setattr(
         cp,
-        "resolve_checkpoint_state",
+        "resolve_done_sets",
         lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("probe fail")),
     )
     done, due, reason = _checkpoint_state(

@@ -24,15 +24,15 @@ from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
 from fplt.automation.checkpoints import (
     Checkpoint,
     NoPlanAlarm,
-    apply_output_guards,
     due_checkpoints,
     due_no_plan_alarms,
-    mark_alarm_done,
-    mark_checkpoint_done,
     next_upcoming_deadline,
-    persist_checkpoint_state,
-    pull_checkpoint_state,
-    resolve_checkpoint_state,
+    push_alarm_markers,
+    push_checkpoint_markers,
+    resolve_done_sets,
+    write_alarm_marker,
+    write_notified_marker,
+    write_plan_checkpoint_marker,
 )
 from fplt.automation.cycle import (
     catch_up,
@@ -205,12 +205,17 @@ def run_ops_tick(
                     upcoming_deadline, what="upcoming_deadline"
                 )
                 deadline = upcoming_deadline
-                # Durable state lives in R2 status/ops/; local data/ops may be empty.
-                pull_checkpoint_state(root, settings=cfg)
-                state = resolve_checkpoint_state(root, upcoming_key, deadline)
-                has_plan = plans_exist(root, chosen, upcoming_key, steps)
-                state = apply_output_guards(root, state, has_plan=has_plan)
-                due = due_checkpoints(moment, deadline, state.done)
+                primary_line = ops.primary_line().line
+                slate_lines = tuple(line.line for line in ops.lines)
+                # Done = write-once official markers in R2 (lsf); no mutable state.
+                done, alarms_done = resolve_done_sets(
+                    root,
+                    upcoming_key,
+                    primary_line=primary_line,
+                    slate_lines=slate_lines,
+                    settings=cfg,
+                )
+                due = due_checkpoints(moment, deadline, done)
                 logger.info(
                     "ops_tick: checkpoints key=%s due=%s",
                     upcoming_key,
@@ -229,8 +234,15 @@ def run_ops_tick(
                         notify=notify,
                         auth=auth,
                     )
-                    state = mark_checkpoint_done(state, checkpoint.id)
-                    persist_checkpoint_state(root, state, settings=cfg)
+                    _record_checkpoint_done(
+                        root,
+                        upcoming_key,
+                        checkpoint,
+                        primary_line=primary_line,
+                        notified=sent,
+                        notify_enabled=notify,
+                        settings=cfg,
+                    )
                     checkpoint_ids.append(checkpoint.id)
                     if sent:
                         notified_plan = True
@@ -244,19 +256,23 @@ def run_ops_tick(
                         )
 
                 has_plan = plans_exist(root, chosen, upcoming_key, steps)
-                # Re-apply guards after checkpoints may have created a plan.
-                state = apply_output_guards(root, state, has_plan=has_plan)
+                # Refresh alarm done set after checkpoints may have written markers.
+                _, alarms_done = resolve_done_sets(
+                    root,
+                    upcoming_key,
+                    primary_line=primary_line,
+                    slate_lines=slate_lines,
+                    settings=cfg,
+                )
                 alarms = due_no_plan_alarms(
                     moment,
                     deadline,
                     has_plan=has_plan,
-                    alarms_done=state.alarms_done,
+                    alarms_done=alarms_done,
                 )
                 for alarm in alarms:
                     # A successful T−3h retry can create the plan; skip later alarms.
                     if plans_exist(root, chosen, upcoming_key, steps):
-                        state = apply_output_guards(root, state, has_plan=True)
-                        persist_checkpoint_state(root, state, settings=cfg)
                         break
                     _run_no_plan_alarm(
                         root,
@@ -268,11 +284,9 @@ def run_ops_tick(
                         cfg,
                         notify=notify,
                     )
-                    state = mark_alarm_done(state, alarm.id)
-                    persist_checkpoint_state(root, state, settings=cfg)
+                    write_alarm_marker(root, upcoming_key, alarm.id)
+                    push_alarm_markers(root, upcoming_key, settings=cfg)
                     alarm_ids.append(alarm.id)
-
-                persist_checkpoint_state(root, state, settings=cfg)
 
             logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
             due_gw = pre_deadline(root, moment, chosen, horizon=steps)
@@ -407,6 +421,44 @@ def _notify_auth_check(
     )
 
 
+def _record_checkpoint_done(
+    root: Path,
+    key: GWKey,
+    checkpoint: Checkpoint,
+    *,
+    primary_line: str,
+    notified: bool,
+    notify_enabled: bool,
+    settings: Settings,
+) -> None:
+    """Write write-once official markers for a completed checkpoint and push.
+
+    T−90m pointers are written by ``run_official_checkpoint``. Plan checkpoints
+    write ``line=<primary>.json``; T−6h also writes ``notified.json`` when the
+    ntfy send succeeded, or when notify is disabled for the tick. A failed
+    send leaves ``notified.json`` absent so the next tick retries.
+    """
+    if checkpoint.id == "T-90m":
+        # Official slate finalize + push already recorded every line pointer.
+        return
+    write_plan_checkpoint_marker(
+        root,
+        key,
+        checkpoint.id,
+        primary_line=primary_line,
+    )
+    if checkpoint.id == "T-6h":
+        if notify_enabled and not notified:
+            logger.info(
+                "ops_tick: T-6h plan marker written without notified.json "
+                "(notify failed); will retry notify next tick"
+            )
+            push_checkpoint_markers(root, key, checkpoint.id, settings=settings)
+            return
+        write_notified_marker(root, key)
+    push_checkpoint_markers(root, key, checkpoint.id, settings=settings)
+
+
 def _run_checkpoint(
     root: Path,
     key: GWKey,
@@ -454,12 +506,13 @@ def _run_checkpoint(
             text = reports(root) or f"No plan yet for {key.season} gw{key.gw}."
             if auth is not None:
                 text = with_manual_apply_banner(text, auth)
-            notify_recommendation(
-                settings,
-                f"fplt plan {checkpoint.id} {key.season} gw{key.gw}",
-                text,
+            notified = bool(
+                notify_recommendation(
+                    settings,
+                    f"fplt plan {checkpoint.id} {key.season} gw{key.gw}",
+                    text,
+                )
             )
-            notified = True
         logger.info(
             "ops_tick: checkpoint %s key=%s planned=%s notified=%s",
             checkpoint.id,
