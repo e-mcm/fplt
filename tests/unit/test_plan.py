@@ -226,6 +226,8 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
 
 def test_plan_table_persists_chip_and_legacy_coerces() -> None:
     """Free Hit / chip plans must keep chip on parquet so UI/apply can show it."""
+    from fplt.optimise.plan import _chips_for_horizon
+
     picks = pl.DataFrame(
         {
             "step": [0, 0],
@@ -259,6 +261,28 @@ def test_plan_table_persists_chip_and_legacy_coerces() -> None:
     assert "chip" in filled.columns
     assert plan_step_chip(legacy, step=0) is None
     assert all(value is None for value in filled["chip"].to_list())
+
+    # Edge branches for plan_step_chip / horizon padding (diff-cover).
+    assert plan_step_chip(pl.DataFrame()) is None
+    assert plan_step_chip(pl.DataFrame({"player_key": [1]})) is None
+    assert plan_step_chip(frame, step=9) is None
+    assert _chips_for_horizon((), 2) == [None, None]
+    assert _chips_for_horizon(("bboost",), 2) == ["bboost", None]
+    assert _chips_for_horizon(("freehit", "wildcard", "3xc"), 2) == [
+        "freehit",
+        "wildcard",
+    ]
+
+    # Empty chips on GameweekPlan still write a null chip column per step.
+    no_chip = GameweekPlan(
+        picks=picks,
+        hits=(0.0,),
+        free_transfers=(1,),
+        points=9.0,
+        chips=(),
+    )
+    padded = plan_table(no_chip, "model", "2024-25", 1, [1])
+    assert set(padded["chip"].to_list()) == {None}
 
 
 def test_write_plan_records_code_sha_in_metadata(tmp_path: Path) -> None:
