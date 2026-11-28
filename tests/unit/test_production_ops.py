@@ -117,20 +117,30 @@ def test_env_can_override_one_field_only(tmp_path: Path) -> None:
     assert horizon_only.primary_line().horizon == 8
 
 
-def test_empty_env_override_raises(tmp_path: Path) -> None:
+def test_empty_env_override_means_unset(tmp_path: Path) -> None:
+    """GitHub Actions passes \"\" for unset vars; treat as YAML defaults (#362)."""
     path = tmp_path / "production.yaml"
     path.write_text(
         yaml.safe_dump({"models": ["dc_layered_v4"], "plan_horizon": 3}),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="FPLT_PRODUCTION_MODELS"):
-        load_production_ops(path, environ={"FPLT_PRODUCTION_MODELS": "  "})
-    with pytest.raises(ValueError, match="FPLT_PLAN_HORIZON"):
-        load_production_ops(path, environ={"FPLT_PLAN_HORIZON": ""})
+    ops = load_production_ops(
+        path,
+        environ={"FPLT_PRODUCTION_MODELS": "", "FPLT_PLAN_HORIZON": ""},
+    )
+    assert ops.models == ["dc_layered_v4"]
+    assert ops.plan_horizon == 3
+    whitespace = load_production_ops(
+        path, environ={"FPLT_PRODUCTION_MODELS": "  ", "FPLT_PLAN_HORIZON": "  "}
+    )
+    assert whitespace.models == ["dc_layered_v4"]
+    assert whitespace.plan_horizon == 3
     with pytest.raises(ValueError, match="integer"):
         load_production_ops(path, environ={"FPLT_PLAN_HORIZON": "nope"})
     with pytest.raises(ValueError, match=">= 1"):
         load_production_ops(path, environ={"FPLT_PLAN_HORIZON": "0"})
+    with pytest.raises(ValueError, match="non-empty names"):
+        load_production_ops(path, environ={"FPLT_PRODUCTION_MODELS": "a,,b"})
 
 
 def test_missing_or_invalid_yaml_raises(tmp_path: Path) -> None:

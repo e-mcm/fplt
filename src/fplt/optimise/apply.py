@@ -19,7 +19,7 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
 from fplt.schemas.plan import PlanSchema
-from fplt.settings import Settings, get_settings, secret_value
+from fplt.settings import Settings, get_settings, require_entry_id, secret_value
 from fplt.types import GWKey
 from fplt.utils.frames import require_dataframe
 
@@ -235,14 +235,14 @@ def apply_plan(
 
     Raises:
         ApplyError: Plan cannot be applied.
+        SettingsConfigError: ``FPLT_ENTRY_ID`` is unset.
         FileNotFoundError: Plan parquet missing.
         KeyError: Unknown model name.
     """
     if transfers_only and lineup_only:
         raise ApplyError("choose at most one of transfers_only / lineup_only")
     cfg = settings if settings is not None else get_settings()
-    if cfg.entry_id is None:
-        raise ApplyError("set FPLT_ENTRY_ID to apply a plan")
+    entry_id = require_entry_id(cfg)
     api_token = secret_value(cfg.fpl_api_token)
     session = secret_value(cfg.fpl_session)
     if confirm and not api_token and client is None:
@@ -267,7 +267,7 @@ def apply_plan(
             api = FPLClient(session=session, api_token=api_token)
             owns_client = True
         try:
-            live = api.current_team(cfg.entry_id, event=gameweek)
+            live = api.current_team(entry_id, event=gameweek)
         finally:
             if owns_client and not confirm:
                 api.close()
@@ -279,7 +279,7 @@ def apply_plan(
         live,
         element_by_key=element_by_key,
         purchase_price_by_key=prices,
-        entry_id=cfg.entry_id,
+        entry_id=entry_id,
         event=gameweek,
     )
 

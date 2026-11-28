@@ -12,6 +12,13 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+
+class SettingsConfigError(ValueError):
+    """A required setting is missing or empty (operator config, not a bug)."""
+
+
+_ENTRY_ID_UNSET = "FPLT_ENTRY_ID is not set (GitHub: environment 'r2' secret)"
+
 # Credential fields held as ``SecretStr`` (or already so). Used for log redaction.
 _SECRET_FIELD_NAMES: tuple[str, ...] = (
     "fpl_api_token",
@@ -94,6 +101,7 @@ class Settings(BaseSettings):
         env_prefix="FPLT_",
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
     )
 
@@ -181,6 +189,24 @@ class Settings(BaseSettings):
             dotenv_settings,
             file_secret_settings,
         )
+
+
+def require_entry_id(settings: Settings | None = None) -> int:
+    """Return ``entry_id`` or raise a clear config error when unset.
+
+    Args:
+        settings: Process settings; defaults to ``get_settings()``.
+
+    Returns:
+        The configured FPL manager entry id.
+
+    Raises:
+        SettingsConfigError: ``FPLT_ENTRY_ID`` is unset (including empty env).
+    """
+    cfg = get_settings() if settings is None else settings
+    if cfg.entry_id is None:
+        raise SettingsConfigError(_ENTRY_ID_UNSET)
+    return cfg.entry_id
 
 
 @lru_cache(maxsize=1)

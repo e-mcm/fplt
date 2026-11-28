@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fplt.automation.cycle import (
-    PRODUCTION_MODELS,
     catch_up,
     pending_checked,
     reports,
@@ -80,7 +79,8 @@ def run_ops_catchup(
     Args:
         data_dir: Root with ``raw/``, ``staged/``, and ``plans/``. Defaults to
             ``Settings.data_dir``.
-        models: YAML spec names for catch-up. Defaults to ``PRODUCTION_MODELS``.
+        models: YAML spec names for catch-up. Defaults to
+            ``load_production_ops().models``.
         horizon: Weeks each plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
         source: Raw fetch source: ``auto`` (bucket when configured, else branch),
             ``bucket``, or ``branch``.
@@ -102,7 +102,8 @@ def run_ops_catchup(
     """
     cfg = get_settings() if settings is None else settings
     root = cfg.data_dir if data_dir is None else data_dir
-    chosen = PRODUCTION_MODELS if models is None else models
+    ops = load_production_ops()
+    chosen = list(ops.models) if models is None else models
 
     with timing_session() as timings:
         record_job_setup(timings)
@@ -116,7 +117,6 @@ def run_ops_catchup(
             )
 
             store = DataStore(root)
-            ops = load_production_ops()
             enforce_training_history(
                 store,
                 now=datetime.now(UTC),

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import polars as pl
+from pydantic import ValidationError
 
 from fplt.auth import (
     check_token,
@@ -114,7 +115,7 @@ from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.optimise.realised import DEFAULT_MAX_MEAN_PPG
 from fplt.optimise.regret_board import run_regret_board, write_regret_board
 from fplt.optimise.state import load_squad_state, rebuild_squad_state
-from fplt.settings import get_settings, secret_value
+from fplt.settings import SettingsConfigError, get_settings, secret_value
 from fplt.types import GWKey
 from fplt.utils.logging import configure_logging
 from fplt.utils.process import run_command
@@ -127,6 +128,13 @@ logger = logging.getLogger(__name__)
 def _not_implemented(name: str) -> int:
     print(f"fplt {name} is not implemented yet", file=sys.stderr)
     return 2
+
+
+def _exit_config_error(exc: BaseException) -> None:
+    """Log a config error and exit 2 without a traceback."""
+    logger.error("%s", exc)
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(2) from None
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1981,11 +1989,24 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command is None:
         return
-    configure_logging(
-        verbose=bool(args.verbose),
-        quiet=bool(args.quiet),
-        log_format=getattr(args, "log_format", None),
-    )
+    try:
+        configure_logging(
+            verbose=bool(args.verbose),
+            quiet=bool(args.quiet),
+            log_format=getattr(args, "log_format", None),
+        )
+    except (SettingsConfigError, ValidationError) as exc:
+        # Logging may not be up yet; still fail cleanly for empty/invalid env.
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
+    try:
+        _dispatch(args)
+    except SettingsConfigError as exc:
+        _exit_config_error(exc)
+
+
+def _dispatch(args: argparse.Namespace) -> None:
+    """Route a parsed CLI command after logging is configured."""
     if args.command == "auth":
         logger.info("fplt auth")
         _auth(args)
@@ -3804,6 +3825,8 @@ def _apply(args: argparse.Namespace) -> None:
             transfers_only=bool(args.transfers_only),
             lineup_only=bool(args.lineup_only),
         )
+    except SettingsConfigError:
+        raise
     except (
         ApplyError,
         FPLAPIError,

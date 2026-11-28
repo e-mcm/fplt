@@ -598,7 +598,9 @@ def test_apply_plan_guardrails(tmp_path: Path) -> None:
             lineup_only=True,
             settings=Settings(entry_id=42, fpl_api_token="t"),
         )
-    with pytest.raises(ApplyError, match="FPLT_ENTRY_ID"):
+    from fplt.settings import SettingsConfigError
+
+    with pytest.raises(SettingsConfigError, match="FPLT_ENTRY_ID"):
         apply_plan(
             tmp_path,
             _MODEL,

@@ -45,6 +45,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Check required secrets are non-empty
+        uses: ./.github/actions/check-nonempty-env
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        with:
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
+
       - name: Resolve refs
         id: refs
         env:

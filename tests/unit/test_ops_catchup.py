@@ -136,6 +136,18 @@ def test_run_ops_catchup_calls_existing_library_steps(
         "pending",
     ]
     assert notify_calls == [("fplt recommendation", "# GW 1\nok")]
+
+    # Default models come from load_production_ops (not an import-time constant).
+    calls.clear()
+    notify_calls.clear()
+    defaulted = run_ops_catchup(
+        horizon=1,
+        source="branch",
+        remote="/tmp/remote",
+        branch="snapshots",
+    )
+    assert defaulted.models == ["dc_layered_v4_native"]
+    assert any(c.startswith("catch_up:['dc_layered_v4_native']") for c in calls)
     get_settings.cache_clear()
 
 

@@ -69,6 +69,45 @@ def test_ops_workflows_gate_on_ops_live_and_call_cli() -> None:
     assert "fplt ops-catchup" in run_catchup["run"]
 
 
+def test_ops_tick_checks_secrets_before_run() -> None:
+    """ops-tick preflight fails empty secrets before Run ops-tick (#362)."""
+    steps = _load("ops-tick.yml")["jobs"]["tick"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert "Check required secrets are non-empty" in names
+    assert "Run ops-tick" in names
+    assert names.index("Check required secrets are non-empty") < names.index(
+        "Run ops-tick"
+    )
+    check = next(
+        s for s in steps if s.get("name") == "Check required secrets are non-empty"
+    )
+    assert check.get("uses") == "./.github/actions/check-nonempty-env"
+    assert "FPLT_ENTRY_ID" in check["with"]["names"]
+    action = (_ACTIONS / "check-nonempty-env" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "::error::" in action
+    assert "never echo" in action.lower() or "Never echoes" in action
+
+
+def test_r2_environment_jobs_check_nonempty_secrets() -> None:
+    """Every environment:r2 job that reads R2 secrets has the preflight (#362)."""
+    for path in sorted(_WORKFLOWS.glob("*.yml")):
+        doc = _load(path.name)
+        for job_id, body in doc["jobs"].items():
+            if body.get("environment") != "r2":
+                continue
+            dumped = yaml.safe_dump(body)
+            if "secrets.R2_" not in dumped:
+                continue
+            steps = body.get("steps") or []
+            assert any(
+                isinstance(s, dict)
+                and s.get("uses") == "./.github/actions/check-nonempty-env"
+                for s in steps
+            ), f"{path.name}::{job_id}"
+
+
 def test_ops_workflows_export_job_started_at() -> None:
     for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
         steps = _load(name)["jobs"][job]["steps"]

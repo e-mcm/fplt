@@ -42,6 +42,15 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.ref }}
 
+      - name: Check required secrets are non-empty
+        uses: ./.github/actions/check-nonempty-env
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        with:
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
+
       - name: Simulate failure
         if: ${{ inputs.simulate_failure }}
         run: |
@@ -178,6 +187,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
+
       - name: Notify failure
         if: needs.release.result == 'failure'
         uses: ./.github/actions/notify-failure
