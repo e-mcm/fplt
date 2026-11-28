@@ -11,8 +11,10 @@ import pytest
 
 from fplt.automation.checkpoints import (
     CHECKPOINTS,
+    MISSING_OFFICIAL_SLATE_ALARM_ID,
     done_from_official_listing,
     due_checkpoints,
+    due_missing_official_slate_alarm,
     due_no_plan_alarms,
     list_official_gw_outputs,
     next_upcoming_deadline,
@@ -133,6 +135,77 @@ def test_due_no_plan_alarms_table() -> None:
     )
 
 
+def test_due_missing_official_slate_alarm_table() -> None:
+    """T−60m missing-slate alarm fires once when T−90m pointers are absent (#373)."""
+    # Before T−60m: never.
+    assert (
+        due_missing_official_slate_alarm(
+            _DEADLINE - timedelta(minutes=61),
+            _DEADLINE,
+            has_official_slate=False,
+            alarms_done=set(),
+        )
+        is None
+    )
+    # Exactly at T−60m with no slate: fires.
+    due = due_missing_official_slate_alarm(
+        _DEADLINE - timedelta(minutes=60),
+        _DEADLINE,
+        has_official_slate=False,
+        alarms_done=set(),
+    )
+    assert due is not None
+    assert due.id == MISSING_OFFICIAL_SLATE_ALARM_ID
+    # After T−60m, still missing: still due until recorded.
+    late = due_missing_official_slate_alarm(
+        _DEADLINE - timedelta(minutes=45),
+        _DEADLINE,
+        has_official_slate=False,
+        alarms_done=set(),
+    )
+    assert late is not None
+    assert late.id == MISSING_OFFICIAL_SLATE_ALARM_ID
+    # Slate present: never.
+    assert (
+        due_missing_official_slate_alarm(
+            _DEADLINE - timedelta(minutes=45),
+            _DEADLINE,
+            has_official_slate=True,
+            alarms_done=set(),
+        )
+        is None
+    )
+    # Already recorded: never again.
+    assert (
+        due_missing_official_slate_alarm(
+            _DEADLINE - timedelta(minutes=45),
+            _DEADLINE,
+            has_official_slate=False,
+            alarms_done={MISSING_OFFICIAL_SLATE_ALARM_ID},
+        )
+        is None
+    )
+    # After deadline: never.
+    assert (
+        due_missing_official_slate_alarm(
+            _DEADLINE + timedelta(minutes=1),
+            _DEADLINE,
+            has_official_slate=False,
+            alarms_done=set(),
+        )
+        is None
+    )
+    assert (
+        due_missing_official_slate_alarm(
+            _DEADLINE - timedelta(minutes=30),
+            None,
+            has_official_slate=False,
+            alarms_done=set(),
+        )
+        is None
+    )
+
+
 def test_checkpoint_offsets_match_spec() -> None:
     by_id = {cp.id: cp for cp in CHECKPOINTS}
     assert by_id["T-24h"].offset == timedelta(hours=24)
@@ -178,11 +251,12 @@ def test_done_from_official_listing_markers() -> None:
     listing.add("checkpoint=T-90m/line=v4_h5.json")
     listing.add("checkpoint=T-30m/line=v4_h3.json")
     listing.add("alarms/urgent.json")
+    listing.add("alarms/missing_official_slate.json")
     done, alarms = done_from_official_listing(
         listing, primary_line=_PRIMARY, slate_lines=_SLATE
     )
     assert done == frozenset({"T-24h", "T-6h", "T-90m", "T-30m"})
-    assert alarms == frozenset({"retry", "urgent"})
+    assert alarms == frozenset({"retry", "urgent", "missing_official_slate"})
 
 
 def test_write_markers_idempotent(tmp_path: Path) -> None:

@@ -85,7 +85,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_RAW_PARITY }}
 
       - name: Notify failure
-        if: needs.parity.result == 'failure'
+        if: needs.parity.result == 'failure' || needs.parity.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.parity.result }}

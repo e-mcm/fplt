@@ -1,4 +1,4 @@
-"""Deadline-anchored ops checkpoints and the no-plan alarm (ops-02).
+"""Deadline-anchored ops checkpoints and write-once alarms (ops-02).
 
 GitHub Actions cron is best-effort: ticks can arrive late or be dropped.
 ``due_checkpoints`` lists every checkpoint whose fire time has passed and
@@ -12,7 +12,7 @@ listing (or the local ``official/`` tree). Markers:
 * T−24h / T−30m — ``checkpoint=<id>/line=<primary>.json``
 * T−6h — that pointer **and** ``checkpoint=T-6h/notified.json``
 * T−90m — ``checkpoint=T-90m/line=<line>.json`` for every official slate line
-* no-plan alarms — ``alarms/<alarm_id>.json``
+* alarms — ``alarms/<alarm_id>.json`` (no-plan + missing official slate)
 
 Checkpoints (offsets before the deadline):
 
@@ -21,10 +21,11 @@ Checkpoints (offsets before the deadline):
 * ``T-90m`` — final refresh; apply is stubbed until ops-05
 * ``T-30m`` — last-chance refresh only
 
-No-plan alarm (separate from the plan checkpoints):
+Alarms (separate from the plan checkpoints):
 
-* ``T-3h`` — retry / catch-up when any production model lacks a plan
-* ``T-2h`` — urgent notification if still missing
+* ``T-3h`` — no-plan retry / catch-up when any production model lacks a plan
+* ``T-2h`` — no-plan urgent notification if still missing
+* ``T-60m`` — urgent when the T−90m official slate pointers are still missing
 """
 
 from __future__ import annotations
@@ -49,9 +50,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CheckpointId = Literal["T-24h", "T-6h", "T-90m", "T-30m"]
-AlarmId = Literal["retry", "urgent"]
+NoPlanAlarmId = Literal["retry", "urgent"]
+MissingOfficialSlateAlarmId = Literal["missing_official_slate"]
+AlarmId = NoPlanAlarmId | MissingOfficialSlateAlarmId
 
 _NOTIFIED_NAME = "notified.json"
+MISSING_OFFICIAL_SLATE_ALARM_ID: MissingOfficialSlateAlarmId = "missing_official_slate"
+_KNOWN_ALARM_IDS: tuple[AlarmId, ...] = (
+    "retry",
+    "urgent",
+    MISSING_OFFICIAL_SLATE_ALARM_ID,
+)
+_ALARM_KIND: dict[str, str] = {
+    "retry": "no_plan_alarm",
+    "urgent": "no_plan_alarm",
+    MISSING_OFFICIAL_SLATE_ALARM_ID: "missing_official_slate_alarm",
+}
 
 
 @dataclass(frozen=True)
@@ -116,6 +130,7 @@ _CHECKPOINT_BY_ID: dict[str, Checkpoint] = {cp.id: cp for cp in CHECKPOINTS}
 
 NO_PLAN_RETRY_OFFSET = timedelta(hours=3)
 NO_PLAN_URGENT_OFFSET = timedelta(hours=2)
+MISSING_OFFICIAL_SLATE_OFFSET = timedelta(minutes=60)
 
 
 @dataclass(frozen=True)
@@ -127,7 +142,20 @@ class NoPlanAlarm:
         offset: Offset before the deadline when this alarm fires.
     """
 
-    id: AlarmId
+    id: NoPlanAlarmId
+    offset: timedelta
+
+
+@dataclass(frozen=True)
+class MissingOfficialSlateAlarm:
+    """Urgent alarm when the T−90m official slate is still missing at T−60m.
+
+    Attributes:
+        id: Always ``missing_official_slate``.
+        offset: Offset before the deadline when this alarm fires (60m).
+    """
+
+    id: MissingOfficialSlateAlarmId
     offset: timedelta
 
 
@@ -204,6 +232,46 @@ def due_no_plan_alarms(
     if moment >= cut - NO_PLAN_URGENT_OFFSET and "urgent" not in finished:
         due.append(NoPlanAlarm(id="urgent", offset=NO_PLAN_URGENT_OFFSET))
     return due
+
+
+def due_missing_official_slate_alarm(
+    now: datetime,
+    deadline: datetime | None,
+    *,
+    has_official_slate: bool,
+    alarms_done: frozenset[str] | set[str],
+) -> MissingOfficialSlateAlarm | None:
+    """Return the T−60m missing-official-slate alarm when due and not recorded.
+
+    Fires once at/after ``deadline - 60m`` when the T−90m official slate
+    pointers are still missing. Never before T−60m, never when the slate
+    exists, and never after the deadline. Late ticks catch up the same way
+    as other alarms.
+
+    Args:
+        now: Clock reading.
+        deadline: Upcoming deadline, or ``None`` when there is none.
+        has_official_slate: True when every official slate line has a
+            ``checkpoint=T-90m/line=<line>.json`` pointer.
+        alarms_done: Alarm ids already fired for this deadline.
+
+    Returns:
+        The alarm when due, else ``None``.
+    """
+    if deadline is None or has_official_slate:
+        return None
+    if MISSING_OFFICIAL_SLATE_ALARM_ID in alarms_done:
+        return None
+    moment = _aware(now)
+    cut = _aware(deadline)
+    if moment >= cut:
+        return None
+    if moment < cut - MISSING_OFFICIAL_SLATE_OFFSET:
+        return None
+    return MissingOfficialSlateAlarm(
+        id=MISSING_OFFICIAL_SLATE_ALARM_ID,
+        offset=MISSING_OFFICIAL_SLATE_OFFSET,
+    )
 
 
 def next_upcoming_deadline(
@@ -327,7 +395,7 @@ def done_from_official_listing(
         else:
             done.add(checkpoint.id)
     alarms = frozenset(
-        alarm for alarm in ("retry", "urgent") if f"alarms/{alarm}.json" in paths
+        alarm for alarm in _KNOWN_ALARM_IDS if f"alarms/{alarm}.json" in paths
     )
     return frozenset(done), alarms
 
@@ -373,7 +441,7 @@ def notified_path(root: Path, key: GWKey, *, checkpoint: str = "T-6h") -> Path:
 
 
 def alarm_marker_path(root: Path, key: GWKey, alarm_id: str) -> Path:
-    """Path for a write-once no-plan alarm marker."""
+    """Path for a write-once alarm marker under ``alarms/<alarm_id>.json``."""
     return (
         root
         / "official"
@@ -457,16 +525,18 @@ def write_alarm_marker(
     alarm_id: str,
     *,
     written_at: datetime | None = None,
+    kind: str | None = None,
 ) -> Path:
-    """Write ``alarms/<alarm_id>.json`` once after a no-plan alarm fires.
+    """Write ``alarms/<alarm_id>.json`` once after an alarm fires.
 
     Idempotent: existing file is left untouched.
 
     Args:
         root: Data directory.
         key: Season / gameweek.
-        alarm_id: ``retry`` or ``urgent``.
+        alarm_id: ``retry``, ``urgent``, or ``missing_official_slate``.
         written_at: Marker timestamp (default now UTC).
+        kind: Marker kind override. Defaults from ``alarm_id``.
 
     Returns:
         Path of the marker file.
@@ -475,7 +545,7 @@ def write_alarm_marker(
     moment = _aware(written_at or datetime.now(UTC))
     payload = {
         "alarm": alarm_id,
-        "kind": "no_plan_alarm",
+        "kind": kind or _ALARM_KIND.get(alarm_id, "alarm"),
         "written_at": moment.isoformat(),
     }
     return _write_json_once(dest, payload)
@@ -620,16 +690,22 @@ def _aware(value: datetime) -> datetime:
 
 __all__ = [
     "CHECKPOINTS",
+    "MISSING_OFFICIAL_SLATE_ALARM_ID",
+    "MISSING_OFFICIAL_SLATE_OFFSET",
     "AlarmId",
     "Checkpoint",
     "CheckpointId",
+    "MissingOfficialSlateAlarm",
+    "MissingOfficialSlateAlarmId",
     "NO_PLAN_RETRY_OFFSET",
     "NO_PLAN_URGENT_OFFSET",
     "NoPlanAlarm",
+    "NoPlanAlarmId",
     "alarm_marker_path",
     "checkpoint_by_id",
     "done_from_official_listing",
     "due_checkpoints",
+    "due_missing_official_slate_alarm",
     "due_no_plan_alarms",
     "list_official_gw_outputs",
     "next_upcoming_deadline",

@@ -167,7 +167,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_API_FOOTBALL }}
 
       - name: Notify failure
-        if: needs.capture.result == 'failure'
+        if: needs.capture.result == 'failure' || needs.capture.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.capture.result }}
