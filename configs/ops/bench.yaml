@@ -30,3 +30,4 @@ tracked_phases:
   - optimise/milp
   - mc_bench_total
   - pytest_suite
+  - exp_component

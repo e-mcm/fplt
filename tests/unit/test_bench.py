@@ -78,6 +78,7 @@ def test_load_default_bench_config() -> None:
     assert cfg.baseline_window >= 1
     assert cfg.consecutive_nights >= 1
     assert "fit" in cfg.tracked_phases
+    assert "exp_component" in cfg.tracked_phases
 
 
 def test_write_once_and_list(tmp_path: Path) -> None:

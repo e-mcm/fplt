@@ -347,6 +347,7 @@ class ModelSpec(BaseModel):
 - **Pipeline arms** (`fplt.models.pipeline_patch`, experiments §9 step 2 / toolkit §2.1): dotted-path patches over a base `PipelineSpec` (scalar overrides, component substitution by registered name, grid expansion, auto-labels). Validity: the resolved leaf-diff equals the patch effect. Arm identity is `pipeline_hash` of the resolved spec.
 - **Measure interface** (`fplt.backtest.measure`, experiments §9 step 3 / toolkit §2.3): one `Measure` protocol `(stage, runs, outcomes, slices) →` `MeasureMetricsSchema` table. Adapters wrap existing scorers (`component_eval`, `minutes_measurement`, `other_points_measurement`, `forecast_scores`, decisions board, `simulated_season`) without rewriting them.
 - **Component output cache** (`fplt.models.component_cache`, experiments §9 step 4 / toolkit §2.2): `run_type=component` on `RunManifest` / `RunType`. Cache key = `(component spec hash, upstream component hashes, code_sha, lockfile_hash, build_id, deadline)`. Explicit `LAYERED_COMPONENT_UPSTREAM` graph (involvement team-normalises internally; lineup multipliers that read minutes must list `minutes` as upstream). `CompositePredictor.fit(..., precomputed={slot: fitted})` injects cached fits so a minutes arm reuses control score/involvement/other.
+- **Component experiment command** (`fplt exp component` / `fplt.backtest.component_experiment`, toolkit §2.4): patch arms on a base `PipelineSpec`, reuse cached upstream fits, score via Measure at the component stage then player-fixture stage, write `experiments/…/results/arm_metrics.parquet`. Bench phase `exp_component` (≤10 min/season target on GHA).
 - **Never edit a released production ModelSpec in place.** A keep that changes compose bumps the versioned YAML (`dc_layered_v3`, `v4`, then `v5`, …) and retargets `configs/ops/production.yaml` / opt-out forks. Decision boards label arms as `name (model_id)` so a stable name alone cannot hide a hash change. **Note:** boards run before `4d715b5` under the name `dc_layered_v2` used model_id `b12aad1575ff0d34` (mean wire). Commit `4d715b5` edited that YAML in place to the rate wire (hash `12152f0e53162d2f`). FDB-226 froze mean-wire `dc_layered_v2` back to `b12aad1575ff0d34` and moved production to `dc_layered_v3` (rate wire; `model_id` includes later param bumps such as `logistic_blend`). FDB-267 moved production to `dc_layered_v4` (`market_cs_strength=0.5`; frozen pre-CS `dc_layered_v3` = `30367a901721a5d6`).
 - Implementing classes register with `@register_model("kind")`.
 - Artifacts are written to `artifacts/<model_id>/as_of=<...>/` with `spec.json` and `git_sha.txt` alongside. Nothing is ever overwritten.
@@ -767,7 +768,7 @@ fplt/
 │   │   ├── direct/              # all-in-one predictors
 │   │   ├── baselines/
 │   │   └── external/openfpl.py
-│   ├── backtest/                # walk-forward, ledger, metrics, Measure adapters, decision sim
+│   ├── backtest/                # walk-forward, ledger, metrics, Measure, component_experiment (§2.4)
 │   ├── optimise/
 │   └── cli.py                   # `fplt backtest`, `fplt compare`, `fplt predict`, ...
 ├── apps/leaderboard.py

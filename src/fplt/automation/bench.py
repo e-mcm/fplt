@@ -63,6 +63,7 @@ class BenchConfig(BaseModel):
         "optimise/milp",
         "mc_bench_total",
         "pytest_suite",
+        "exp_component",
     )
 
     def rss_warn_kb(self) -> int:
