@@ -174,15 +174,16 @@ def test_plan_squad_h8_raf_lineup_reopt_with_freehit_windows() -> None:
     Prevention: long-horizon tests used to set lineup_reopt=False, so the
     production composition (RAF + reopt + chips) was untested.
 
-    Pool / time_limit are kept deliberately small (FDB-387): assertions only
-    need a feasible step-0 locked fifteen under the production flags, not a
-    large candidate universe.
+    Pool / time_limit are kept deliberately small (FDB-387, FDB-421):
+    assertions only need a feasible step-0 locked fifteen under the
+    production flags (lineup_reopt, RAF, FH windows), not a large universe
+    or a fully optimal board.
     """
     scenario = sample_synthetic_scenarios(
         1,
         seed=11,
         horizon=8,
-        pool_counts={"GK": 4, "DEF": 10, "MID": 12, "FWD": 6},
+        pool_counts={"GK": 3, "DEF": 8, "MID": 10, "FWD": 5},
     )[0]
     gameweeks = list(range(5, 13))
     windows = ChipUseWindows(
@@ -209,7 +210,7 @@ def test_plan_squad_h8_raf_lineup_reopt_with_freehit_windows() -> None:
         gameweeks=gameweeks,
         chip_windows=windows,
         prune=False,
-        highs_options=HighsSolveOptions(time_limit=5.0, mip_rel_gap=1e-2),
+        highs_options=HighsSolveOptions(time_limit=2.5, mip_rel_gap=1e-2),
         lineup_reopt=True,
         long_horizon_policy=LongHorizonPolicy(
             relax_and_fix=True,
@@ -221,6 +222,8 @@ def test_plan_squad_h8_raf_lineup_reopt_with_freehit_windows() -> None:
     step0 = plan.picks.filter((pl.col("step") == 0) & ~pl.col("sold"))
     assert locked_fifteen_issue(step0) is None
     assert step0.filter(pl.col("in_xi")).height == 11
+    # Reopt (or MILP) must still leave a single captain on the actionable step.
+    assert int(step0["captain"].sum()) == 1
     assert dict(SQUAD_POSITION_QUOTA) == {
         "GK": 2,
         "DEF": 5,
