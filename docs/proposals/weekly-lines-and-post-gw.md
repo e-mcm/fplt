@@ -13,13 +13,13 @@ Compute is cheap: a fit is about 30 s, a predict 15–35 s and a plan 15–40 s 
 | Tier | `role` | Runs | Question | Scored on |
 |---|---|---|---|---|
 | Primary | `primary` | predict + plan, real squad (`v4_h3` today) | What we play | Real points |
-| Shadow decision lines | `candidate` (virtual squad) | predict + plan on a virtual squad, **at most 6 lines** | Would this decision process score more? | Decision ledger: realised points of the virtual squad |
+| Shadow decision lines | `candidate` (virtual squad) | predict + plan on a virtual squad, **at most 6 lines**: v4 h5/h7/h9, baseline `ep_next_v1` h3, one challenger slot | Would this decision process score more? | Decision ledger: realised points of the virtual squad |
 | Prediction-only | `shadow_predict` (new) | predict only, no plan | Is this forecast better? | Prediction ledger: RMSE, calibration, log-loss per player-fixture |
 
 ### 1.1 Shadow decision lines (at most 6)
 
 - Horizon lines: `v4_h5`, `v4_h7`, `v4_h9` (existing).
-- **Baseline:** a plan driven by a simple forecast (FPL `ep_next` from the archived benchmark projections, or `rolling_mean_v1`). This is the floor any model must beat.
+- **Baseline: `ep_next_v1` at h3 (decided 2026-11-29).** FPL's own free projection run through *our* optimiser. If v4 cannot beat it, the modelling adds no value. It's a sharper test than `rolling_mean_v1`.
 - **Challenger:** the current experiment winner. Approving an experiment adds or replaces this line, so it is the bridge to the agentic experiment loop (promotion to primary only after N live weeks).
 
 Fairness rules:
@@ -43,7 +43,18 @@ Ex-chips rows carry the same keys plus `chip_adjusted=true`, so cumulative sums 
 
 ### 1.2 Prediction-only lines
 
-- Every model worth tracking: past production models, challengers under evaluation, and component models (minutes, goals/assists, clean sheets, cards, bonus).
+**Roster (decided 2026-11-29):**
+
+| Model | Why |
+|---|---|
+| `ep_next_v1`, `openfpl_v1` | External benchmarks (OpenFPL season guard below) |
+| `dc_layered_v3`, `dc_layered_v2` | Ancestors: do the backtested improvements hold up live? |
+| `rolling_mean_v1` | Naive floor |
+| `lgbm_probs_v1` | Different model family (machine learning vs Dixon–Coles layering) |
+| `forecast_combine_probs_v1` | Ensemble check (dropped offline, cheap to watch live) |
+
+- **Components:** the primary's own minutes / scoreline / involvement outputs are already stored in each official predict run, and are scored by §2.3 at no extra cost. Alternative component models are compared in component experiments, not weekly lines, because they need the composite rebuilt around them.
+- **Timing: non-blocking.** Prediction-only lines must never delay the T−90m official slate. They run in a separate step or job after the official slate has been written (or at T−6h). A failure there alerts but doesn't fail the slate. At about 1 min per model (fit + predict), the roster costs about 8 min.
 - Benchmarks: archived FPL `ep_next` and OpenFPL projections (`fplt.data.benchmark_projections`) are scored as pseudo-models in the same ledger. Per AGENTS.md §6, OpenFPL is never benchmarked on 2020-21 to 2023-24.
 - Run at T−90m together with the official slate, as `kind=official`, `run_type=predict`, with no plan, no PMF and no pointer. Fingerprint skip-if-done applies (#346, #380).
 
