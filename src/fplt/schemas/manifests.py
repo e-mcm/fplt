@@ -145,6 +145,21 @@ class BuildManifest(BaseModel):
         return value
 
 
+class CuratedLatestPointer(BaseModel):
+    """Mutable pointer to the latest curated build under ``status/``.
+
+    Path: ``status/curated/latest.json`` (rewritable; ``curated/`` stays
+    write-once). ``raw_cutoff`` is the incremental watermark (#345).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    build_id: str = Field(min_length=1)
+    created_at: datetime
+    raw_cutoff: datetime
+    code_sha: str = Field(min_length=1)
+
+
 class OfficialPointer(BaseModel):
     """Write-once official line pointer for one season/GW/checkpoint/line.
 

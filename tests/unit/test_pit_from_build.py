@@ -148,18 +148,16 @@ def test_latest_build_id_picks_newest(tmp_path: Path) -> None:
     assert latest_build_id(tmp_path) is None
     assert list_build_ids(tmp_path) == []
     first = _seed_build(tmp_path)
-    # Second build: change raw so build_id differs.
-    raw = (
-        tmp_path
-        / "raw"
-        / "fpl_api"
-        / "season=2024-25"
-        / "captured_at=2024-08-11T12-00-00Z"
-        / "bootstrap_static.json.gz"
-    )
-    raw.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(raw, "wt", encoding="utf-8") as handle:
-        json.dump(_BOOTSTRAP, handle)
+    # Second build: restage with different content so table shas (and thus
+    # build_id) differ (#345 content-addressed id).
+    later = datetime(2024, 8, 11, 12, 0, 0, tzinfo=UTC)
+    payload = json.loads(json.dumps(_BOOTSTRAP))
+    payload["elements"][0]["now_cost"] = 111
+    frames = stage_bootstrap(payload, _FIXTURES, later, "2024-25")
+    store = DataStore(tmp_path)
+    for name, frame in frames.items():
+        if not frame.is_empty():
+            store.write(name, frame)
     second = build_from_staged(
         tmp_path,
         code_sha="abc",
