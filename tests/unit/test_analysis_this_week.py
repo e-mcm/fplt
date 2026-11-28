@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -288,6 +289,16 @@ def test_default_selection_prefers_newest_manual_checkpoint() -> None:
 
 def test_default_selection_empty() -> None:
     assert default_official_selection(pl.DataFrame()) is None
+
+
+def test_applied_for_gw_prefers_t90m_then_none(tmp_path: Path) -> None:
+    """``_applied_for_gw`` scans checkpoints; returns None when none applied."""
+    from fplt.ui.data import DashboardStore
+    from fplt.ui.pages.this_week import _applied_for_gw
+
+    pointers = _pointers_frame()
+    store = DashboardStore(tmp_path)
+    assert _applied_for_gw(store, season=_SEASON, gw=13, pointers=pointers) is None
 
 
 def test_players_table_horizon_double_and_blank() -> None:

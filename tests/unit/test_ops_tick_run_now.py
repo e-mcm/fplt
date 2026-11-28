@@ -481,6 +481,108 @@ def test_run_now_requires_upcoming_deadline(
     get_settings.cache_clear()
 
 
+def test_ops_tick_drift_alert_and_failure_nonfatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-run_now path still logs drift alerts / swallows drift errors."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("JOB_STARTED_AT", "1700000000")
+    get_settings.cache_clear()
+    _league(tmp_path)
+    _patch_curated(monkeypatch)
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.catch_up",
+        lambda *a, **k: [GWKey("2024-25", 2)],
+    )
+    monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.resolve_done_sets",
+        lambda *a, **k: (
+            frozenset({"T-24h", "T-6h", "T-90m", "T-30m"}),
+            frozenset(),
+        ),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.ensure_slate_runs", lambda *a, **k: ("b", ())
+    )
+    monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.notify_recommendation", lambda *a, **k: True
+    )
+
+    drift = type(
+        "Drift",
+        (),
+        {
+            "alerted": True,
+            "model_id": "m",
+            "alerts": [type("A", (), {"metric": "rmse"})()],
+        },
+    )()
+    monkeypatch.setattr(
+        "fplt.automation.drift.run_live_drift_monitor",
+        lambda *a, **k: [drift],
+    )
+    run_ops_tick(tmp_path, now=_DEADLINE - timedelta(days=5), notify=False)
+
+    monkeypatch.setattr(
+        "fplt.automation.drift.run_live_drift_monitor",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    run_ops_tick(tmp_path, now=_DEADLINE - timedelta(days=5), notify=False)
+    get_settings.cache_clear()
+
+
+def test_run_now_ops_log_exists_is_tolerated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-existing ops_log.jsonl is write-once; run_now continues (#364)."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("JOB_STARTED_AT", "1700000000")
+    get_settings.cache_clear()
+    _league(tmp_path)
+    _patch_curated(monkeypatch)
+
+    def fake_official(
+        data_dir: Path,
+        ops: ProductionOps,
+        gw_key: GWKey,
+        *,
+        settings: Settings | None = None,
+        chip_arm: str = "optimised",
+        build_id: str | None = None,
+        prod_tag: str | None = None,
+        decisions: list[LineFpDecision] | None = None,
+        now: datetime | None = None,
+        checkpoint: str | None = None,
+        apply_primary: bool | None = None,
+    ) -> OfficialCheckpointResult:
+        cp = str(checkpoint)
+        cp_dir = official_checkpoint_dir(
+            data_dir, season=gw_key.season, gw=gw_key.gw, checkpoint=cp
+        )
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        # Force FileExistsError inside write_ops_log_once.
+        (cp_dir / "ops_log.jsonl").write_text("{}\n", encoding="utf-8")
+        return OfficialCheckpointResult(
+            season=gw_key.season,
+            gw=gw_key.gw,
+            checkpoint=cp,
+            pairs=(),
+            checkpoint_dir=cp_dir,
+            build_id=str(build_id),
+        )
+
+    monkeypatch.setattr(
+        "fplt.automation.ops_tick.run_official_checkpoint", fake_official
+    )
+    result = run_ops_tick(
+        tmp_path, now=_DEADLINE - timedelta(days=1), notify=False, run_now=True
+    )
+    assert result.checkpoints_run[0].startswith("manual-")
+    get_settings.cache_clear()
+
+
 def test_run_official_checkpoint_manual_skips_applied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -348,6 +348,164 @@ def test_checkpoint_manual_and_latest_aliases(
     )
 
 
+def test_resolve_checkpoint_target_concrete_and_errors(tmp_path: Path) -> None:
+    """Concrete checkpoint with/without gw, plus empty-alias errors (#364)."""
+    bucket = tmp_path / "bucket"
+    local = tmp_path / "data"
+    local.mkdir()
+    predict = _succeed(bucket, "r_20261127T120000Z_pred_c")
+    plan = _succeed(
+        bucket,
+        "r_20261127T120000Z_plan_c",
+        run_type="plan",
+        plan_horizon=3,
+        line="v4_h3",
+    )
+    _pointer(
+        bucket,
+        gw=13,
+        line="v4_h3",
+        predict=predict,
+        plan=plan,
+        checkpoint="T-90m",
+    )
+    remote = Remote(target=str(bucket), kind="data", env={})
+    root = mirror_official_index(local, remote)
+
+    assert resolve_checkpoint_target(
+        root, season=_SEASON, checkpoint="T-90m", gw=13
+    ) == (13, "T-90m")
+    assert resolve_checkpoint_target(root, season=_SEASON, checkpoint="T-90m") == (
+        13,
+        "T-90m",
+    )
+    with pytest.raises(OfficialPullError, match="gw=12"):
+        resolve_checkpoint_target(root, season=_SEASON, checkpoint="T-90m", gw=12)
+    with pytest.raises(OfficialPullError, match="no manual"):
+        resolve_checkpoint_target(root, season=_SEASON, checkpoint="manual")
+    with pytest.raises(OfficialPullError, match="no official pointer"):
+        resolve_checkpoint_target(root, season=_SEASON, checkpoint="latest", gw=99)
+
+    # Empty / junk paths under official/ are skipped by the candidate scanner.
+    empty = tmp_path / "empty_official"
+    empty.mkdir()
+    (empty / "season=2099-00").mkdir()
+    (empty / "season=2099-00" / "gw=notint").mkdir()
+    (empty / "season=2099-00" / "gw=1").mkdir()
+    (empty / "season=2099-00" / "gw=1" / "checkpoint=T-90m").mkdir()
+    junk = empty / "season=2099-00" / "gw=1" / "checkpoint=T-90m" / "line=v4_h3.json"
+    junk.write_text("{not-json", encoding="utf-8")
+    (empty / "season=2099-00" / "gw=1" / "checkpoint=file.txt").write_text(
+        "x", encoding="utf-8"
+    )
+    with pytest.raises(OfficialPullError, match="available:"):
+        resolve_checkpoint_target(empty, season="2099-00", checkpoint="latest")
+    with pytest.raises(OfficialPullError, match="available: \\(none\\)"):
+        resolve_checkpoint_target(
+            empty / "missing", season="2099-00", checkpoint="latest"
+        )
+
+
+def test_cli_data_pull_checkpoint_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI accepts ``--checkpoint manual|latest`` without xor latest/--gw."""
+    from fplt.cli import main
+    from fplt.store.pull_official import OfficialPullResult
+
+    monkeypatch.setattr(
+        "fplt.store.pull_official.require_data_remote",
+        lambda settings=None: Remote(target=str(tmp_path / "b"), kind="data", env={}),
+    )
+    monkeypatch.setattr(
+        "fplt.store.pull_official.mirror_official_index",
+        lambda data_dir, remote: data_dir / "official",
+    )
+    monkeypatch.setattr(
+        "fplt.store.pull_official.infer_official_season",
+        lambda root, season: season or _SEASON,
+    )
+    monkeypatch.setattr(
+        "fplt.store.pull_official.resolve_checkpoint_target",
+        lambda *a, **k: (13, "manual-20261128T073015Z"),
+    )
+    monkeypatch.setattr(
+        "fplt.store.pull_official.pull_official",
+        lambda *a, **k: OfficialPullResult(
+            season=_SEASON,
+            gw=13,
+            checkpoint="manual-20261128T073015Z",
+            line=None,
+            predict_run_ids=("p",),
+            plan_run_ids=("q",),
+            build_ids=("b",),
+            n_written=1,
+        ),
+    )
+    assert (
+        main(
+            [
+                "data",
+                "pull",
+                "--official",
+                "--checkpoint",
+                "manual",
+                "--data-dir",
+                str(tmp_path),
+            ]
+        )
+        is None
+    )
+    out = capsys.readouterr().out
+    assert "manual-20261128T073015Z" in out
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "data",
+                "pull",
+                "--official",
+                "--checkpoint",
+                "manual",
+                "latest",
+                "--gw",
+                "13",
+            ]
+        )
+    assert exc.value.code == 2
+
+    # Concrete checkpoint + --gw skips alias resolve (else branch).
+    monkeypatch.setattr(
+        "fplt.store.pull_official.pull_official",
+        lambda *a, **k: OfficialPullResult(
+            season=_SEASON,
+            gw=13,
+            checkpoint="T-90m",
+            line=None,
+            predict_run_ids=("p",),
+            plan_run_ids=("q",),
+            build_ids=("b",),
+            n_written=0,
+        ),
+    )
+    assert (
+        main(
+            [
+                "data",
+                "pull",
+                "--official",
+                "--gw",
+                "13",
+                "--checkpoint",
+                "T-90m",
+                "--data-dir",
+                str(tmp_path),
+            ]
+        )
+        is None
+    )
+
+
 def test_latest_lists_availability_when_missing(
     tmp_path: Path,
 ) -> None:
