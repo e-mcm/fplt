@@ -180,9 +180,30 @@ def test_build_payload_pairs_transfers_and_lineup() -> None:
     body = payload.transfers_body()
     assert body["entry"] == 42
     assert body["transfers"][0]["element_in"] == buy_key
+    assert body["chip"] is None
+    assert payload.chip is None
     assert len(payload.picks) == 15
     assert {pick["element"] for pick in payload.picks} == set(owned[1:] + [buy_key])
     assert sum(1 for pick in payload.picks if pick["is_captain"]) == 1
+
+
+def test_build_payload_includes_freehit_chip() -> None:
+    """Free Hit plans must POST chip=freehit, not look like ordinary transfers."""
+    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
+    owned = [pick.element for pick in team.picks]
+    buy_key = 9001
+    frame = _swap_plan(team, buy_key).with_columns(pl.lit("freehit").alias("chip"))
+    payload = build_apply_payload(
+        frame,
+        team,
+        element_by_key={key: key for key in owned + [buy_key]},
+        purchase_price_by_key={key: 50 for key in owned + [buy_key]},
+        entry_id=42,
+        event=_GW,
+    )
+    assert payload.chip == "freehit"
+    assert payload.transfers_body()["chip"] == "freehit"
+    assert payload.lineup_body()["chip"] == "freehit"
 
 
 def test_refuses_initial_draft() -> None:

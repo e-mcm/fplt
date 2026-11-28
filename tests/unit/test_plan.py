@@ -25,10 +25,13 @@ from fplt.optimise.decisions import (
 )
 from fplt.optimise.plan import (
     DEFAULT_PLAN_HORIZON,
+    GameweekPlan,
     covered_horizon,
+    ensure_plan_chip_column,
     plan_code_sha_path,
     plan_metadata_path,
     plan_squad,
+    plan_step_chip,
     plan_table,
     render_report,
     write_plan,
@@ -203,6 +206,7 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
     points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
     plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
     frame = plan_table(plan, "model", "2024-25", 1, [1])
+    assert "chip" in frame.columns
     path = write_plan(tmp_path, frame, code_sha="deadbeef")
     assert path.parent.name == "as_of=2024-25_gw01_h01"
     with pytest.raises(FileExistsError):
@@ -218,6 +222,67 @@ def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
     broken = frame.with_columns(pl.lit(2).alias("step"))
     with pytest.raises(ValueError, match="horizon step"):
         write_plan(tmp_path, broken)
+
+
+def test_plan_table_persists_chip_and_legacy_coerces() -> None:
+    """Free Hit / chip plans must keep chip on parquet so UI/apply can show it."""
+    from fplt.optimise.plan import _chips_for_horizon
+
+    picks = pl.DataFrame(
+        {
+            "step": [0, 0],
+            "player_key": [1, 2],
+            "position": ["MID", "FWD"],
+            "team_key": [1, 2],
+            "price": [50, 60],
+            "xpts": [4.0, 5.0],
+            "in_xi": [True, True],
+            "captain": [True, False],
+            "vice": [False, True],
+            "bought": [True, False],
+            "sold": [False, True],
+        }
+    )
+    plan = GameweekPlan(
+        picks=picks,
+        hits=(0.0,),
+        free_transfers=(1,),
+        points=9.0,
+        chips=("freehit",),
+    )
+    frame = plan_table(plan, "model", "2024-25", 1, [1])
+    assert set(frame["chip"].to_list()) == {"freehit"}
+    assert plan_step_chip(frame, step=0) == "freehit"
+    report = render_report(plan, "2024-25", [1])
+    assert "Chip: freehit" in report
+
+    legacy = frame.drop("chip")
+    filled = ensure_plan_chip_column(legacy)
+    assert "chip" in filled.columns
+    assert plan_step_chip(legacy, step=0) is None
+    assert all(value is None for value in filled["chip"].to_list())
+
+    # Edge branches for plan_step_chip / horizon padding (diff-cover).
+    assert plan_step_chip(pl.DataFrame()) is None
+    assert plan_step_chip(pl.DataFrame({"player_key": [1]})) is None
+    assert plan_step_chip(frame, step=9) is None
+    assert _chips_for_horizon((), 2) == [None, None]
+    assert _chips_for_horizon(("bboost",), 2) == ["bboost", None]
+    assert _chips_for_horizon(("freehit", "wildcard", "3xc"), 2) == [
+        "freehit",
+        "wildcard",
+    ]
+
+    # Empty chips on GameweekPlan still write a null chip column per step.
+    no_chip = GameweekPlan(
+        picks=picks,
+        hits=(0.0,),
+        free_transfers=(1,),
+        points=9.0,
+        chips=(),
+    )
+    padded = plan_table(no_chip, "model", "2024-25", 1, [1])
+    assert set(padded["chip"].to_list()) == {None}
 
 
 def test_write_plan_records_code_sha_in_metadata(tmp_path: Path) -> None:

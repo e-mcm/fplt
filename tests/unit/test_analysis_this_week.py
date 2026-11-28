@@ -354,25 +354,26 @@ def test_players_table_my_squad_only() -> None:
 
 
 def test_plan_panel_and_squad_keys() -> None:
+    players = pl.concat(
+        [
+            _players(),
+            pl.DataFrame(
+                {
+                    "season": [_SEASON, _SEASON],
+                    "player_key": [200, 300],
+                    "element_id": [20, 30],
+                    "team_key": [7, 3],
+                    "position": ["FWD", "DEF"],
+                    "web_name": ["Richarlison", "Saliba"],
+                    "available_at": [_TS, _TS],
+                    "source": ["test", "test"],
+                }
+            ),
+        ]
+    )
     panel = plan_panel(
         _plan(),
-        players=pl.concat(
-            [
-                _players(),
-                pl.DataFrame(
-                    {
-                        "season": [_SEASON, _SEASON],
-                        "player_key": [200, 300],
-                        "element_id": [20, 30],
-                        "team_key": [7, 3],
-                        "position": ["FWD", "DEF"],
-                        "web_name": ["Richarlison", "Saliba"],
-                        "available_at": [_TS, _TS],
-                        "source": ["test", "test"],
-                    }
-                ),
-            ]
-        ),
+        players=players,
         teams=_teams(),
         status=_status(),
         chip="wildcard",
@@ -386,6 +387,14 @@ def test_plan_panel_and_squad_keys() -> None:
     assert set(panel.xi["player_key"].to_list()) == {100, 200}
     assert panel.bench["player_key"].to_list() == []  # sold DEF not on bench
     assert set(squad_keys_from_plan(_plan())) == {100, 200}
+
+    # Chip comes from PlanSchema.chip when not passed (Free Hit / WC plans).
+    freehit = _plan().with_columns(pl.lit("freehit").alias("chip"))
+    from_frame = plan_panel(freehit, players=players, teams=_teams(), status=_status())
+    assert from_frame.chip == "freehit"
+    assert from_frame.transfers.height == 1
+    legacy = plan_panel(_plan(), players=players, teams=_teams(), status=_status())
+    assert legacy.chip is None
 
 
 def test_drilldown_with_and_without_components() -> None:

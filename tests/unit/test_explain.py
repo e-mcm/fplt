@@ -1102,9 +1102,14 @@ def test_gameweek_plan_from_table_and_player_names(tmp_path) -> None:
     )
     rebuilt = mod._gameweek_plan_from_table(raw, pool.drop("xpts"), state)
     assert rebuilt.free_transfers[0] == 2
+    assert rebuilt.chips == (None,)
     owned_price = rebuilt.picks.filter(pl.col("player_key") == 1)
     if owned_price.height:
         assert int(owned_price["price"][0]) == 99
+
+    with_chip = raw.with_columns(pl.lit("freehit").alias("chip"))
+    chip_plan = mod._gameweek_plan_from_table(with_chip, pool.drop("xpts"), state)
+    assert chip_plan.chips == ("freehit",)
 
     store = build_league(DataStore(tmp_path))
     view = PITData(store).view(GWKey("2024-25", 2))

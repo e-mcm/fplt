@@ -30,6 +30,7 @@ from fplt.optimise.plan import (
     DEFAULT_PLAN_HORIZON,
     GameweekPlan,
     covered_horizon,
+    ensure_plan_chip_column,
     next_free_transfers,
     plan_parquet,
 )
@@ -664,7 +665,7 @@ def run_explain(
         path = plan_parquet(data_dir, spec.model_id, season, gameweek, covered)
         if not path.exists():
             raise FileNotFoundError(f"plan not found: {path}")
-        raw = PlanSchema.validate(pl.read_parquet(path))
+        raw = PlanSchema.validate(ensure_plan_chip_column(pl.read_parquet(path)))
         raw = require_dataframe(raw)
         candidates = candidates_as_of(view)
         plan_frame = raw
@@ -1399,13 +1400,18 @@ def _gameweek_plan_from_table(
     state: SquadState,
 ) -> GameweekPlan:
     """Rebuild a ``GameweekPlan`` from a saved ``PlanSchema`` frame."""
-    checked = PlanSchema.validate(plan)
+    checked = PlanSchema.validate(ensure_plan_chip_column(plan))
     checked = require_dataframe(checked)
     steps = [int(step) for step in checked["step"].unique().sort().to_list()]
     hits: list[float] = []
+    chips: list[str | None] = []
     for step in steps:
         part = checked.filter(pl.col("step") == step)
         hits.append(float(part["hit"][0]) if part.height else 0.0)
+        if part.height and part["chip"][0] is not None:
+            chips.append(str(part["chip"][0]))
+        else:
+            chips.append(None)
     # PlanSchema does not store free-transfer banking; use pre-plan state for
     # step 0 and leave later steps as the same placeholder.
     frees = [int(state.free_transfers) for _ in steps]
@@ -1438,6 +1444,7 @@ def _gameweek_plan_from_table(
         hits=tuple(hits),
         free_transfers=tuple(frees),
         points=0.0,
+        chips=tuple(chips),
     )
 
 
