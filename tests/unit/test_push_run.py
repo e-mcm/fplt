@@ -88,6 +88,8 @@ def test_push_run_adhoc_to_lab_local_dir(tmp_path: Path) -> None:
     assert (dest / "_SUCCESS").is_file()
     assert (dest / "manifest.json").is_file()
     assert (dest / "predictions" / "player_fixture.parquet").is_file()
+    # #371: catalog inbox rides with the run so catch-up can skip cold caches.
+    assert (bucket / "catalog" / "inbox" / f"run={run_id}.parquet").is_file()
 
 
 def test_push_run_official_to_data_local_dir(tmp_path: Path) -> None:
@@ -97,6 +99,23 @@ def test_push_run_official_to_data_local_dir(tmp_path: Path) -> None:
     remote = Remote(target=str(bucket), kind="data", env={})
     push_run(tmp_path, run_id, remote=remote)
     assert (bucket / f"runs/run={run_id}" / "_SUCCESS").is_file()
+    assert (bucket / "catalog" / "inbox" / f"run={run_id}.parquet").is_file()
+
+
+def test_push_run_skips_missing_catalog_inbox(tmp_path: Path) -> None:
+    """#371: push still succeeds when the inbox row was already compacted away."""
+    from fplt.store.catalog import catalog_inbox_dir
+
+    run_id = "r_20261124T125601Z_noibox"
+    _finish_run(tmp_path, run_id=run_id, kind="adhoc")
+    inbox = catalog_inbox_dir(tmp_path) / f"run={run_id}.parquet"
+    assert inbox.is_file()
+    inbox.unlink()
+    bucket = tmp_path / "lab-bucket"
+    remote = Remote(target=str(bucket), kind="lab", env={})
+    push_run(tmp_path, run_id, remote=remote)
+    assert (bucket / f"runs/run={run_id}" / "_SUCCESS").is_file()
+    assert not (bucket / "catalog" / "inbox" / f"run={run_id}.parquet").exists()
 
 
 def test_push_run_rejects_wrong_remote_kind(tmp_path: Path) -> None:
