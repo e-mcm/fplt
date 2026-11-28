@@ -126,6 +126,24 @@ def test_helper_empty_src_sets_uploaded_true_without_rclone(tmp_path: Path) -> N
     assert not (tmp_path / "bin" / "rclone-calls.log").exists()
 
 
+def test_helper_rejects_dot_path_components(tmp_path: Path) -> None:
+    """A source tree with ``.foo/bar`` exits non-zero and skips rclone (#339)."""
+    src = tmp_path / "raw"
+    bad = src / ".foo"
+    bad.mkdir(parents=True)
+    (bad / "bar").write_text("nope\n", encoding="utf-8")
+    (src / "ok.txt").write_text("ok\n", encoding="utf-8")
+    result = _run_helper(tmp_path, src=src)
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "::error::" in combined
+    assert "uploaded=false" in (tmp_path / "github_output").read_text(encoding="utf-8")
+    assert "uploaded=true" not in (tmp_path / "github_output").read_text(
+        encoding="utf-8"
+    )
+    assert not (tmp_path / "bin" / "rclone-calls.log").exists()
+
+
 def test_install_rclone_default_matches_ops_runbook_pin() -> None:
     """Action default and ops-runbook Tooling pins must stay in sync (#340)."""
     doc = yaml.safe_load(_INSTALL.read_text(encoding="utf-8"))

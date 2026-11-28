@@ -264,6 +264,27 @@ def test_push_raw_uses_install_rclone_not_apt() -> None:
     assert "./.github/actions/install-rclone" in uses
 
 
+def test_push_raw_rejects_dot_path_components() -> None:
+    """push_raw_upload.sh guards '.'-prefixed paths before rclone (#339)."""
+    helper = (_REPO / "scripts" / "push_raw_upload.sh").read_text(encoding="utf-8")
+    assert "reject_raw_dot_paths.py" in helper
+    # Strip comments so the header docstring mentioning rclone does not confuse order.
+    code_lines = [
+        line
+        for line in helper.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    code = "\n".join(code_lines)
+    assert "reject_raw_dot_paths.py" in code
+    assert "rclone copy" in code
+    assert code.index("reject_raw_dot_paths.py") < code.index("rclone copy")
+    action = (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
+    assert "push_raw_upload.sh" in action
+    assert "::error::" in (_REPO / "scripts" / "reject_raw_dot_paths.py").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_notify_failure_soft_skips_when_ntfy_url_unset() -> None:
     """Empty NTFY_URL exits 0 with a soft-skip log (no network)."""
     script = _action_run_script("notify-failure")
