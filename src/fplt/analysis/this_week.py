@@ -95,9 +95,16 @@ def plan_panel(
     teams: pl.DataFrame,
     status: pl.DataFrame,
     chip: str | None = None,
+    season: str | None = None,
+    as_of: datetime | None = None,
 ) -> PlanPanel:
-    """Build the step-0 plan panel from a ``PlanSchema`` frame."""
-    labels = _player_labels(players, teams, status)
+    """Build the step-0 plan panel from a ``PlanSchema`` frame.
+
+    ``players`` / ``teams`` / ``status`` are PIT-versioned curated tables (one
+    row per capture per season); labels use the latest row per key for
+    ``season`` at or before ``as_of`` (#379). Both default to "latest".
+    """
+    labels = _player_labels(players, teams, status, season=season, as_of=as_of)
     empty = pl.DataFrame(schema=THIS_WEEK_TRANSFER_COLUMNS)
     empty_panel = PlanPanel(
         transfers=empty,
@@ -174,18 +181,22 @@ def players_table(
     price_max: float | None = None,
     min_p_played: float | None = None,
     my_squad_only: bool = False,
+    season: str | None = None,
+    as_of: datetime | None = None,
 ) -> pl.DataFrame:
     """Build the horizon players table (DGW summed; blanks → 0).
 
     Players present only in predictions keep a placeholder name. See
     ``ThisWeekPlayersSchema`` for base columns; ``xpts_gw{N}`` are dynamic.
+    Labels take the latest curated row per player (``season`` / ``as_of``,
+    #379), so each player appears once.
     """
     if horizon < 1:
         raise ValueError(f"horizon must be >= 1, got {horizon}")
     target_gws = [
         as_of_gw + offset for offset in range(horizon) if as_of_gw + offset <= 38
     ]
-    labels = _player_labels(players, teams, status)
+    labels = _player_labels(players, teams, status, season=season, as_of=as_of)
     squad = {int(k) for k in (squad_keys or ())}
     if predictions.is_empty():
         return _empty_players_table(target_gws)
@@ -277,6 +288,8 @@ def player_drilldown(
     columns null; the board and PMF still render.
     """
     key = int(player_key)
+    players = latest_rows(players, "player_key", season=season)
+    teams = latest_rows(teams, "team_key", season=season)
     pred = predictions.filter(pl.col("player_key") == key)
     has_components = bool(
         minutes is not None
@@ -400,10 +413,53 @@ def _pick_line(
     )
 
 
-def _player_labels(
-    players: pl.DataFrame, teams: pl.DataFrame, status: pl.DataFrame
+def latest_rows(
+    frame: pl.DataFrame,
+    key: str,
+    *,
+    season: str | None = None,
+    as_of: datetime | None = None,
 ) -> pl.DataFrame:
-    """Join curated name / team / price / status for labelling."""
+    """Return one row per ``key``: the latest PIT version of a curated table.
+
+    Curated ``players`` / ``teams`` / ``player_status`` keep one row per capture
+    per season (``TABLE_KEYS`` include ``available_at``). Joining them raw fans
+    out every player (#379). This keeps rows for ``season`` (when given and the
+    table has a ``season`` column) with ``available_at <= as_of`` (when given),
+    then the newest ``(season, available_at)`` row per ``key``.
+
+    Args:
+        frame: Curated table, possibly empty.
+        key: Identity column (``player_key`` / ``team_key``).
+        season: Season to keep, or ``None`` for all seasons (latest wins).
+        as_of: Point-in-time cut-off, or ``None`` for no cut-off.
+
+    Returns:
+        ``frame`` filtered to at most one row per ``key``.
+    """
+    if frame.is_empty() or key not in frame.columns:
+        return frame
+    out = frame
+    if season is not None and "season" in out.columns:
+        out = out.filter(pl.col("season") == season)
+    if as_of is not None and "available_at" in out.columns:
+        cut = pl.lit(as_of).cast(out.schema["available_at"])
+        out = out.filter(pl.col("available_at") <= cut)
+    order = [c for c in ("season", "available_at") if c in out.columns]
+    if order:
+        out = out.sort(order)
+    return out.unique(subset=[key], keep="last", maintain_order=True)
+
+
+def _player_labels(
+    players: pl.DataFrame,
+    teams: pl.DataFrame,
+    status: pl.DataFrame,
+    *,
+    season: str | None = None,
+    as_of: datetime | None = None,
+) -> pl.DataFrame:
+    """Join curated name / team / price / status for labelling (one row/player)."""
     empty = pl.DataFrame(
         schema={
             "player_key": pl.Int64(),
@@ -416,6 +472,9 @@ def _player_labels(
             "news": pl.Utf8(),
         }
     )
+    players = latest_rows(players, "player_key", season=season, as_of=as_of)
+    teams = latest_rows(teams, "team_key", season=season, as_of=as_of)
+    status = latest_rows(status, "player_key", season=season, as_of=as_of)
     if players.is_empty():
         return empty
     frame = players.select("player_key", "web_name", "team_key", "position")
@@ -429,17 +488,18 @@ def _player_labels(
         else frame.with_columns(pl.lit(None).cast(pl.Utf8()).alias("team"))
     )
     if not status.is_empty():
-        latest = (
-            status.sort("available_at")
-            .unique(subset=["player_key"], keep="last")
-            .select("player_key", "price", "status", "news")
-        )
+        latest = status.select("player_key", "price", "status", "news")
         frame = frame.join(latest, on="player_key", how="left")
     else:
         frame = frame.with_columns(
             pl.lit(None).cast(pl.Float64()).alias("price"),
             pl.lit(None).cast(pl.Utf8()).alias("status"),
             pl.lit(None).cast(pl.Utf8()).alias("news"),
+        )
+    if not frame["player_key"].is_unique().all():
+        raise ValueError(
+            "player labels are not unique per player_key; curated tables must "
+            "be reduced with latest_rows before joining (#379)"
         )
     return frame.with_columns(pl.col("price").cast(pl.Float64))
 
@@ -604,6 +664,7 @@ __all__ = [
     "PlayerDrilldown",
     "default_official_selection",
     "header_fields",
+    "latest_rows",
     "plan_panel",
     "player_drilldown",
     "players_table",
