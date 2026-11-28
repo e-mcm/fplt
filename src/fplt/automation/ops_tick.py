@@ -305,7 +305,7 @@ def run_ops_tick(
 
             # Resolve checkpoint / alarm due-ness before pulling full tables.
             due: list[Checkpoint] = []
-            slate_lines = tuple(line.line for line in ops.lines)
+            slate_lines = tuple(line.line for line in ops.decision_lines())
             done: frozenset[str] = frozenset()
             alarms_done: frozenset[str] = frozenset()
             quiet = False

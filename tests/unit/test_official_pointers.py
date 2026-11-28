@@ -61,6 +61,7 @@ def test_official_slate_from_committed_production() -> None:
     assert checkpoint == "T-90m"
     assert horizons == {"dc_layered_v4_native": 9}
     assert [line.line for line in lines] == ["v4_h3", "v4_h5", "v4_h7", "v4_h9"]
+    assert all(line.role != "shadow_predict" for line in lines)
 
 
 def test_finalize_writes_pointers_and_applied(tmp_path: Path) -> None:

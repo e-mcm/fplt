@@ -73,7 +73,8 @@ class LineFpDecision:
         spec_name: ModelSpec name.
         predict_fp: Predict-run fingerprint.
         plan_fp: Plan-run fingerprint.
-        skip: True when both fps already exist in ``by_fp``.
+        skip: True when required fps already exist in ``by_fp`` (predict+plan
+            for decision lines; predict only for ``shadow_predict``).
         predict_run_id: Existing predict run when skipped.
         plan_run_id: Existing plan run when skipped.
     """
@@ -300,6 +301,7 @@ def decisions_for_slate(
     squad_digest: str | None = None,
     kind: RunKind = "official",
     lines: tuple[OfficialLine, ...] | list[OfficialLine] | None = None,
+    predict_only: bool = False,
 ) -> list[LineFpDecision]:
     """Compute predict/plan fingerprints for slate lines.
 
@@ -307,7 +309,8 @@ def decisions_for_slate(
     Plan fingerprints add ``plan_identity(line, squad_digest)`` so the four
     official lines never share a plan run and a changed squad re-plans (#380).
     ``kind`` is hashed into every fp (#374) so adhoc fingerprint runs do not
-    collide with official T−90m reuse.
+    collide with official T−90m reuse. ``predict_only=True`` (#389
+    ``shadow_predict``) skips when the predict fp exists; plan fp is unused.
 
     Args:
         ops: Production slate.
@@ -320,8 +323,10 @@ def decisions_for_slate(
         squad_digest: ``entry_state_digest`` output (``None`` without an entry).
         kind: Run kind hashed into ``fp`` (#374). Official checkpoints use
             ``official``; mid-week fingerprint runs use ``adhoc``.
-        lines: Lines to decide. Defaults to every ``ops.lines``; fingerprint
-            path passes the primary only.
+        lines: Lines to decide. Defaults to decision lines (primary +
+            candidate); fingerprint path passes the primary only.
+        predict_only: When True, ``skip`` depends only on the predict fp
+            (``shadow_predict`` / #389).
 
     Returns:
         One decision per selected line.
@@ -329,7 +334,7 @@ def decisions_for_slate(
     loaded = load_model_specs() if specs is None else specs
     listing = set(remote_by_fp) if remote_by_fp is not None else None
     selected: tuple[OfficialLine, ...] | list[OfficialLine] = (
-        ops.lines if lines is None else lines
+        ops.decision_lines() if lines is None else lines
     )
     out: list[LineFpDecision] = []
     for line in selected:
@@ -361,9 +366,9 @@ def decisions_for_slate(
                 spec_name=line.spec,
                 predict_fp=predict_fp,
                 plan_fp=plan_fp,
-                skip=pred_done and plan_done,
+                skip=pred_done if predict_only else (pred_done and plan_done),
                 predict_run_id=pred_id,
-                plan_run_id=plan_id,
+                plan_run_id=None if predict_only else plan_id,
             )
         )
     return out
@@ -381,10 +386,11 @@ def tables_for_slate(
         ops: Production config.
         specs: Optional preloaded ModelSpecs.
         lines: Restrict to these lines (fingerprint path: primary only).
+            Defaults to decision lines (excludes ``shadow_predict``).
     """
     loaded = load_model_specs() if specs is None else specs
     selected: tuple[OfficialLine, ...] | list[OfficialLine] = (
-        ops.lines if lines is None else lines
+        ops.decision_lines() if lines is None else lines
     )
     tables: set[str] = set()
     seen: set[str] = set()

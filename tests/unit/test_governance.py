@@ -130,6 +130,64 @@ def test_live_slate_changed_edge_cases() -> None:
     assert _live_slate_changed(_PROD, _PROD) is False
 
 
+def test_shadow_predict_line_additions_do_not_gate_promote_eval() -> None:
+    """#389: prediction-only lines do not retarget the live decision slate."""
+    base_with_lines = (
+        _PROD
+        + "lines:\n"
+        + "  - {line: primary, spec: dc_prod_v1, horizon: 3, role: primary}\n"
+    )
+    head = (
+        base_with_lines
+        + "  - {line: rm_h1, spec: rolling_mean_v1, horizon: 1, role: shadow_predict}\n"
+    )
+    result = check_production_governance(
+        changed_paths=[PRODUCTION_RELPATH],
+        base_production_yaml=base_with_lines,
+        head_production_yaml=head,
+        base_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        head_model_specs={model_spec_relpath("dc_prod_v1"): _SPEC_V1},
+        pr_body="Add shadow_predict weekly lines.",
+    )
+    assert result.passed
+    assert result.gated_paths == ()
+    assert result.reasons == ()
+
+
+def test_decision_line_change_still_gates_when_shadow_also_present() -> None:
+    """#389: changing a primary/candidate line still requires promote-eval."""
+    from fplt.automation.governance import _live_slate_changed
+
+    base = (
+        _PROD
+        + "lines:\n"
+        + "  - {line: primary, spec: dc_prod_v1, horizon: 3, role: primary}\n"
+        + "  - {line: rm_h1, spec: rolling_mean_v1, horizon: 1, role: shadow_predict}\n"
+    )
+    head = (
+        _PROD
+        + "lines:\n"
+        + "  - {line: primary, spec: dc_prod_v1, horizon: 5, role: primary}\n"
+        + "  - {line: rm_h1, spec: rolling_mean_v1, horizon: 1, role: shadow_predict}\n"
+    )
+    assert _live_slate_changed(base, head) is True
+
+
+def test_decision_lines_payload_keeps_non_mapping_entries() -> None:
+    from fplt.automation.governance import _decision_lines_payload
+
+    raw = [
+        {"line": "p", "role": "primary"},
+        "not-a-mapping",
+        {"line": "s", "role": "shadow_predict"},
+    ]
+    assert _decision_lines_payload(raw) == [
+        {"line": "p", "role": "primary"},
+        "not-a-mapping",
+    ]
+    assert _decision_lines_payload("not-a-list") == "not-a-list"
+
+
 def test_changed_production_with_passing_eval_link_passes() -> None:
     head = _prod_retarget("dc_prod_v2")
     result = check_production_governance(

@@ -10,7 +10,8 @@ form automation reads; when ``pipeline:`` is present they must match.
 
 Stage B12 adds ``lines:`` — named official lines (primary + candidates) that
 share one predict per distinct spec and one plan per line
-(``fplt-data-model.md`` §4.1 / step 6).
+(``fplt-data-model.md`` §4.1 / step 6). ``shadow_predict`` lines (#389) are
+predict-only (no plan / PMF / pointer) and do not join the decision slate.
 """
 
 from __future__ import annotations
@@ -37,8 +38,9 @@ class OfficialLine(BaseModel):
     """One official production line: model spec, plan horizon, and role.
 
     ``squad_mode`` defaults to ``real`` for the primary line and ``virtual``
-    for candidates (data model §4.1). Changing a line's spec or horizon means
-    a new ``line`` name.
+    for candidates / ``shadow_predict`` (data model §4.1 / #389). Changing a
+    line's spec or horizon means a new ``line`` name. ``shadow_predict``
+    horizons are predict-only — they never drive a plan.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -134,6 +136,19 @@ class ProductionOps(BaseModel):
                 f"primary line horizon {primary.horizon} must equal "
                 f"plan_horizon {self.plan_horizon}"
             )
+        # shadow_predict horizons are predict-only (#389); they must not
+        # lengthen the decision slate's shared predict for a shared spec.
+        decision_specs = {entry.spec for entry in self.decision_lines()}
+        for entry in self.shadow_predict_lines():
+            if entry.spec in decision_specs:
+                decision_h = self.predict_groups().get(entry.spec, 0)
+                if entry.horizon > decision_h:
+                    raise ValueError(
+                        f"shadow_predict line {entry.line!r} horizon "
+                        f"{entry.horizon} exceeds decision predict horizon "
+                        f"{decision_h} for shared spec {entry.spec!r}; "
+                        "shadow_predict must not extend the decision slate"
+                    )
         return self
 
     def primary_line(self) -> OfficialLine:
@@ -143,14 +158,36 @@ class ProductionOps(BaseModel):
                 return entry
         raise RuntimeError("ProductionOps invariant broken: no primary line")
 
-    def predict_groups(self) -> dict[str, int]:
-        """Map each distinct ModelSpec name to the longest horizon its lines need.
+    def decision_lines(self) -> tuple[OfficialLine, ...]:
+        """Return primary + candidate lines (plan + pointer slate)."""
+        return tuple(entry for entry in self.lines if entry.role != "shadow_predict")
 
-        Official ops run one predict per key at the returned horizon, then one
-        plan per line (data model §4.1).
+    def shadow_predict_lines(self) -> tuple[OfficialLine, ...]:
+        """Return prediction-only shadow lines (#389)."""
+        return tuple(entry for entry in self.lines if entry.role == "shadow_predict")
+
+    def predict_groups(self) -> dict[str, int]:
+        """Map each distinct decision-line ModelSpec to its longest horizon.
+
+        Official decision ops run one predict per key at the returned horizon,
+        then one plan per decision line (data model §4.1). ``shadow_predict``
+        lines are excluded (#389).
         """
         groups: dict[str, int] = {}
-        for entry in self.lines:
+        for entry in self.decision_lines():
+            current = groups.get(entry.spec, 0)
+            if entry.horizon > current:
+                groups[entry.spec] = entry.horizon
+        return groups
+
+    def shadow_predict_groups(self) -> dict[str, int]:
+        """Map each distinct ``shadow_predict`` ModelSpec to its predict horizon.
+
+        Prediction-only lines never plan; each distinct spec gets one predict
+        at the longest horizon among its shadow_predict lines (#389).
+        """
+        groups: dict[str, int] = {}
+        for entry in self.shadow_predict_lines():
             current = groups.get(entry.spec, 0)
             if entry.horizon > current:
                 groups[entry.spec] = entry.horizon
@@ -159,12 +196,14 @@ class ProductionOps(BaseModel):
     def official_slate(
         self, *, checkpoint: str = "T-90m"
     ) -> tuple[dict[str, int], tuple[OfficialLine, ...], str]:
-        """Return ``(predict_horizons, lines, checkpoint)`` for official ops.
+        """Return ``(predict_horizons, decision_lines, checkpoint)`` for ops.
 
         Callers run one predict per ``predict_horizons`` entry, then one plan
-        per line, then ``fplt.store.official.finalize_official_checkpoint``.
+        per decision line, then ``fplt.store.official.finalize_official_checkpoint``.
+        ``shadow_predict`` lines are omitted — they run after pointers via
+        ``run_shadow_predicts`` (#389).
         """
-        return dict(self.predict_groups()), tuple(self.lines), checkpoint
+        return dict(self.predict_groups()), self.decision_lines(), checkpoint
 
 
 def default_production_path() -> Path:
