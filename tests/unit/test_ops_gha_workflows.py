@@ -104,6 +104,31 @@ def test_ops_tick_checks_secrets_before_run() -> None:
     assert "never echo" in action.lower() or "Never echoes" in action
 
 
+def test_ops_preflight_does_not_require_fpl_token() -> None:
+    """The FPL token is optional for ops planning (#363); preflight only warns.
+
+    Regression: #362's preflight listed ``FPLT_FPL_API_TOKEN`` as required, so
+    ops-tick failed before planning even though public squad state needs no
+    token.
+    """
+    for name, job in (("ops-tick.yml", "tick"), ("ops-catchup.yml", "catchup")):
+        steps = _load(name)["jobs"][job]["steps"]
+        check = next(
+            s for s in steps if s.get("name") == "Check required secrets are non-empty"
+        )
+        required = check["with"]["names"].split()
+        assert "FPLT_ENTRY_ID" in required, name
+        assert "FPLT_FPL_API_TOKEN" not in required, name
+        warn = next(
+            s for s in steps if s.get("name") == "Warn if FPL API token is unset"
+        )
+        assert "::warning::" in warn["run"], name
+        assert "::error::" not in warn["run"], name
+        names = [s.get("name") for s in steps]
+        run_name = "Run ops-tick" if job == "tick" else "Run ops-catchup"
+        assert names.index("Warn if FPL API token is unset") < names.index(run_name)
+
+
 def test_r2_environment_jobs_check_nonempty_secrets() -> None:
     """Every environment:r2 job that reads R2 secrets has the preflight (#362)."""
     for path in sorted(_WORKFLOWS.glob("*.yml")):
