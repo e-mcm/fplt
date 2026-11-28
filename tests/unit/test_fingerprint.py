@@ -220,17 +220,26 @@ def test_fp_index_exists_prefers_remote_listing(tmp_path: Path) -> None:
     assert load_fp_index(tmp_path, fp) is None
 
 
-def test_run_fingerprint_missing_table_raises() -> None:
+def test_run_fingerprint_missing_table_uses_empty_sha() -> None:
+    """Empty staged tables are omitted from builds; absence is sha=\"\"."""
     specs = load_model_specs()
     spec = specs["rolling_mean_v1"]
-    with pytest.raises(KeyError, match="missing from build"):
-        run_fingerprint(
-            spec=spec,
-            build=_build({"players": "p" * 64}),
-            target_gw=GWKey("2024-25", 1),
-            run_type="predict",
-            tables={"players", "gameweeks"},
-        )
+    key = GWKey("2024-25", 1)
+    fp_absent = run_fingerprint(
+        spec=spec,
+        build=_build({"players": "p" * 64}),
+        target_gw=key,
+        run_type="predict",
+        tables={"players", "gameweeks"},
+    )
+    fp_present = run_fingerprint(
+        spec=spec,
+        build=_build({"players": "p" * 64, "gameweeks": "g" * 64}),
+        target_gw=key,
+        run_type="predict",
+        tables={"players", "gameweeks"},
+    )
+    assert fp_absent != fp_present
 
 
 def test_required_tables_walks_nested_components() -> None:

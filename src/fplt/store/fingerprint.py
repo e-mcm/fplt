@@ -191,10 +191,8 @@ def run_fingerprint(
         tables: Override for ``required_tables(spec)`` (tests).
 
     Returns:
-        64-character lowercase hex digest.
-
-    Raises:
-        KeyError: A required table is missing from ``build.tables``.
+        64-character lowercase hex digest. Required tables absent from the
+        build (empty at curate time) contribute ``sha=\"\"``.
     """
     needed = required_tables(spec) if tables is None else tables
     digest = spec_hash(spec)
@@ -350,14 +348,12 @@ def _parse_feature(item: str) -> tuple[str, int]:
 
 
 def _table_sha_pairs(build: BuildManifest, tables: set[str]) -> list[tuple[str, str]]:
+    # Empty staged tables are omitted from builds (#345). Treat absence as
+    # sha="" so the fingerprint still covers every required name.
     pairs: list[tuple[str, str]] = []
     for name in sorted(tables):
         entry = build.tables.get(name)
-        if entry is None:
-            raise KeyError(
-                f"required table {name!r} missing from build {build.build_id}"
-            )
-        pairs.append((name, entry.sha))
+        pairs.append((name, entry.sha if entry is not None else ""))
     return pairs
 
 

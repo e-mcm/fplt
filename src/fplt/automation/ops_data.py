@@ -155,11 +155,18 @@ def pull_required_tables(
     target = remote
     if target is None:
         target = Remote.from_settings(cfg, bucket=cfg.data_bucket)
-    allow = frozenset(tables)
     if target is not None:
-        pull_build(data_dir, target, build_id, tables=allow)
+        # Manifest first so we can intersect with tables actually in the build
+        # (empty staged tables are omitted from builds — #345 / #346).
+        pull_build(data_dir, target, build_id, tables=frozenset())
     elif not build_manifest_path(data_dir, build_id).is_file():
         raise FileNotFoundError(build_manifest_path(data_dir, build_id))
+    build = load_build_manifest(data_dir, build_id)
+    allow = frozenset(set(tables) & set(build.tables))
+    if target is not None and allow:
+        pull_build(data_dir, target, build_id, tables=allow)
+    if not allow:
+        return []
     return hydrate_staged_from_build(data_dir, build_id, tables=allow)
 
 

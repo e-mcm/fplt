@@ -122,6 +122,54 @@ def seed_e2e_bucket(bucket: Path) -> Path:
     return bucket
 
 
+def seed_e2e_curated(bucket: Path, data_dir: Path, remote: Any) -> str:
+    """Ingest bucket ``raw/`` → staged build → push curated + latest pointer.
+
+    Ops ticks (#346) never pull ``raw/``; the e2e fixture must expose a
+    curated build the same way production does after curate (FPL API ingest +
+    vaastav ``import_available``).
+
+    Args:
+        bucket: Local data-bucket root (already seeded via ``seed_e2e_bucket``).
+        data_dir: Local data root used for ingest / build (also the tick root).
+        remote: Data-bucket ``Remote`` pointing at ``bucket``.
+
+    Returns:
+        The curated ``build_id``.
+    """
+    import shutil
+
+    from fplt.automation.curate import push_curated_latest, write_curated_latest
+    from fplt.data.raw import ingest_raw
+    from fplt.data.store import DataStore
+    from fplt.data.vaastav import import_available
+    from fplt.schemas.manifests import CuratedLatestPointer
+    from fplt.store.builds import build_from_staged
+    from fplt.store.push import push_build
+
+    # ``import_available`` reads ``data_dir/raw/vaastav/`` only.
+    raw_dest = data_dir / "raw"
+    if raw_dest.exists():
+        shutil.rmtree(raw_dest)
+    shutil.copytree(bucket / "raw", raw_dest)
+    store = DataStore(data_dir)
+    ingest_raw(store, raw_dest)
+    import_available(store, data_dir)
+    manifest = build_from_staged(data_dir, code_sha="e2e", created_at=NOW_T90M)
+    push_build(data_dir, manifest.build_id, remote=remote)
+    write_curated_latest(
+        data_dir,
+        CuratedLatestPointer(
+            build_id=manifest.build_id,
+            created_at=NOW_T90M,
+            raw_cutoff=NOW_T90M,
+            code_sha="e2e",
+        ),
+    )
+    push_curated_latest(data_dir, remote=remote)
+    return manifest.build_id
+
+
 def _seed_vaastav(raw: Path) -> None:
     capture = raw / "vaastav" / f"captured_at={_VAASTAV_STAMP}"
     root = capture / "data"
