@@ -609,8 +609,7 @@ def _run_manual_preview(
     """
     if upcoming is None:
         raise ValueError(
-            "run_now requires an upcoming deadline in staged gameweeks; "
-            "none found"
+            "run_now requires an upcoming deadline in staged gameweeks; none found"
         )
     key, _deadline = upcoming
     checkpoint = manual_checkpoint_id(moment)
