@@ -425,11 +425,13 @@ def plan_table(
     steps = plan.picks["step"].unique().sort().to_list()
     if len(gameweeks) != (max(steps) + 1 if steps else 0):
         raise ValueError("gameweeks must have one entry per horizon step")
+    chips = _chips_for_horizon(plan.chips, len(gameweeks))
     targets = pl.DataFrame(
         {
             "step": list(range(len(gameweeks))),
             "target_gw": gameweeks,
             "hit": list(plan.hits),
+            "chip": chips,
         }
     )
     frame = plan.picks.join(targets, on="step").with_columns(
@@ -454,9 +456,45 @@ def plan_table(
             "sold",
             "xpts",
             "hit",
+            "chip",
         ),
         PlanSchema,
     )
+
+
+def ensure_plan_chip_column(frame: pl.DataFrame) -> pl.DataFrame:
+    """Fill a missing ``chip`` column so legacy plan parquets still validate.
+
+    Args:
+        frame: Plan rows, possibly from before ``chip`` was on ``PlanSchema``.
+
+    Returns:
+        ``frame`` unchanged when ``chip`` is present; otherwise with a null
+        ``chip`` column.
+    """
+    if "chip" in frame.columns:
+        return frame
+    return frame.with_columns(pl.lit(None).cast(pl.Utf8()).alias("chip"))
+
+
+def plan_step_chip(plan: pl.DataFrame, *, step: int = 0) -> str | None:
+    """Return the chip played at ``step`` on a ``PlanSchema`` frame.
+
+    Args:
+        plan: Saved plan rows (``chip`` may be absent on legacy files).
+        step: Horizon step to read (default week 1 / step 0).
+
+    Returns:
+        Chip name (``freehit`` / ``wildcard`` / ``bboost`` / ``3xc``), or
+        ``None`` when no chip was played or the column is missing.
+    """
+    if plan.is_empty() or "step" not in plan.columns:
+        return None
+    part = ensure_plan_chip_column(plan).filter(pl.col("step") == step)
+    if part.is_empty():
+        return None
+    played = [value for value in part["chip"].to_list() if value is not None]
+    return str(played[0]) if played else None
 
 
 def covered_horizon(gameweek: int, horizon: int) -> int:
@@ -589,6 +627,8 @@ def render_report(
         lines.append("")
         lines.append(f"Free transfers: {plan.free_transfers[step]}")
         lines.append(f"Hit: {plan.hits[step]:.0f}")
+        chip = plan.chips[step] if step < len(plan.chips) else None
+        lines.append(f"Chip: {chip or '—'}")
         lines.append("")
         lines.extend(
             _report_section(
@@ -1928,7 +1968,17 @@ def _label(player_key: int, names: Mapping[int, str] | None) -> str:
     return name or str(player_key)
 
 
+def _chips_for_horizon(chips: tuple[str | None, ...], horizon: int) -> list[str | None]:
+    """Pad or trim per-step chips to the plan horizon length."""
+    values = list(chips)
+    if len(values) < horizon:
+        values.extend([None] * (horizon - len(values)))
+    return values[:horizon]
+
+
 def _frame(frame: pl.DataFrame, schema: _Schema) -> pl.DataFrame:
+    if schema is PlanSchema:
+        frame = ensure_plan_chip_column(frame)
     checked = schema.validate(frame)
     checked = require_dataframe(checked)
     return checked

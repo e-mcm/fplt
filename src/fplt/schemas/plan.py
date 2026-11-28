@@ -103,6 +103,7 @@ class PlanSchema(pa.DataFrameModel):
     sold: bool
     xpts: float
     hit: float = pa.Field(ge=0)
+    chip: str = pa.Field(nullable=True)
 
     class Config(pa.DataFrameModel.Config):
         strict = True

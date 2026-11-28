@@ -17,7 +17,13 @@ from fplt.data.fpl_client import CurrentTeam, FPLClient
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, plan_parquet
+from fplt.optimise.plan import (
+    DEFAULT_PLAN_HORIZON,
+    covered_horizon,
+    ensure_plan_chip_column,
+    plan_parquet,
+    plan_step_chip,
+)
 from fplt.schemas.plan import PlanSchema
 from fplt.settings import Settings, get_settings, require_entry_id, secret_value
 from fplt.types import GWKey
@@ -116,13 +122,14 @@ def build_apply_payload(
     Raises:
         ApplyError: Draft plan, unequal buy/sell counts, or missing map/price.
     """
-    checked = PlanSchema.validate(plan)
+    checked = PlanSchema.validate(ensure_plan_chip_column(plan))
     checked = require_dataframe(checked)
     step0 = checked.filter(pl.col("step") == 0)
     if step0.is_empty():
         raise ApplyError("plan has no step 0 rows")
     as_of = int(step0["as_of_gw"][0])
     gw = as_of if event is None else event
+    chip = plan_step_chip(checked, step=0)
 
     bought = (
         step0.filter(pl.col("bought") & ~pl.col("sold"))
@@ -188,16 +195,18 @@ def build_apply_payload(
         raise ApplyError(f"kept squad must be 15 players, got {kept.height}")
     picks = _lineup_picks(kept, element_by_key)
     logger.info(
-        "built apply payload entry=%s event=%s transfers=%s",
+        "built apply payload entry=%s event=%s transfers=%s chip=%s",
         entry_id,
         gw,
         len(moves),
+        chip,
     )
     return ApplyPayload(
         entry_id=entry_id,
         event=gw,
         transfers=tuple(moves),
         picks=tuple(picks),
+        chip=chip,
     )
 
 

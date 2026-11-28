@@ -14,6 +14,7 @@ from typing import Any
 import polars as pl
 
 from fplt.optimise.explain import build_forecast_board
+from fplt.optimise.plan import plan_step_chip
 from fplt.schemas.this_week import (
     THIS_WEEK_FIXTURE_DETAIL_COLUMNS,
     THIS_WEEK_TRANSFER_COLUMNS,
@@ -103,6 +104,8 @@ def plan_panel(
     ``players`` / ``teams`` / ``status`` are PIT-versioned curated tables (one
     row per capture per season); labels use the latest row per key for
     ``season`` at or before ``as_of`` (#379). Both default to "latest".
+    When ``chip`` is omitted, step-0 ``PlanSchema.chip`` is used (Free Hit /
+    Wildcard / etc. when the solver played one).
     """
     labels = _player_labels(players, teams, status, season=season, as_of=as_of)
     empty = pl.DataFrame(schema=THIS_WEEK_TRANSFER_COLUMNS)
@@ -121,6 +124,7 @@ def plan_panel(
     step0 = plan.filter(pl.col("step") == 0)
     if step0.is_empty():
         return empty_panel
+    resolved_chip = chip if chip is not None else plan_step_chip(plan, step=0)
     hit_raw = step0.select(pl.col("hit").max()).item()
     hit = float(hit_raw) if isinstance(hit_raw, (int, float)) else 0.0
     captains = step0.filter(pl.col("captain"))["player_key"].to_list()
@@ -161,7 +165,7 @@ def plan_panel(
         captain_key=int(captains[0]) if captains else None,
         vice_key=int(vices[0]) if vices else None,
         hit=hit,
-        chip=chip,
+        chip=resolved_chip,
         expected_points=xi_xpts - hit,
     )
 
