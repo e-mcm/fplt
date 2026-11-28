@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -10,6 +10,7 @@ import pytest
 
 from fplt.analysis.this_week import (
     default_official_selection,
+    latest_rows,
     plan_panel,
     player_drilldown,
     players_table,
@@ -576,3 +577,147 @@ def test_player_labels_without_teams_or_status() -> None:
     )
     assert table.filter(pl.col("player_key") == 100)["web_name"][0] == "Saka"
     assert table.filter(pl.col("player_key") == 100)["price"][0] is None
+
+
+def _versioned(
+    frame: pl.DataFrame, *, seasons: list[str], captures: int
+) -> pl.DataFrame:
+    """Repeat each row per season x capture, like PIT-versioned curated tables."""
+    parts: list[pl.DataFrame] = []
+    for season in seasons:
+        for i in range(captures):
+            parts.append(
+                frame.with_columns(
+                    pl.lit(season).alias("season"),
+                    (pl.col("available_at") + timedelta(minutes=15 * i)).alias(
+                        "available_at"
+                    ),
+                )
+            )
+    return pl.concat(parts)
+
+
+def _all_players() -> pl.DataFrame:
+    return pl.concat(
+        [
+            _players(),
+            pl.DataFrame(
+                {
+                    "season": [_SEASON, _SEASON],
+                    "player_key": [200, 300],
+                    "element_id": [20, 30],
+                    "team_key": [7, 3],
+                    "position": ["FWD", "DEF"],
+                    "web_name": ["Richarlison", "Saliba"],
+                    "available_at": [_TS, _TS],
+                    "source": ["test", "test"],
+                }
+            ),
+        ]
+    )
+
+
+def test_plan_panel_not_multiplied_by_versioned_curated_rows() -> None:
+    """Regression #379: one row per capture per season fanned out the XI.
+
+    The live preview showed repeated players and expected points around
+    60,000 because labels joined raw PIT-versioned players/teams.
+    """
+    seasons = ["2024-25", "2025-26", _SEASON]
+    players = _versioned(_all_players(), seasons=seasons, captures=50)
+    teams = _versioned(_teams(), seasons=seasons, captures=50)
+    status = _versioned(_status(), seasons=seasons, captures=50)
+    clean = plan_panel(
+        _plan(), players=_all_players(), teams=_teams(), status=_status()
+    )
+    panel = plan_panel(
+        _plan(), players=players, teams=teams, status=status, season=_SEASON
+    )
+    assert panel.xi["player_key"].to_list() == clean.xi["player_key"].to_list()
+    assert panel.xi["player_key"].is_unique().all()
+    # 7 + 5 + captain 7 - hit 4
+    assert panel.expected_points == pytest.approx(15.0)
+    assert panel.expected_points == pytest.approx(clean.expected_points)
+    assert panel.transfers.height == 1
+    # Default (no season) still collapses to the latest row per player.
+    default = plan_panel(_plan(), players=players, teams=teams, status=status)
+    assert default.expected_points == pytest.approx(15.0)
+
+
+def test_players_table_one_row_per_player_with_versioned_curated() -> None:
+    players = _versioned(_players(), seasons=["2025-26", _SEASON], captures=20)
+    teams = _versioned(_teams(), seasons=["2025-26", _SEASON], captures=20)
+    status = _versioned(_status(), seasons=["2025-26", _SEASON], captures=20)
+    base = players_table(
+        _predictions(),
+        players=_players(),
+        teams=_teams(),
+        status=_status(),
+        as_of_gw=13,
+        horizon=3,
+    )
+    table = players_table(
+        _predictions(),
+        players=players,
+        teams=teams,
+        status=status,
+        as_of_gw=13,
+        horizon=3,
+        season=_SEASON,
+    )
+    assert table["player_key"].is_unique().all()
+    assert table.height == base.height
+    assert table["total_xpts"].to_list() == pytest.approx(base["total_xpts"].to_list())
+
+
+def test_latest_rows_takes_newest_capture_and_respects_as_of() -> None:
+    later = _TS + timedelta(hours=2)
+    players = pl.concat(
+        [
+            _players(),
+            _players().with_columns(
+                pl.lit(7, dtype=pl.Int64).alias("team_key"),
+                pl.lit(later).alias("available_at"),
+            ),
+            _players().with_columns(pl.lit("2025-26").alias("season")),
+        ]
+    )
+    latest = latest_rows(players, "player_key", season=_SEASON)
+    assert latest.height == 1
+    assert latest["team_key"][0] == 7
+    before = latest_rows(
+        players, "player_key", season=_SEASON, as_of=_TS + timedelta(hours=1)
+    )
+    assert before["team_key"][0] == 3
+    # Without a season the newest season's newest row wins.
+    assert latest_rows(players, "player_key")["team_key"][0] == 7
+    # Empty / missing-key frames pass through unchanged.
+    empty = pl.DataFrame(schema={"player_key": pl.Int64()})
+    assert latest_rows(empty, "player_key").is_empty()
+    assert latest_rows(pl.DataFrame({"x": [1]}), "player_key").height == 1
+
+
+def test_drilldown_uses_latest_team_for_opponent() -> None:
+    """A mid-season transfer: drill-down must use the player's latest club."""
+    later = _TS + timedelta(hours=2)
+    players = pl.concat(
+        [
+            _players(),
+            _players().with_columns(
+                pl.lit(7, dtype=pl.Int64).alias("team_key"),
+                pl.lit(later).alias("available_at"),
+            ),
+        ]
+    )
+    drill = player_drilldown(
+        100,
+        _predictions(),
+        players=players,
+        fixtures=_fixtures(),
+        teams=_versioned(_teams(), seasons=[_SEASON], captures=5),
+        season=_SEASON,
+    )
+    first = drill.fixtures.filter(pl.col("fixture_id") == 1)
+    # Fixture 1 is team 3 (home) v 7: as a team-7 player he's away to ARS.
+    assert first["opponent"][0] == "ARS"
+    assert first["is_home"][0] is False
