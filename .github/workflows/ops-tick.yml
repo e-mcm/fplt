@@ -93,6 +93,7 @@ jobs:
             data/artifacts
             data/runs
             data/curated
+            data/ops
           key: ops-state-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             ops-state-${{ runner.os }}-

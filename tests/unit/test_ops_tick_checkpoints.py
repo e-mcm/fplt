@@ -371,3 +371,192 @@ def test_ops_tick_t90m_skips_apply(
     assert "T-90m" in result.checkpoints_run
     assert any("skipping apply" in rec.message for rec in caplog.records)
     get_settings.cache_clear()
+
+
+def _patch_local_data_remote(monkeypatch: pytest.MonkeyPatch, remote: object) -> None:
+    """Point checkpoint + status Remote.from_settings at a local-dir remote."""
+    from fplt.data.remote import Remote
+
+    def _from_settings(
+        _cls: type,
+        _settings: Settings,
+        bucket: str | None = None,
+    ) -> Remote:
+        del bucket
+        assert isinstance(remote, Remote)
+        return remote
+
+    monkeypatch.setattr(
+        "fplt.data.remote.Remote.from_settings",
+        classmethod(_from_settings),
+    )
+    # Status push at end of tick must not require a real R2 account.
+    monkeypatch.setattr(
+        "fplt.automation.status.push_status",
+        lambda *a, **k: None,
+    )
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("rclone") is None,
+    reason="rclone binary not installed",
+)
+def test_ops_tick_checkpoint_state_survives_fresh_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two ticks on fresh data dirs sharing only the remote: second is a no-op."""
+    from fplt.data.remote import Remote
+
+    bucket = tmp_path / "bucket"
+    runner_a = tmp_path / "runner-a"
+    runner_b = tmp_path / "runner-b"
+    runner_a.mkdir()
+    runner_b.mkdir()
+    remote = Remote(target=str(bucket), kind="data", env={})
+    _patch_local_data_remote(monkeypatch, remote)
+
+    monkeypatch.setenv("FPLT_DATA_DIR", str(runner_a))
+    monkeypatch.setenv("FPLT_DATA_BUCKET", "fplt-data")
+    get_settings.cache_clear()
+    _league(runner_a)
+    plan_calls: list[str] = []
+    sent = _patch_tick_deps(monkeypatch, plan_calls=plan_calls)
+    settings = Settings(
+        data_dir=runner_a,
+        data_bucket="fplt-data",
+        ntfy_url="https://ntfy.sh/fplt-test",
+    )
+    moment = _DEADLINE - timedelta(hours=5)
+    first = run_ops_tick(
+        runner_a,
+        now=moment,
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings,
+        notify=True,
+    )
+    assert first.checkpoints_run == ["T-24h", "T-6h"]
+    assert len(sent) == 1  # T−6h notify
+    remote_state = bucket / "status" / "ops" / "checkpoint_state.json"
+    assert remote_state.is_file()
+
+    # Fresh runner: empty local dir, only the shared remote carries state.
+    plan_calls.clear()
+    sent.clear()
+    monkeypatch.setenv("FPLT_DATA_DIR", str(runner_b))
+    get_settings.cache_clear()
+    _league(runner_b)
+    settings_b = Settings(
+        data_dir=runner_b,
+        data_bucket="fplt-data",
+        ntfy_url="https://ntfy.sh/fplt-test",
+    )
+    second = run_ops_tick(
+        runner_b,
+        now=moment,
+        models=["rolling_mean_v1"],
+        horizon=1,
+        settings=settings_b,
+        notify=True,
+    )
+    assert second.checkpoints_run == []
+    assert plan_calls == []
+    assert sent == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("rclone") is None,
+    reason="rclone binary not installed",
+)
+def test_ops_tick_t6h_notify_fires_once_across_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T−6h notify fires exactly once across N ticks between T−6h and T−90m."""
+    from fplt.data.remote import Remote
+
+    bucket = tmp_path / "bucket"
+    remote = Remote(target=str(bucket), kind="data", env={})
+    _patch_local_data_remote(monkeypatch, remote)
+
+    notify_titles: list[str] = []
+    n_ticks = 4
+    for i in range(n_ticks):
+        runner = tmp_path / f"runner-{i}"
+        runner.mkdir()
+        monkeypatch.setenv("FPLT_DATA_DIR", str(runner))
+        get_settings.cache_clear()
+        _league(runner)
+        plan_calls: list[str] = []
+        _patch_tick_deps(monkeypatch, plan_calls=plan_calls)
+
+        def _notify(
+            settings: Settings,
+            title: str,
+            message: str,
+            **kwargs: object,
+        ) -> bool:
+            del settings, message, kwargs
+            notify_titles.append(title)
+            return True
+
+        monkeypatch.setattr("fplt.automation.ops_tick.notify_recommendation", _notify)
+        settings = Settings(
+            data_dir=runner,
+            data_bucket="fplt-data",
+            ntfy_url="https://ntfy.sh/fplt-test",
+        )
+        # Between T−6h and T−90m.
+        moment = _DEADLINE - timedelta(hours=4)
+        result = run_ops_tick(
+            runner,
+            now=moment,
+            models=["rolling_mean_v1"],
+            horizon=1,
+            settings=settings,
+            notify=True,
+        )
+        if i == 0:
+            assert "T-6h" in result.checkpoints_run
+        else:
+            assert result.checkpoints_run == []
+
+    t6h_notifies = [title for title in notify_titles if "T-6h" in title]
+    assert len(t6h_notifies) == 1
+    get_settings.cache_clear()
+
+
+def test_ops_tick_skips_t90m_when_official_pointer_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty state + existing official pointer ⇒ T−90m is not re-run."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _league(tmp_path)
+    plan_calls: list[str] = []
+    _patch_tick_deps(
+        monkeypatch,
+        plan_calls=plan_calls,
+        plans_exist_impl=lambda *a, **k: True,
+    )
+    pointer = (
+        tmp_path
+        / "official"
+        / "season=2024-25"
+        / "gw=3"
+        / "checkpoint=T-90m"
+        / "line=v4_h3.json"
+    )
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text("{}", encoding="utf-8")
+
+    result = run_ops_tick(
+        tmp_path,
+        now=_DEADLINE - timedelta(minutes=80),
+        models=["rolling_mean_v1"],
+        horizon=1,
+        notify=False,
+    )
+    assert "T-90m" not in result.checkpoints_run
+    assert not any(call.startswith("official:") for call in plan_calls)
+    get_settings.cache_clear()

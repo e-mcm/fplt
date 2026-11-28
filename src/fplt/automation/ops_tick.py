@@ -24,13 +24,15 @@ from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
 from fplt.automation.checkpoints import (
     Checkpoint,
     NoPlanAlarm,
+    apply_output_guards,
     due_checkpoints,
     due_no_plan_alarms,
     mark_alarm_done,
     mark_checkpoint_done,
     next_upcoming_deadline,
+    persist_checkpoint_state,
+    pull_checkpoint_state,
     resolve_checkpoint_state,
-    save_checkpoint_state,
 )
 from fplt.automation.cycle import (
     catch_up,
@@ -203,7 +205,11 @@ def run_ops_tick(
                     upcoming_deadline, what="upcoming_deadline"
                 )
                 deadline = upcoming_deadline
+                # Durable state lives in R2 status/ops/; local data/ops may be empty.
+                pull_checkpoint_state(root, settings=cfg)
                 state = resolve_checkpoint_state(root, upcoming_key, deadline)
+                has_plan = plans_exist(root, chosen, upcoming_key, steps)
+                state = apply_output_guards(root, state, has_plan=has_plan)
                 due = due_checkpoints(moment, deadline, state.done)
                 logger.info(
                     "ops_tick: checkpoints key=%s due=%s",
@@ -224,6 +230,7 @@ def run_ops_tick(
                         auth=auth,
                     )
                     state = mark_checkpoint_done(state, checkpoint.id)
+                    persist_checkpoint_state(root, state, settings=cfg)
                     checkpoint_ids.append(checkpoint.id)
                     if sent:
                         notified_plan = True
@@ -237,6 +244,8 @@ def run_ops_tick(
                         )
 
                 has_plan = plans_exist(root, chosen, upcoming_key, steps)
+                # Re-apply guards after checkpoints may have created a plan.
+                state = apply_output_guards(root, state, has_plan=has_plan)
                 alarms = due_no_plan_alarms(
                     moment,
                     deadline,
@@ -246,6 +255,8 @@ def run_ops_tick(
                 for alarm in alarms:
                     # A successful T−3h retry can create the plan; skip later alarms.
                     if plans_exist(root, chosen, upcoming_key, steps):
+                        state = apply_output_guards(root, state, has_plan=True)
+                        persist_checkpoint_state(root, state, settings=cfg)
                         break
                     _run_no_plan_alarm(
                         root,
@@ -258,9 +269,10 @@ def run_ops_tick(
                         notify=notify,
                     )
                     state = mark_alarm_done(state, alarm.id)
+                    persist_checkpoint_state(root, state, settings=cfg)
                     alarm_ids.append(alarm.id)
 
-                save_checkpoint_state(root, state)
+                persist_checkpoint_state(root, state, settings=cfg)
 
             logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
             due_gw = pre_deadline(root, moment, chosen, horizon=steps)

@@ -11,16 +11,23 @@ import pytest
 from fplt.automation.checkpoints import (
     CHECKPOINTS,
     CheckpointState,
+    apply_output_guards,
     due_checkpoints,
     due_no_plan_alarms,
     load_checkpoint_state,
     mark_alarm_done,
     mark_checkpoint_done,
     next_upcoming_deadline,
+    official_slate_exists,
+    persist_checkpoint_state,
+    pull_checkpoint_state,
+    push_checkpoint_state,
     resolve_checkpoint_state,
     save_checkpoint_state,
 )
+from fplt.data.remote import Remote
 from fplt.data.store import DataStore
+from fplt.settings import Settings
 from fplt.types import GWKey
 
 _DEADLINE = datetime(2024, 9, 1, 17, 0, tzinfo=UTC)
@@ -215,3 +222,63 @@ def test_checkpoint_state_roundtrip_and_reset(tmp_path: Path) -> None:
     advanced = mark_alarm_done(advanced, "urgent")
     assert advanced.done == frozenset({"T-24h", "T-6h"})
     assert advanced.alarms_done == frozenset({"retry", "urgent"})
+
+
+def test_apply_output_guards_seeds_from_plan_and_official(tmp_path: Path) -> None:
+    key = GWKey("2024-25", 3)
+    empty = CheckpointState(
+        key=key,
+        deadline=_DEADLINE,
+        done=frozenset(),
+        alarms_done=frozenset(),
+    )
+    with_plan = apply_output_guards(tmp_path, empty, has_plan=True)
+    assert with_plan.done == frozenset({"T-24h", "T-6h", "T-30m"})
+    assert with_plan.alarms_done == frozenset({"retry", "urgent"})
+    assert "T-90m" not in with_plan.done
+
+    pointer = (
+        tmp_path
+        / "official"
+        / "season=2024-25"
+        / "gw=3"
+        / "checkpoint=T-90m"
+        / "line=v4_h3.json"
+    )
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text("{}", encoding="utf-8")
+    assert official_slate_exists(tmp_path, key)
+    with_official = apply_output_guards(tmp_path, empty, has_plan=False)
+    assert with_official.done == frozenset({"T-90m"})
+    assert with_official.alarms_done == frozenset()
+
+
+def test_checkpoint_state_roundtrip_via_local_remote(tmp_path: Path) -> None:
+    """Local-dir remote stands in for R2 ``status/ops/checkpoint_state.json``."""
+    import shutil
+
+    if shutil.which("rclone") is None:
+        pytest.skip("rclone binary not installed")
+
+    bucket = tmp_path / "bucket"
+    first = tmp_path / "runner-a"
+    second = tmp_path / "runner-b"
+    first.mkdir()
+    second.mkdir()
+    remote = Remote(target=str(bucket), kind="data", env={})
+    key = GWKey("2024-25", 3)
+    state = CheckpointState(
+        key=key,
+        deadline=_DEADLINE,
+        done=frozenset({"T-24h", "T-6h"}),
+        alarms_done=frozenset({"retry"}),
+    )
+    settings = Settings(data_dir=first, data_bucket="fplt-data")
+    persist_checkpoint_state(first, state, settings=settings, remote=remote)
+    remote_path = bucket / "status" / "ops" / "checkpoint_state.json"
+    assert remote_path.is_file()
+
+    assert pull_checkpoint_state(second, settings=settings, remote=remote) is True
+    loaded = load_checkpoint_state(second)
+    assert loaded == state
+    assert push_checkpoint_state(second, settings=settings, remote=remote) is True

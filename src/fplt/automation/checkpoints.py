@@ -5,6 +5,11 @@ GitHub Actions cron is best-effort: ticks can arrive late or be dropped.
 that is not yet recorded in ``done``, so a missed T−24h still runs on the
 next tick. After the deadline nothing is due.
 
+Checkpoint completion state is durable in R2 at
+``fplt-data/status/ops/checkpoint_state.json`` (mutable ``status/`` rewrite via
+``push_replace``). Each ops tick pulls it before resolving due work and pushes
+after every ``mark_*_done``. GHA cache of ``data/ops`` is belt-and-braces only.
+
 Checkpoints (offsets before the deadline):
 
 * ``T-24h`` — full plan
@@ -25,10 +30,14 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fplt.data.store import DataStore
 from fplt.types import GWKey
+
+if TYPE_CHECKING:
+    from fplt.data.remote import Remote
+    from fplt.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +45,8 @@ CheckpointId = Literal["T-24h", "T-6h", "T-90m", "T-30m"]
 AlarmId = Literal["retry", "urgent"]
 
 _STATE_REL = Path("ops") / "checkpoint_state.json"
+_REMOTE_PREFIX = "status/ops"
+_REMOTE_OBJECT = "status/ops/checkpoint_state.json"
 
 
 @dataclass(frozen=True)
@@ -314,6 +325,138 @@ def save_checkpoint_state(root: Path, state: CheckpointState) -> Path:
     return path
 
 
+def pull_checkpoint_state(
+    root: Path,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> bool:
+    """Pull R2 ``status/ops/checkpoint_state.json`` into the local data dir.
+
+    Soft-skips when no data bucket is configured or the remote object is
+    missing. Uses a mutable rclone copy because ``status/`` is rewritten.
+
+    Args:
+        root: Local data directory (receives ``ops/checkpoint_state.json``).
+        settings: Process settings. Defaults to ``get_settings()``.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        True when a remote pull was attempted (including a missing-object skip).
+
+    Raises:
+        ValueError: ``remote`` is not the data bucket.
+        RemoteError: rclone failed for a reason other than a missing prefix.
+    """
+    from fplt.data.remote import Remote, RemoteError, copy_mutable
+    from fplt.settings import get_settings
+
+    cfg = get_settings() if settings is None else settings
+    target = remote if remote is not None else Remote.from_settings(cfg)
+    if target is None:
+        logger.info("checkpoint state pull skipped: data bucket unset")
+        return False
+    if target.kind != "data":
+        raise ValueError(
+            f"checkpoint state must pull from the data bucket; got kind={target.kind!r}"
+        )
+    dest = root / "ops"
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        copy_mutable(
+            target,
+            f"{target.target.rstrip('/')}/{_REMOTE_PREFIX}",
+            str(dest),
+        )
+    except RemoteError as exc:
+        detail = str(exc).lower()
+        if "directory not found" in detail or "not found" in detail:
+            logger.info("no remote checkpoint state yet at %s", _REMOTE_PREFIX)
+            return True
+        raise
+    logger.info(
+        "pulled checkpoint state ← %s/%s",
+        target.target,
+        _REMOTE_OBJECT,
+    )
+    return True
+
+
+def push_checkpoint_state(
+    root: Path,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> bool:
+    """Push local checkpoint state to R2 via ``push_replace``.
+
+    Args:
+        root: Local data directory holding ``ops/checkpoint_state.json``.
+        settings: Process settings. Defaults to ``get_settings()``.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        True when a remote push was attempted.
+
+    Raises:
+        ValueError: ``remote`` is not the data bucket.
+        RemoteError: rclone failed.
+    """
+    from fplt.data.remote import Remote, push_replace
+    from fplt.settings import get_settings
+
+    path = checkpoint_state_path(root)
+    if not path.is_file():
+        return False
+    cfg = get_settings() if settings is None else settings
+    target = remote if remote is not None else Remote.from_settings(cfg)
+    if target is None:
+        logger.info("checkpoint state push skipped: data bucket unset")
+        return False
+    if target.kind != "data":
+        raise ValueError(
+            f"checkpoint state must push to the data bucket; got kind={target.kind!r}"
+        )
+    logger.info(
+        "pushing checkpoint state → %s/%s",
+        target.target,
+        _REMOTE_OBJECT,
+    )
+    push_replace(target, path, _REMOTE_OBJECT)
+    return True
+
+
+def persist_checkpoint_state(
+    root: Path,
+    state: CheckpointState,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> Path:
+    """Write local checkpoint state and best-effort push to R2.
+
+    Args:
+        root: Data directory.
+        state: State to persist.
+        settings: Process settings for the R2 push.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        Local path written.
+    """
+    from fplt.data.remote import RemoteError
+
+    path = save_checkpoint_state(root, state)
+    try:
+        push_checkpoint_state(root, settings=settings, remote=remote)
+    except (RemoteError, ValueError, OSError):
+        logger.exception(
+            "checkpoint state push failed; local %s retained",
+            path,
+        )
+    return path
+
+
 def resolve_checkpoint_state(
     root: Path,
     key: GWKey,
@@ -343,6 +486,76 @@ def resolve_checkpoint_state(
         deadline=cut,
         done=frozenset(),
         alarms_done=frozenset(),
+    )
+
+
+def official_slate_exists(
+    root: Path,
+    key: GWKey,
+    *,
+    checkpoint: str = "T-90m",
+) -> bool:
+    """True when any write-once official line pointer exists for ``checkpoint``.
+
+    Args:
+        root: Data directory containing ``official/``.
+        key: Season / gameweek.
+        checkpoint: Official checkpoint id (default ``T-90m``).
+
+    Returns:
+        True when ``official/.../checkpoint=<cp>/line=*.json`` is present.
+    """
+    cp_dir = (
+        root
+        / "official"
+        / f"season={key.season}"
+        / f"gw={key.gw}"
+        / f"checkpoint={checkpoint}"
+    )
+    if not cp_dir.is_dir():
+        return False
+    return any(cp_dir.glob("line=*.json"))
+
+
+def apply_output_guards(
+    root: Path,
+    state: CheckpointState,
+    *,
+    has_plan: bool,
+) -> CheckpointState:
+    """Mark checkpoints and alarms done when their write-once outputs exist.
+
+    Belt-and-braces for lost local state: plan checkpoints are done when a
+    production plan already exists; ``T-90m`` is done when an official line
+    pointer exists; no-plan alarms are done when a plan exists.
+
+    Args:
+        root: Data directory.
+        state: Current checkpoint state for the upcoming deadline.
+        has_plan: True when every production model already has a plan.
+
+    Returns:
+        State with additional ids seeded from on-disk outputs.
+    """
+    done = set(state.done)
+    for checkpoint in CHECKPOINTS:
+        if checkpoint.id in done:
+            continue
+        if checkpoint.id == "T-90m":
+            if official_slate_exists(root, state.key, checkpoint=checkpoint.id):
+                done.add(checkpoint.id)
+        elif checkpoint.plan and has_plan:
+            done.add(checkpoint.id)
+    alarms = set(state.alarms_done)
+    if has_plan:
+        alarms.update({"retry", "urgent"})
+    if done == set(state.done) and alarms == set(state.alarms_done):
+        return state
+    return CheckpointState(
+        key=state.key,
+        deadline=state.deadline,
+        done=frozenset(done),
+        alarms_done=frozenset(alarms),
     )
 
 
@@ -393,6 +606,7 @@ __all__ = [
     "NO_PLAN_RETRY_OFFSET",
     "NO_PLAN_URGENT_OFFSET",
     "NoPlanAlarm",
+    "apply_output_guards",
     "checkpoint_by_id",
     "checkpoint_state_path",
     "due_checkpoints",
@@ -401,6 +615,10 @@ __all__ = [
     "mark_alarm_done",
     "mark_checkpoint_done",
     "next_upcoming_deadline",
+    "official_slate_exists",
+    "persist_checkpoint_state",
+    "pull_checkpoint_state",
+    "push_checkpoint_state",
     "resolve_checkpoint_state",
     "save_checkpoint_state",
 ]
