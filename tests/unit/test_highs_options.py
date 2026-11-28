@@ -123,8 +123,13 @@ def test_board_deterministic_solves_pruned_empty_squad_h3() -> None:
 
 
 def test_board_deterministic_identical_across_reruns() -> None:
-    """Identical inputs → identical step-0 squad / XI / objective (FDB-269)."""
-    candidates, points = _synthetic_league_pool()
+    """Identical inputs → identical step-0 squad / XI / objective (FDB-269).
+
+    Uses the smaller ``n_teams=8`` pool (same as the thread-scheduler pin
+    regression) so two pruned H=3 solves stay cheap while still proving
+    board_deterministic is bit-stable across reruns.
+    """
+    candidates, points = _synthetic_league_pool(n_teams=8)
     state = SquadState(bank=1000, free_transfers=1, ft_bank_cap=5)
     options = HighsSolveOptions.board_deterministic()
     signatures = [
@@ -140,9 +145,15 @@ def test_board_deterministic_identical_across_reruns() -> None:
                 lineup_reopt=True,
             )
         )
-        for _ in range(3)
+        for _ in range(2)
     ]
     assert len(set(signatures)) == 1
+    # Non-empty plan fingerprint: accidental empty/no-op signatures would
+    # still look "identical" across reruns and weaken the regression.
+    points0, squad, xi = signatures[0]
+    assert points0 > 0.0
+    assert len(squad) == 15
+    assert len(xi) == 11
 
 
 def test_apply_threads_pin_after_default_scheduler() -> None:
