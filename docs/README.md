@@ -71,6 +71,7 @@ Specs-only plans committed from the Project store. Not yet design-canonical — 
 | [`proposals/fplt-experiments.md`](proposals/fplt-experiments.md) | Experiments platform / harness design |
 | [`proposals/fplt-ui-design.md`](proposals/fplt-ui-design.md) | UI / dashboard design proposal |
 | [`proposals/weekly-ui-milestone.md`](proposals/weekly-ui-milestone.md) | Milestone: scheduled ingest → weekly official runs → R2 → laptop UI |
+| [`proposals/weekly-lines-and-post-gw.md`](proposals/weekly-lines-and-post-gw.md) | Weekly model tiers (primary / shadow lines / prediction-only), post-GW analysis, forecast evaluation statistics |
 
 ## Standing rules (agents)
 
