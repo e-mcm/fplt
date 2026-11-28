@@ -28,7 +28,12 @@ from fplt.backtest.intervals import (
     interval_to_dict,
     intervals_for_pair,
 )
-from fplt.backtest.ledger import align_ledger_columns, read_predictions
+from fplt.backtest.ledger import (
+    ARCHIVE_MODEL_PREFIX,
+    align_ledger_columns,
+    archive_model_id,
+    read_predictions,
+)
 from fplt.backtest.metrics import overall_summary, summarise
 from fplt.data.benchmark_projections import read_benchmark_archive
 from fplt.data.store import DataStore
@@ -49,8 +54,6 @@ DEFAULT_SOURCES: tuple[str, ...] = (SOURCE_EP_NEXT, SOURCE_OPENFPL)
 ALLOWED_SOURCES: frozenset[str] = frozenset(
     {SOURCE_EP_NEXT, SOURCE_OPENFPL, SOURCE_FPL_REVIEW}
 )
-ARCHIVE_MODEL_PREFIX = "archive:"
-
 OUTCOME_ZEROS = "zeros"
 OUTCOME_BLANKS = "blanks"
 OUTCOME_TICKERS = "tickers"
@@ -101,11 +104,6 @@ class ArchiveCompareResult:
     intervals: tuple[PairedInterval, ...]
     output_dir: Path
     openfpl_degraded_rows: int = 0
-
-
-def archive_model_id(source: str) -> str:
-    """Ledger ``model_id`` used for an archived benchmark ``source``."""
-    return f"{ARCHIVE_MODEL_PREFIX}{source}"
 
 
 def outcome_group(actual_pts: int, actual_minutes: int | None) -> str:
