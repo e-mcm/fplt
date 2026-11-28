@@ -195,8 +195,13 @@ def compute_forecast_scores(
             group["points_bin"].to_numpy(), group["probability"].to_numpy()
         )
         derived = pmf_event_probs(dense)
-        p_row = pred.filter(
-            (pl.col("player_key") == player_key) & (pl.col("fixture_id") == fixture_id)
+        p_row = (
+            pred.filter(
+                (pl.col("player_key") == player_key)
+                & (pl.col("fixture_id") == fixture_id)
+            )
+            if not pred.is_empty()
+            else pred
         )
         probs = _event_probs(p_row, derived)
         position = str(row.get("position") or "MID")
