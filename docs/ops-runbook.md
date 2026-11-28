@@ -56,6 +56,14 @@ Composite action: `.github/actions/notify-failure`. Dagster path:
 
 Soft skip of missing R2 credentials is allowed **only off `main`** (PR / feature branches). Lint: `scripts/check_workflow_r2_environment.py`.
 
+### Tooling pins
+
+| Tool | Version | Where |
+|---|---|---|
+| rclone | **1.76.0** | GHA: `.github/actions/install-rclone` (release zip + `SHA256SUMS` checksum). Laptop / VM: install the same version (`brew install rclone` then `rclone version`, or the [release zip](https://github.com/rclone/rclone/releases/tag/v1.76.0)). |
+
+`push-raw` uses this pin (not apt). Bump the action default and this table together.
+
 ### ops-03: Heartbeat missing
 
 | | |
@@ -232,7 +240,7 @@ season.
 After official predict/plan runs land in `fplt-data` (ops-tick / M5), pull them
 onto the Mac and open the UI. Needs owner R2 creds in `~/.config/fplt/env`
 (`FPLT_R2_ACCOUNT_ID`, `FPLT_R2_ACCESS_KEY_ID`, `FPLT_R2_SECRET_ACCESS_KEY`,
-`FPLT_DATA_BUCKET=fplt-data`) and `rclone` installed.
+`FPLT_DATA_BUCKET=fplt-data`) and rclone at the pinned version above.
 
 ```bash
 # Latest GW with a primary T-90m pointer (prints predict/plan run ids)

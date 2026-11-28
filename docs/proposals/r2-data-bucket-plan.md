@@ -85,7 +85,7 @@ FPLT_DATA_BUCKET=fplt-data
 FPLT_LAB_BUCKET=fplt-lab
 ```
 
-Install rclone with `brew install rclone` on the Mac or `sudo apt-get install -y rclone` on Ubuntu. To use rclone by hand, define the remote once with these env vars (put them in your shell rc):
+Install rclone at the version pinned in [`docs/ops-runbook.md`](../ops-runbook.md) (Tooling pins) — GHA uses `.github/actions/install-rclone` (checksum-verified release zip). On the Mac: `brew install rclone` (confirm `rclone version` matches the pin) or the matching release zip. Do **not** rely on Ubuntu apt rclone in Actions (`push-raw`); apt ships an ancient build that can 501 against R2. To use rclone by hand, define the remote once with these env vars (put them in your shell rc):
 
 ```bash
 export RCLONE_CONFIG_FPLT_TYPE=s3 RCLONE_CONFIG_FPLT_PROVIDER=Cloudflare \
@@ -242,6 +242,22 @@ In `snapshot.yml`, `understat.yml`, `api_football.yml` and `football_data.yml`, 
 ```
 
 Add `if: always()` to the branch-publish step. Each sink then runs even if the other fails, so a single R2 outage never loses a capture. Check each workflow's real output directory when you implement this; understat and API-Football may not use `$RUNNER_TEMP/raw`. Logs show only rclone's one-line stats; secrets are masked, and there are no object listings.
+
+`push-raw` sets `uploaded=true` only after `rclone copy` exits 0, then runs `rclone check --one-way` on the same source → destination (#340). Soft-skip / failure → `uploaded=false`.
+
+#### If R2 still returns 501 NotImplemented on current rclone
+
+Prefer fixing via the pinned current rclone first. If ERROR / 501 lines persist after that:
+
+1. Reproduce a **single-file** upload with header dump (do not leave this on in scheduled jobs):
+
+```bash
+rclone copy ./one-file.json.gz "fplt:${DATA_BUCKET}/raw/…" \
+  -vv --dump headers --retries 1 --low-level-retries 1
+```
+
+2. Record which request header or transfer feature R2 rejects (compare a successful laptop upload at the same pin).
+3. Note the finding here and file a follow-up; do not paper over with retries that leave ERROR noise in the log.
 
 ### PR 4: `fplt data pull/push` CLI
 - Thin wrappers over `remote.pull`/`push`, bucket chosen by `--bucket data|lab`, prefixes checked against `PUSHABLE`.
