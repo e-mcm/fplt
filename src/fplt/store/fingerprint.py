@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -177,10 +178,15 @@ def run_fingerprint(
     run_type: RunType,
     prod_tag: str | None = None,
     tables: set[str] | None = None,
+    extra: Mapping[str, object] | None = None,
 ) -> str:
     """Compute the run identity fingerprint for one spec / build / GW.
 
     ``fp = sha256(spec_hash, prod_tag, target_gw, run_type, sorted table shas)``.
+    Plan runs pass ``extra`` (#380): official line, horizon, squad mode and a
+    squad-state digest, so lines sharing a spec never collide and a changed
+    squad re-plans. ``extra`` is hashed under ``"extra"`` with ``"v": 2``;
+    when omitted the payload (and so predict fingerprints) is unchanged.
 
     Args:
         spec: Model that will run.
@@ -189,6 +195,7 @@ def run_fingerprint(
         run_type: ``predict`` / ``plan`` / ``eval``.
         prod_tag: Moving ops tag label, or ``None``.
         tables: Override for ``required_tables(spec)`` (tests).
+        extra: Additional identity fields (JSON-serialisable), or ``None``.
 
     Returns:
         64-character lowercase hex digest. Required tables absent from the
@@ -197,13 +204,16 @@ def run_fingerprint(
     needed = required_tables(spec) if tables is None else tables
     digest = spec_hash(spec)
     pairs = _table_sha_pairs(build, needed)
-    payload = {
+    payload: dict[str, object] = {
         "spec_hash": digest,
         "prod_tag": prod_tag,
         "target_gw": {"season": target_gw.season, "gw": target_gw.gw},
         "run_type": run_type,
         "tables": pairs,
     }
+    if extra is not None:
+        payload["v"] = 2
+        payload["extra"] = dict(extra)
     return _sha256_canonical(payload)
 
 

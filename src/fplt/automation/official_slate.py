@@ -26,6 +26,7 @@ from fplt.automation.ops_data import (
     pull_required_tables,
     push_fp_index,
     record_line_run,
+    safe_entry_state_digest,
     tables_for_slate,
 )
 from fplt.automation.production import OfficialLine, ProductionOps
@@ -49,7 +50,7 @@ from fplt.store.official import (
     official_checkpoint_dir,
 )
 from fplt.store.points_pmf import points_pmf_tables_from_sample
-from fplt.store.push import maybe_push_official
+from fplt.store.push import load_run_manifest, maybe_push_official
 from fplt.store.runs import write_plan_run, write_predict_run
 from fplt.types import GWKey
 from fplt.utils.timing import timed_phase
@@ -124,6 +125,7 @@ def ensure_slate_runs(
             key,
             data_dir=data_dir,
             prod_tag=prod_tag,
+            squad_digest=safe_entry_state_digest(cfg),
         )
     by_line = {item.line: item for item in slate_decisions}
 
@@ -161,7 +163,12 @@ def ensure_slate_runs(
     pairs: list[LineRunPair] = []
     for line in lines:
         decision = by_line[line.line]
-        if decision.skip and decision.plan_run_id is not None:
+        reusable = (
+            decision.skip
+            and decision.plan_run_id is not None
+            and _plan_run_matches_line(data_dir, decision.plan_run_id, line)
+        )
+        if reusable and decision.plan_run_id is not None:
             plan_id = decision.plan_run_id
         else:
             plan_id = _official_plan(
@@ -189,6 +196,35 @@ def ensure_slate_runs(
             )
         )
     return resolved_build_id, tuple(pairs)
+
+
+def _plan_run_matches_line(data_dir: Path, run_id: str, line: OfficialLine) -> bool:
+    """Whether a reusable plan run was made for ``line`` (#380).
+
+    Before #380 every line sharing a spec had the same plan fingerprint, so an
+    index entry could point a v4_h5 pointer at the v4_h3 plan. A reused plan
+    must carry the same ``line`` and ``plan_horizon``; when the manifest is
+    not available locally the index entry is trusted (fps now include line).
+    """
+    try:
+        manifest = load_run_manifest(data_dir, run_id)
+    except FileNotFoundError:
+        return True
+    ok = manifest.line in (None, line.line) and manifest.plan_horizon in (
+        None,
+        line.horizon,
+    )
+    if not ok:
+        logger.warning(
+            "official_slate: not reusing plan %s for line=%s horizon=%s "
+            "(manifest line=%s horizon=%s); re-planning",
+            run_id,
+            line.line,
+            line.horizon,
+            manifest.line,
+            manifest.plan_horizon,
+        )
+    return ok
 
 
 def run_official_checkpoint(

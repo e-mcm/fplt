@@ -60,6 +60,7 @@ from fplt.automation.ops_data import (
     enforce_build_freshness,
     load_ops_build_context,
     pull_required_tables,
+    safe_entry_state_digest,
     tables_for_slate,
     throttle_allows,
 )
@@ -247,6 +248,10 @@ def run_ops_tick(
             )
             _notify_auth_check(cfg, auth, notify=notify_live)
 
+            # #380: the squad is part of plan identity (a transfer re-plans).
+            squad_digest = (
+                safe_entry_state_digest(cfg) if upcoming_key is not None else None
+            )
             slate_decisions = (
                 decisions_for_slate(
                     ops,
@@ -255,6 +260,7 @@ def run_ops_tick(
                     data_dir=root,
                     prod_tag=prod_tag,
                     remote_by_fp=ctx.remote_by_fp,
+                    squad_digest=squad_digest,
                 )
                 if upcoming_key is not None
                 else []

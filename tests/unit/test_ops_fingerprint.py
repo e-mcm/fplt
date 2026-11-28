@@ -665,3 +665,198 @@ def test_ops_tick_stale_build_skips_checkpoint(
     assert "T-90m" not in result.checkpoints_run
     assert official_calls == []
     get_settings.cache_clear()
+
+
+def _four_line_ops(model: str = "rolling_mean_v1") -> ProductionOps:
+    pipeline = live_pipeline_defaults(model=model, horizon=3)
+    return ProductionOps(
+        models=[model],
+        plan_horizon=3,
+        pipeline=pipeline,
+        lines=[
+            OfficialLine(
+                line="v4_h3", spec=model, horizon=3, role="primary", squad_mode="real"
+            ),
+            *(
+                OfficialLine(
+                    line=f"v4_h{h}",
+                    spec=model,
+                    horizon=h,
+                    role="candidate",
+                    squad_mode="virtual",
+                )
+                for h in (5, 7, 9)
+            ),
+        ],
+        min_run_interval_minutes=60,
+        max_build_age_minutes=30,
+    )
+
+
+def _slate_build(tmp_path: Path) -> BuildManifest:
+    spec = load_model_specs()["rolling_mean_v1"]
+    needed = required_tables(spec)
+    return _write_build(
+        tmp_path, {name: f"{i:064d}" for i, name in enumerate(sorted(needed))}
+    )
+
+
+def test_plan_fp_distinct_per_line_sharing_a_spec(tmp_path: Path) -> None:
+    """Regression #380: v4_h3/h5/h7/h9 shared one plan_fp, so pointers reused
+    the h3 plan for every line (by_fp already present for fp=9c528d235e9f)."""
+    build = _slate_build(tmp_path)
+    decisions = decisions_for_slate(
+        _four_line_ops(), build, GWKey("2024-25", 3), data_dir=tmp_path
+    )
+    assert len({d.plan_fp for d in decisions}) == 4
+    # One predict per spec at the longest horizon: predict fp is shared.
+    assert len({d.predict_fp for d in decisions}) == 1
+
+
+def test_plan_fp_changes_with_squad_digest_only(tmp_path: Path) -> None:
+    build = _slate_build(tmp_path)
+    ops = _four_line_ops()
+    key = GWKey("2024-25", 3)
+    a = decisions_for_slate(ops, build, key, data_dir=tmp_path, squad_digest="s1")
+    same = decisions_for_slate(ops, build, key, data_dir=tmp_path, squad_digest="s1")
+    b = decisions_for_slate(ops, build, key, data_dir=tmp_path, squad_digest="s2")
+    assert [d.plan_fp for d in a] == [d.plan_fp for d in same]
+    assert all(x.plan_fp != y.plan_fp for x, y in zip(a, b, strict=True))
+    assert [d.predict_fp for d in a] == [d.predict_fp for d in b]
+    # A transfer (new digest) means a previously indexed plan is not reused.
+    write_fp_index(tmp_path, a[0].predict_fp, "r_pred")
+    write_fp_index(tmp_path, a[0].plan_fp, "r_plan_s1")
+    after = decisions_for_slate(ops, build, key, data_dir=tmp_path, squad_digest="s2")
+    assert after[0].skip is False
+
+
+def test_run_fingerprint_extra_is_optional_and_hashed(tmp_path: Path) -> None:
+    build = _slate_build(tmp_path)
+    spec = load_model_specs()["rolling_mean_v1"]
+    key = GWKey("2024-25", 3)
+    base = run_fingerprint(spec=spec, build=build, target_gw=key, run_type="plan")
+    again = run_fingerprint(
+        spec=spec, build=build, target_gw=key, run_type="plan", extra=None
+    )
+    tagged = run_fingerprint(
+        spec=spec, build=build, target_gw=key, run_type="plan", extra={"line": "x"}
+    )
+    assert base == again
+    assert tagged != base
+
+
+class _FakeFPL:
+    def __init__(
+        self,
+        history: dict[str, Any],
+        transfers: list[dict[str, Any]],
+        *,
+        fail: bool = False,
+    ) -> None:
+        self.history = history
+        self.transfers = transfers
+        self.fail = fail
+
+    def entry_history(self, entry_id: int) -> dict[str, Any]:
+        from fplt.data.fpl_client import FPLAPIError
+
+        if self.fail:
+            raise FPLAPIError("boom")
+        return self.history
+
+    def entry_transfers(self, entry_id: int) -> list[dict[str, Any]]:
+        return self.transfers
+
+
+def _history(points: int = 50, bank: int = 30) -> dict[str, Any]:
+    return {
+        "current": [
+            {
+                "event": 12,
+                "points": points,
+                "total_points": 600 + points,
+                "rank": 1000,
+                "bank": bank,
+                "event_transfers": 1,
+                "event_transfers_cost": 0,
+            }
+        ],
+        "chips": [{"name": "wildcard", "event": 5, "time": "x"}],
+    }
+
+
+_TRANSFER = {
+    "event": 12,
+    "element_in": 10,
+    "element_out": 20,
+    "element_in_cost": 55,
+    "element_out_cost": 60,
+    "time": "2026-11-20T10:00:00Z",
+}
+
+
+def test_entry_state_digest_tracks_squad_not_points() -> None:
+    from fplt.automation.ops_data import entry_state_digest
+    from fplt.settings import Settings
+
+    cfg = Settings(entry_id=42)
+    base = entry_state_digest(cfg, api=_FakeFPL(_history(), [_TRANSFER]))  # type: ignore[arg-type]
+    live_points = entry_state_digest(
+        cfg,
+        api=_FakeFPL(_history(points=80), [_TRANSFER]),  # type: ignore[arg-type]
+    )
+    moved = entry_state_digest(
+        cfg,
+        api=_FakeFPL(  # type: ignore[arg-type]
+            _history(bank=25), [_TRANSFER, {**_TRANSFER, "event": 13}]
+        ),
+    )
+    assert base is not None
+    assert len(base) == 64
+    assert live_points == base  # live scoring does not re-plan
+    assert moved != base  # a transfer does
+    assert entry_state_digest(Settings(entry_id=None)) is None
+
+
+def test_safe_entry_state_digest_marks_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fplt.automation import ops_data
+    from fplt.data.fpl_client import FPLAPIError
+    from fplt.settings import Settings
+
+    def boom(*_: object, **__: object) -> str:
+        raise FPLAPIError("down")
+
+    monkeypatch.setattr(ops_data, "entry_state_digest", boom)
+    got = ops_data.safe_entry_state_digest(Settings(entry_id=42))
+    assert got == ops_data.SQUAD_DIGEST_UNAVAILABLE
+
+
+def test_reused_plan_must_match_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A skipped line must never point at another line's plan run (#380)."""
+    from types import SimpleNamespace
+
+    from fplt.automation import official_slate
+
+    line_h5 = _four_line_ops().lines[1]
+    monkeypatch.setattr(
+        official_slate,
+        "load_run_manifest",
+        lambda *_: SimpleNamespace(line="v4_h3", plan_horizon=3),
+    )
+    assert official_slate._plan_run_matches_line(tmp_path, "r", line_h5) is False
+    monkeypatch.setattr(
+        official_slate,
+        "load_run_manifest",
+        lambda *_: SimpleNamespace(line="v4_h5", plan_horizon=5),
+    )
+    assert official_slate._plan_run_matches_line(tmp_path, "r", line_h5) is True
+
+    def missing(*_: object) -> None:
+        raise FileNotFoundError("r")
+
+    monkeypatch.setattr(official_slate, "load_run_manifest", missing)
+    assert official_slate._plan_run_matches_line(tmp_path, "r", line_h5) is True

@@ -7,11 +7,15 @@ otherwise pull only ``required_tables(spec)`` into ``staged/``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
+
+import httpx
 
 from fplt.automation.curate import (
     load_curated_latest,
@@ -19,10 +23,11 @@ from fplt.automation.curate import (
 )
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.production import OfficialLine, ProductionOps
+from fplt.data.fpl_client import FPLAPIError, FPLClient
 from fplt.data.remote import Remote, RemoteError, lsf
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.schemas.manifests import BuildManifest, CuratedLatestPointer
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, get_settings, secret_value
 from fplt.store.builds import (
     build_manifest_path,
     hydrate_staged_from_build,
@@ -39,6 +44,9 @@ from fplt.types import GWKey
 logger = logging.getLogger(__name__)
 
 _THROTTLE_RELATIVE = "status/ops/last_run_by_line.json"
+# Squad digest when the entry is configured but its public state could not be
+# fetched: never equals a real digest, so the plan is not reused (#380).
+SQUAD_DIGEST_UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -170,6 +178,116 @@ def pull_required_tables(
     return hydrate_staged_from_build(data_dir, build_id, tables=allow)
 
 
+def entry_state_digest(
+    settings: Settings | None = None,
+    *,
+    api: FPLClient | None = None,
+) -> str | None:
+    """Digest of the manager's squad-determining public FPL state (#380).
+
+    Hashes only what changes the squad: ``history.current[]`` ``event`` /
+    ``bank`` / ``event_transfers`` / ``event_transfers_cost``, ``history.chips``
+    and every transfer's ``event`` / ``element_in`` / ``element_out`` / costs.
+    Points and ranks are excluded, so live-GW scoring does not change the
+    digest. Two public GETs; no token and no staged tables needed, so idle
+    ticks stay cheap.
+
+    Args:
+        settings: Process settings (``entry_id``); defaults to ``get_settings()``.
+        api: Optional pre-built client (tests).
+
+    Returns:
+        64-char hex digest, or ``None`` when ``FPLT_ENTRY_ID`` is unset.
+
+    Raises:
+        FPLAPIError: A public endpoint failed or returned a bad payload.
+    """
+    cfg = get_settings() if settings is None else settings
+    if cfg.entry_id is None:
+        return None
+    owns = api is None
+    fpl = api or FPLClient(session=secret_value(cfg.fpl_session), api_token=None)
+    try:
+        history = fpl.entry_history(cfg.entry_id)
+        transfers = fpl.entry_transfers(cfg.entry_id)
+    finally:
+        if owns:
+            fpl.close()
+    current = [
+        {
+            k: row.get(k)
+            for k in ("event", "bank", "event_transfers", "event_transfers_cost")
+        }
+        for row in _dict_rows(history.get("current"))
+    ]
+    chips = [
+        {"name": row.get("name"), "event": row.get("event")}
+        for row in _dict_rows(history.get("chips"))
+    ]
+    moves = sorted(
+        (
+            {
+                k: row.get(k)
+                for k in (
+                    "event",
+                    "element_in",
+                    "element_out",
+                    "element_in_cost",
+                    "element_out_cost",
+                )
+            }
+            for row in _dict_rows(transfers)
+        ),
+        key=lambda item: json.dumps(item, sort_keys=True),
+    )
+    payload: dict[str, object] = {
+        "current": current,
+        "chips": chips,
+        "transfers": moves,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _dict_rows(value: object) -> list[dict[str, Any]]:
+    """Return the dict rows of a JSON list (anything else → empty)."""
+    if not isinstance(value, list):
+        return []
+    return [
+        cast(dict[str, Any], row)
+        for row in cast(list[object], value)
+        if isinstance(row, dict)
+    ]
+
+
+def safe_entry_state_digest(settings: Settings | None = None) -> str | None:
+    """``entry_state_digest`` that never raises on FPL/network errors.
+
+    A failed fetch returns ``SQUAD_DIGEST_UNAVAILABLE`` (logged WARNING) so the
+    plan fingerprint cannot match a previous run: an unknown squad must never
+    reuse a plan made for a different squad (#380).
+    """
+    try:
+        return entry_state_digest(settings)
+    except (FPLAPIError, httpx.HTTPError) as exc:
+        logger.warning("ops_data: entry state digest unavailable: %s", exc)
+        return SQUAD_DIGEST_UNAVAILABLE
+
+
+def plan_identity(line: OfficialLine, squad_digest: str | None) -> dict[str, object]:
+    """Return the plan-fingerprint ``extra`` for one official line (#380).
+
+    Lines sharing a spec differ by ``line`` / ``horizon`` / ``squad_mode``; the
+    squad digest makes a transfer (or chip) invalidate the previous plan.
+    """
+    return {
+        "line": line.line,
+        "horizon": line.horizon,
+        "squad_mode": line.squad_mode,
+        "squad": squad_digest,
+    }
+
+
 def decisions_for_slate(
     ops: ProductionOps,
     build: BuildManifest,
@@ -179,8 +297,13 @@ def decisions_for_slate(
     prod_tag: str | None = None,
     remote_by_fp: frozenset[str] | set[str] | None = None,
     specs: dict[str, ModelSpec] | None = None,
+    squad_digest: str | None = None,
 ) -> list[LineFpDecision]:
     """Compute predict/plan fingerprints for every official line.
+
+    Predict fingerprints are per spec (one predict at the longest horizon).
+    Plan fingerprints add ``plan_identity(line, squad_digest)`` so the four
+    official lines never share a plan run and a changed squad re-plans (#380).
 
     Args:
         ops: Production slate.
@@ -190,6 +313,7 @@ def decisions_for_slate(
         prod_tag: Moving ops tag when known.
         remote_by_fp: Optional remote listing of ``runs/by_fp/``.
         specs: Optional preloaded ModelSpecs.
+        squad_digest: ``entry_state_digest`` output (``None`` without an entry).
 
     Returns:
         One decision per official line.
@@ -212,6 +336,7 @@ def decisions_for_slate(
             target_gw=key,
             run_type="plan",
             prod_tag=prod_tag,
+            extra=plan_identity(line, squad_digest),
         )
         pred_done = fp_index_exists(data_dir, predict_fp, remote_listing=listing)
         plan_done = fp_index_exists(data_dir, plan_fp, remote_listing=listing)
