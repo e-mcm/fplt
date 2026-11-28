@@ -36,10 +36,11 @@ from fplt.data.benchmark_projections import archive_if_missing
 from fplt.data.pit import PITData
 from fplt.data.remote import Remote
 from fplt.data.store import DataStore
-from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import resolve_squad_state, run_plan
-from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.optimise.plan import covered_horizon
 from fplt.settings import Settings
+from fplt.store.catalog import scan_succeeded_runs
+from fplt.store.plan_runs import plan_reports
 from fplt.types import GWKey
 
 # Live list / horizon come from ``configs/ops/production.yaml`` (or env).
@@ -310,21 +311,15 @@ def pre_deadline(
 
 
 def reports(root: Path) -> str:
-    """Concatenate every saved plan report.
+    """Concatenate every saved plan report (``report.md`` in plan runs).
 
     Args:
-        root: Data directory that contains ``plans/``.
+        root: Data directory that contains ``runs/``.
 
     Returns:
         The markdown, or an empty string when no report has been written.
     """
-    folder = root / "plans"
-    if not folder.exists():
-        return ""
-    parts = [
-        path.read_text(encoding="utf-8") for path in sorted(folder.rglob("report.md"))
-    ]
-    return "\n".join(parts)
+    return plan_reports(root)
 
 
 def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
@@ -399,15 +394,15 @@ def plans_exist(
 
 
 def _local_plans_exist(root: Path, models: list[str], key: GWKey, horizon: int) -> bool:
-    """Whether every model already has a local plan parquet for ``key``."""
+    """Whether every model already has a succeeded local plan *run* for ``key``.
+
+    Reads ``runs/`` (data-model cut-over), never ``plans/<model_id>/as_of=…``:
+    that path ignores code, purpose and squad, so a stale file could pass.
+    """
     weeks = covered_horizon(key.gw, horizon)
     if weeks < 1:
         return False
-    specs = load_model_specs()
-    return all(
-        plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks).exists()
-        for name in models
-    )
+    return catalog_has_plans(scan_succeeded_runs(root), models, key, weeks)
 
 
 def _aware(value: datetime) -> datetime:

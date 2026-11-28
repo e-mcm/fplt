@@ -7,8 +7,8 @@ import polars as pl
 import pytest
 
 from fplt.automation.late_refresh import (
-    artifact_mtime,
     latest_late_signal_at,
+    latest_plan_finished_at,
     plans_stale_vs_signals,
     retire_plans,
 )
@@ -16,7 +16,7 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import plan_parquet, write_plan
 from fplt.types import GWKey
-from tests.builders import build_league
+from tests.builders import build_league, dual_write_plan
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _DEADLINE = datetime(2024, 8, 16, 17, tzinfo=UTC)
@@ -78,15 +78,14 @@ def test_plans_stale_when_signal_newer_than_mtime(
     specs = load_model_specs()
     model = "rolling_mean_v1"
     model_id = specs[model].model_id
-    write_plan(tmp_path, _tiny_plan(model_id, "2024-25", 1))
-    path = plan_parquet(tmp_path, model_id, "2024-25", 1, 1)
-    assert path.exists()
+    dual_write_plan(tmp_path, _tiny_plan(model_id, "2024-25", 1))
+    assert latest_plan_finished_at(tmp_path, model, GWKey("2024-25", 1), 1) is not None
 
     old = _DEADLINE - timedelta(hours=6)
     newer = _DEADLINE - timedelta(hours=1)
     monkeypatch.setattr(
-        "fplt.automation.late_refresh.artifact_mtime",
-        lambda p: old if p == path else artifact_mtime(p),
+        "fplt.automation.late_refresh.latest_plan_finished_at",
+        lambda *_a, **_k: old,
     )
     store.write(
         "predicted_lineups",
