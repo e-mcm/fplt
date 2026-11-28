@@ -13,7 +13,6 @@ from fplt.automation.official_slate import (
     OfficialCheckpointResult,
     run_official_checkpoint,
 )
-from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_tick import run_ops_tick
 from fplt.automation.production import OfficialLine, ProductionOps, load_production_ops
 from fplt.data.store import DataStore
@@ -23,6 +22,7 @@ from fplt.store.official import official_checkpoint_dir
 from fplt.store.push import maybe_push_official, push_official
 from fplt.types import GWKey
 from fplt.utils.timing import ops_timing_path as timing_ops_path
+from tests.unit._ops_tick_curated import patch_curated_ops_path
 
 _DEADLINE = datetime(2024, 9, 1, 17, 0, tzinfo=UTC)
 
@@ -76,6 +76,10 @@ def test_ops_tick_t90m_calls_official_slate(
         *,
         settings: Settings | None = None,
         chip_arm: str = "optimised",
+        build_id: str | None = None,
+        prod_tag: str | None = None,
+        decisions: object = None,
+        now: object = None,
     ) -> OfficialCheckpointResult:
         calls.append(f"{key.season} gw{key.gw}:{ops.primary_line().line}:{chip_arm}")
         return OfficialCheckpointResult(
@@ -84,13 +88,10 @@ def test_ops_tick_t90m_calls_official_slate(
             checkpoint="T-90m",
             pairs=(),
             checkpoint_dir=cp_dir,
-            build_id="abc",
+            build_id=build_id or "abc",
         )
 
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
+    patch_curated_ops_path(monkeypatch)
     monkeypatch.setattr("fplt.automation.ops_tick.catch_up", lambda *a, **k: [])
     monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", lambda *a, **k: None)
     monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])
@@ -169,24 +170,18 @@ def test_run_official_checkpoint_requires_sampled_model(
     from tests.builders import build_league
 
     build_league(DataStore(tmp_path))
-    # Seed minimal staged content so build_from_staged can run.
     monkeypatch.setattr(
-        "fplt.automation.official_slate.build_from_staged",
-        lambda *a, **k: type("B", (), {"build_id": "deadbeef"})(),
-    )
-
-    def boom_predict(*_a: Any, **_k: Any) -> str:
-        raise ValueError(
-            "official predict requires SampledPointsPredictor.sample() "
-            "for points PMFs; got RollingMeanPredictor"
-        )
-
-    monkeypatch.setattr(
-        "fplt.automation.official_slate._official_predict", boom_predict
+        "fplt.automation.official_slate.ensure_slate_runs",
+        lambda *a, **k: (_ for _ in ()).throw(
+            ValueError(
+                "official predict requires SampledPointsPredictor.sample() "
+                "for points PMFs; got RollingMeanPredictor"
+            )
+        ),
     )
     ops = _tiny_ops()
     with pytest.raises(ValueError, match="SampledPointsPredictor"):
-        run_official_checkpoint(tmp_path, ops, GWKey("2024-25", 2))
+        run_official_checkpoint(tmp_path, ops, GWKey("2024-25", 2), build_id="deadbeef")
 
 
 def test_committed_production_slate_still_loads() -> None:
@@ -261,27 +256,23 @@ def test_run_official_checkpoint_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Wire predict → plan → finalize → push with stubs for heavy work."""
-    from fplt.optimise.state import SquadState
     from fplt.store.official import LineRunPair
     from tests.builders import build_league
 
     build_league(DataStore(tmp_path))
-    squad = SquadState(bank=1000, free_transfers=1, ft_bank_cap=5, owned=[])
-    monkeypatch.setattr(
-        "fplt.automation.official_slate.build_from_staged",
-        lambda *a, **k: type("B", (), {"build_id": "build1"})(),
+
+    pairs = (
+        LineRunPair(
+            line="e2e_primary",
+            role="primary",
+            squad_mode="real",
+            predict_run_id="predict-run",
+            plan_run_id="plan-run",
+        ),
     )
     monkeypatch.setattr(
-        "fplt.automation.official_slate._official_predict",
-        lambda *a, **k: "predict-run",
-    )
-    monkeypatch.setattr(
-        "fplt.automation.official_slate.resolve_squad_state",
-        lambda *a, **k: squad,
-    )
-    monkeypatch.setattr(
-        "fplt.automation.official_slate._official_plan",
-        lambda *a, **k: "plan-run",
+        "fplt.automation.official_slate.ensure_slate_runs",
+        lambda *a, **k: ("build1", pairs),
     )
     finalized: list[object] = []
 
@@ -310,7 +301,9 @@ def test_run_official_checkpoint_happy_path(
 
     monkeypatch.setattr("fplt.automation.official_slate.maybe_push_official", fake_push)
 
-    result = run_official_checkpoint(tmp_path, _tiny_ops(), GWKey("2024-25", 2))
+    result = run_official_checkpoint(
+        tmp_path, _tiny_ops(), GWKey("2024-25", 2), build_id="build1"
+    )
     assert result.build_id == "build1"
     assert result.checkpoint == "T-90m"
     assert result.pairs == (
@@ -375,8 +368,38 @@ def test_official_predict_writes_run(
 
     monkeypatch.setattr("fplt.automation.official_slate.write_predict_run", fake_write)
     assert (
-        _official_predict(tmp_path, spec.name, key=key, horizon=1, checkpoint="T-90m")
+        _official_predict(
+            tmp_path,
+            spec.name,
+            key=key,
+            horizon=1,
+            checkpoint="T-90m",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
+            build=_stub_build(),
+        )
         == "pred-1"
+    )
+
+
+def _stub_build() -> Any:
+    from fplt.models.spec import load_model_specs
+    from fplt.schemas.manifests import BuildManifest, BuildTableEntry
+    from fplt.store.fingerprint import required_tables
+
+    needed = required_tables(load_model_specs()["rolling_mean_v1"])
+    return BuildManifest(
+        build_id="b" * 64,
+        created_at=_DEADLINE,
+        staging_version=1,
+        code_sha="abc",
+        raw_manifest_hash="r" * 64,
+        raw_cutoff=_DEADLINE,
+        tables={
+            name: BuildTableEntry(sha=f"{i:064d}", rows=1, schema_hash="s" * 64)
+            for i, name in enumerate(sorted(needed))
+        },
     )
 
 
@@ -390,6 +413,10 @@ def test_official_predict_unknown_model(tmp_path: Path) -> None:
             key=GWKey("2024-25", 1),
             horizon=1,
             checkpoint="T-90m",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
+            build=_stub_build(),
         )
 
 
@@ -437,7 +464,17 @@ def test_official_predict_tolerates_legacy_predictions(
         lambda *a, **k: type("M", (), {"run_id": "pred-legacy"})(),
     )
     assert (
-        _official_predict(tmp_path, spec.name, key=key, horizon=1, checkpoint="T-90m")
+        _official_predict(
+            tmp_path,
+            spec.name,
+            key=key,
+            horizon=1,
+            checkpoint="T-90m",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
+            build=_stub_build(),
+        )
         == "pred-legacy"
     )
 
@@ -475,6 +512,9 @@ def test_official_plan_success_and_exists(
             checkpoint="T-90m",
             squad=squad,
             chip_arm="off",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
         )
         == "plan-ok"
     )
@@ -487,6 +527,9 @@ def test_official_plan_success_and_exists(
             parent_run_id="p",
             checkpoint="T-90m",
             squad="nope",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
             chip_arm="off",
         )
 
@@ -529,6 +572,9 @@ def test_official_plan_success_and_exists(
             checkpoint="T-90m",
             squad=squad,
             chip_arm="off",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
         )
         == "plan-from-legacy"
     )
@@ -691,3 +737,146 @@ def test_write_points_pmf_tables_ignores_bad_builders(tmp_path: Path) -> None:
             purpose=f"bad-{id(builder)}",
             points_pmf_for_run_id=builder,
         )
+
+
+def test_ensure_slate_runs_skip_and_execute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ensure_slate_runs`` reuses skip decisions and runs when needed."""
+    from fplt.automation.official_slate import ensure_slate_runs
+    from fplt.automation.ops_data import LineFpDecision
+    from fplt.store.official import LineRunPair
+    from tests.builders import build_league
+
+    build_league(DataStore(tmp_path))
+    ops = _tiny_ops()
+    key = GWKey("2024-25", 2)
+    build = _stub_build()
+    from fplt.store.builds import build_manifest_path
+
+    path = build_manifest_path(tmp_path, build.build_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(build.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    skip_decision = LineFpDecision(
+        line="e2e_primary",
+        spec_name="rolling_mean_v1",
+        predict_fp="p" * 64,
+        plan_fp="q" * 64,
+        skip=True,
+        predict_run_id="pred-skip",
+        plan_run_id="plan-skip",
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.pull_required_tables",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.push_fp_index", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.record_line_run", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.resolve_squad_state",
+        lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.decisions_for_slate",
+        lambda *a, **k: [skip_decision],
+    )
+    bid, pairs = ensure_slate_runs(
+        tmp_path,
+        ops,
+        key,
+        build_id=build.build_id,
+        decisions=[skip_decision],
+        checkpoint=None,
+    )
+    assert bid == build.build_id
+    assert pairs == (
+        LineRunPair(
+            line="e2e_primary",
+            role="primary",
+            squad_mode="real",
+            predict_run_id="pred-skip",
+            plan_run_id="plan-skip",
+        ),
+    )
+
+    run_decision = LineFpDecision(
+        line="e2e_primary",
+        spec_name="rolling_mean_v1",
+        predict_fp="r" * 64,
+        plan_fp="s" * 64,
+        skip=False,
+        predict_run_id=None,
+        plan_run_id=None,
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate._official_predict",
+        lambda *a, **k: "pred-new",
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate._official_plan",
+        lambda *a, **k: "plan-new",
+    )
+    bid2, pairs2 = ensure_slate_runs(
+        tmp_path,
+        ops,
+        key,
+        build_id=build.build_id,
+        decisions=[run_decision],
+        checkpoint="T-90m",
+        now=_DEADLINE,
+    )
+    assert bid2 == build.build_id
+    assert pairs2[0].predict_run_id == "pred-new"
+    assert pairs2[0].plan_run_id == "plan-new"
+
+
+def test_resolve_build_id_from_curated_and_missing(tmp_path: Path) -> None:
+    from fplt.automation.official_slate import _resolve_build_id
+    from fplt.schemas.manifests import CuratedLatestPointer
+
+    assert _resolve_build_id(tmp_path, "explicit") == "explicit"
+    with pytest.raises(ValueError, match="requires build_id"):
+        _resolve_build_id(tmp_path, None)
+    (tmp_path / "status" / "curated").mkdir(parents=True)
+    pointer = CuratedLatestPointer(
+        build_id="c" * 64,
+        created_at=_DEADLINE,
+        raw_cutoff=_DEADLINE,
+        code_sha="abc",
+    )
+    (tmp_path / "status" / "curated" / "latest.json").write_text(
+        pointer.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    assert _resolve_build_id(tmp_path, None) == "c" * 64
+
+
+def test_reuse_predict_id_helpers() -> None:
+    from fplt.automation.official_slate import _reuse_predict_id
+    from fplt.automation.ops_data import LineFpDecision
+
+    assert _reuse_predict_id("x", []) is None
+    skip = LineFpDecision(
+        line="a",
+        spec_name="x",
+        predict_fp="p" * 64,
+        plan_fp="q" * 64,
+        skip=True,
+        predict_run_id="rid",
+        plan_run_id="pid",
+    )
+    assert _reuse_predict_id("x", [skip]) == "rid"
+    noskip = LineFpDecision(
+        line="a",
+        spec_name="x",
+        predict_fp="p" * 64,
+        plan_fp="q" * 64,
+        skip=False,
+        predict_run_id="rid",
+        plan_run_id="pid",
+    )
+    assert _reuse_predict_id("x", [noskip]) is None

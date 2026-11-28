@@ -277,3 +277,31 @@ def test_yaml_lines_reject_non_mapping_entries(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="mapping"):
         load_production_ops(path, environ={})
+
+
+def test_min_run_interval_and_max_build_age_validation(tmp_path: Path) -> None:
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "min_run_interval_minutes": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="min_run_interval_minutes"):
+        load_production_ops(path, environ={})
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "max_build_age_minutes": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="max_build_age_minutes"):
+        load_production_ops(path, environ={})

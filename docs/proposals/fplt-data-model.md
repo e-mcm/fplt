@@ -117,6 +117,7 @@ runs/run=<run_id>/
   "fplt_mc_version": "0.3.1",
   "lockfile_hash": "sha256 of uv.lock",
   "build_id": "curated build the PITView was made from",
+  "fp": "sha256(spec_hash, prod_tag, target_gw, run_type, required table shas) (#346)",
   "as_of": [{"season": "2026-27", "gw": 12, "deadline_utc": "…"}],
   "horizon": 6,
   "checkpoint": "T-90m | null",
@@ -129,7 +130,7 @@ runs/run=<run_id>/
 }
 ```
 
-The manifest identity is **(spec_hash, code_sha, lockfile_hash, build_id, seeds)**. That fixes problem 1 without changing `model_id` semantics. `model_id` stays as a label, and nothing keys storage on it any more.
+Ops reuse identity is the run fingerprint **`fp`** (#346): sha256 of `spec_hash`, `prod_tag`, target GW, `run_type`, and content shas of `required_tables(spec)`. Write-once `runs/by_fp/fp=<fp>.json` → `{run_id}`. Legacy imports may omit `fp`. `model_id` stays as a label; nothing keys storage on it.
 
 **Predict runs and plan runs are separate.** A predict run simulates one spec out to the longest horizon any consumer needs. A plan run reads its parent predict run (`parent_run_id`) and solves the optimiser for one `plan_horizon` and solver setting. Several plan horizons therefore share one simulation, and their differences come purely from planning.
 

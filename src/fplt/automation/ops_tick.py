@@ -1,23 +1,24 @@
-"""Cheap idempotent ops tick: refresh feeds, catch up, checkpoints, alarm.
+"""Cheap idempotent ops tick: curated hydrate, catch up, checkpoints, alarm.
 
 GitHub Actions runs this on an offset cron ``7,22,37,52`` (see ``ops-tick.yml``).
 Extra ticks are safe: ``catch_up``, deadline checkpoints, and the no-plan
 alarm no-op when nothing is due. Missed checkpoint minutes are caught up on
 the next tick (ops-02).
 
-Official T−90m runs ``ProductionOps.official_slate`` via
-``fplt.automation.official_slate.run_official_checkpoint`` (curated build,
-predict + points PMF, plan per line, finalize pointers, push).
+#346: ops never pulls ``raw/``. Each tick reads ``status/curated/latest.json``
+and the build manifest, skips when ``runs/by_fp/`` already has the fingerprint,
+and otherwise pulls only ``required_tables(spec)`` into ``staged/``.
 
-TODO(ops-04): pass the checkout ``prod`` tag into ``RunWriter(prod_tag=…)`` for
-official runs so manifests record the frozen release.
+Official T−90m runs ``ProductionOps.official_slate`` via
+``fplt.automation.official_slate.run_official_checkpoint`` (pulled curated
+``build_id``, predict + points PMF, plan per line, finalize pointers, push).
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
@@ -46,11 +47,23 @@ from fplt.automation.history_guard import enforce_training_history
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.official_slate import (
     OfficialCheckpointResult,
+    ensure_slate_runs,
     run_official_checkpoint,
 )
-from fplt.automation.ops_feeds import refresh_ops_feeds
+from fplt.automation.ops_data import (
+    LineFpDecision,
+    StaleBuildError,
+    decisions_for_slate,
+    enforce_build_freshness,
+    load_ops_build_context,
+    pull_required_tables,
+    tables_for_slate,
+    throttle_allows,
+)
+from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
 from fplt.automation.production import ProductionOps, load_production_ops
+from fplt.automation.release import resolve_prod_tag_label
 from fplt.automation.runbook import OPS_01_TOKEN_EXPIRY, OPS_02_NO_PLAN
 from fplt.automation.status import publish_ops_status, record_last_error
 from fplt.data.snapshots import RawSource
@@ -124,19 +137,22 @@ def run_ops_tick(
     settings: Settings | None = None,
     notify: bool = True,
 ) -> OpsTickResult:
-    """Refresh feeds, catch up, run due checkpoints, and raise no-plan alarms.
+    """Hydrate from curated build, catch up, run due checkpoints, raise alarms.
+
+    Never pulls ``raw/`` (#346). ``source`` / ``remote`` / ``branch`` remain for
+    CLI compatibility but are ignored for data ingest.
 
     Args:
-        data_dir: Root with ``raw/``, ``staged/``, and ``plans/``. Defaults to
-            ``Settings.data_dir``.
+        data_dir: Root with ``curated/``, ``staged/``, and ``plans/``. Defaults
+            to ``Settings.data_dir``.
         now: Clock for checkpoints and the pre-deadline window. Defaults to
             ``datetime.now(UTC)``.
         models: YAML spec names. Defaults to ``load_production_ops().models``.
         horizon: Weeks each plan looks ahead. Defaults to
             ``load_production_ops().plan_horizon``.
-        source: Raw fetch source: ``auto``, ``bucket``, or ``branch``.
-        remote: Git remote (or local path in tests) for the snapshots branch.
-        branch: Branch that holds write-once captures (default ``snapshots``).
+        source: Ignored (#346; curated path only). Kept for CLI compatibility.
+        remote: Ignored (#346).
+        branch: Ignored (#346).
         settings: Optional settings for notify and bucket credentials.
         notify: When True, push recommendation / alarm messages via ntfy/SMTP.
 
@@ -144,27 +160,38 @@ def run_ops_tick(
         Counts and planned / pending gameweeks for the operator status print.
 
     Raises:
-        SnapshotFetchError: Raw fetch failed (branch clone or missing bucket).
-        RemoteError: An rclone pull against the bucket failed.
+        RemoteError: An rclone pull against the curated / by_fp prefix failed.
+        StaleBuildError: A refresh checkpoint refused an aged curated build.
     """
+    del source, remote, branch  # curated path only (#346); no raw/
     cfg = get_settings() if settings is None else settings
     root = cfg.data_dir if data_dir is None else data_dir
     ops = load_production_ops()
     chosen = list(ops.models) if models is None else models
     steps = ops.plan_horizon if horizon is None else horizon
     moment = datetime.now(UTC) if now is None else now
+    prod_tag = resolve_prod_tag_label()
+    # Feed counts stay zero: ops no longer pulls/stages raw snapshots.
+    feeds = FeedRefreshResult(0, 0, 0, 0)
 
     with timing_session() as timings:
         record_job_setup(timings)
         try:
-            feeds = refresh_ops_feeds(
-                root,
-                source=source,
-                remote=remote,
-                branch=branch,
-                settings=cfg,
-            )
+            ctx = load_ops_build_context(root, settings=cfg)
+            if ctx is None:
+                logger.warning("ops_tick: no curated latest; idle (never pulls raw/)")
+                return _idle_result(
+                    root,
+                    moment,
+                    chosen,
+                    steps,
+                    feeds,
+                    settings=cfg,
+                    timings=timings,
+                )
 
+            # Cheap bootstrap: gameweeks alone for deadline discovery.
+            pull_required_tables(root, ctx.build.build_id, {"gameweeks"}, settings=cfg)
             store = DataStore(root)
             checkpoint_ids: list[str] = []
             alarm_ids: list[str] = []
@@ -186,6 +213,85 @@ def run_ops_tick(
             )
             _notify_auth_check(cfg, auth, notify=notify)
 
+            slate_decisions = (
+                decisions_for_slate(
+                    ops,
+                    ctx.build,
+                    upcoming_key,
+                    data_dir=root,
+                    prod_tag=prod_tag,
+                    remote_by_fp=ctx.remote_by_fp,
+                )
+                if upcoming_key is not None
+                else []
+            )
+            all_fps_done = bool(slate_decisions) and all(
+                item.skip for item in slate_decisions
+            )
+
+            # Resolve checkpoint / alarm due-ness before pulling full tables.
+            due: list[Checkpoint] = []
+            primary_line = ops.primary_line().line
+            slate_lines = tuple(line.line for line in ops.lines)
+            done: frozenset[str] = frozenset()
+            alarms_done: frozenset[str] = frozenset()
+            if upcoming is not None:
+                upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
+                upcoming_deadline = require_not_none(
+                    upcoming_deadline, what="upcoming_deadline"
+                )
+                done, alarms_done = resolve_done_sets(
+                    root,
+                    upcoming_key,
+                    primary_line=primary_line,
+                    slate_lines=slate_lines,
+                    settings=cfg,
+                )
+                due = list(due_checkpoints(moment, upcoming_deadline, done))
+
+            if all_fps_done and not due:
+                logger.info(
+                    "ops_tick: idle — fingerprints unchanged, no checkpoint due"
+                )
+                publish_ops_status(
+                    root,
+                    now=moment,
+                    models=list(chosen),
+                    horizon=steps,
+                    settings=cfg,
+                    clear_error=True,
+                )
+                finalize_ops_timing(
+                    "ops_tick",
+                    timings,
+                    root,
+                    meta={"models": list(chosen), "horizon": steps, "idle": True},
+                    succeeded=True,
+                )
+                return OpsTickResult(
+                    snapshots_fetched=0,
+                    staged_snapshots=0,
+                    understat_matches=0,
+                    api_football_captures=0,
+                    catch_up_planned=[],
+                    pre_deadline_planned=None,
+                    still_pending=[],
+                    models=list(chosen),
+                    horizon=steps,
+                    upcoming=upcoming_key,
+                    auth_level=auth.level,
+                    auth_manual_apply=auth.manual_apply,
+                )
+
+            # Work is due: hydrate required tables (never raw/).
+            pull_required_tables(
+                root,
+                ctx.build.build_id,
+                tables_for_slate(ops),
+                settings=cfg,
+            )
+            store = DataStore(root)
+
             # #285: abort before catch-up / official pointers when history is thin.
             enforce_training_history(
                 store,
@@ -199,29 +305,68 @@ def run_ops_tick(
             logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
             caught = catch_up(root, chosen, horizon=steps)
 
+            # Mid-week: ensure predict/plan runs for the current fp (throttled).
+            # Does not write official/ pointers — checkpoints do that.
+            if (
+                upcoming_key is not None
+                and slate_decisions
+                and not all(item.skip for item in slate_decisions)
+                and any(
+                    throttle_allows(
+                        root,
+                        item.line,
+                        now=moment,
+                        min_interval=timedelta(minutes=ops.min_run_interval_minutes),
+                        checkpoint=False,
+                    )
+                    for item in slate_decisions
+                    if not item.skip
+                )
+            ):
+                logger.info(
+                    "ops_tick: fingerprint run for %s (non-checkpoint)",
+                    upcoming_key,
+                )
+                ensure_slate_runs(
+                    root,
+                    ops,
+                    upcoming_key,
+                    settings=cfg,
+                    build_id=ctx.build.build_id,
+                    prod_tag=prod_tag,
+                    decisions=slate_decisions,
+                    checkpoint=None,
+                    now=moment,
+                )
+
             if upcoming is not None:
                 upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
                 upcoming_deadline = require_not_none(
                     upcoming_deadline, what="upcoming_deadline"
                 )
                 deadline = upcoming_deadline
-                primary_line = ops.primary_line().line
-                slate_lines = tuple(line.line for line in ops.lines)
-                # Done = write-once official markers in R2 (lsf); no mutable state.
-                done, alarms_done = resolve_done_sets(
-                    root,
-                    upcoming_key,
-                    primary_line=primary_line,
-                    slate_lines=slate_lines,
-                    settings=cfg,
-                )
-                due = due_checkpoints(moment, deadline, done)
                 logger.info(
                     "ops_tick: checkpoints key=%s due=%s",
                     upcoming_key,
                     [cp.id for cp in due],
                 )
                 for checkpoint in due:
+                    if checkpoint.id in ("T-90m", "T-30m"):
+                        try:
+                            enforce_build_freshness(
+                                ctx.pointer,
+                                now=moment,
+                                ops=ops,
+                                settings=cfg,
+                                notify=notify,
+                                checkpoint=checkpoint.id,
+                            )
+                        except StaleBuildError:
+                            logger.exception(
+                                "ops_tick: skipping %s — curated build stale",
+                                checkpoint.id,
+                            )
+                            continue
                     _, sent, official = _run_checkpoint(
                         root,
                         upcoming_key,
@@ -233,6 +378,9 @@ def run_ops_tick(
                         ops=ops,
                         notify=notify,
                         auth=auth,
+                        build_id=ctx.build.build_id,
+                        prod_tag=prod_tag,
+                        decisions=slate_decisions,
                     )
                     _record_checkpoint_done(
                         root,
@@ -459,6 +607,46 @@ def _record_checkpoint_done(
     push_checkpoint_markers(root, key, checkpoint.id, settings=settings)
 
 
+def _idle_result(
+    root: Path,
+    moment: datetime,
+    models: list[str],
+    horizon: int,
+    feeds: FeedRefreshResult,
+    *,
+    settings: Settings,
+    timings: object,
+) -> OpsTickResult:
+    """Publish status/timing for a tick with no curated build."""
+    del feeds
+    publish_ops_status(
+        root,
+        now=moment,
+        models=list(models),
+        horizon=horizon,
+        settings=settings,
+        clear_error=True,
+    )
+    finalize_ops_timing(
+        "ops_tick",
+        timings,  # type: ignore[arg-type]
+        root,
+        meta={"models": list(models), "horizon": horizon, "idle": True},
+        succeeded=True,
+    )
+    return OpsTickResult(
+        snapshots_fetched=0,
+        staged_snapshots=0,
+        understat_matches=0,
+        api_football_captures=0,
+        catch_up_planned=[],
+        pre_deadline_planned=None,
+        still_pending=[],
+        models=list(models),
+        horizon=horizon,
+    )
+
+
 def _run_checkpoint(
     root: Path,
     key: GWKey,
@@ -471,6 +659,9 @@ def _run_checkpoint(
     ops: ProductionOps,
     notify: bool,
     auth: AuthCheckResult | None = None,
+    build_id: str | None = None,
+    prod_tag: str | None = None,
+    decisions: list[LineFpDecision] | None = None,
 ) -> tuple[bool, bool, OfficialCheckpointResult | None]:
     """Execute one due checkpoint.
 
@@ -490,7 +681,16 @@ def _run_checkpoint(
         official: OfficialCheckpointResult | None = None
         if checkpoint.id == "T-90m":
             logger.info("ops_tick: official slate at %s for %s", checkpoint.id, key)
-            official = run_official_checkpoint(root, ops, key, settings=settings)
+            official = run_official_checkpoint(
+                root,
+                ops,
+                key,
+                settings=settings,
+                build_id=build_id,
+                prod_tag=prod_tag,
+                decisions=decisions,
+                now=now,
+            )
             planned = True
         elif checkpoint.plan or checkpoint.refresh:
             planned = plan_deadline(

@@ -242,3 +242,20 @@ def test_write_plan_run_writes_plan_parquet(tmp_path: Path) -> None:
     assert manifest.plan_horizon == 1
     assert (run_dir(tmp_path, manifest.run_id) / "plans" / "plan.parquet").exists()
     assert (run_dir(tmp_path, manifest.run_id) / "_SUCCESS").exists()
+
+
+def test_run_writer_writes_by_fp_index(tmp_path: Path) -> None:
+    fp = "f" * 64
+    with _writer(tmp_path, fp=fp, run_id="r_20261124T125601Z_fp0001"):
+        pass
+    from fplt.store.fingerprint import load_fp_index
+
+    entry = load_fp_index(tmp_path, fp)
+    assert entry is not None
+    assert entry.run_id == "r_20261124T125601Z_fp0001"
+    # Succeed again via second writer with same fp → FileExistsError swallowed.
+    with _writer(tmp_path, fp=fp, run_id="r_20261124T125601Z_fp0002"):
+        pass
+    still = load_fp_index(tmp_path, fp)
+    assert still is not None
+    assert still.run_id == "r_20261124T125601Z_fp0001"
