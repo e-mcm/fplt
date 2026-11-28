@@ -293,9 +293,9 @@ uv run fplt ui
 ```
 
 Locally: `uv run fplt ops-tick --run-now` (same library path). Two dispatches
-produce two distinct `manual-*` stamps (second-resolution). When run-fingerprint
-skip-if-done (#346) is on main, an unchanged curated build reuses the prior run
-and still writes a new manual pointer.
+produce two distinct `manual-*` stamps (second-resolution). Unchanged curated
+fingerprints (#346 skip-if-done) reuse the prior run and still write a new
+manual pointer.
 
 ---
 

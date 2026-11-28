@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from fplt.automation.production import load_production_ops
 from fplt.data.remote import Remote, RemoteError, pull, r2_credentials_complete
 from fplt.schemas.manifests import OfficialPointer
 from fplt.settings import Settings, get_settings
@@ -98,7 +97,7 @@ def resolve_latest_gw(
             primary_line=primary_line,
         )
         return gw
-    line = primary_line or load_production_ops().primary_line().line
+    line = primary_line or _primary_line_name()
     best: int | None = None
     season_dir = official_root / f"season={season}"
     if season_dir.is_dir():
@@ -136,7 +135,7 @@ def resolve_checkpoint_target(
     A concrete checkpoint id with ``gw=None`` picks the highest GW that has
     that checkpoint (same as ``resolve_latest_gw``).
     """
-    line = primary_line or load_production_ops().primary_line().line
+    line = primary_line or _primary_line_name()
     if checkpoint == "manual":
         return _resolve_manual_alias(official_root, season=season, line=line, gw=gw)
     if checkpoint == "latest":
@@ -247,6 +246,13 @@ def _primary_pointer_candidates(
                 )
             )
     return out
+
+
+def _primary_line_name() -> str:
+    """Lazy load of the production primary line (avoids import cycle with ops)."""
+    from fplt.automation.production import load_production_ops
+
+    return load_production_ops().primary_line().line
 
 
 def mirror_official_index(data_dir: Path, remote: Remote) -> Path:

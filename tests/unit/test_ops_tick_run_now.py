@@ -21,7 +21,12 @@ from fplt.automation.production import OfficialLine, ProductionOps
 from fplt.data.store import DataStore
 from fplt.models.pipeline_spec import live_pipeline_defaults
 from fplt.optimise.state import SquadState
-from fplt.schemas.manifests import BuildManifest, CuratedLatestPointer, OfficialPointer
+from fplt.schemas.manifests import (
+    BuildManifest,
+    BuildTableEntry,
+    CuratedLatestPointer,
+    OfficialPointer,
+)
 from fplt.settings import Settings, get_settings
 from fplt.store.builds import STAGING_VERSION
 from fplt.store.official import LineRunPair, official_checkpoint_dir
@@ -30,6 +35,7 @@ from fplt.types import GWKey
 _DEADLINE = datetime(2024, 9, 1, 17, 0, tzinfo=UTC)
 _PRIMARY = "e2e_primary"
 _TS = datetime(2024, 8, 1, tzinfo=UTC)
+_TABLE = BuildTableEntry(sha="a" * 64, rows=1, schema_hash="b" * 64)
 
 
 def _tiny_ops(*, n_lines: int = 2) -> ProductionOps:
@@ -87,7 +93,7 @@ def _build_ctx(build_id: str = "build-manual") -> Any:
         code_sha="abc",
         raw_manifest_hash="d" * 64,
         raw_cutoff=_TS,
-        tables={},
+        tables={"gameweeks": _TABLE},
     )
     pointer = CuratedLatestPointer(
         build_id=build_id,
