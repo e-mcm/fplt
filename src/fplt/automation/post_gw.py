@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import polars as pl
@@ -36,6 +36,7 @@ from fplt.backtest.forecast_scores import (
 )
 from fplt.backtest.other_points_measurement import minutes_bucket
 from fplt.data.overall_rank import OverallRankSnapshot, load_latest_overall_rank
+from fplt.data.raw import iter_snapshots, read_json
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, load_model_specs
 from fplt.models.spec_identity import spec_hash
@@ -68,11 +69,13 @@ _N = 2_000
 
 __all__ = [
     "PostGwResult",
+    "bootstrap_event_scores",
     "format_post_gw_ntfy",
     "format_post_gw_summary",
     "has_pending_post_gw",
     "pending_post_gw",
     "post_gw_fingerprint",
+    "rank_change_from_history",
     "run_pending_post_gw",
     "run_post_gw",
 ]
@@ -206,6 +209,10 @@ def run_post_gw(
     specs: Mapping[str, ModelSpec] | None = None,
     post: Any | None = None,
     push: bool = True,
+    entry_history: Mapping[str, Any] | None = None,
+    fpl_average: float | None = None,
+    fpl_highest: float | None = None,
+    rank_change: float | None = None,
 ) -> PostGwResult:
     """Write one post_gw analysis run (skip when ``by_fp`` already has ``fp``).
 
@@ -254,7 +261,16 @@ def run_post_gw(
         rank_snapshot=snap,
     )
     scorecard, attribution = _tables(
-        data_dir, key, picks, score, primary.line, model_id
+        data_dir,
+        key,
+        picks,
+        score,
+        primary.line,
+        model_id,
+        fpl_average=fpl_average,
+        fpl_highest=fpl_highest,
+        rank_change=rank_change,
+        entry_history=entry_history,
     )
     deadline = gw_row["deadline_time"][0]
     if not isinstance(deadline, datetime):
@@ -490,6 +506,11 @@ def _tables(
     score: Any,
     line: str,
     model_id: str,
+    *,
+    fpl_average: float | None = None,
+    fpl_highest: float | None = None,
+    rank_change: float | None = None,
+    entry_history: Mapping[str, Any] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     chip = _chip(picks)
     hit = float(picks["hit"][0])
@@ -502,6 +523,14 @@ def _tables(
         chip_value = float(score.realised_points) - float(
             score_gameweek(picks, hit=hit, chip="")
         )
+    avg, highest = fpl_average, fpl_highest
+    if avg is None or highest is None:
+        boot_avg, boot_hi = bootstrap_event_scores(data_dir / "raw", key.season, key.gw)
+        avg = boot_avg if avg is None else avg
+        highest = boot_hi if highest is None else highest
+    rank_delta = rank_change
+    if rank_delta is None:
+        rank_delta = rank_change_from_history(entry_history, key.gw)
     scorecard = require_dataframe(
         PostGwScorecardSchema.validate(
             pl.DataFrame(
@@ -522,9 +551,9 @@ def _tables(
                             line=line,
                             model_id=model_id,
                         ),
-                        "fpl_average": None,
-                        "fpl_highest": None,
-                        "rank_change": None,
+                        "fpl_average": avg,
+                        "fpl_highest": highest,
+                        "rank_change": rank_delta,
                         "season_points_to_date": score.season_points_to_date,
                         "points_at_rank": score.points_at_rank,
                         "percentile": score.percentile,
@@ -804,6 +833,99 @@ def _optional_table(store: DataStore, name: str) -> pl.DataFrame:
         return store.read(name)
     except (OSError, KeyError, ValueError):
         return pl.DataFrame(schema=POLARS_SCHEMAS.get(name, {}))
+
+
+def bootstrap_event_scores(
+    raw_root: Path, season: str, gw: int
+) -> tuple[float | None, float | None]:
+    """Read ``average_entry_score`` / ``highest_score`` from local bootstrap.
+
+    Prefers the newest snapshot for ``season``. Missing fields or files return
+    ``(None, None)`` so scorecard context degrades gracefully.
+
+    Args:
+        raw_root: ``$FPLT_DATA_DIR/raw`` (or a test fixture root).
+        season: Season key.
+        gw: Gameweek id matching bootstrap ``events[].id``.
+
+    Returns:
+        ``(fpl_average, fpl_highest)``.
+    """
+    snaps = [snap for snap in iter_snapshots(raw_root) if snap.season == season]
+    if not snaps:
+        return None, None
+    for snap in reversed(snaps):
+        try:
+            payload_raw = read_json(snap.bootstrap_path)
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(payload_raw, dict):
+            continue
+        payload = cast(dict[str, Any], payload_raw)
+        events_raw = payload.get("events")
+        if not isinstance(events_raw, list):
+            continue
+        for event_raw in cast(list[object], events_raw):
+            if not isinstance(event_raw, dict):
+                continue
+            event = cast(dict[str, Any], event_raw)
+            try:
+                if int(event.get("id", -1)) != gw:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            return _optional_float(event.get("average_entry_score")), _optional_float(
+                event.get("highest_score")
+            )
+    return None, None
+
+
+def rank_change_from_history(
+    history: Mapping[str, Any] | None, gw: int
+) -> float | None:
+    """Compute overall-rank climb from public ``entry/.../history`` current[].
+
+    Positive means the manager climbed (lower overall_rank than the prior GW).
+    Returns ``None`` when history or the GW row is missing.
+
+    Args:
+        history: Parsed entry-history JSON (``current`` list of event rows).
+        gw: Gameweek to score.
+
+    Returns:
+        Rank delta, or ``None``.
+    """
+    if history is None:
+        return None
+    current_raw = history.get("current")
+    if not isinstance(current_raw, list):
+        return None
+    by_gw: dict[int, int] = {}
+    for row_raw in cast(list[object], current_raw):
+        if not isinstance(row_raw, dict):
+            continue
+        row = cast(dict[str, Any], row_raw)
+        try:
+            event = int(row["event"])
+            overall = int(row["overall_rank"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        by_gw[event] = overall
+    if gw not in by_gw:
+        return None
+    prev = by_gw.get(gw - 1)
+    if prev is None:
+        return None
+    return float(prev - by_gw[gw])
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _chip(picks: pl.DataFrame) -> str | None:

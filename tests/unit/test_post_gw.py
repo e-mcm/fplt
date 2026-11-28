@@ -784,3 +784,148 @@ def test_pmf_edge_paths(tmp_path: Path) -> None:
         mod._pmf_pct(tmp_path, key, picks, realised=10, line="primary", model_id="m")
         == 1.0
     )
+
+
+def test_bootstrap_event_scores_and_rank_change(tmp_path: Path) -> None:
+    import gzip
+    import json
+
+    from fplt.automation.post_gw import (
+        bootstrap_event_scores,
+        rank_change_from_history,
+    )
+
+    raw = (
+        tmp_path
+        / "raw"
+        / "fpl_api"
+        / "season=2024-25"
+        / "captured_at=2024-09-01T12-00-00Z"
+    )
+    raw.mkdir(parents=True)
+    payload = {
+        "events": [
+            {
+                "id": 1,
+                "deadline_time": "2024-08-16T11:00:00Z",
+                "finished": True,
+                "data_checked": True,
+                "average_entry_score": 42,
+                "highest_score": 110,
+            }
+        ]
+    }
+    with gzip.open(raw / "bootstrap_static.json.gz", "wt", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    avg, highest = bootstrap_event_scores(tmp_path / "raw", "2024-25", 1)
+    assert avg == pytest.approx(42.0)
+    assert highest == pytest.approx(110.0)
+    assert bootstrap_event_scores(tmp_path / "raw", "2024-25", 99) == (None, None)
+    assert bootstrap_event_scores(tmp_path / "raw", "2099-00", 1) == (None, None)
+    assert rank_change_from_history(None, 1) is None
+    history = {
+        "current": [
+            {"event": 1, "overall_rank": 100_000},
+            {"event": 2, "overall_rank": 80_000},
+        ]
+    }
+    assert rank_change_from_history(history, 2) == pytest.approx(20_000.0)
+    assert rank_change_from_history(history, 1) is None
+    assert rank_change_from_history({"current": "bad"}, 2) is None
+
+
+def test_scorecard_rank_context_from_injects(tmp_path: Path) -> None:
+    _write_gameweeks(tmp_path, checked=[1], n_fixtures_by_gw={1: 10})
+    decisions = _decisions_for(gw=1)
+    result = run_post_gw(
+        tmp_path,
+        GWKey(_SEASON, 1),
+        build=_build(),
+        ops=_ops(),
+        decisions=decisions,
+        n_fixtures=10,
+        push=False,
+        notify=False,
+        fpl_average=44.0,
+        fpl_highest=99.0,
+        rank_change=500.0,
+    )
+    assert result.run_id is not None
+    scorecard = pl.read_parquet(run_dir(tmp_path, result.run_id) / "scorecard.parquet")
+    assert float(scorecard["fpl_average"][0]) == pytest.approx(44.0)
+    assert float(scorecard["fpl_highest"][0]) == pytest.approx(99.0)
+    assert float(scorecard["rank_change"][0]) == pytest.approx(500.0)
+
+
+def test_bootstrap_and_rank_change_edge_paths(tmp_path: Path) -> None:
+    import gzip
+    import json
+
+    from fplt.automation.post_gw import (
+        _optional_float,
+        bootstrap_event_scores,
+        rank_change_from_history,
+    )
+
+    raw = (
+        tmp_path
+        / "raw"
+        / "fpl_api"
+        / "season=2024-25"
+        / "captured_at=2024-09-02T12-00-00Z"
+    )
+    raw.mkdir(parents=True)
+    # Non-dict payload
+    with gzip.open(raw / "bootstrap_static.json.gz", "wt", encoding="utf-8") as handle:
+        json.dump([1, 2, 3], handle)
+    assert bootstrap_event_scores(tmp_path / "raw", "2024-25", 1) == (None, None)
+
+    raw2 = (
+        tmp_path
+        / "raw"
+        / "fpl_api"
+        / "season=2024-25"
+        / "captured_at=2024-09-03T12-00-00Z"
+    )
+    raw2.mkdir(parents=True)
+    with gzip.open(raw2 / "bootstrap_static.json.gz", "wt", encoding="utf-8") as handle:
+        json.dump({"events": "nope"}, handle)
+    assert bootstrap_event_scores(tmp_path / "raw", "2024-25", 1) == (None, None)
+
+    raw3 = (
+        tmp_path
+        / "raw"
+        / "fpl_api"
+        / "season=2024-25"
+        / "captured_at=2024-09-04T12-00-00Z"
+    )
+    raw3.mkdir(parents=True)
+    with gzip.open(raw3 / "bootstrap_static.json.gz", "wt", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "events": [
+                    "skip",
+                    {"id": "bad", "average_entry_score": 1},
+                    {"id": 1, "average_entry_score": "", "highest_score": "x"},
+                ]
+            },
+            handle,
+        )
+    avg, hi = bootstrap_event_scores(tmp_path / "raw", "2024-25", 1)
+    assert avg is None
+    assert hi is None
+
+    assert rank_change_from_history({"current": [{"event": 2}]}, 2) is None
+    assert (
+        rank_change_from_history(
+            {"current": [1, {"event": 2, "overall_rank": "bad"}]}, 2
+        )
+        is None
+    )
+    assert (
+        rank_change_from_history({"current": [{"event": 5, "overall_rank": 10}]}, 5)
+        is None
+    )
+    assert _optional_float("") is None
+    assert _optional_float("nope") is None
+    assert _optional_float(3) == pytest.approx(3.0)

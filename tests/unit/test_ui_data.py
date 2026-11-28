@@ -373,3 +373,176 @@ def test_dashboard_store_post_gw_loaders(tmp_path: Path) -> None:
     loaded = store.load_table("scorecard", run_id="r_20261128T120000Z_post01")
     assert loaded.height == 1
     assert store.post_gw_scorecards(season="2025-26", through_gw=1).is_empty()
+
+
+def test_dashboard_store_benchmarks_ops_helpers(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from fplt.data.benchmark_projections import write_benchmark_archive
+    from fplt.data.store import DataStore
+    from fplt.schemas.manifests import AppliedRecord, OfficialPointer
+    from fplt.store.official import official_checkpoint_dir
+    from fplt.types import GWKey
+
+    store = DashboardStore(tmp_path)
+    assert store.benchmark_projections(season="2025-26", gw=1).is_empty()
+    assert store.player_outcomes(season="2025-26", gw=1).is_empty()
+    assert store.official_predict_table(season="2025-26", gw=1).is_empty()
+    assert store.gw_alarms(season="2025-26", gw=1) == []
+    assert store.status_freshness_rows() == []
+    assert store.status_last_error() is None
+
+    stamp = datetime(2025, 11, 1, tzinfo=UTC)
+    write_benchmark_archive(
+        tmp_path,
+        GWKey("2025-26", 12),
+        pl.DataFrame(
+            {
+                "source": ["ep_next"],
+                "as_of_season": ["2025-26"],
+                "as_of_gw": [12],
+                "target_season": ["2025-26"],
+                "target_gw": [12],
+                "player_key": [1],
+                "fixture_id": [1],
+                "xpts": [5.0],
+                "available_at": [stamp],
+                "quality_flag": [None],
+            }
+        ),
+    )
+    assert store.benchmark_projections(season="2025-26", gw=12).height == 1
+
+    DataStore(tmp_path).write(
+        "player_fixture_outcomes",
+        pl.DataFrame(
+            {
+                "season": ["2025-26"],
+                "gw": [12],
+                "fixture_id": [1],
+                "player_key": [1],
+                "team_key": [1],
+                "pts": [4],
+                "minutes": [90],
+                "goals": [0],
+                "assists": [0],
+                "clean_sheets": [0],
+                "available_at": [stamp],
+                "schema_version": [1],
+                "source": ["fpl_api"],
+            }
+        ),
+    )
+    outs = store.player_outcomes(season="2025-26", gw=12)
+    assert outs.height == 1
+
+    cp = official_checkpoint_dir(tmp_path, season="2025-26", gw=12, checkpoint="T-90m")
+    cp.mkdir(parents=True)
+    pointer = OfficialPointer(
+        predict_run_id="r_pred",
+        plan_run_id="r_plan",
+        written_at=stamp,
+        role="primary",
+        squad_mode="real",
+    )
+    (cp / "line=v4_h3.json").write_text(pointer.model_dump_json(), encoding="utf-8")
+    # applied.json
+    applied = AppliedRecord(line="v4_h3", plan_run_id="r_plan", submitted_at=stamp)
+    (cp / "applied.json").write_text(applied.model_dump_json(), encoding="utf-8")
+    assert store.applied_record(season="2025-26", gw=12, checkpoint="T-90m") is not None
+    assert store.applied_line(season="2025-26", gw=12, checkpoint="T-90m") == "v4_h3"
+
+    # With a predict run on disk, official_predict_table resolves.
+    from fplt.schemas.manifests import AsOfDeadline
+    from fplt.store.runs import RunWriter
+
+    with RunWriter(
+        tmp_path,
+        kind="official",
+        mode="live",
+        run_type="predict",
+        spec_hash="a" * 64,
+        spec_label="demo",
+        model_id="deadbeef",
+        as_of=[AsOfDeadline(season="2025-26", gw=12, deadline_utc=stamp)],
+        horizon=1,
+        code_sha="abc1234",
+        lockfile_hash="b" * 64,
+        host="test",
+        started_at=stamp,
+        run_id="r_pred",
+        line="v4_h3",
+        auto_build_id=False,
+    ) as writer:
+        writer.write_parquet(
+            "predictions/player_fixture.parquet",
+            pl.DataFrame(
+                {
+                    "model_id": ["deadbeef"],
+                    "as_of_season": ["2025-26"],
+                    "as_of_gw": [12],
+                    "target_season": ["2025-26"],
+                    "target_gw": [12],
+                    "player_key": [1],
+                    "fixture_id": [1],
+                    "xpts": [5.0],
+                    "xpts_sd": [1.0],
+                    "p_played": [0.9],
+                    "p_60": [0.7],
+                    "p_goal": [0.2],
+                    "p_assist": [0.1],
+                    "p_cs": [0.1],
+                    "p_haul": [0.05],
+                }
+            ),
+        )
+
+    preds = store.official_predict_table(season="2025-26", gw=12, line="v4_h3")
+    assert not preds.is_empty()
+
+    alarms = tmp_path / "official" / "season=2025-26" / "gw=12" / "alarms"
+    alarms.mkdir(parents=True)
+    (alarms / "retry.json").write_text(
+        json.dumps(
+            {
+                "alarm": "retry",
+                "kind": "alarm",
+                "written_at": stamp.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (alarms / "urgent.json").write_text("not-json", encoding="utf-8")
+    (alarms / "missing_official_slate.json").write_text("[]", encoding="utf-8")
+    found = store.gw_alarms(season="2025-26", gw=12)
+    assert len(found) == 3
+
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    (status_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generated_at": stamp.isoformat(),
+                "last_captures": [
+                    {"source": "fpl_api", "captured_at": stamp.isoformat()},
+                    "skip",
+                    {"name": "alt", "reason": "missing"},
+                ],
+                "last_plans": [],
+                "next_deadline": {"reason": "none"},
+                "token_expiry": {"reason": "none"},
+                "prod_sha_reason": "unset",
+                "last_error": {"at": stamp.isoformat(), "message": "boom"},
+                "heartbeats": [
+                    {"name": "snapshot", "last_at": stamp.isoformat()},
+                    "skip",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # status_payload validates loosely as dict; freshness helpers tolerate it.
+    freshness = store.status_freshness_rows()
+    assert any(r["key"] == "fpl_api" for r in freshness)
+    assert store.status_last_error() == "boom"
