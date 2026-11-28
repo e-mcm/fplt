@@ -21,7 +21,8 @@ def _clip(y: int) -> int:
     return int(min(POINTS_PMF_MAX, max(POINTS_PMF_MIN, y)))
 
 
-def _dense_pmf(bins: NDArray[np.integer], probs: FloatArray) -> FloatArray:
+def dense_pmf(bins: NDArray[np.integer], probs: FloatArray) -> FloatArray:
+    """Collapse a sparse ``(points_bin, probability)`` PMF onto −5…30 bins."""
     dense = np.zeros(_WIDTH, dtype=np.float64)
     for bin_k, prob in zip(bins.tolist(), probs.tolist(), strict=True):
         idx = int(bin_k) - POINTS_PMF_MIN
@@ -31,6 +32,33 @@ def _dense_pmf(bins: NDArray[np.integer], probs: FloatArray) -> FloatArray:
     if total > 0.0:
         dense /= total
     return dense
+
+
+def _dense_pmf(bins: NDArray[np.integer], probs: FloatArray) -> FloatArray:
+    return dense_pmf(bins, probs)
+
+
+def randomised_pit(pmf: FloatArray, y: int, rng: np.random.Generator) -> float:
+    """Randomised PIT ``F̂(y−1) + V·p̂(y)`` with ``V ~ U(0,1)`` (Czado et al.)."""
+    dense = np.asarray(pmf, dtype=np.float64).reshape(-1)
+    if dense.shape != (_WIDTH,):
+        raise ValueError(f"pmf must have length {_WIDTH}, got {dense.shape}")
+    idx = _clip(y) - POINTS_PMF_MIN
+    cdf_before = 0.0 if idx == 0 else float(np.sum(dense[:idx]))
+    return float(cdf_before + float(rng.uniform()) * float(dense[idx]))
+
+
+def pmf_event_probs(pmf: FloatArray) -> dict[str, float]:
+    """Derive haul / blank (and played proxies) from a dense points PMF."""
+    dense = np.asarray(pmf, dtype=np.float64).reshape(-1)
+    if dense.shape != (_WIDTH,):
+        raise ValueError(f"pmf must have length {_WIDTH}, got {dense.shape}")
+    bins = np.arange(POINTS_PMF_MIN, POINTS_PMF_MAX + 1)
+    return {
+        "p_haul": float(np.sum(dense[bins >= 10])),
+        "p_blank": float(np.sum(dense[bins <= 2])),
+        "mu_hat": float(np.dot(bins.astype(np.float64), dense)),
+    }
 
 
 def discrete_rps(pmf: FloatArray, y: int) -> float:

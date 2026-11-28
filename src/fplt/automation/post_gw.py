@@ -1,4 +1,4 @@
-"""Post-GW analysis run for ops-tick (#393 / #394).
+"""Post-GW analysis run for ops-tick (#393 / #394 / #395).
 
 ``data_checked`` → write-once ``run_type=eval`` / ``purpose=post_gw`` run,
 fingerprinted on outcomes shas + official pointers; done = ``by_fp`` exists.
@@ -26,6 +26,15 @@ from fplt.automation.biggest_misses import (
 from fplt.automation.cycle import current_season
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.production import ProductionOps, load_production_ops
+from fplt.backtest.error_attribution import price_band
+from fplt.backtest.forecast_scores import (
+    aggregate_forecast_scores,
+    compute_forecast_scores,
+    empty_forecast_score_agg,
+    empty_forecast_scores,
+    fit_climatology,
+)
+from fplt.backtest.other_points_measurement import minutes_bucket
 from fplt.data.overall_rank import OverallRankSnapshot, load_latest_overall_rank
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, load_model_specs
@@ -259,7 +268,16 @@ def run_post_gw(
         line=primary.line,
         deadline=deadline,
     )
-    summary = format_post_gw_summary(scorecard, std, attribution, misses)
+    forecast_scores, forecast_agg = _forecast_eval(
+        data_dir,
+        key,
+        model_id=spec.model_id,
+        line=primary.line,
+        decisions=model_frame,
+    )
+    summary = format_post_gw_summary(
+        scorecard, std, attribution, misses, forecast_agg=forecast_agg
+    )
     with RunWriter(
         data_dir,
         kind="official",
@@ -283,6 +301,8 @@ def run_post_gw(
         writer.write_parquet("attribution.parquet", attribution)
         writer.write_parquet("season_to_date.parquet", std)
         writer.write_parquet("biggest_misses.parquet", misses)
+        writer.write_parquet("forecast_scores.parquet", forecast_scores)
+        writer.write_parquet("forecast_score_agg.parquet", forecast_agg)
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False, encoding="utf-8"
         ) as handle:
@@ -301,7 +321,7 @@ def run_post_gw(
             notify_recommendation(
                 cfg,
                 f"fplt post_gw {key.season} GW{key.gw}",
-                format_post_gw_ntfy(scorecard, std, misses),
+                format_post_gw_ntfy(scorecard, std, misses, forecast_agg=forecast_agg),
                 post=post,
             )
         )
@@ -355,6 +375,7 @@ def format_post_gw_summary(
     season_to_date: pl.DataFrame,
     attribution: pl.DataFrame,
     biggest_misses: pl.DataFrame | None = None,
+    forecast_agg: pl.DataFrame | None = None,
 ) -> str:
     """Render ``summary.md`` with season-to-date first, then this GW."""
     if scorecard.is_empty():
@@ -406,6 +427,10 @@ def format_post_gw_summary(
                 f"actual {int(r['actual_pts'])} vs xPts {float(r['xpts']):.1f} "
                 f"(Δ {float(r['signed_error']):+.1f})"
             )
+    agg = forecast_agg if forecast_agg is not None else empty_forecast_score_agg()
+    if not agg.is_empty():
+        lines.extend(["", "## Forecast scores (STD)", ""])
+        lines.extend(_forecast_summary_lines(agg))
     lines.append("")
     return "\n".join(lines)
 
@@ -414,6 +439,7 @@ def format_post_gw_ntfy(
     scorecard: pl.DataFrame,
     season_to_date: pl.DataFrame,
     biggest_misses: pl.DataFrame | None = None,
+    forecast_agg: pl.DataFrame | None = None,
 ) -> str:
     """Return one ntfy line for a post_gw run."""
     if scorecard.is_empty():
@@ -435,6 +461,10 @@ def format_post_gw_ntfy(
             f"; biggest miss: player {int(m['player_key'])} "
             f"({float(m['signed_error']):+.0f}, {m['reason']})"
         )
+    agg = forecast_agg if forecast_agg is not None else empty_forecast_score_agg()
+    rps = agg.filter((pl.col("metric") == "mean_rps") & (pl.col("slice") == "all"))
+    if not rps.is_empty():
+        line += f"; RPS {float(rps['value'][0]):.3f}"
     return line
 
 
@@ -583,6 +613,174 @@ def _biggest_misses(
         deadline=deadline,
         player_injuries=_optional_table(store, "player_injuries"),
     )
+
+
+def _forecast_eval(
+    data_dir: Path,
+    key: GWKey,
+    *,
+    model_id: str,
+    line: str,
+    decisions: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build ``forecast_scores`` + STD aggregations for one post_gw run."""
+    store = DataStore(data_dir)
+    predictions = _official_predictions(data_dir, key, line=line)
+    pmf = _official_points_pmf(data_dir, key, line=line)
+    if predictions.is_empty() or pmf.is_empty():
+        return empty_forecast_scores(), empty_forecast_score_agg()
+    try:
+        outcomes = store.read("player_fixture_outcomes")
+    except (OSError, KeyError, ValueError):
+        return empty_forecast_scores(), empty_forecast_score_agg()
+    meta = _player_meta(store, key.season)
+    clim = _climatology_from_store(store, key, meta=meta)
+    picks = decisions.filter(pl.col("gw") == key.gw)
+    if "sold" in picks.columns:
+        picks = picks.filter(~pl.col("sold"))
+    selected = {line: set(picks["player_key"].to_list())}
+    # Prefer season-to-date scores when prior post_gw rows exist; else this GW.
+    scores = compute_forecast_scores(
+        model_id=model_id,
+        key=key,
+        points_pmf=pmf,
+        predictions=predictions,
+        outcomes=outcomes,
+        selected_by_line=selected,
+        climatology=clim,
+        meta=meta,
+    )
+    prior = _prior_forecast_scores(data_dir, key, model_id=model_id)
+    combined = (
+        scores
+        if prior.is_empty()
+        else pl.concat([prior, scores], how="diagonal_relaxed")
+    )
+    agg = aggregate_forecast_scores(
+        combined, model_id=model_id, season=key.season, lines=(line,)
+    )
+    return scores, agg
+
+
+def _forecast_summary_lines(agg: pl.DataFrame) -> list[str]:
+    """Render a few STD forecast metrics for ``summary.md``."""
+    lines: list[str] = []
+    all_slice = agg.filter(pl.col("slice") == "all")
+    for metric, label in (
+        ("mean_rps", "RPS"),
+        ("mean_log_score", "log score"),
+        ("rps_skill_clim", "RPS skill vs clim"),
+        ("pit_coverage_90", "PIT 90% cov"),
+    ):
+        part = all_slice.filter(pl.col("metric") == metric)
+        if part.is_empty():
+            continue
+        value = float(part["value"][0])
+        lo, hi = part["ci_lo"][0], part["ci_hi"][0]
+        if lo is None or hi is None:
+            lines.append(f"- {label}: {value:.3f}")
+        else:
+            lines.append(f"- {label}: {value:.3f} [{float(lo):.3f}, {float(hi):.3f}]")
+    bias = agg.filter(pl.col("metric") == "selection_bias")
+    if not bias.is_empty():
+        lines.append(
+            f"- selection bias ({bias['slice'][0]}): {float(bias['value'][0]):+.3f}"
+        )
+    return lines or ["_No forecast aggregations._"]
+
+
+def _official_points_pmf(data_dir: Path, key: GWKey, *, line: str) -> pl.DataFrame:
+    path = pointer_path(
+        data_dir, season=key.season, gw=key.gw, line=line, checkpoint=_CP
+    )
+    if not path.is_file():
+        return pl.DataFrame()
+    try:
+        rid = str(json.loads(path.read_text(encoding="utf-8"))["predict_run_id"])
+    except (OSError, KeyError, TypeError, ValueError):
+        return pl.DataFrame()
+    pmf_path = run_dir(data_dir, rid) / "predictions" / "points_pmf.parquet"
+    if not pmf_path.is_file():
+        return pl.DataFrame()
+    return pl.read_parquet(pmf_path)
+
+
+def _player_meta(store: DataStore, season: str) -> pl.DataFrame:
+    players = _optional_table(store, "players")
+    status = _optional_table(store, "player_status")
+    if players.is_empty():
+        return pl.DataFrame(
+            schema={
+                "player_key": pl.Int64(),
+                "position": pl.Utf8(),
+                "price": pl.Int64(),
+            }
+        )
+    part = players.filter(pl.col("season") == season)
+    if "available_at" in part.columns:
+        part = part.sort("available_at")
+    pos = part.unique(subset=["player_key"], keep="last").select(
+        "player_key", "position"
+    )
+    if status.is_empty() or "price" not in status.columns:
+        return pos.with_columns(pl.lit(60).cast(pl.Int64).alias("price"))
+    st = status.filter(pl.col("season") == season)
+    if "available_at" in st.columns:
+        st = st.sort("available_at")
+    prices = st.unique(subset=["player_key"], keep="last").select("player_key", "price")
+    return pos.join(prices, on="player_key", how="left").with_columns(
+        pl.col("price").fill_null(60)
+    )
+
+
+def _climatology_from_store(
+    store: DataStore, key: GWKey, *, meta: pl.DataFrame
+) -> pl.DataFrame:
+    outcomes = _optional_table(store, "player_fixture_outcomes")
+    if outcomes.is_empty():
+        return pl.DataFrame()
+    prior = outcomes.filter(pl.col("season") < key.season)
+    if prior.is_empty():
+        return pl.DataFrame()
+    hist = prior.join(meta, on="player_key", how="left").with_columns(
+        pl.col("position").fill_null("MID"),
+        pl.col("price")
+        .fill_null(60)
+        .map_elements(lambda p: price_band(int(p)), return_dtype=pl.Utf8)
+        .alias("price_band"),
+        pl.col("minutes")
+        .fill_null(0)
+        .map_elements(lambda m: minutes_bucket(int(m)), return_dtype=pl.Utf8)
+        .alias("minutes_bucket"),
+    )
+    return fit_climatology(hist)
+
+
+def _prior_forecast_scores(
+    data_dir: Path, key: GWKey, *, model_id: str
+) -> pl.DataFrame:
+    """Load earlier post_gw ``forecast_scores`` for the same season (STD)."""
+    root = data_dir / "runs"
+    if not root.is_dir():
+        return empty_forecast_scores()
+    frames: list[pl.DataFrame] = []
+    for path in sorted(root.glob("run=*/forecast_scores.parquet")):
+        try:
+            frame = pl.read_parquet(path)
+        except OSError:
+            continue
+        if frame.is_empty():
+            continue
+        part = frame.filter(
+            (pl.col("model_id") == model_id)
+            & (pl.col("season") == key.season)
+            & (pl.col("gw") < key.gw)
+        )
+        if not part.is_empty():
+            frames.append(part)
+    if not frames:
+        return empty_forecast_scores()
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def _official_predictions(data_dir: Path, key: GWKey, *, line: str) -> pl.DataFrame:
