@@ -6,7 +6,7 @@ Everything that lands on `main` is exercised here. Tests **never** touch the net
 |---|---|
 | `unit/` | Library behaviour, edge cases, error paths |
 | `contracts/` | `PointsPredictor` / component contracts **incl. leakage** |
-| `integration/` | Dagster factories / end-to-end wiring |
+| `integration/` | End-to-end wiring / library integration |
 | `fixtures/` | Recorded gzipped API JSON (and CSV) per source |
 | `builders.py` | Synthetic polars frames for unit tests |
 

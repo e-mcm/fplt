@@ -1,4 +1,4 @@
-.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release dagster-dev clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report bench-nightly pytest-profile
+.PHONY: test check lint typecheck leaderboard ui eval-board compare-models eval-components minutes-brier minutes-measure other-measure predicted-xi-audit horizon-skill pruning-loss ensemble-sensitivity promote-eval bakeoff decisions-board chip-decision-board regret-board weekly-report decisions-explain horizon-decisions sim-season-smoke plan explain apply archive-benchmarks archive-compare ops-catchup ops-tick release clean bootstrap-vaastav fetch-understat fetch-api-football fetch-football-data fetch-overall-rank mc-dev mc-test mc-format mc-bench mc-ci mc-golden perf-report bench-nightly pytest-profile
 
 # ── Historical data (vaastav) → raw/vaastav/captured_at=… ─────────────────────
 # First seed: make bootstrap-vaastav ARGS='--full'
@@ -25,7 +25,7 @@ fetch-api-football:
 # Usage: make fetch-football-data SEASON=2024-25
 # Monthly refresh (write-once): CAPTURED_AT=YYYY-MM-DD
 # GHA: .github/workflows/football_data.yml (1st of month 06:00 UTC) → snapshots;
-# Dagster match_odds_sensor stages when a new E0.csv lands under raw.
+# stage via ``fplt data curate`` / ops-catchup when a new E0.csv lands under raw.
 fetch-football-data:
 	@if [ -z "$(SEASON)" ]; then echo "Usage: make fetch-football-data SEASON=2024-25 [CAPTURED_AT=YYYY-MM-DD]"; exit 1; fi
 	uv run python scripts/fetch_football_data.py --out "$${FPLT_DATA_DIR:-./data}/raw" --season $(SEASON) \
@@ -389,11 +389,10 @@ archive-compare:
 		$(if $(TO_GW),--to-gw $(TO_GW),) \
 		$(ARGS)
 
-# ── Post-downtime ops catch-up (no Dagster UI) ────────────────────────────────
+# ── Post-downtime ops catch-up ────────────────────────────────────────────────
 # After travel / long sleep: fetch snapshots → restage FPL → understat +
 # api_football ingest → catch_up missing checked GWs → print status (+ auth).
-# Same library steps as the Dagster refresh_staged / understat_ingest /
-# api_football_ingest / catch_up jobs. Optional: ARGS='--no-notify --horizon 3'
+# Optional: ARGS='--no-notify --horizon 3'
 ops-catchup:
 	uv run fplt ops-catchup $(ARGS)
 
@@ -411,10 +410,6 @@ ops-tick:
 # Prefer GHA: gh workflow run release.yml -f ref=main
 release:
 	uv run fplt release promote $(ARGS)
-
-# ── Dagster UI ────────────────────────────────────────────────────────────────
-dagster-dev:
-	uv run dagster dev -m fplt.orchestration
 
 # ── fplt-mc native kernel (tree: mc/; never compile on experiment VMs) ───────
 # Cloud agents / board VMs: uv sync --frozen only (no-build-package once pinned).

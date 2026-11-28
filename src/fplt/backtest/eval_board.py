@@ -5,21 +5,12 @@ and optionally OpenFPL when configured. Afterward ``make leaderboard`` reads
 the same ledger. This is not a CI quality gate.
 """
 
-# Dagster does not ship type stubs.
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
-# pyright: reportUnknownVariableType=false, reportUnknownParameterType=false
-# pyright: reportMissingTypeArgument=false
-#
-# Do not enable ``from __future__ import annotations`` here: Dagster resolves
-# the ``config: EvalBoardConfig`` annotation at decoration time.
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-
-import dagster as dg
-from dagster import Config
 
 # Side-effect imports so kinds resolve even before backtest/run.py registers
 # them (see PR #27 for the shared import on the CLI path).
@@ -39,7 +30,6 @@ from fplt.data.outcomes import stage_outcomes
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
-from fplt.settings import get_settings
 from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from fplt.utils.timing import (
@@ -60,10 +50,7 @@ __all__ = [
     "CORE_MODELS",
     "OPENFPL_COMPARE_FROM",
     "OPENFPL_MODEL",
-    "EvalBoardConfig",
     "EvalResult",
-    "eval_board_job",
-    "eval_board_op",
     "resolve_eval_models",
     "run_eval_board",
 ]
@@ -75,17 +62,6 @@ class EvalResult:
 
     specs: tuple[ModelSpec, ...]
     skipped_openfpl: str | None = None
-
-
-class EvalBoardConfig(Config):
-    """Dagster run config for ``eval_board_job``."""
-
-    season: str
-    from_gw: int = 1
-    to_gw: int = 38
-    with_openfpl: bool = False
-    openfpl_model_dir: str | None = None
-    steps: int = 1
 
 
 @binds_timing_artifacts()
@@ -269,28 +245,3 @@ def _configured(
 
 # Alias kept so older tests/scripts can import the skip helper from here.
 _openfpl_skip_note = openfpl_skip_note
-
-
-@dg.op
-def eval_board_op(context: dg.OpExecutionContext, config: EvalBoardConfig) -> list[str]:
-    """Run the multi-model eval for the configured season."""
-    result = run_eval_board(
-        get_settings().data_dir,
-        config.season,
-        config.from_gw,
-        config.to_gw,
-        with_openfpl=config.with_openfpl,
-        openfpl_model_dir=config.openfpl_model_dir,
-        steps=config.steps,
-    )
-    names = [spec.name for spec in result.specs]
-    context.log.info("eval_board ran %s", ", ".join(names) or "nothing")
-    if result.skipped_openfpl:
-        context.log.info(result.skipped_openfpl)
-    return names
-
-
-@dg.job(name="eval_board")
-def eval_board_job() -> None:
-    """Walk-forward the core models (and optional OpenFPL) into the ledger."""
-    eval_board_op()

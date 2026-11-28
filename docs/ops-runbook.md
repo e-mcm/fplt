@@ -50,12 +50,11 @@ Write-once marker: `alarms/missing_official_slate.json` under the GW prefix.
 
 | | |
 |---|---|
-| **Means** | A scheduled or dispatched GitHub Actions job (or a Dagster run-failure sensor) **failed or was cancelled** (runner OOM / shutdown, job timeout, manual cancel). The alert carries the workflow, job, result, and run URL — no log excerpts (public repo). |
+| **Means** | A scheduled or dispatched GitHub Actions job **failed or was cancelled** (runner OOM / shutdown, job timeout, manual cancel). The alert carries the workflow, job, result, and run URL — no log excerpts (public repo). |
 | **Urgency** | **Urgent** if the failing / cancelled job is `ops-tick` / `ops-catchup` inside T−6h. Otherwise **high** until the next successful capture / tick. |
 | **Fix** | Open the run URL in the alert, fix the cause, then `gh run rerun <run-id> --failed` (or re-dispatch the workflow). Cancelled runs with no failure step still need a fresh dispatch. |
 
-Composite action: `.github/actions/notify-failure`. Dagster path:
-`notify_run_failure` → same runbook section.
+Composite action: `.github/actions/notify-failure`.
 
 ### R2 upload failed: credentials missing on main
 
@@ -227,8 +226,8 @@ PR scans only fail on **newly introduced** vulns (reusable-pr workflow). Weekly 
 
 ## Recommendation
 
-Informational plan push from `ops-tick` / `ops-catchup` / Dagster
-recommendation assets (`notify_recommendation`). Not a failure alert.
+Informational plan push from `ops-tick` / `ops-catchup`
+(`notify_recommendation`). Not a failure alert.
 
 | | |
 |---|---|
@@ -312,7 +311,7 @@ manual pointer.
 
 ## Run a gameweek by hand
 
-Total-outage fallback when GHA / Dagster / heartbeats are down. Same path as
+Total-outage fallback when GHA / heartbeats are down. Same path as
 [`next-gw-actions.md`](next-gw-actions.md) (live squad) or
 [`blank-week-prod-plan.md`](blank-week-prod-plan.md) (empty draft).
 
