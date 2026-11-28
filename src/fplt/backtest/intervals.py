@@ -116,11 +116,102 @@ def interval_entirely_bad(
     Returns:
         True when every non-null upper bound is strictly negative.
     """
+    return interval_below_threshold(
+        hac_low, hac_high, boot_low, boot_high, threshold=0.0
+    )
+
+
+def interval_below_threshold(
+    hac_low: float | None,
+    hac_high: float | None,
+    boot_low: float | None,
+    boot_high: float | None,
+    *,
+    threshold: float,
+) -> bool:
+    """Return whether every available CI upper bound is strictly below ``threshold``.
+
+    Missing bounds do not trigger. HAC and bootstrap must both clear the bar
+    when both are present.
+
+    Args:
+        hac_low: HAC CI lower bound (unused).
+        hac_high: HAC CI upper bound.
+        boot_low: Bootstrap CI lower bound (unused).
+        boot_high: Bootstrap CI upper bound.
+        threshold: Strict upper-bound ceiling.
+
+    Returns:
+        True when every non-null upper bound is ``< threshold``.
+    """
     del hac_low, boot_low
     uppers = [u for u in (hac_high, boot_high) if u is not None]
     if not uppers:
         return False
-    return all(u < 0.0 for u in uppers)
+    return all(u < threshold for u in uppers)
+
+
+def interval_clears_threshold(
+    hac_low: float | None,
+    hac_high: float | None,
+    boot_low: float | None,
+    boot_high: float | None,
+    *,
+    threshold: float,
+) -> bool:
+    """Return whether every available CI lower bound is strictly above ``threshold``.
+
+    Used for superiority (threshold 0) and non-inferiority (threshold
+    ``-margin``). Missing bounds do not pass. HAC and bootstrap must both
+    clear the bar when both are present.
+
+    Args:
+        hac_low: HAC CI lower bound.
+        hac_high: HAC CI upper bound (unused).
+        boot_low: Bootstrap CI lower bound.
+        boot_high: Bootstrap CI upper bound (unused).
+        threshold: Strict lower-bound floor.
+
+    Returns:
+        True when every non-null lower bound is ``> threshold``.
+    """
+    del hac_high, boot_high
+    lowers = [lo for lo in (hac_low, boot_low) if lo is not None]
+    if not lowers:
+        return False
+    return all(lo > threshold for lo in lowers)
+
+
+def interval_inside_band(
+    hac_low: float | None,
+    hac_high: float | None,
+    boot_low: float | None,
+    boot_high: float | None,
+    *,
+    margin: float,
+) -> bool:
+    """Return whether every available CI lies inside ``(-margin, +margin)``.
+
+    Equivalence (TOST-style): lower bounds clear ``-margin`` and upper bounds
+    stay below ``+margin``. Both sides must pass.
+
+    Args:
+        hac_low: HAC CI lower bound.
+        hac_high: HAC CI upper bound.
+        boot_low: Bootstrap CI lower bound.
+        boot_high: Bootstrap CI upper bound.
+        margin: Positive half-width of the equivalence band.
+
+    Returns:
+        True when the interval is strictly inside the open band.
+    """
+    if margin <= 0.0:
+        raise ValueError("margin must be positive for equivalence")
+    return interval_clears_threshold(
+        hac_low, hac_high, boot_low, boot_high, threshold=-margin
+    ) and interval_below_threshold(
+        hac_low, hac_high, boot_low, boot_high, threshold=margin
+    )
 
 
 def equivalence_drop_from_intervals(intervals: list[PairedInterval]) -> bool:
@@ -239,6 +330,7 @@ def paired_interval(
     position: str | None = None,
     bootstrap_reps: int = DEFAULT_BOOTSTRAP_REPS,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+    alpha: float = 0.05,
 ) -> PairedInterval:
     """Fit HAC OLS and a stationary-bootstrap CI on ``d_t``.
 
@@ -248,10 +340,16 @@ def paired_interval(
         position: Optional position slice label.
         bootstrap_reps: Stationary bootstrap replications (default 2000).
         bootstrap_seed: Fixed seed for the bootstrap.
+        alpha: Two-sided type-I rate for both CIs (default 0.05 → 95% CI).
 
     Returns:
         ``PairedInterval`` with mean, HAC SE/p/CI, and bootstrap CI.
+
+    Raises:
+        ValueError: ``alpha`` is not in ``(0, 1)``.
     """
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), got {alpha!r}")
     series = np.asarray(d_t, dtype=np.float64).reshape(-1)
     n = int(series.size)
     if n == 0 or not np.isfinite(series).all():
@@ -282,7 +380,7 @@ def paired_interval(
         )
         hac_se = float(ols.bse[0])
         hac_p = float(ols.pvalues[0])
-        ci = ols.conf_int(alpha=0.05)
+        ci = ols.conf_int(alpha=alpha)
         hac_lo = float(ci[0, 0])
         hac_hi = float(ci[0, 1])
 
@@ -292,7 +390,7 @@ def paired_interval(
         block = max(1, int(np.sqrt(n)))
         bs = StationaryBootstrap(block, series, seed=bootstrap_seed)
         ci_boot = bs.conf_int(
-            np.mean, reps=bootstrap_reps, method="percentile", size=0.95
+            np.mean, reps=bootstrap_reps, method="percentile", size=1.0 - alpha
         )
         boot_lo = float(ci_boot[0, 0])
         boot_hi = float(ci_boot[1, 0])
@@ -620,7 +718,10 @@ __all__ = [
     "PairedInterval",
     "SpaResult",
     "equivalence_drop_from_intervals",
+    "interval_below_threshold",
+    "interval_clears_threshold",
     "interval_entirely_bad",
+    "interval_inside_band",
     "interval_to_dict",
     "intervals_for_pair",
     "loss_differential",
