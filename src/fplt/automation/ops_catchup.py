@@ -1,9 +1,8 @@
-"""One-shot post-downtime recovery without the Dagster UI.
+"""One-shot post-downtime recovery via the ``fplt`` CLI / GHA.
 
-Runs the same library steps the Dagster jobs wrap: ``fetch_raw`` →
-restage FPL (+ vaastav) → Understat / API-Football ingest → ``catch_up`` →
-status summary. Prefer this after travel or long sleep when sensors have not
-drained the backlog yet.
+Runs ``fetch_raw`` → restage FPL (+ vaastav) → Understat / API-Football ingest
+→ ``catch_up`` → status summary. Prefer this after travel or long sleep when
+scheduled ops ticks have not drained the backlog yet.
 """
 
 from __future__ import annotations
@@ -73,10 +72,6 @@ def run_ops_catchup(
 ) -> OpsCatchupResult:
     """Fetch raw captures, restage feeds, catch up plans, and return status counts.
 
-    Mirrors the Dagster ``refresh_staged``, ``understat_ingest``,
-    ``api_football_ingest``, and ``catch_up`` jobs without requiring the UI or
-    a running daemon.
-
     Args:
         data_dir: Root with ``raw/``, ``staged/``, and ``plans/``. Defaults to
             ``Settings.data_dir``.
@@ -90,8 +85,7 @@ def run_ops_catchup(
         settings: Optional settings for recommendation notify and bucket
             credentials. Defaults to ``get_settings()``.
         notify: When True and at least one gameweek was planned, push the
-            concatenated ``report.md`` via ntfy/SMTP (same as the Dagster
-            ``recommendation_report`` asset).
+            concatenated ``report.md`` via ntfy/SMTP.
 
     Returns:
         Counts and pending/planned gameweeks for the operator status print.

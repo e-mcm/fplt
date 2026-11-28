@@ -21,7 +21,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Every new `PointsPredictor` or component must pass the contract suite **including the leakage test** (`tests/contracts/`). Register it so the parametrised suite picks it up.
 ### Data and schemas
 - Use **polars**, not pandas. pandas is allowed only inside `src/fplt/models/external/` adapters when a third-party dependency requires it, and must be converted to polars at the adapter boundary.
-- Every DataFrame crossing a module boundary (function argument or return in a public function) must have a `pandera.polars` `DataFrameModel` in `src/fplt/schemas/`. Validate at boundaries: when producing a staged/feature/prediction/plan table, and in Dagster asset checks.
+- Every DataFrame crossing a module boundary (function argument or return in a public function) must have a `pandera.polars` `DataFrameModel` in `src/fplt/schemas/`. Validate at boundaries: when producing a staged/feature/prediction/plan table.
 - Add the schema **before** the function that produces the table.
 - Raw data under `data/raw/` is write-once. Never modify or delete raw files in code.
 ### Models
@@ -36,9 +36,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 ### Scoring rules
 - FPL scoring lives in `configs/scoring/<season>.yaml`, loaded via `fplt.scoring.Rules.for_season`. Never hardcode points values in code.
 ### Orchestration
-- Dagster code (`src/fplt/orchestration/`) is a thin wrapper. All logic lives in library modules and must be callable without Dagster.
-- New tables get a blocking pandera asset check via `pandera_check(...)`.
-- Prefer factories (assets generated from feature registry / model specs) over hand-written per-model assets.
+- Orchestration is GitHub Actions workflows calling the `fplt` CLI. Workflows are thin: all logic lives in library modules, callable and tested without GHA. New tables are validated with their pandera schema when produced (library boundary).
 ### Engineering habits
 - **Bug → regression test.** Every time a bug is found, write a unit test that would have exposed it. Ship that test with (or before) the fix — never a bare fix.
 - **Hard investigation → utility.** Every time an ad-hoc investigation is hard, reflect on why and add helpers, fixtures, scripts, or docs so the next time is easier. Do not only solve the one-off.
@@ -60,7 +58,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Per-test timeouts via `pytest-timeout` (global 60s; unit tests 30s unless a test sets its own `@pytest.mark.timeout`). A hang fails that test with a stack dump instead of burning the job timeout.
 - Hypothesis profiles in `tests/conftest.py`: `ci` (`HYPOTHESIS_PROFILE=ci` in CI — `deadline=None`, `print_blob=True`, `max_examples=100`) and `dev` (default locally — fewer examples). Per-test `@settings(max_examples=…)` still wins.
 - Never assert model quality (MAE, RMSE, log-loss) in pytest. Quality is measured by the backtester and recorded in the ledger.
-- Unit tests in `tests/unit/`, contract tests in `tests/contracts/`, Dagster/end-to-end in `tests/integration/`. Mark anything slower than ~2 s with `@pytest.mark.slow`.
+- Unit tests in `tests/unit/`, contract tests in `tests/contracts/`, end-to-end in `tests/integration/`. Mark anything slower than ~2 s with `@pytest.mark.slow`.
 - Optimiser tests check **constraint satisfaction** on small known problems, not solution optimality on real data.
 - Add a property test (hypothesis) for anything probabilistic: distributions sum to 1, allocations conserve goals, etc.
 ## 4. Workflow
@@ -69,7 +67,6 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
   - `make check` — ruff lint (including docstring rules) + format check, pyright, workflow lints, then fast tests (`pytest -n auto -m "not slow"`). Must pass before finishing any task. Diff-cover runs in CI on PRs, not in `make check`.
   - `make test` — full suite (incl. slow) with xdist, coverage XML/term, `--durations=25`, and `fail_under = 90`.
   - `make pytest-profile` — rank slowest pytest cases (CI-shaped by default; see `scripts/pytest_profile.py`).
-  - `make dagster-dev` — local Dagster UI.
   - `make mc-dev` / `mc-test` / `mc-format` / `mc-bench` — native `fplt-mc` kernel under `mc/` (C++ editors only).
 - **`fplt-mc` / cloud agents:** `uv sync --frozen` must **never** compile the kernel. Wheels publish to the **public** GitHub Pages simple index (`https://e-mcm.github.io/fplt/simple/`; no `UV_INDEX` credentials). Root `pyproject.toml` pins `fplt-mc` with `no-build-package = ["fplt-mc"]` so a missing wheel fails fast. Live PRODUCTION is `dc_layered_v4_native` (`mc_backend: native`) — missing import raises; no silent Python MC fallback. Experiment VMs and cloud agents install the locked wheel only; do not run `make mc-dev` there. Prefer GHA for release wheels. See `mc/README.md`.
 - **R2 data access (cloud agents):** pull raw / curated / official reads from bucket **`fplt-data`** with the read-only agent token; write runs, experiments and lab specs only to **`fplt-lab`**. Never push to `fplt-data` from an agent. Library code still reads the local `$FPLT_DATA_DIR` mirror after pull — no model or feature code talks to the network. Layout and tokens: `docs/design.md` §4.3; ops: `docs/proposals/r2-data-bucket-plan.md`.
@@ -81,7 +78,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - **Make the smallest change that completes the task.** Touch only what the task requires.
 - No drive-by refactors, renames, reformatting or "while I'm here" fixes. If you notice something else that needs doing, note it in the PR description as a suggested follow-up issue instead.
 - **Prefer several small PRs to one large one.** Each PR does one thing and leaves `main` working.
-- Size guide: aim for under ~200 changed lines of non-test code per PR. If a task looks bigger, split it before starting and propose the split in the issue. For example: schema → producing function → Dagster asset → asset check, each as its own PR.
+- Size guide: aim for under ~200 changed lines of non-test code per PR. If a task looks bigger, split it before starting and propose the split in the issue. For example: schema → producing function → CLI / workflow wiring, each as its own PR.
 - Land foundations first (contracts, schemas, types), then implementations, then wiring. Don't bundle all three.
 - Each commit should be a coherent step with a clear message, so the PR is easy to review commit by commit.
 ## 5. Code style
@@ -97,7 +94,7 @@ These are non-negotiable. A PR that breaks one of these is wrong even if tests p
 - Public methods should also have docstrings where their behaviour isn't obvious from the name and the class docstring.
 - Use `pydantic` for configs, `dataclasses`/`attrs` for internal value objects, `Protocol` for contracts.
 - Paths come from `fplt.settings`; never hardcode `./data` or absolute paths.
-- Log with `logging` (Dagster captures it); no `print` in library code (CLI and `fplt.ui` only). Timestamps are ISO-8601 UTC via `fplt.utils.logging.configure_logging`. Levels: **DEBUG** = diagnostic detail (HTTP paths, per-GW steps); **INFO** = operator progress; **WARNING** = recoverable problems; **ERROR** = failures that need attention. Bind run/ops identity with `log_context` / `RunWriter` (`run_id`, `experiment_id`, `checkpoint`, `line`, `spec`, `season`, `gw`). Use `--log-format json` or `FPLT_LOG_FORMAT=json` in workflows; humans keep text. Run tees INFO+ to `runs/run=<id>/logs/run.log.jsonl`; ops checkpoints write write-once `official/…/ops_log.jsonl` (redaction applies before write).
+- Log with `logging`; no `print` in library code (CLI and `fplt.ui` only). Timestamps are ISO-8601 UTC via `fplt.utils.logging.configure_logging`. Levels: **DEBUG** = diagnostic detail (HTTP paths, per-GW steps); **INFO** = operator progress; **WARNING** = recoverable problems; **ERROR** = failures that need attention. Bind run/ops identity with `log_context` / `RunWriter` (`run_id`, `experiment_id`, `checkpoint`, `line`, `spec`, `season`, `gw`). Use `--log-format json` or `FPLT_LOG_FORMAT=json` in workflows; humans keep text. Run tees INFO+ to `runs/run=<id>/logs/run.log.jsonl`; ops checkpoints write write-once `official/…/ops_log.jsonl` (redaction applies before write).
 ## 6. Domain notes that trip people up
  
 - FPL element and team `id`s change between seasons. Use `player_key` (element `code`) and `team_key` (team `code`) across seasons.

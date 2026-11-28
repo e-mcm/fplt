@@ -15,9 +15,9 @@ The system must:
 3. **Be versioned and reproducible.** Any prediction can be traced to the exact code, config, features and data that produced it, and re-run.
 4. **Run automatically.** After each gameweek: ingest, refit, evaluate, predict, re-optimise. Before each deadline: refresh availability, re-predict, re-optimise.
 5. **Benchmark easily.** Compare any set of predictors (internal or external, e.g. OpenFPL) on identical walk-forward backtests, at prediction level and at decision level.
-6. **Validate data visibly.** Schema and domain checks at every stage boundary, visible in a UI.
+6. **Validate data at boundaries.** Schema and domain checks at every stage boundary (pandera in library producers).
 
-Non-goals (for now): mini-league rival modelling, real-time in-match updates. Gated opt-in apply of a saved plan to FPL (`fplt apply`, dry-run by default, `--confirm` to POST) is supported; Dagster sensors never auto-submit.
+Non-goals (for now): mini-league rival modelling, real-time in-match updates. Gated opt-in apply of a saved plan to FPL (`fplt apply`, dry-run by default, `--confirm` to POST) is supported; unattended ops never auto-submit.
 
 ---
 
@@ -29,7 +29,7 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 4. **Every durable object is written once.** Raw API responses, curated builds, runs, specs and official pointers are immutable after write — never edited or overwritten in place. Object storage has no append and no locks across writers, so mutable shared files lose rows under concurrency. Derived indexes (`catalog/`, `status/`) are the only rewritten prefixes and can be rebuilt. See §4.3.
 5. **Schemas are contracts.** Every table crossing a module boundary has a `pandera.polars` schema. No bare DataFrames between stages.
 6. **Scoring rules are data, keyed by season.** FPL rules change between seasons; backtests must apply the rules of the season being tested.
-7. **Library first, orchestrator second.** All logic lives in plain Python functions in the `fplt` package and runs without Dagster (tests, notebooks, CLI). Dagster assets are thin wrappers that call library functions and record metadata.
+7. **Library first, orchestrator second.** All logic lives in plain Python functions in the `fplt` package and runs without GitHub Actions (tests, notebooks, CLI). Workflows are thin wrappers that call the `fplt` CLI / library functions.
 8. **Determinism.** All randomness uses seeded generators derived from (model_id, as_of, fixture_id). Same inputs → identical outputs.
 
 ---
@@ -41,9 +41,9 @@ Non-goals (for now): mini-league rival modelling, real-time in-match updates. Ga
 | Environment & deps | `uv` | `pyproject.toml` + committed `uv.lock` |
 | Dataframe engine | `polars` | pandas only inside external adapters if a dependency forces it |
 | Storage | Parquet (derived), gzipped JSON (raw API responses); durable mirror on Cloudflare R2 (`fplt-data` / `fplt-lab`) | DuckDB for ad hoc SQL over parquet; local `$FPLT_DATA_DIR` remains what library code reads (§4.3) |
-| Schemas / validation | `pandera.polars` | Wired into Dagster asset checks via a small factory (§8.4) |
+| Schemas / validation | `pandera.polars` | Validate at library boundaries when producing staged/feature/prediction/plan tables (§8.4) |
 | Configs | `pydantic` models, loaded from YAML | `pydantic-settings` for environment settings. No Hydra. |
-| Orchestration, lineage, validation UI | Dagster (OSS, run locally) | Webserver + daemon as launchd services (§8.6) |
+| Orchestration | GitHub Actions + `fplt` CLI | Capture, curate, ops-tick, ops-catchup, bench (§8) |
 | Score model | `scipy` | Dixon-Coles via MLE |
 | ML models | `lightgbm` | |
 | Optimiser | `highspy` (HiGHS) | |
@@ -170,11 +170,11 @@ data/
 
 Raw is stored as gzipped JSON rather than parquet because it is lossless against API schema changes; the first transform produces typed parquet. football-data E0 files are plain CSV (write-once) as published upstream.
 
-Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) read league dates/teams from `getLeagueData` (Understat no longer embeds `datesData` in HTML) and write match JSON plus league teams snapshots under `raw/understat/...` (dual-write to R2 `fplt-data` and the `snapshots` branch during migration; bucket is source of truth after cut-over — §4.5). When Understat (or another capture source) is unavailable, `fplt.data.capture_health` records `status/<source>_unavailable.json`, emits a GitHub warning, suppresses the heartbeat, and exits non-zero after `configs/ops/capture_health.yaml` consecutive failures; healthy "nothing new" still exits 0 and pings. The Dagster `understat_ingest` asset stages player and team tables with `available_at = kickoff + 3h`.
+Understat ids are joined to FPL codes via `configs/understat/id_maps.yaml` (`player_key` / `team_key`). Unmapped players stage with a null `player_key`; unmapped teams are rejected. `scripts/fetch_understat.py` (and `.github/workflows/understat.yml`) read league dates/teams from `getLeagueData` (Understat no longer embeds `datesData` in HTML) and write match JSON plus league teams snapshots under `raw/understat/...` (dual-write to R2 `fplt-data` and the `snapshots` branch during migration; bucket is source of truth after cut-over — §4.5). When Understat (or another capture source) is unavailable, `fplt.data.capture_health` records `status/<source>_unavailable.json`, emits a GitHub warning, suppresses the heartbeat, and exits non-zero after `configs/ops/capture_health.yaml` consecutive failures; healthy "nothing new" still exits 0 and pings. Staging (`fplt data curate` / ops catch-up) writes player and team tables with `available_at = kickoff + 3h`.
 
-football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` (and monthly `.github/workflows/football_data.yml`, 1st of month 06:00 UTC + manual) writes write-once E0 CSVs under `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` (same dual-write → bucket SoT; local `make fetch-football-data` may still use the legacy `season=…/E0.csv` path). The Dagster `match_odds_sensor` (30 min) requests `match_odds_ingest` when a new E0 CSV appears under raw after the raw-pull sensor copies it. Staging writes `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist; later `captured_at` files win on key collision. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
+football-data team names map to `team_key` via `configs/football_data/team_names.yaml`. `scripts/fetch_football_data.py` (and monthly `.github/workflows/football_data.yml`, 1st of month 06:00 UTC + manual) writes write-once E0 CSVs under `raw/football_data/season=…/captured_at=YYYY-MM-DD/E0.csv` (same dual-write → bucket SoT; local `make fetch-football-data` may still use the legacy `season=…/E0.csv` path). When a new E0 CSV appears under raw (after capture / ops pull), staging writes `match_odds` with both `odds_kind=closing_proxy` (`available_at=kickoff`; closing lines are pre-KO, **not** deadline PIT) and `odds_kind=prematch_scheduled` from non-closing columns only (`AvgH`/`B365H`/…, never relabelled closes) with a conservative collection `available_at` (Friday 17:00 London for Fri–Sun kickoffs; Tuesday 17:00 London for Mon–Thu). Unique key includes `odds_kind` so both rows coexist; later `captured_at` files win on key collision. Optional join fills `fixture_id` from staged FPL fixtures on season + teams + match date. Prematch boards must run `check_prematch_deadline_coverage` / `require_prematch_deadline_coverage` so fixtures whose FPL deadline is before that stamp drop out clearly.
 
-API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON plus cup/Europe `/fixtures` (leagues in `configs/api_football/competitions.yaml`) under `raw/api_football/...` (same dual-write → bucket SoT); the Dagster `api_football_ingest` asset stages `player_injuries` and `competition_fixtures` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Only fixtures involving a mapped EPL `team_key` are staged. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v4` is unchanged until eval. All-comp rest / `games_last_7d` always merge PIT-visible `competition_fixtures` when present (PL-only fallback when empty).
+API-Football player/team ids map via `configs/api_football/id_maps.yaml`. `scripts/fetch_api_football.py` (and `.github/workflows/api_football.yml`) writes league-season `/injuries` JSON plus cup/Europe `/fixtures` (leagues in `configs/api_football/competitions.yaml`) under `raw/api_football/...` (same dual-write → bucket SoT); staging writes `player_injuries` and `competition_fixtures` with `available_at = captured_at`. Unmapped players keep a null `player_key`. Only fixtures involving a mapped EPL `team_key` are staged. Minutes components may set `use_injury_overlay: true` to soft-downgrade (doubtful) or zero (suspension/missing) when FPL tags still look available — never raising an FPL zero. Default remains off so production `dc_layered_v4` is unchanged until eval. All-comp rest / `games_last_7d` always merge PIT-visible `competition_fixtures` when present (PL-only fallback when empty).
 
 ### 4.4 Point-in-time access (`PITData`)
 
@@ -216,14 +216,14 @@ Models receive a `PITView`, never a `DataStore`. The leakage test (§9.2) verifi
 
 ### 4.5 Snapshot capture
 
-Availability and news cannot be recovered after the fact, so capture runs independently of the local Dagster instance:
+Availability and news cannot be recovered after the fact, so capture runs independently of local planning:
 
 - A standalone script `scripts/snapshot.py` (stdlib + `httpx` only) runs every **15 minutes** on **GitHub Actions cron**, throttling writes: every 15 minutes in the last 3 hours before a deadline, every hour in the 3–6 hour window, otherwise when the last snapshot is more than 12 hours old. After a GW is `data_checked` it also captures `event/{gw}/live`. Sibling workflows (`understat.yml`, `api_football.yml`, `football_data.yml`, `vaastav.yml`) follow the same publish pattern for their sources.
 - **Dual-write (migration):** each capture job uploads new objects to R2 `fplt-data/raw/` (write-once, `--immutable`) **and** publishes onto the orphan `snapshots` git branch (path layout as `data/raw/...`). Both sinks run even if the other fails, so a single R2 outage never loses a capture. GHA jobs that read `secrets.R2_*` set `environment: r2` (environment secrets; lint `scripts/check_workflow_r2_environment.py`). Missing R2 credentials **fail on `main`** and soft-skip only off main / on `pull_request`; capture heartbeats require `push-raw` `uploaded=true` (#278).
 - **Curate after capture (#345):** `snapshot.yml` job `curate` (`needs: capture`, `if: always() && needs.capture.result == 'success'`, `environment: r2`, concurrency group `curate` with `cancel-in-progress: false`) runs `fplt data curate --source bucket` (incremental). A curation failure never fails the capture job. Weekly full rebuild + sha parity: `curate-full.yml` (`fplt data curate --full`). Timing: `remote/pull`, `ingest`, `curate/hydrate`, `curate/build`, `remote/push`.
 - **Parity (during dual-write):** `fplt data parity` clones the `snapshots` tip and runs `rclone check --one-way` against `fplt-data/raw` (missing/different keys → non-zero). Weekly GHA: `.github/workflows/raw_parity.yml`.
 - **Cut-over:** after clean parity, branch publish stops; the bucket is the only sink. The `snapshots` branch is kept forever as a **read-only archive** — never deleted (it is raw data). Local pull switches from the branch to `rclone` from `fplt-data` (see rollout Stage A).
-- Local Dagster / `ops-catchup` pulls new raw into `$FPLT_DATA_DIR/raw` (bucket when `FPLT_DATA_BUCKET` is set; else the `snapshots` branch) and restages.
+- `ops-catchup` / local CLI pulls new raw into `$FPLT_DATA_DIR/raw` (bucket when `FPLT_DATA_BUCKET` is set; else the `snapshots` branch) and restages.
 - **Sanity gates (ops-06 / A10):** `fplt.data.gates` compares each new bootstrap+fixtures capture with the previous good one (player-count delta, null shares on `now_cost`/`status`/`team`, next-GW fixtures covering `expected_team_count` teams, monotone deadlines, `data_checked` never flipping true→false). Thresholds live in `configs/ops/data_gates.yaml`. Failures produce `QuarantineRecordSchema` rows persisted under `$FPLT_DATA_DIR/quarantine/` (`fplt.data.quarantine`); raw stays write-once. `ingest_raw` skips quarantined capture paths so they never reach `staged/` (PIT therefore excludes them). The `snapshot` GHA job runs `fplt data gates --check --new-raw … --notify` right after a bootstrap write (`fplt.data.capture_gates`); alerts fire once per new failure type via ntfy. Quarantine mirrors to R2 `status/quarantine/` (rewritable); `ops-tick` / `ops-catchup` pull it before restage. Inspect with `fplt data gates --since 7d`.
 
 Historical seasons (vaastav) are a pinned write-once raw source under `raw/vaastav/captured_at=…/` (GHA `vaastav.yml`; local `make bootstrap-vaastav`). Staging (`import_available`) and prior-hash loading read only **complete** captures: `_source.json` must exist and every listed file must match its sha256 (otherwise WARNING + skip — partial R2 uploads stay locked under write-once `raw/` but are ignored; `#353`). `_source.json` is uploaded last as the completion marker. Staging reads the **latest** complete capture per season from that prefix — not `$FPLT_DATA_DIR/<season>/`. **`captured_at` is provenance, not visibility:** a 2026 capture of 2022-23 results remains valid history for a 2022-23 backtest; PIT still filters on row-level `available_at` only (schedules at `season_start`, results at kickoff + 3h, prices at each GW deadline). Raw keeps every season vaastav publishes (2016-17 onward); import still starts at 2021-22 (`_MIN_SEASON`).
@@ -550,7 +550,7 @@ Control is the off state and treatment is the on state. Production stays whichev
 
 Internal: `rolling_mean` baseline, `fpl_ep_next` (from snapshots; only for snapshot-backed GWs), direct LightGBM, each layered variant.
 
-**Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` + Dagster `benchmark_archive`) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. FPL Review enters only via manual CSV/JSON drop (`fplt ingest-review` / `fplt.data.fpl_review`) after a terms check — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md), [`docs/fpl_review.md`](fpl_review.md).
+**Deadline archive (`benchmark_projections`).** Canonical N1 table for prospective paired boards. Schema `BenchmarkProjectionSchema` (`source` ∈ {`ep_next`, `openfpl`, `fpl_review`}, `player_key`, `fixture_id`, `xpts`, `available_at` strictly before the deadline, optional `quality_flag`). Write-once parquet at `benchmark_projections/as_of=<season>_gwNN/part.parquet`. Pre-deadline automation (`pre_deadline` / ops-tick checkpoints) saves `ep_next` and OpenFPL each GW and fails loudly if a required source is missing. OpenFPL rows without staged Deep/PPDA are labelled `quality_flag=openfpl_degraded`. FPL Review enters only via manual CSV/JSON drop (`fplt ingest-review` / `fplt.data.fpl_review`) after a terms check — **no scrape**; do not invent a second table. Ops: [`docs/benchmark-archives.md`](benchmark-archives.md), [`docs/fpl_review.md`](fpl_review.md).
 
 **Paired archive compare (N2).** `fplt archive-compare` / `fplt.backtest.archive_compare.compare_to_archives` joins a candidate ledger arm to archived sources on identical player–fixtures. Coverage gate: only rows where every compared arm has a pre-deadline snapshot (`available_at` strictly before the deadline for archives; ledger presence for ours). Default board: RMSE headline, MAE secondary, Spearman by position, OpenFPL groups (zeros / blanks / tickers / haulers). Paired significance reuses Diebold–Mariano / HAC + stationary bootstrap (`fplt.backtest.intervals`). Does not scrape FPL Review.
 
@@ -574,50 +574,54 @@ Season rank alone is a noisy live check (evaluation north star §3). Cache Overa
 
 ---
 
-## 8. Orchestration (Dagster)
+## 8. Orchestration (GitHub Actions + `fplt` CLI)
 
 ### 8.1 Layout
 
-`src/fplt/orchestration/` contains only Dagster definitions; all logic is imported from library modules.
+Production orchestration is **GitHub Actions workflows** calling the **`fplt` CLI**. All logic lives in library modules under `src/fplt/` and must be callable and tested without GHA (`make ops-tick`, `make ops-catchup`, `uv run fplt …`). Workflows are thin: checkout, secrets, invoke CLI, heartbeat / ntfy.
 
-### 8.2 Partitions
+Key workflows: `snapshot.yml` (capture + curate), `ops-tick.yml`, `ops-catchup.yml`, capture feeds (`understat.yml`, `api_football.yml`, `football_data.yml`, …), `curate-full.yml`, `bench.yml`, `release.yml`, `auth-check.yml`.
 
-`MultiPartitionsDefinition(season=StaticPartitionsDefinition([...]), gw=StaticPartitionsDefinition(["1".."38"]))`.
-
-### 8.3 Assets
-
-| Asset | Partitioned | Description |
-|---|---|---|
-| `raw_snapshots` | no (observable source) | Files pulled into `$FPLT_DATA_DIR/raw` (from R2 `fplt-data` when configured; else the `snapshots` branch during dual-write) |
-| `staged_*` (players, teams, fixtures, gameweeks, player_status, player_fixture_stats, player_injuries, competition_fixtures) | season-gw | Typed parquet from raw (migration: content-addressed curated builds) |
-| `feature__<name>__v<version>` | no (as-of via run config / `resolve_as_of`) | One asset per registered feature version (`orchestration/factories.py`) |
-| `model__<name>` | no (same) | Fitted artifact per points-predictor `ModelSpec` (component YAML skipped) |
-| `predictions__<name>` | no (same) | Predictions for horizon 1..H (default 10 via `DEFAULT_PROJECTION_HORIZON`); CLI/catch-up stay authoritative |
-| `ledger_predictions` | season-gw | Transitional: appends predictions and joins actuals; target is the ledger view over runs ⋈ outcomes (§7.2) |
-| `squad_plan` | season-gw | Optimiser output for the chosen production model |
-| `recommendation_report` | season-gw | Markdown summary attached as Dagster metadata |
-| `benchmark_archive` | no (due GW via `due_gameweek`) | Write-once `benchmark_projections` for `ep_next` + OpenFPL (§7.5) |
-
-Factories mean adding a YAML spec or a new feature version makes a new asset appear in the UI without new orchestration code. Asset `code_version` = feature version / `model_id`, so stale assets are flagged.
-
-### 8.4 Asset checks (data validation UI)
-
-- A factory `pandera_check(asset, Schema, blocking=True)` validates the materialised frame with `pandera.polars` and returns failure cases as metadata. (`dagster-pandera` targets pandas, hence the factory.)
-- Domain checks, e.g.: team goals in `player_fixture_stats` equal the fixture score; every finished fixture has stats for ≥ 11 players per side; predictions have no NaN; sum of `xpts` per team per fixture is within plausible bounds; every player in the next GW has a prediction from the production model.
-- Blocking checks stop downstream materialisation.
-
-### 8.5 Automation
+### 8.2 Cadence (summary)
 
 | Trigger | Type | Action |
 |---|---|---|
-| New raw under `fplt-data/raw/` (or `snapshots` branch during dual-write) | sensor (every 10 min) | Pull into `data/raw`, materialise `staged_*` (football-data CSVs are copied but restage is skipped — odds sensor handles them) |
-| New Understat raw under `raw/understat/` | sensor (every 10 min) | Materialise `understat_ingest` (fetch + prefix filter; cursor fallback if the raw-pull sensor already copied) |
-| New API-Football injury / cup-fixture raw under `raw/api_football/` (excludes `lineups/`) | sensor (every 10 min) | Materialise `api_football_ingest` (`player_injuries` + `competition_fixtures`) |
-| New football-data `E0.csv` under raw | sensor (every 30 min) | Materialise `match_odds_ingest` |
-| Monthly / manual football-data capture | GHA `football_data.yml` | Current-season E0 → R2 `fplt-data/raw/` (and `snapshots` during dual-write) under `captured_at=YYYY-MM-DD` |
-| GW `data_checked` and not yet processed | sensor (every 30 min) | Join actuals → ledger (transitional mutate; target: outcomes build + ledger view); refit models; predict next H GWs; re-optimise. Processes **all** missing GWs, so downtime self-heals. |
-| Next deadline within 3 h and plan missing **or** stale vs late availability signals | sensor (every 15 min) | Archive `ep_next` + OpenFPL; re-predict (no refit); re-optimise; emit report. Stale = plan parquet mtime older than newest `player_status` / `predicted_lineups` / `player_injuries` `available_at` at or before the deadline — retired under `plans/<model_id>/superseded/` then rebuilt (`fplt.automation.late_refresh`). |
-| Run failure | run-failure sensor | Notify (email or push via ntfy) |
+| New raw under `fplt-data/raw/` (or `snapshots` branch during dual-write) | GHA capture + `fplt data curate` / `ops-catchup` | Pull into `data/raw`, restage staged tables |
+| New Understat / API-Football / football-data raw | GHA capture workflows + curate / ops | Stage Understat, injuries/cup fixtures, match odds |
+| GW `data_checked` and plan missing | `ops-tick` / `ops-catchup` (`catch_up`) | Join actuals → ledger path; refit; predict; re-optimise. Processes missing GWs so downtime self-heals |
+| Next deadline within checkpoint windows | `ops-tick` checkpoints (ops-02) | Archive benchmarks; re-predict; re-optimise; notify. Late refresh when plan is stale vs availability signals |
+| Workflow failure / cancel | GHA `alerts` / `notify-failure` | ntfy (workflow, job, run URL; no logs) |
+| Snapshot curate (GHA `snapshot.yml` job `curate`) | after successful `capture` | Incremental `fplt data curate` → curated build → `status/curated/latest.json` |
+| Weekly curated full rebuild (GHA `curate-full.yml`) | schedule `0 7 * * 1` + `workflow_dispatch` | `fplt data curate --full` |
+| Ops tick (GHA `ops-tick.yml`) | schedule `7,22,37,52 * * * *` + `workflow_dispatch` | Checks out moving tag `prod`. `fplt ops-tick`: curated hydrate → auth → catch_up → checkpoints (T−24h / T−6h / T−90m / T−30m) → status. See full ops-tick paragraph below |
+| Ops catch-up (GHA `ops-catchup.yml`) | `workflow_dispatch` | `fplt ops-catchup` one-shot recovery |
+| Release (GHA `release.yml` / `make release`) | `workflow_dispatch` | Move `prod` tag under CI + freeze + smoke gates |
+| Nightly performance bench | GHA `bench.yml` | Write-once lab bench results; ntfy on regression vs baseline |
+
+### 8.3 Library entry points
+
+| Concern | Library / CLI |
+|---|---|
+| Raw ingest + staged tables | `fplt.data.*` / `fplt data curate` |
+| Catch-up checked GWs | `fplt.automation.cycle.catch_up` / `fplt ops-tick` · `ops-catchup` |
+| Pre-deadline refresh | `fplt.automation.cycle.pre_deadline` |
+| Official slate checkpoints | `fplt.automation.official_slate` |
+| Benchmark archive | `fplt.data.benchmark_projections` |
+| Multi-model eval | `fplt.backtest.eval_board.run_eval_board` / `make eval-board` |
+| Recommendations notify | `fplt.automation.notify.notify_recommendation` |
+
+### 8.4 Validation
+
+- Every table crossing a module boundary has a `pandera.polars` schema in `src/fplt/schemas/`. Producers validate when writing staged / feature / prediction / plan tables (AGENTS.md §2).
+- Domain checks (team goals vs fixture score, prediction NaNs, …) live in library / asset-check-free helpers and tests — not a separate orchestrator UI.
+- Blocking validation failures raise at the library boundary so CLI / GHA jobs exit non-zero.
+
+### 8.5 Automation detail
+
+The following workflows are the authoritative ops surface (same text as prior design, GHA-only):
+
+| Trigger | Type | Action |
+|---|---|---|
 | Snapshot curate (GHA `snapshot.yml` job `curate`) | after successful `capture` | Incremental `fplt data curate`: previous build + raw captures newer than `raw_cutoff` → curated build → `status/curated/latest.json`. Concurrency group `curate`. Failure never blocks capture (#345). |
 | Weekly curated full rebuild (GHA `curate-full.yml`) | schedule `0 7 * * 1` + `workflow_dispatch` | `fplt data curate --full`: copy all of `raw/`, stage from scratch, require table-sha parity with the latest pointer (mismatch → fail + ntfy). Only job that copies all of raw (#345). Heartbeat `HC_PING_URL_CURATE_FULL`. |
 | Scheduled GHA success (`snapshot`, `understat`, `api_football`, `football_data`, `ops-tick`, `raw_parity`, `auth-check`, `curate-full`; plus `ops-catchup` on dispatch) | workflow `alerts` job | Ping healthchecks.io URL from `HC_PING_URL_*` secrets (ops-03; soft skip when unset) |
@@ -635,19 +639,17 @@ Factories mean adding a YAML spec or a new feature version makes a new asset app
 
 Missed heartbeats are the dead-man's switch for silent cron disable (including GitHub's ~60-day inactivity gate on public scheduled workflows). **Choice: runbook, not keepalive** — re-enable the workflow; see `deploy/README.md`. CI keeps running on `main`; ops jobs do not follow `main` HEAD.
 
-The pre-deadline run can always be launched manually from the UI or via `gh workflow run ops-tick.yml`.
+The pre-deadline run can always be launched manually via `gh workflow run ops-tick.yml` or `make ops-tick`.
 
-Live unattended models and planner horizon come from `configs/ops/production.yaml` (defaults: `dc_layered_v4_native`, horizon 3), loaded by `fplt.automation.production.load_production_ops`. The same file carries a typed **`PipelineSpec`** under `pipeline:` (data / model / planner / policy / env; hashed by `fplt.models.pipeline_spec.pipeline_hash`) so experiments and official lines can identify the full arm, not only the ModelSpec (rollout B11 / `fplt-experiments.md` §3). `models` / `plan_horizon` stay as the short form and must match `pipeline.model` / `pipeline.planner.horizon` and the **primary** official line. **`lines:`** (rollout B12 / data model §4.1) names the official slate: primary `v4_h3` (real squad, applied) plus candidate `v4_h5` / `v4_h7` / `v4_h9` (virtual squad by default). Validation requires exactly one primary and unique line names; ops run one predict per distinct spec at the longest horizon those lines need, then one plan per line. Write-once official records live under `official/season=…/gw=…/checkpoint=…/` via `fplt.store.official` (`line=<line>.json`, `applied.json`, `submitted.json`, `intervention.json`); pointers require both predict and plan `_SUCCESS`. Virtual candidate lines persist `plans/squad_state_in|out.parquet` via `fplt.store.virtual_squad` (`prev_run_id` chain); official runs bin `points_pmf` / `points_pmf_gw` with `fplt.store.points_pmf` **one gameweek at a time** (`points_pmf_tables_from_sample`) so a horizon-9 slate never materialises the full MC draw table (~36M rows) in memory (#372). Timing records carry per-phase `peak_rss_kb`; ops WARN when peak RSS exceeds `rss_warn_pct` of `runner_memory_gb` in `configs/ops/bench.yaml`. Nightly bench tracks a synthetic `points_pmf` horizon-9 phase. ops-tick runs the official slate at T−90m (`run_official_checkpoint`); ops-04 `prod` tag on `RunWriter` is still TODO. Operators may override without a code change via `FPLT_PRODUCTION_MODELS` (comma-separated) and/or `FPLT_PLAN_HORIZON`; env wins over YAML and **collapses to a single primary line** so an emergency override never silently multi-arms. CLI / `make plan` still default to `DEFAULT_PLAN_HORIZON` in `fplt.optimise.plan` (also 3); the ops file only feeds catch-up / pre-deadline. A checked gameweek is waiting until every configured production model has a plan parquet for that deadline at the ops horizon. Local `plans/` is the fast path; when `FPLT_DATA_BUCKET` is set, `pending_checked` / `plans_exist` also consult the durable R2 plan catalog (`catalog/runs.parquet` + `catalog/inbox/`, lab then data) keyed by `(spec_label, season, gw, plan_horizon, run_type=plan)` so a cold `plans/` cache does not re-play finished weeks (#371). Catch-up plan runs push their catalog inbox row with the run so the remote index stays current. Catch-up is scoped to the **current season** (the latest season in staged `gameweeks`) from `catch_up_from_gw` onwards, never staged history such as vaastav seasons, and plays at most `max_catch_up_per_tick` weeks per call (the rest continue next tick). A live play for any other season raises `CatchUpSeasonError` (#369). The catch-up sensor asks the `recommendation_report` asset to plan every waiting week, and the markdown is stored as asset metadata. After a successful catch-up or pre-deadline plan, the concatenated `report.md` body is pushed via `FPLT_NTFY_URL` and/or optional SMTP (`FPLT_SMTP_HOST`, `FPLT_SMTP_FROM`, `FPLT_SMTP_TO`, plus user/password/port/TLS) when those settings are present; missing config is a no-op. Run failures POST to `FPLT_NTFY_URL` when it is set.
+Live unattended models and planner horizon come from `configs/ops/production.yaml` (defaults: `dc_layered_v4_native`, horizon 3), loaded by `fplt.automation.production.load_production_ops`. The same file carries a typed **`PipelineSpec`** under `pipeline:` (data / model / planner / policy / env; hashed by `fplt.models.pipeline_spec.pipeline_hash`) so experiments and official lines can identify the full arm, not only the ModelSpec (rollout B11 / `fplt-experiments.md` §3). `models` / `plan_horizon` stay as the short form and must match `pipeline.model` / `pipeline.planner.horizon` and the **primary** official line. **`lines:`** (rollout B12 / data model §4.1) names the official slate: primary `v4_h3` (real squad, applied) plus candidate `v4_h5` / `v4_h7` / `v4_h9` (virtual squad by default). Validation requires exactly one primary and unique line names; ops run one predict per distinct spec at the longest horizon those lines need, then one plan per line. Write-once official records live under `official/season=…/gw=…/checkpoint=…/` via `fplt.store.official` (`line=<line>.json`, `applied.json`, `submitted.json`, `intervention.json`); pointers require both predict and plan `_SUCCESS`. Virtual candidate lines persist `plans/squad_state_in|out.parquet` via `fplt.store.virtual_squad` (`prev_run_id` chain); official runs bin `points_pmf` / `points_pmf_gw` with `fplt.store.points_pmf` **one gameweek at a time** (`points_pmf_tables_from_sample`) so a horizon-9 slate never materialises the full MC draw table (~36M rows) in memory (#372). Timing records carry per-phase `peak_rss_kb`; ops WARN when peak RSS exceeds `rss_warn_pct` of `runner_memory_gb` in `configs/ops/bench.yaml`. Nightly bench tracks a synthetic `points_pmf` horizon-9 phase. ops-tick runs the official slate at T−90m (`run_official_checkpoint`); ops-04 `prod` tag on `RunWriter` is still TODO. Operators may override without a code change via `FPLT_PRODUCTION_MODELS` (comma-separated) and/or `FPLT_PLAN_HORIZON`; env wins over YAML and **collapses to a single primary line** so an emergency override never silently multi-arms. CLI / `make plan` still default to `DEFAULT_PLAN_HORIZON` in `fplt.optimise.plan` (also 3); the ops file only feeds catch-up / pre-deadline. A checked gameweek is waiting until every configured production model has a plan parquet for that deadline at the ops horizon. Local `plans/` is the fast path; when `FPLT_DATA_BUCKET` is set, `pending_checked` / `plans_exist` also consult the durable R2 plan catalog (`catalog/runs.parquet` + `catalog/inbox/`, lab then data) keyed by `(spec_label, season, gw, plan_horizon, run_type=plan)` so a cold `plans/` cache does not re-play finished weeks (#371). Catch-up plan runs push their catalog inbox row with the run so the remote index stays current. Catch-up is scoped to the **current season** (the latest season in staged `gameweeks`) from `catch_up_from_gw` onwards, never staged history such as vaastav seasons, and plays at most `max_catch_up_per_tick` weeks per call (the rest continue next tick). A live play for any other season raises `CatchUpSeasonError` (#369). After a successful catch-up or pre-deadline plan, the concatenated `report.md` body is pushed via `FPLT_NTFY_URL` and/or optional SMTP (`FPLT_SMTP_HOST`, `FPLT_SMTP_FROM`, `FPLT_SMTP_TO`, plus user/password/port/TLS) when those settings are present; missing config is a no-op. Run failures POST to `FPLT_NTFY_URL` when it is set.
 
 **Production governance + live drift (ops-09).** CI job `production-governance` runs `fplt governance-check` on PRs: changes to `configs/ops/production.yaml` or a ModelSpec listed in it require a PR-body link `promote-eval-run: <run_id>` whose verdict resolves to `keep` (registry entry id, committed `configs/evals/results/<id>/summary.json`, or `$FPLT_DATA_DIR` promote-eval / run summary). In-place edits of a listed production ModelSpec always fail — bump the YAML name. After catch-up plans a checked GW, `ops-tick` runs `fplt.automation.drift.run_live_drift_monitor` (also `fplt drift-check`): rolling live RMSE and event Brier (`brier_60`, `brier_goal`, `brier_cs`) vs the backtest per-GW distribution at the configured horizon; alert when the rolling window sits beyond a z-threshold for `k` consecutive GWs. Thresholds live in `configs/ops/drift_monitor.yaml`. Alert only — never auto-switch models.
 
 ### 8.6 Running locally
 
-- Development: `make dagster-dev` (`dagster dev`).
-- Always-on: `dagster-webserver` and `dagster-daemon` as launchd services with fixed `DAGSTER_HOME` and SQLite storage (templates in `deploy/launchd/`). Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` via `run-with-env.sh` — never from the committed plists. The same file is loaded by `Settings` for local CLI (`fplt auth set` / `status` / `clear`). Operator steps: `deploy/README.md`.
-- Post-downtime one-shot (no UI): `make ops-catchup` / `fplt ops-catchup` runs fetch → restage → Understat/API-Football ingest → `catch_up` → status (library steps mirrored by the Dagster jobs). Regular cadence without Dagster: `make ops-tick` / `fplt ops-tick` (also GHA). See `deploy/README.md`. Alert → one-command fix, season rollover, and hand-run GW: `docs/ops-runbook.md`.
-- A `deploy/docker-compose.yml` keeps the option of moving to a small VPS without code changes; the same `FPLT_*` vars are passed through from a gitignored `deploy/.env` or the shell.
-- Multi-model eval (manual / `eval_board` Dagster job): `make eval-board SEASON=2024-25` runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, `dc_layered_v2`, `dc_layered_v3`, `dc_layered_v4`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it with `--with-openfpl`, `--openfpl-model-dir`, or a `model_dir` other than the fetched default checkout, and only for seasons from 2024-25 onwards. Live `fplt predict` refuses to record an all-zero frame. Walk-forward backtests still record a cold start, such as a rolling mean before any appearances.
+- Secrets (`FPLT_ENTRY_ID`, `FPLT_FPL_API_TOKEN`, `FPLT_NTFY_URL`, SMTP) load from `~/.config/fplt/env` (or `FPLT_ENV_FILE`) via `deploy/launchd/run-with-env.sh` / `Settings`. Operator steps: `deploy/README.md`.
+- Post-downtime one-shot: `make ops-catchup` / `fplt ops-catchup` runs fetch → restage → Understat/API-Football ingest → `catch_up` → status. Regular cadence: `make ops-tick` / `fplt ops-tick` (also GHA). Alert → one-command fix, season rollover, and hand-run GW: `docs/ops-runbook.md`.
+- Multi-model eval: `make eval-board SEASON=2024-25` (`fplt.backtest.eval_board`) runs walk-forward backtests for `rolling_mean_v1`, `ep_next_v1`, `dc_layered_v1`, `dc_layered_v2`, `dc_layered_v3`, `dc_layered_v4`, and `lgbm_direct_v1` into the prediction ledger for `make leaderboard`. OpenFPL (`openfpl_v1`) is optional — include it with `--with-openfpl`, `--openfpl-model-dir`, or a `model_dir` other than the fetched default checkout, and only for seasons from 2024-25 onwards. Live `fplt predict` refuses to record an all-zero frame. Walk-forward backtests still record a cold start, such as a rolling mean before any appearances.
 - Fair compare (CLI): `make compare-models SEASON=2024-25` / `uv run fplt compare …` runs the same core set under shared windows in walk-forward and fixed-parameter modes and writes `$FPLT_DATA_DIR/compare/.../summary.json` (see §7.1).
 - Component eval (CLI): `make eval-components SEASON=2024-25` / `uv run fplt eval-components …` walk-forwards scoreline RPS/log-loss/CS Brier (Dixon-Coles vs Poisson vs `odds_poisson_v1` / `odds_1x2_v1`), minutes Brier on P(played) and P(≥60) sliced by `source`, involvement goal-share MAE, and an optional `n_sims` stability sweep for `dc_layered_v1`. Writes `$FPLT_DATA_DIR/component_eval/.../summary.json` (see §7.3). Other/haul board: `make other-measure SEASON=2024-25` / `uv run fplt other-measure …` (see §7.3).
 - Operator logging: CLI and scripts call `fplt.utils.logging.configure_logging` (default INFO to stderr with ISO-8601 UTC timestamps; `-v`/`--verbose` for DEBUG including FPL HTTP paths; `-q` for WARNING+; `--log-format json` / `FPLT_LOG_FORMAT=json` for one JSON object per line — workflows use JSON). Library modules use `logging.getLogger(__name__)`. A `contextvars` filter injects `run_id`, `experiment_id`, `checkpoint`, `line`, `spec`, `season`, and `gw` (set by `RunWriter`, `run_ops_tick`, and the experiment runner). While a `RunWriter` is open, INFO+ records tee to `runs/run=<id>/logs/run.log.jsonl`; each ops checkpoint writes write-once `official/…/checkpoint=<cp>/ops_log.jsonl` (pulled with `fplt data pull --official`). Empty env values are ignored (`Settings.model_config.env_ignore_empty=True`; production `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON` treat blank as unset). Credential fields on `Settings` are `pydantic.SecretStr`; `configure_logging` installs a `SecretRedactionFilter` that replaces configured secrets (plus `Bearer ` / URL-encoded forms) and `Authorization` / `x-api-authorization` / `api-key` header values and `?token=` / `?key=` query params with `***` before any handler emits (public Actions logs and JSONL tees). Suspected leak playbook: `docs/ops-runbook.md`.
@@ -673,7 +675,7 @@ Live unattended models and planner horizon come from `configs/ops/production.yam
 | Distributions | pmf sums to 1; clean-sheet probabilities in [0, 1]; home/away axis conventions |
 | Optimiser | Constraint satisfaction on small known problems: budget, 2/5/5/3, max 3 per club, valid formation, transfer accounting, hit costs |
 | Features | Known input → known output; PIT respected |
-| Integration | Synthetic mini-league (6 teams, 10 GWs) materialised end to end with Dagster's in-process `materialize()` |
+| Integration | Synthetic mini-league (6 teams, 10 GWs) exercised end to end via library catch-up / plan helpers |
 
 ### 9.3 Coverage
 
@@ -753,7 +755,6 @@ fplt/
 │   │   └── external/openfpl.py
 │   ├── backtest/                # walk-forward, ledger, metrics, decision sim
 │   ├── optimise/
-│   ├── orchestration/           # Dagster definitions, factories, sensors, checks
 │   └── cli.py                   # `fplt backtest`, `fplt compare`, `fplt predict`, ...
 ├── apps/leaderboard.py
 ├── external/openfpl/            # isolated env; ensemble fetched into OpenFPL/
@@ -772,7 +773,7 @@ Milestones map to GitHub milestones; each bullet becomes one or more issues.
 |---|---|---|
 | **M0 Scaffold** | uv project, ruff, pyright, pytest + cov, Makefile, CI workflow, settings, package skeleton | `make check` passes in CI |
 | **M1 Snapshots** | `scripts/snapshot.py`, `snapshot.yml` workflow, `snapshots` branch | Snapshots appear hourly near deadlines; **ship first — missed snapshots are unrecoverable** |
-| **M2 Data layer** | Raw ingest, staging tables, `available_at`, `DataStore`, `PITData`, schemas, vaastav import, Dagster data assets + checks | Staged tables for ≥ 3 seasons + current season validate in the Dagster UI |
+| **M2 Data layer** | Raw ingest, staging tables, `available_at`, `DataStore`, `PITData`, schemas, vaastav import | Staged tables for ≥ 3 seasons + current season validate via pandera / CLI |
 | **M3 Evaluation spine** | Contracts, `ModelSpec`, registry, baselines (rolling mean, ep_next), walk-forward backtester, ledger, metrics, contract + leakage tests, leaderboard v0 | Two baselines on the leaderboard |
 | **M4 Score model** | Dixon-Coles, `ScorelineDist`, component ledger and diagnostics | DC beats Poisson baseline on RPS |
 | **M5 Layered predictor** | Scoring rules + reconstruction tests, minutes, involvement, other-points, simulation engine, `CompositePredictor` | Layered model on the leaderboard |

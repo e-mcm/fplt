@@ -1,10 +1,10 @@
-# Deploy — unattended Dagster + secrets
+# Deploy — secrets + GHA ops
 
-Always-on templates for `dagster-webserver` and `dagster-daemon`. Secrets for the
-live squad and recommendation alerts are injected from the environment; they are
-never committed.
+Production orchestration is **GitHub Actions** plus the **`fplt` CLI**
+(`docs/design.md` §8). This directory holds secret-loading helpers and an
+optional compose volume layout — not a local orchestrator daemon.
 
-**Agents:** alert → fix commands → [`docs/ops-runbook.md`](../docs/ops-runbook.md); cadence and sensor map → [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md); architecture §8 → [`docs/design.md`](../docs/design.md). Live models → `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`). Do not put secrets in plists or compose committed files.
+**Agents:** alert → fix commands → [`docs/ops-runbook.md`](../docs/ops-runbook.md); architecture §8 → [`docs/design.md`](../docs/design.md). Live models → `configs/ops/production.yaml` (or `FPLT_PRODUCTION_MODELS` / `FPLT_PLAN_HORIZON`). Do not put secrets in committed files.
 
 ## What to set
 
@@ -29,7 +29,7 @@ are all set; otherwise that channel is a no-op (same as missing ntfy).
 Canonical commented list: repo-root [`.env.example`](../.env.example). Never put
 real cookie or password values in git.
 
-## launchd (macOS always-on)
+## Local secrets file
 
 1. Create the secrets file (mode `600`). Prefer the CLI for the live-team token
    (never paste `FPLT_FPL_API_TOKEN` into the repo `.env`):
@@ -43,33 +43,17 @@ real cookie or password values in git.
    ```
 
    Or copy `.env.example` to `~/.config/fplt/env` and edit there. Override the
-   path with `FPLT_ENV_FILE` if needed. `fplt` Settings also loads this file for
-   local CLI use (not only launchd).
-
-2. Copy the plists from `deploy/launchd/`, replace `__FPLT_REPO__` with the
-   absolute path to this checkout, and ensure `dagster-webserver` /
-   `dagster-daemon` are on `PATH` for the agent (or use absolute paths to the
-   `uv`/`venv` binaries).
-
-3. Load the agents:
-
-   ```bash
-   launchctl load ~/Library/LaunchAgents/dev.fplt.webserver.plist
-   launchctl load ~/Library/LaunchAgents/dev.fplt.daemon.plist
-   ```
-
-`run-with-env.sh` sources the secrets file before exec. Paths
-(`DAGSTER_HOME`, `FPLT_DATA_DIR`) stay in the plist; session cookie, ntfy, and
-SMTP stay out of the plist.
+   path with `FPLT_ENV_FILE` if needed. `fplt` Settings loads this file for
+   local CLI use. `deploy/launchd/run-with-env.sh` sources the same file before
+   exec when wrapping a command.
 
 After a successful catch-up or pre-deadline plan, recommendation `report.md` is
-pushed when ntfy and/or SMTP are configured. Run failures still POST to
-`FPLT_NTFY_URL` when set.
+pushed when ntfy and/or SMTP are configured. Workflow failures POST to
+`FPLT_NTFY_URL` / `NTFY_URL` when set.
 
-## Post-travel / downtime catch-up (no UI)
+## Post-travel / downtime catch-up
 
-When the laptop slept through sensors or the daemon was off, drain the backlog
-without opening Dagster:
+When scheduled ops ticks missed checked gameweeks, drain the backlog:
 
 ```bash
 make ops-catchup
@@ -81,9 +65,8 @@ API-Football ingest → `catch_up` for every checked GW still missing a producti
 plan → print counts / pending GWs and `fplt auth status`. Refresh the live token
 first if plans should use your squad (`uv run fplt auth status`).
 
-Optional flags via `ARGS`, e.g. `make ops-catchup ARGS='--no-notify'`. Does not
-replace a running daemon for ongoing pre-deadline windows; use this as a
-one-shot recovery.
+Optional flags via `ARGS`, e.g. `make ops-catchup ARGS='--no-notify'`. Regular
+cadence remains GHA `ops-tick` / `make ops-tick`.
 
 ## GHA ops-tick / ops-catchup (foundation)
 
@@ -140,7 +123,11 @@ gh workflow run ops-tick.yml -f force_live=true
 gh workflow run ops-catchup.yml -f force_live=true -f no_notify=true
 ```
 
-## docker compose (optional VPS)
+## docker compose (optional data volume)
+
+Optional helper for a host that keeps `$FPLT_DATA_DIR` on a named volume.
+Orchestration stays on GHA / the `fplt` CLI — compose does not run a planner
+daemon.
 
 1. Build or tag an image as `fplt:local` that contains this repo and its deps.
 2. Copy secrets next to the compose file (gitignored):
@@ -151,20 +138,13 @@ gh workflow run ops-catchup.yml -f force_live=true -f no_notify=true
    # edit values
    ```
 
-   Or export the same `FPLT_*` variables in the shell. Compose substitutes them
-   into both services, including `FPLT_FPL_API_TOKEN` (live my-team) and optional
-   `FPLT_API_FOOTBALL_KEY` (local injuries fetch). Legacy `FPLT_FPL_SESSION` is
-   still passed for older setups but unused by the current API.
-
 3. Start:
 
    ```bash
    docker compose -f deploy/docker-compose.yml up -d
    ```
 
-Container `FPLT_DATA_DIR` remains `/var/lib/fplt` (volume-backed). Do not point
-compose at a host `.env` that sets `FPLT_DATA_DIR=./data` unless you also adjust
-volumes.
+Container `FPLT_DATA_DIR` remains `/var/lib/fplt` (volume-backed).
 
 ## Heartbeats and failure alerts (ops-03)
 

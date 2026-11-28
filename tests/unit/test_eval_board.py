@@ -8,11 +8,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from fplt.backtest.eval_set import _yaml_openfpl_model_dir_set
-from fplt.models.direct.lgbm import LGBMDirectPredictor
-from fplt.models.spec import ModelSpec, get_model
-from fplt.orchestration import defs
-from fplt.orchestration.eval_job import (
+from fplt.backtest.eval_board import (
     CORE_MODELS,
     OPENFPL_MODEL,
     EvalResult,
@@ -21,6 +17,9 @@ from fplt.orchestration.eval_job import (
     resolve_eval_models,
     run_eval_board,
 )
+from fplt.backtest.eval_set import _yaml_openfpl_model_dir_set
+from fplt.models.direct.lgbm import LGBMDirectPredictor
+from fplt.models.spec import ModelSpec, get_model
 from fplt.settings import get_settings
 from scripts.eval_board import build_parser, main
 
@@ -128,7 +127,7 @@ def test_run_eval_board_delegates_to_backtest(
         }
         return [ModelSpec(name=name, kind="rolling_mean") for name in models]
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.run_backtest", fake_backtest)
+    monkeypatch.setattr("fplt.backtest.eval_board.run_backtest", fake_backtest)
     monkeypatch.setattr(
         "fplt.backtest.eval_set._yaml_openfpl_model_dir_set",
         lambda: False,
@@ -181,9 +180,9 @@ def test_run_eval_board_patches_openfpl_model_dir(
         openfpl_calls.append(model_dir)
         return ModelSpec(name=OPENFPL_MODEL, kind="openfpl")
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.run_backtest", fake_backtest)
-    monkeypatch.setattr("fplt.orchestration.eval_job._run_openfpl", fake_openfpl)
-    monkeypatch.setattr("fplt.orchestration.eval_job.stage_outcomes", lambda *_: {})
+    monkeypatch.setattr("fplt.backtest.eval_board.run_backtest", fake_backtest)
+    monkeypatch.setattr("fplt.backtest.eval_board._run_openfpl", fake_openfpl)
+    monkeypatch.setattr("fplt.backtest.eval_board.stage_outcomes", lambda *_: {})
     result = run_eval_board(
         tmp_path,
         "2024-25",
@@ -203,7 +202,7 @@ def test_skip_note_when_openfpl_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.run_backtest",
+        "fplt.backtest.eval_board.run_backtest",
         lambda *a, **k: [ModelSpec(name="rolling_mean_v1", kind="rolling_mean")],
     )
     monkeypatch.setattr(
@@ -260,46 +259,6 @@ def test_script_main_maps_errors(
     get_settings.cache_clear()
 
 
-def test_eval_board_job_is_registered() -> None:
-    assert "eval_board" in defs.get_repository_def().job_names
-
-
-def test_eval_board_op_uses_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    seen: dict[str, object] = {}
-
-    def fake_run(
-        data_dir: Path,
-        season: str,
-        from_gw: int,
-        to_gw: int,
-        **kwargs: object,
-    ) -> EvalResult:
-        seen["data_dir"] = data_dir
-        seen["season"] = season
-        seen["kwargs"] = kwargs
-        return EvalResult(
-            specs=(ModelSpec(name="rolling_mean_v1", kind="rolling_mean"),)
-        )
-
-    monkeypatch.setattr("fplt.orchestration.eval_job.run_eval_board", fake_run)
-    from dagster import RunConfig
-
-    from fplt.orchestration.eval_job import EvalBoardConfig, eval_board_job
-
-    result = eval_board_job.execute_in_process(
-        run_config=RunConfig(ops={"eval_board_op": EvalBoardConfig(season="2024-25")})
-    )
-    assert result.success
-    assert result.output_for_node("eval_board_op") == ["rolling_mean_v1"]
-    assert seen["data_dir"] == tmp_path
-    assert seen["season"] == "2024-25"
-    get_settings.cache_clear()
-
-
 def test_eval_job_registers_lgbm_direct() -> None:
     assert get_model("lgbm_direct") is LGBMDirectPredictor
 
@@ -308,7 +267,7 @@ def test_skip_note_for_early_default_season(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.run_backtest",
+        "fplt.backtest.eval_board.run_backtest",
         lambda *a, **k: [ModelSpec(name="rolling_mean_v1", kind="rolling_mean")],
     )
     monkeypatch.setattr(
@@ -316,7 +275,7 @@ def test_skip_note_for_early_default_season(
         lambda: False,
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.resolve_eval_models",
+        "fplt.backtest.eval_board.resolve_eval_models",
         lambda season, **_: list(CORE_MODELS),
     )
     result = run_eval_board(tmp_path, "2023-24", 1, 1)
@@ -440,7 +399,7 @@ def test_run_openfpl_walks_forward(
         refit="never",
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.load_model_specs",
+        "fplt.backtest.eval_board.load_model_specs",
         lambda: {OPENFPL_MODEL: base},
     )
 
@@ -455,9 +414,9 @@ def test_run_openfpl_walks_forward(
             del view, horizon
             return pl.DataFrame()
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.get_model", lambda _kind: Stub)
+    monkeypatch.setattr("fplt.backtest.eval_board.get_model", lambda _kind: Stub)
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.walk_forward",
+        "fplt.backtest.eval_board.walk_forward",
         lambda *_a, **_k: pl.DataFrame({"xpts": [1.0]}),
     )
     written: list[Path] = []
@@ -466,9 +425,9 @@ def test_run_openfpl_walks_forward(
         written.append(data_dir)
         return type("M", (), {"run_id": "r_test"})()
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.write_backtest_run", fake_write)
-    monkeypatch.setattr("fplt.orchestration.eval_job.stage_outcomes", lambda *_: {})
-    monkeypatch.setattr("fplt.orchestration.eval_job.PITData", lambda store: store)
+    monkeypatch.setattr("fplt.backtest.eval_board.write_backtest_run", fake_write)
+    monkeypatch.setattr("fplt.backtest.eval_board.stage_outcomes", lambda *_: {})
+    monkeypatch.setattr("fplt.backtest.eval_board.PITData", lambda store: store)
 
     class _FakeStore:
         def __init__(self, root: Path) -> None:
@@ -480,7 +439,7 @@ def test_run_openfpl_walks_forward(
 
             return datetime(2024, 8, 16, 17, tzinfo=UTC)
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", _FakeStore)
+    monkeypatch.setattr("fplt.backtest.eval_board.DataStore", _FakeStore)
 
     result = run_eval_board(
         tmp_path,
@@ -508,22 +467,22 @@ def test_run_openfpl_warns_on_empty_dir(
         params={"model_dir": "", "compare_from": "2024-25"},
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.load_model_specs",
+        "fplt.backtest.eval_board.load_model_specs",
         lambda: {OPENFPL_MODEL: base},
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.get_model",
+        "fplt.backtest.eval_board.get_model",
         lambda _kind: lambda spec: type("M", (), {"spec": spec})(),
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.walk_forward",
+        "fplt.backtest.eval_board.walk_forward",
         lambda *_a, **_k: pl.DataFrame(),
     )
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.write_backtest_run",
+        "fplt.backtest.eval_board.write_backtest_run",
         lambda *a, **k: type("M", (), {"run_id": "r_test"})(),
     )
-    monkeypatch.setattr("fplt.orchestration.eval_job.PITData", lambda store: store)
+    monkeypatch.setattr("fplt.backtest.eval_board.PITData", lambda store: store)
 
     class _FakeStore:
         def __init__(self, root: Path) -> None:
@@ -535,7 +494,7 @@ def test_run_openfpl_warns_on_empty_dir(
 
             return datetime(2024, 8, 16, 17, tzinfo=UTC)
 
-    monkeypatch.setattr("fplt.orchestration.eval_job.DataStore", _FakeStore)
+    monkeypatch.setattr("fplt.backtest.eval_board.DataStore", _FakeStore)
     with caplog.at_level("WARNING"):
         _run_openfpl(
             tmp_path,
@@ -554,7 +513,7 @@ def test_run_openfpl_missing_spec(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "fplt.orchestration.eval_job.load_model_specs",
+        "fplt.backtest.eval_board.load_model_specs",
         lambda: {},
     )
     with pytest.raises(ValueError, match="unknown model spec"):
@@ -568,26 +527,3 @@ def test_run_openfpl_missing_spec(
             seasons_back=None,
             steps=1,
         )
-
-
-def test_eval_board_op_logs_skip(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    monkeypatch.setattr(
-        "fplt.orchestration.eval_job.run_eval_board",
-        lambda *a, **k: EvalResult(
-            specs=(ModelSpec(name="rolling_mean_v1", kind="rolling_mean"),),
-            skipped_openfpl="skipped openfpl_v1: demo",
-        ),
-    )
-    from dagster import RunConfig
-
-    from fplt.orchestration.eval_job import EvalBoardConfig, eval_board_job
-
-    result = eval_board_job.execute_in_process(
-        run_config=RunConfig(ops={"eval_board_op": EvalBoardConfig(season="2024-25")})
-    )
-    assert result.success
-    get_settings.cache_clear()

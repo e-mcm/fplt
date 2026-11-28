@@ -7,8 +7,8 @@ prediction / eval lead times.
 
 from __future__ import annotations
 
-# Live ``fplt predict`` / Dagster lineage default: enough steps for H=8–10
-# planning without forcing the MILP default.
+# Live ``fplt predict`` default: enough steps for H=8–10 planning without
+# forcing the MILP default.
 DEFAULT_PROJECTION_HORIZON = 10
 
 # Skill-by-horizon eval length (``eval-components --points-models``,
