@@ -59,6 +59,7 @@ KIND_TOP_LEVEL: Mapping[str, tuple[str, ...]] = {
     "eval_board": ("board/core", "board/openfpl"),
     "ingest": ("ingest",),
     "remote": ("remote/pull", "remote/push", "remote/check"),
+    "curate": ("remote/pull", "ingest", "curate/build", "remote/push"),
 }
 
 # Nested names shared with walk-forward / plan; excluded from ops ``total_s``.

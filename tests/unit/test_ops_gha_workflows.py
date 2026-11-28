@@ -141,6 +141,28 @@ def test_release_workflow_refuses_on_red_ci_freeze_or_smoke() -> None:
     assert "Run freeze + smoke gates" in step_names
 
 
+def test_snapshot_curate_job_after_capture() -> None:
+    """#345: curate needs capture success, own concurrency, fplt data curate."""
+    doc = _load("snapshot.yml")
+    curate = doc["jobs"]["curate"]
+    assert curate["needs"] == "capture"
+    assert curate["if"] == "always() && needs.capture.result == 'success'"
+    assert curate["environment"] == "r2"
+    assert curate["timeout-minutes"] == 60
+    assert curate["concurrency"]["group"] == "curate"
+    assert curate["concurrency"]["cancel-in-progress"] is False
+    steps = curate["steps"]
+    cache = next(s for s in steps if s.get("name") == "Restore raw cache")
+    assert cache["with"]["path"] == "data/raw"
+    assert "curate-raw-" in cache["with"]["key"]
+    run_step = next(s for s in steps if s.get("name") == "Curate")
+    assert "fplt data curate" in run_step["run"]
+    assert "--source bucket" in run_step["run"]
+    assert run_step["env"]["FPLT_DATA_BUCKET"] == "${{ vars.DATA_BUCKET }}"
+    # Capture alerts stay independent of curate (curate failure never blocks capture).
+    assert doc["jobs"]["alerts"]["needs"] == "capture"
+
+
 def test_dual_write_capture_workflows_untouched() -> None:
     """Foundation must not strip branch+R2 dual-write from capture jobs."""
     for name in (

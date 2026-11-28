@@ -1563,6 +1563,7 @@ def main(argv: list[str] | None = None) -> None:
             "eval_board",
             "ingest",
             "remote",
+            "curate",
             "ops_tick",
             "ops_catchup",
         ),
@@ -1643,6 +1644,38 @@ def main(argv: list[str] | None = None) -> None:
     data_pull.add_argument("--checkpoint", default="T-90m", help="Default: T-90m")
     data_pull.add_argument("--line", help="Line filter (default: all at checkpoint)")
     data_pull.add_argument("--data-dir", type=Path, help="Override FPLT_DATA_DIR")
+    data_curate = data_sub.add_parser(
+        "curate",
+        parents=[log_flags],
+        help=(
+            "Fetch raw → restage → curated build → status/curated/latest.json "
+            "(#345 producer; GHA snapshot curate job)"
+        ),
+    )
+    data_curate.add_argument(
+        "--source",
+        choices=("auto", "bucket", "branch"),
+        default="auto",
+        help=(
+            "Raw fetch source: auto (bucket when FPLT_DATA_BUCKET is set, "
+            "else branch), bucket, or branch (default: auto)"
+        ),
+    )
+    data_curate.add_argument(
+        "--remote",
+        default="origin",
+        help="Git remote (or local path) for the snapshots branch",
+    )
+    data_curate.add_argument(
+        "--branch",
+        default="snapshots",
+        help="Branch that holds write-once captures (default: snapshots)",
+    )
+    data_curate.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
     data_gates = data_sub.add_parser(
         "gates",
         parents=[log_flags],
@@ -2218,10 +2251,42 @@ def _data(args: argparse.Namespace) -> None:
     if command == "pull":
         _data_pull(args)
         return
+    if command == "curate":
+        _data_curate(args)
+        return
     if command == "gates":
         _data_gates(args)
         return
     raise SystemExit(_not_implemented(f"data {command}"))
+
+
+def _data_curate(args: argparse.Namespace) -> None:
+    from fplt.automation.curate import run_curate
+    from fplt.data.remote import RemoteError
+    from fplt.data.snapshots import SnapshotFetchError
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    try:
+        result = run_curate(
+            data_dir,
+            source=args.source,
+            remote=args.remote,
+            branch=args.branch,
+        )
+    except (SnapshotFetchError, RemoteError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+    pointer = result.pointer
+    build_id = result.manifest.build_id
+    updated = "yes" if result.pointer_updated else "no"
+    print(
+        f"curate: build_id={build_id} pointer_updated={updated} "
+        f"fetched={result.feeds.snapshots_fetched} "
+        f"staged={result.feeds.staged_snapshots}"
+        + (f" raw_cutoff={pointer.raw_cutoff.isoformat()}" if pointer else "")
+    )
 
 
 def _data_pull(args: argparse.Namespace) -> None:

@@ -21,6 +21,7 @@ from fplt.schemas.manifests import (
     BatchManifest,
     BuildManifest,
     BuildTableEntry,
+    CuratedLatestPointer,
     ExperimentArm,
     ExperimentEvent,
     ExperimentManifest,
@@ -131,6 +132,26 @@ def test_build_manifest_requires_tables() -> None:
             raw_manifest_hash="h" * 64,
             raw_cutoff=_TS,
             tables={},
+        )
+
+
+def test_curated_latest_pointer_round_trip() -> None:
+    pointer = CuratedLatestPointer(
+        build_id="build_cafe",
+        created_at=_TS,
+        raw_cutoff=_TS,
+        code_sha="abc1234",
+    )
+    loaded = CuratedLatestPointer.model_validate_json(pointer.model_dump_json())
+    assert loaded == pointer
+    with pytest.raises(ValidationError):
+        CuratedLatestPointer.model_validate(
+            {
+                "build_id": "x",
+                "created_at": _TS.isoformat(),
+                "raw_cutoff": _TS.isoformat(),
+                # missing code_sha
+            }
         )
 
 

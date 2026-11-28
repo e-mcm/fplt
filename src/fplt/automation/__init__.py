@@ -1,5 +1,6 @@
 """Unattended gameweek cycle: catch-up, checkpoints, pre-deadline, alerts."""
 
+from fplt.automation.curate import CurateResult, run_curate
 from fplt.automation.freeze import (
     FREEZE_LEAD,
     FreezeWindow,
@@ -31,6 +32,7 @@ from fplt.automation.status import (
 
 __all__ = [
     "FREEZE_LEAD",
+    "CurateResult",
     "FreezeWindow",
     "OpsCatchupResult",
     "OpsTickResult",
@@ -45,6 +47,7 @@ __all__ = [
     "in_freeze_window",
     "public_status",
     "publish_ops_status",
+    "run_curate",
     "run_ops_catchup",
     "run_ops_tick",
     "run_smoke_plan",
