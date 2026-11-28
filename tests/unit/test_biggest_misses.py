@@ -16,6 +16,9 @@ from fplt.automation.biggest_misses import (
     tag_miss_reason,
 )
 from fplt.automation.post_gw import (
+    _biggest_misses,
+    _official_predictions,
+    _optional_table,
     format_post_gw_ntfy,
     format_post_gw_summary,
     run_post_gw,
@@ -945,3 +948,222 @@ def test_reason_minutes_starts(minutes: int, starts: int, expected: str) -> None
         )
         == expected
     )
+
+
+def _empty_status() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "season": pl.Utf8(),
+            "player_key": pl.Int64(),
+            "status": pl.Utf8(),
+            "chance_of_playing": pl.Float64(),
+            "chance_of_playing_this_round": pl.Float64(),
+            "available_at": pl.Datetime(time_zone="UTC"),
+        }
+    )
+
+
+def _empty_lineups() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "season": pl.Utf8(),
+            "player_key": pl.Int64(),
+            "fixture_id": pl.Int64(),
+            "role": pl.Utf8(),
+            "available_at": pl.Datetime(time_zone="UTC"),
+        }
+    )
+
+
+def test_t90_cutoff_naive_deadline() -> None:
+    naive = datetime(2024, 8, 16, 11, 0)  # noqa: DTZ001 — intentional naive
+    assert t90_cutoff(naive) == _T90
+
+
+def test_no_matching_outcomes_returns_empty() -> None:
+    """Predictions exist but share no keys with outcomes → empty join."""
+    frame = compute_biggest_misses(
+        model_id=_MODEL,
+        key=_KEY,
+        predictions=_predictions([{"player_key": 1, "fixture_id": 1, "xpts": 5.0}]),
+        outcomes=_outcomes(
+            [
+                {
+                    "player_key": 99,
+                    "fixture_id": 99,
+                    "team_key": 1,
+                    "pts": 0,
+                    "minutes": 0,
+                }
+            ]
+        ),
+        stats=pl.DataFrame(),
+        fixtures=_fixtures(n=1, team_keys=[(1, 2)]),
+        player_status=_empty_status(),
+        predicted_lineups=_empty_lineups(),
+        deadline=_DEADLINE,
+    )
+    assert frame.is_empty()
+
+
+def test_empty_and_wrong_season_stats() -> None:
+    preds = _predictions([{"player_key": 1, "fixture_id": 1, "xpts": 6.0}])
+    outs = _outcomes(
+        [{"player_key": 1, "fixture_id": 1, "team_key": 1, "pts": 1, "minutes": 90}]
+    )
+    empty_stats = compute_biggest_misses(
+        model_id=_MODEL,
+        key=_KEY,
+        predictions=preds,
+        outcomes=outs,
+        stats=pl.DataFrame(
+            schema={
+                "season": pl.Utf8(),
+                "player_key": pl.Int64(),
+                "fixture_id": pl.Int64(),
+                "starts": pl.Int64(),
+                "red_cards": pl.Int64(),
+                "penalties_missed": pl.Int64(),
+            }
+        ),
+        fixtures=_fixtures(n=1, team_keys=[(1, 2)]),
+        player_status=_empty_status(),
+        predicted_lineups=_empty_lineups(),
+        deadline=_DEADLINE,
+    )
+    assert empty_stats.height == 1
+    wrong = _stats(
+        [
+            {
+                "player_key": 1,
+                "fixture_id": 1,
+                "minutes": 90,
+                "starts": 1,
+                "red_cards": 0,
+                "penalties_missed": 0,
+            }
+        ]
+    ).with_columns(pl.lit("2099-00").alias("season"))
+    other_season = compute_biggest_misses(
+        model_id=_MODEL,
+        key=_KEY,
+        predictions=preds,
+        outcomes=outs,
+        stats=wrong,
+        fixtures=_fixtures(n=1, team_keys=[(1, 2)]),
+        player_status=_empty_status(),
+        predicted_lineups=_empty_lineups(),
+        deadline=_DEADLINE,
+    )
+    assert other_season.height == 1
+
+
+def test_injury_out_signal_and_filtered_empty() -> None:
+    preds = _predictions([{"player_key": 8, "fixture_id": 1, "xpts": 7.0}])
+    outs = _outcomes(
+        [{"player_key": 8, "fixture_id": 1, "team_key": 1, "pts": 0, "minutes": 0}]
+    )
+    stats = _stats(
+        [
+            {
+                "player_key": 8,
+                "fixture_id": 1,
+                "minutes": 0,
+                "starts": 0,
+                "red_cards": 0,
+                "penalties_missed": 0,
+            }
+        ]
+    )
+    hit = pl.DataFrame(
+        [
+            {
+                "season": _SEASON,
+                "player_key": 8,
+                "api_player_id": 1,
+                "team_key": 1,
+                "api_team_id": 1,
+                "api_fixture_id": 1,
+                "fixture_id": 1,
+                "injury_type": "Knee",
+                "reason": "Knee",
+                "category": "out",
+                "available_at": _T90,
+                "source": "test",
+            }
+        ]
+    )
+    flagged = compute_biggest_misses(
+        model_id=_MODEL,
+        key=_KEY,
+        predictions=preds,
+        outcomes=outs,
+        stats=stats,
+        fixtures=_fixtures(n=1, team_keys=[(1, 2)]),
+        player_status=_empty_status(),
+        predicted_lineups=_empty_lineups(),
+        deadline=_DEADLINE,
+        player_injuries=hit,
+    )
+    assert flagged["reason"][0] == "injury"
+    # Non-empty injuries that filter out (wrong category / after cutoff).
+    miss = hit.with_columns(
+        pl.lit("doubtful").alias("category"),
+        pl.lit(_T90 + timedelta(minutes=5)).alias("available_at"),
+    )
+    skipped = compute_biggest_misses(
+        model_id=_MODEL,
+        key=_KEY,
+        predictions=preds,
+        outcomes=outs,
+        stats=stats,
+        fixtures=_fixtures(n=1, team_keys=[(1, 2)]),
+        player_status=_empty_status(),
+        predicted_lineups=_empty_lineups(),
+        deadline=_DEADLINE,
+        player_injuries=miss,
+    )
+    assert skipped["reason"][0] == "benched"
+
+
+def test_official_predictions_bad_pointer_and_optional_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = official_checkpoint_dir(tmp_path, season=_SEASON, gw=1, checkpoint="T-90m")
+    base.mkdir(parents=True)
+    (base / "line=primary.json").write_text("{not-json", encoding="utf-8")
+    assert _official_predictions(tmp_path, _KEY, line="primary").is_empty()
+
+    (base / "line=primary.json").write_text('{"plan_run_id":"x"}', encoding="utf-8")
+    assert _official_predictions(tmp_path, _KEY, line="primary").is_empty()
+
+    store = DataStore(tmp_path)
+
+    def boom(self: DataStore, name: str) -> pl.DataFrame:
+        raise OSError(f"missing {name}")
+
+    monkeypatch.setattr(DataStore, "read", boom)
+    missing = _optional_table(store, "player_injuries")
+    assert missing.is_empty()
+    assert "player_key" in missing.columns
+
+
+def test_biggest_misses_outcomes_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_predict_run(tmp_path, player_key=1)
+
+    def boom(self: DataStore, name: str) -> pl.DataFrame:
+        if name == "player_fixture_outcomes":
+            raise KeyError(name)
+        raise KeyError(name)
+
+    monkeypatch.setattr(DataStore, "read", boom)
+    frame = _biggest_misses(
+        tmp_path,
+        _KEY,
+        model_id=_MODEL,
+        line="primary",
+        deadline=_DEADLINE,
+    )
+    assert frame.is_empty()
