@@ -9,5 +9,6 @@ points PMFs live in ``fplt.store.points_pmf``. Ops-06 quarantine rows:
 ``weekly_report.WeeklyReportSchema``. Derived catalog:
 ``catalog.CatalogRunSchema`` (Stage C / step 8). Ops-10 health document:
 ``status.StatusDocument``. Timing JSON: ``timing.TimingRecord``. This-week
-timing panel tables: ``run_timing``.
+timing panel tables: ``run_timing``. Residual signal screen (#402):
+``signal_screen.SignalScreenSchema``.
 """

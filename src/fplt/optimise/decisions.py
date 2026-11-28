@@ -110,9 +110,10 @@ logger = logging.getLogger(__name__)
 _MIN_COVERAGE = 0.5
 _CHIP_ARMS: tuple[ChipArm, ...] = ("off", "rule_based", "optimised")
 
-# Live ``fplt plan`` / automation / ``catch_up`` / ``pre_deadline``. Chosen
+# Live ``fplt plan`` / automation ``pre_deadline`` / checkpoints. Chosen
 # after the C6 three-arm board (optimised > chips-off > rule-based on
 # 2025-26 H=3). Keep ``DEFAULT_PLAN_HORIZON`` at 3; do not flip from this.
+# Catch-up past GWs is predict-only (#381) and never reaches this arm.
 DEFAULT_LIVE_CHIP_ARM: ChipArm = "optimised"
 
 # Live within-horizon list prices. Kept off until the FDB-218 season-points
@@ -123,6 +124,7 @@ DEFAULT_LIVE_PRICE_FORECAST_METHOD: PriceForecastMethod = "mean_gw_delta"
 __all__ = [
     "DEFAULT_LIVE_CHIP_ARM",
     "DEFAULT_LIVE_PRICE_FORECAST_METHOD",
+    "PastGameweekSquadError",
     "PlanExistsError",
     "advance_squad_from_plan",
     "assert_sane_mean_ppg",
@@ -165,6 +167,32 @@ class PlanExistsError(FileExistsError):
         """
         super().__init__(str(path))
         self.report = report
+
+
+class PastGameweekSquadError(ValueError):
+    """Refused to resolve a finished gameweek from the live / public squad.
+
+    The live squad (``my-team`` / ``public_squad_state``) always reflects
+    ``last_finished``. Planning or replaying a past ``as_of_gw`` against it
+    silently uses the wrong fifteen, bank, FTs, and chips (#381). Catch-up
+    for past GWs is predict-only; plans use the live squad only for the
+    upcoming deadline.
+    """
+
+    def __init__(self, as_of_gw: int, last_finished: int) -> None:
+        """Record the requested and live gameweeks.
+
+        Args:
+            as_of_gw: Deadline the caller asked to resolve for.
+            last_finished: Latest finished event on the live / public squad.
+        """
+        super().__init__(
+            f"refusing to resolve as_of_gw={as_of_gw} from the live squad "
+            f"(last_finished={last_finished}); catch-up past GWs is "
+            "predict-only — plan only the upcoming deadline"
+        )
+        self.as_of_gw = as_of_gw
+        self.last_finished = last_finished
 
 
 def candidates_as_of(view: PITView) -> pl.DataFrame:
@@ -507,6 +535,7 @@ def resolve_squad_state(
     *,
     entry_json: Path | None = None,
     event: int | None = None,
+    as_of_gw: int | None = None,
     settings: Settings | None = None,
     load_team: TeamLoader | None = None,
     load_public: PublicSquadLoader | None = None,
@@ -530,12 +559,20 @@ def resolve_squad_state(
     inventory from ``history.chips``. ``fplt apply`` still needs a valid
     Bearer token.
 
+    When ``as_of_gw`` is set on the live / public path, the public derivation
+    is loaded first and a ``PastGameweekSquadError`` is raised if
+    ``as_of_gw <= last_finished`` so a past deadline cannot silently reuse
+    the current squad (#381).
+
     Args:
         view: Point-in-time view used to map FPL element ids to ``player_key``
             and to price never-transferred-in players.
         entry_json: Optional picks JSON path. Wins over the live entry.
         event: Finished gameweek hint for ``load_current_team``; ignored by
-            ``public_squad_state`` (uses last finished from history).
+            ``public_squad_state`` (uses last finished from history). Defaults
+            to ``as_of_gw`` when omitted.
+        as_of_gw: Deadline being planned. When set with a live entry, must be
+            strictly after the entry's ``last_finished``.
         settings: Process settings; defaults to ``get_settings()``.
         load_team: Injectable ``load_current_team`` (for tests).
         load_public: Injectable ``public_squad_state`` (for tests).
@@ -547,6 +584,7 @@ def resolve_squad_state(
     Raises:
         FPLAPIError: Live / public load fails when ``entry_id`` is set.
         KeyError: A pick's element has no ``player_key`` in ``view``.
+        PastGameweekSquadError: ``as_of_gw`` is a finished GW on the live squad.
         ValueError: An entry payload is malformed or lacks selling prices.
     """
     state = load_squad_state()
@@ -571,19 +609,29 @@ def resolve_squad_state(
         )
         return ResolvedSquad(state=state, source="yaml")
 
+    event_hint = event if event is not None else as_of_gw
     logger.info(
-        "resolving squad via FPL API entry_id=%s event=%s",
+        "resolving squad via FPL API entry_id=%s event=%s as_of_gw=%s",
         cfg.entry_id,
-        event,
+        event_hint,
+        as_of_gw,
     )
     public_loader = public_squad_state if load_public is None else load_public
+    # Always derive public first when as_of_gw is set so we can refuse a past
+    # GW before my-team / public application (#381).
+    public: PublicSquadState | None = None
+    if as_of_gw is not None:
+        public = public_loader(cfg.entry_id, view, cfg)
+        if as_of_gw <= public.last_finished:
+            raise PastGameweekSquadError(as_of_gw, public.last_finished)
+
     token_set = bool(secret_value(cfg.fpl_api_token)) or bool(
         secret_value(cfg.fpl_session)
     )
     if token_set:
         loader = load_current_team if load_team is None else load_team
         try:
-            team = loader(event=event, settings=cfg)
+            team = loader(event=event_hint, settings=cfg)
         except FPLAPIError as exc:
             if not is_auth_failure(exc):
                 raise
@@ -591,7 +639,14 @@ def resolve_squad_state(
                 "my-team unauthorized (entry_id=%s); using public_squad_state",
                 cfg.entry_id,
             )
-            return _from_public(state, view, cfg, keys, public_loader=public_loader)
+            return _from_public(
+                state,
+                view,
+                cfg,
+                keys,
+                public_loader=public_loader,
+                public=public,
+            )
         if team.source == "my_team":
             return _from_my_team(
                 state,
@@ -600,6 +655,7 @@ def resolve_squad_state(
                 cfg,
                 keys,
                 public_loader=public_loader,
+                public=public,
             )
         # Token present but current_team fell back to raw entry_picks (no
         # selling prices) — rebuild via the public derivation.
@@ -607,13 +663,27 @@ def resolve_squad_state(
             "token present but squad source=%s; using public_squad_state",
             team.source,
         )
-        return _from_public(state, view, cfg, keys, public_loader=public_loader)
+        return _from_public(
+            state,
+            view,
+            cfg,
+            keys,
+            public_loader=public_loader,
+            public=public,
+        )
 
     logger.info(
         "no FPL token/session; using public_squad_state entry_id=%s",
         cfg.entry_id,
     )
-    return _from_public(state, view, cfg, keys, public_loader=public_loader)
+    return _from_public(
+        state,
+        view,
+        cfg,
+        keys,
+        public_loader=public_loader,
+        public=public,
+    )
 
 
 @binds_timing_artifacts()
@@ -742,6 +812,7 @@ def run_plan(
                     view,
                     entry_json=entry_json,
                     event=gameweek,
+                    as_of_gw=gameweek,
                 )
                 state = resolved.state
                 resolved_source = resolved.source
@@ -2023,12 +2094,15 @@ def _from_my_team(
     keys: dict[int, int],
     *,
     public_loader: PublicSquadLoader,
+    public: PublicSquadState | None = None,
 ) -> ResolvedSquad:
     """Apply authenticated my-team and cross-check against the public derivation."""
     resolved = apply_entry_picks(state, team.picks_payload(), keys)
     resolved = _with_live_free_transfers(resolved, team)
     try:
-        public = public_loader(cfg.entry_id, view, cfg)  # type: ignore[arg-type]
+        cross = (
+            public if public is not None else public_loader(cfg.entry_id, view, cfg)  # type: ignore[arg-type]
+        )
     except (FPLAPIError, KeyError, ValueError, OSError, RuntimeError) as exc:
         # Cross-check is best-effort (network blocked in unit tests, stale
         # public payloads, etc.); my-team values remain authoritative.
@@ -2038,7 +2112,7 @@ def _from_my_team(
             exc,
         )
     else:
-        mismatches = compare_public_to_my_team(public, team)
+        mismatches = compare_public_to_my_team(cross, team)
         if mismatches:
             logger.warning(
                 "public_squad_state mismatch vs my-team entry_id=%s: %s "
@@ -2067,14 +2141,15 @@ def _from_public(
     keys: dict[int, int],
     *,
     public_loader: PublicSquadLoader,
+    public: PublicSquadState | None = None,
 ) -> ResolvedSquad:
     """Apply ``public_squad_state`` (no token / expired token path)."""
     if cfg.entry_id is None:
         raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
-    public = public_loader(cfg.entry_id, view, cfg)
-    resolved = apply_entry_picks(state, public.team.picks_payload(), keys)
-    resolved = _with_live_free_transfers(resolved, public.team)
-    resolved = resolved.model_copy(update={"chips": public.chips})
+    derived = public if public is not None else public_loader(cfg.entry_id, view, cfg)
+    resolved = apply_entry_picks(state, derived.team.picks_payload(), keys)
+    resolved = _with_live_free_transfers(resolved, derived.team)
+    resolved = resolved.model_copy(update={"chips": derived.chips})
     logger.info(
         "squad ready: owned=%s bank=%s free_transfers=%s source=public",
         len(resolved.owned),

@@ -34,10 +34,11 @@ plan_horizon: 3
 # or when a finished current-season GW lacks player_fixture_stats.
 min_prior_seasons: 3
 
-# Catch-up (#369): fill only *current-season* checked GWs that live ops
-# missed, from this GW onwards — never staged history (vaastav seasons).
-# Bounded per tick so one run cannot burn the job timeout; the rest
-# continues on the next tick.
+# Catch-up (#369 / #381): fill only *current-season* checked GWs that live
+# ops missed, from this GW onwards — never staged history (vaastav seasons).
+# Predict-only for past GWs (ledger / drift); plans are for the upcoming
+# deadline via checkpoints / pre_deadline / run_now. Bounded per tick so
+# one run cannot burn the job timeout; the rest continues on the next tick.
 catch_up_from_gw: 1
 max_catch_up_per_tick: 4
 # #346 run identity: outside checkpoints, at most one run per line per

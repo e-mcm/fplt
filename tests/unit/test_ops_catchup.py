@@ -36,8 +36,8 @@ def test_format_ops_catchup_status_lists_planned_and_pending() -> None:
     assert "understat matches: 3" in text
     assert "api_football:      4" in text
     assert "dc_layered_v4 / H=3" in text
-    assert "planned this run:  2024-25 gw1" in text
-    assert "still pending:     2024-25 gw2" in text
+    assert "predicted this run: 2024-25 gw1" in text
+    assert "still pending:      2024-25 gw2" in text
     assert text.endswith("\n")
 
 
@@ -54,8 +54,8 @@ def test_format_ops_catchup_status_uses_none_when_empty() -> None:
             horizon=1,
         )
     )
-    assert "planned this run:  none" in text
-    assert "still pending:     none" in text
+    assert "predicted this run: none" in text
+    assert "still pending:      none" in text
 
 
 def test_run_ops_catchup_calls_existing_library_steps(
@@ -99,17 +99,9 @@ def test_run_ops_catchup_calls_existing_library_steps(
         calls.append("pending")
         return []
 
-    notify_calls: list[tuple[str, str]] = []
-
-    def notify(settings: object, title: str, message: str, **_: object) -> bool:
-        notify_calls.append((title, message))
-        return True
-
     monkeypatch.setattr("fplt.automation.ops_catchup.refresh_ops_feeds", refresh)
     monkeypatch.setattr("fplt.automation.ops_catchup.catch_up", catch_up)
     monkeypatch.setattr("fplt.automation.ops_catchup.pending_checked", pending)
-    monkeypatch.setattr("fplt.automation.ops_catchup.reports", lambda _d: "# GW 1\nok")
-    monkeypatch.setattr("fplt.automation.ops_catchup.notify_recommendation", notify)
     monkeypatch.setattr(
         "fplt.automation.ops_catchup.enforce_training_history",
         lambda *a, **k: None,
@@ -135,11 +127,9 @@ def test_run_ops_catchup_calls_existing_library_steps(
         "catch_up:['rolling_mean_v1']:1",
         "pending",
     ]
-    assert notify_calls == [("fplt recommendation", "# GW 1\nok")]
 
     # Default models come from load_production_ops (not an import-time constant).
     calls.clear()
-    notify_calls.clear()
     defaulted = run_ops_catchup(
         horizon=1,
         source="branch",
@@ -151,42 +141,31 @@ def test_run_ops_catchup_calls_existing_library_steps(
     get_settings.cache_clear()
 
 
-def test_run_ops_catchup_skips_notify_when_nothing_planned_or_disabled(
+def test_run_ops_catchup_does_not_notify_recommendations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """#381: catch-up is predict-only; no plan recommendation ntfy."""
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
-    notify_calls: list[str] = []
 
     monkeypatch.setattr(
         "fplt.automation.ops_catchup.refresh_ops_feeds",
         lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
     )
-    monkeypatch.setattr("fplt.automation.ops_catchup.catch_up", lambda *a, **k: [])
     monkeypatch.setattr(
-        "fplt.automation.ops_catchup.pending_checked", lambda *a, **k: []
+        "fplt.automation.ops_catchup.catch_up",
+        lambda *a, **k: [GWKey("2024-25", 1)],
     )
     monkeypatch.setattr(
-        "fplt.automation.ops_catchup.notify_recommendation",
-        lambda *a, **k: notify_calls.append("sent") or True,
+        "fplt.automation.ops_catchup.pending_checked", lambda *a, **k: []
     )
     monkeypatch.setattr(
         "fplt.automation.ops_catchup.enforce_training_history",
         lambda *a, **k: None,
     )
 
-    empty = run_ops_catchup(models=["rolling_mean_v1"], horizon=1)
-    assert empty.planned == []
-    assert notify_calls == []
-
-    monkeypatch.setattr(
-        "fplt.automation.ops_catchup.catch_up",
-        lambda *a, **k: [GWKey("2024-25", 1)],
-    )
-    monkeypatch.setattr("fplt.automation.ops_catchup.reports", lambda _d: "report")
-    skipped = run_ops_catchup(models=["rolling_mean_v1"], horizon=1, notify=False)
-    assert skipped.planned == [GWKey("2024-25", 1)]
-    assert notify_calls == []
+    result = run_ops_catchup(models=["rolling_mean_v1"], horizon=1, notify=True)
+    assert result.planned == [GWKey("2024-25", 1)]
     get_settings.cache_clear()
 
 
@@ -234,7 +213,7 @@ def test_cli_ops_catchup_prints_status_and_auth(
     main(["ops-catchup", "--no-notify", "--horizon", "3"])
     out = capsys.readouterr().out
     assert "ops-catchup status" in out
-    assert "still pending:     none" in out
+    assert "still pending:      none" in out
     assert "entry_id" in out or "FPLT_ENTRY_ID" in out or "token" in out.lower()
     assert seen.get("source") == "auto"
     get_settings.cache_clear()

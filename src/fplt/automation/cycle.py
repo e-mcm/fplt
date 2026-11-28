@@ -1,18 +1,24 @@
-"""Catch up checked gameweeks, and refresh the one deadline inside three hours.
+"""Catch up checked gameweeks (predict-only), and plan the upcoming deadline.
 
-A gameweek counts as done when every requested model has a plan parquet for
-that deadline and horizon. Catch-up walks the missing checked gameweeks in
-order, so a week that was skipped while the process was down is picked up on
-the next run. The pre-deadline refresh does the same for a single upcoming deadline
-and does not walk earlier weeks.
+A checked gameweek counts as done for catch-up when every requested model has
+a **predict** run for that deadline and horizon (#381). Catch-up walks the
+missing checked gameweeks in order and writes ledger / outcome coverage for
+drift — it does **not** plan against the live squad (that would reuse the
+current fifteen, bank, FTs, and chips for a past GW). Plans are written only
+for the upcoming deadline via ``plan_deadline`` / ``pre_deadline`` /
+checkpoints / ``run_now``.
 
-When availability signals (``player_status``, ``predicted_lineups``,
-``player_injuries``) move after a plan was written, ``pre_deadline`` retires
-the stale plan and re-predicts / re-optimises (FDB-253 late-refresh hook).
+The pre-deadline refresh plans a single upcoming deadline and does not walk
+earlier weeks. When availability signals (``player_status``,
+``predicted_lineups``, ``player_injuries``) move after a plan was written,
+``pre_deadline`` retires the stale plan and re-predicts / re-optimises
+(FDB-253 late-refresh hook).
 
 When ``FPLT_ENTRY_ID`` is set (and ``FPLT_FPL_API_TOKEN`` for the live squad),
-each plan starts from ``resolve_squad_state`` / ``load_current_team`` rather
-than an empty YAML draft. Without an entry id the YAML behaviour is unchanged.
+upcoming-deadline plans start from ``resolve_squad_state`` /
+``load_current_team`` rather than an empty YAML draft. Without an entry id the
+YAML behaviour is unchanged. ``resolve_squad_state(..., as_of_gw=…)`` refuses
+to resolve a finished GW from the live squad (#381).
 
 Plans use ``run_plan``'s live default chip policy
 (``DEFAULT_LIVE_CHIP_ARM`` = optimised: season chip scheduler → MILP).
@@ -29,7 +35,11 @@ from pathlib import Path
 import polars as pl
 
 from fplt.automation.late_refresh import plans_stale_vs_signals, retire_plans
-from fplt.automation.plan_index import catalog_has_plans, resolve_plan_catalog
+from fplt.automation.plan_index import (
+    catalog_has_plans,
+    catalog_has_predicts,
+    resolve_plan_catalog,
+)
 from fplt.automation.production import load_production_ops
 from fplt.backtest.run import run_backtest
 from fplt.data.benchmark_projections import archive_if_missing
@@ -90,23 +100,24 @@ def pending_checked(
     remotes: Sequence[Remote] | None = None,
     remote_catalog: pl.DataFrame | None = None,
 ) -> list[GWKey]:
-    """Current-season checked gameweeks that are still missing a plan.
+    """Current-season checked gameweeks that are still missing a predict run.
 
     Only the current season (``current_season``) from
     ``ProductionOps.catch_up_from_gw`` onwards is considered: catch-up fills
-    weeks live ops missed, it does not backtest staged history (#369).
+    weeks live ops missed, it does not backtest staged history (#369). Done
+    means every model has a ``run_type=predict`` row for the deadline /
+    horizon — not a plan (#381).
 
-    Local ``plans/`` is the fast path. When a data bucket is configured,
+    Local ``runs/`` is the fast path. When a data bucket is configured,
     gameweeks that look pending locally are checked against the durable R2
-    plan catalog so a cold ``plans/`` cache does not re-play finished weeks
-    (#371).
+    catalog so a cold cache does not re-play finished weeks (#371).
 
     Args:
         store: Staged tables, including ``gameweeks``.
-        root: Data directory that contains ``plans/``.
-        models: YAML spec names that must each have a plan. Defaults to
+        root: Data directory that contains ``runs/``.
+        models: YAML spec names that must each have a predict. Defaults to
             ``load_production_ops().models``.
-        horizon: Weeks the missing plan would cover. Defaults to
+        horizon: Weeks the missing predict would cover. Defaults to
             ``load_production_ops().plan_horizon``.
         settings: Process settings for remote consultation; defaults to
             ``get_settings()``.
@@ -115,8 +126,8 @@ def pending_checked(
             batch of lookups shares one pull (tests / callers).
 
     Returns:
-        Deadlines whose ``data_checked`` flag is set and whose plan is absent
-        both locally and in the remote plan index, earliest first.
+        Deadlines whose ``data_checked`` flag is set and whose predict is
+        absent both locally and in the remote index, earliest first.
     """
     ops = load_production_ops()
     chosen = ops.models if models is None else models
@@ -136,7 +147,7 @@ def pending_checked(
         if key in seen:
             continue
         seen.add(key)
-        if _local_plans_exist(root, chosen, key, steps):
+        if _local_predicts_exist(root, chosen, key, steps):
             continue
         local_pending.append(key)
     if not local_pending:
@@ -147,7 +158,7 @@ def pending_checked(
     waiting = [
         key
         for key in local_pending
-        if not catalog_has_plans(catalog, chosen, key, steps)
+        if not catalog_has_predicts(catalog, chosen, key, steps)
     ]
     return sorted(waiting)
 
@@ -180,21 +191,25 @@ def catch_up(
     models: list[str] | None = None,
     horizon: int | None = None,
 ) -> list[GWKey]:
-    """Fit, score, and plan missed current-season gameweeks, oldest first.
+    """Fit and score missed current-season gameweeks (predict-only), oldest first.
+
+    Does **not** plan: past-GW plans against the live squad are meaningless
+    (#381). Plans for the upcoming deadline come from checkpoints /
+    ``pre_deadline`` / ``run_now``.
 
     At most ``ProductionOps.max_catch_up_per_tick`` gameweeks are played per
     call; the rest stay pending for the next tick, so one tick cannot burn
     the job timeout (#369).
 
     Args:
-        data_dir: Root that contains ``staged/`` and receives ``ledger/`` and
-            ``plans/``.
+        data_dir: Root that contains ``staged/`` and receives ``ledger/`` /
+            ``runs/``.
         models: YAML spec names. Defaults to ``load_production_ops().models``.
-        horizon: Weeks each plan looks ahead. Defaults to
+        horizon: Weeks each predict looks ahead. Defaults to
             ``load_production_ops().plan_horizon``.
 
     Returns:
-        The gameweeks processed by this call, in play order.
+        The gameweeks predicted by this call, in play order.
     """
     ops = load_production_ops()
     chosen = list(ops.models) if models is None else models
@@ -202,7 +217,8 @@ def catch_up(
     waiting = pending_checked(DataStore(data_dir), data_dir, chosen, steps)
     batch = waiting[: ops.max_catch_up_per_tick]
     logger.info(
-        "catch_up models=%s pending=%s playing=%s deferred=%s horizon=%s",
+        "catch_up models=%s pending=%s playing=%s deferred=%s horizon=%s "
+        "(predict-only)",
         chosen,
         len(waiting),
         [str(key) for key in batch],
@@ -211,7 +227,7 @@ def catch_up(
     )
     done: list[GWKey] = []
     for key in batch:
-        _play(data_dir, chosen, key, steps)
+        _predict_checked(data_dir, chosen, key, steps)
         done.append(key)
     return done
 
@@ -322,7 +338,23 @@ def reports(root: Path) -> str:
     return plan_reports(root)
 
 
+def _predict_checked(
+    data_dir: Path, models: list[str], key: GWKey, horizon: int
+) -> None:
+    """Walk-forward predict one checked GW for catch-up (no squad / plan)."""
+    logger.info("automation predict-only %s models=%s horizon=%s", key, models, horizon)
+    live = current_season(DataStore(data_dir))
+    if key.season != live:
+        raise CatchUpSeasonError(
+            f"refusing to play {key}: live automation only plans the current "
+            f"season ({live}); the live squad cannot be priced against "
+            f"{key.season}"
+        )
+    run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
+
+
 def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
+    """Predict then plan one upcoming deadline from the live / YAML squad."""
     logger.info("automation play %s models=%s horizon=%s", key, models, horizon)
     live = current_season(DataStore(data_dir))
     if key.season != live:
@@ -333,8 +365,9 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
         )
     run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
     # Live squad when FPLT_ENTRY_ID is set; otherwise YAML draft / empty owned.
+    # as_of_gw refuses a finished GW from the live squad (#381).
     view = PITData(DataStore(data_dir)).view(key)
-    resolved = resolve_squad_state(view, event=key.gw)
+    resolved = resolve_squad_state(view, event=key.gw, as_of_gw=key.gw)
     for name in models:
         try:
             run_plan(
@@ -351,6 +384,47 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
             continue
 
 
+def predicts_exist(
+    root: Path,
+    models: list[str] | None,
+    key: GWKey,
+    horizon: int | None = None,
+    *,
+    settings: Settings | None = None,
+    remotes: Sequence[Remote] | None = None,
+    remote_catalog: pl.DataFrame | None = None,
+) -> bool:
+    """Whether every model already has a predict run for ``key`` at ``horizon``.
+
+    Local ``runs/`` is checked first. When a data bucket is configured and
+    the local run is missing, the durable R2 catalog is consulted (#371).
+
+    Args:
+        root: Data directory that contains ``runs/``.
+        models: YAML spec names. ``None`` uses ``load_production_ops().models``.
+        key: Deadline to look up.
+        horizon: Weeks the predict covers. Defaults to
+            ``load_production_ops().plan_horizon``.
+        settings: Process settings for remote consultation; defaults to
+            ``get_settings()``.
+        remotes: Optional pre-built remotes (tests).
+        remote_catalog: Optional preloaded catalog frame (tests / batch).
+
+    Returns:
+        True when each model's predict is already on disk, or when the remote
+        index records a matching succeeded predict run for every model.
+    """
+    ops = load_production_ops()
+    chosen = ops.models if models is None else models
+    steps = ops.plan_horizon if horizon is None else horizon
+    if _local_predicts_exist(root, chosen, key, steps):
+        return True
+    catalog = resolve_plan_catalog(
+        settings=settings, remotes=remotes, remote_catalog=remote_catalog
+    )
+    return catalog_has_predicts(catalog, chosen, key, steps)
+
+
 def plans_exist(
     root: Path,
     models: list[str] | None,
@@ -363,9 +437,10 @@ def plans_exist(
 ) -> bool:
     """Whether every model already has a plan for ``key`` at ``horizon``.
 
-    Local ``plans/`` is checked first. When a data bucket is configured and
+    Local ``runs/`` is checked first. When a data bucket is configured and
     the local parquet is missing, the durable R2 plan catalog is consulted
-    (#371).
+    (#371). Used by upcoming-deadline paths (``plan_deadline`` /
+    ``pre_deadline``); catch-up uses ``predicts_exist`` instead (#381).
 
     Args:
         root: Data directory that contains ``plans/``.
@@ -391,6 +466,15 @@ def plans_exist(
         settings=settings, remotes=remotes, remote_catalog=remote_catalog
     )
     return catalog_has_plans(catalog, chosen, key, steps)
+
+
+def _local_predicts_exist(
+    root: Path, models: list[str], key: GWKey, horizon: int
+) -> bool:
+    """Whether every model has a succeeded local predict run for ``key``."""
+    if horizon < 1:
+        return False
+    return catalog_has_predicts(scan_succeeded_runs(root), models, key, horizon)
 
 
 def _local_plans_exist(root: Path, models: list[str], key: GWKey, horizon: int) -> bool:
