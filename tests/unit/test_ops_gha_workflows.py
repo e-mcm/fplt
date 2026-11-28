@@ -153,11 +153,12 @@ def test_dual_write_capture_workflows_untouched() -> None:
         text = (_WORKFLOWS / name).read_text(encoding="utf-8")
         assert "push-raw" in text, name
         assert "Publish to the snapshots branch" in text, name
-        # Dot-path guard must run before checkout of orphan snapshots (#339).
+        # Dot-path guard must run before the worktree publish (#339 / #350).
         assert "reject_raw_dot_paths.py" in text, name
+        assert "git worktree" in text, name
         guard_at = text.index("reject_raw_dot_paths.py")
-        checkout_at = text.index("origin/snapshots")
-        assert guard_at < checkout_at, name
+        worktree_at = text.index("git worktree")
+        assert guard_at < worktree_at, name
 
 
 def test_vaastav_workflow_keeps_cache_outside_raw() -> None:
@@ -166,3 +167,5 @@ def test_vaastav_workflow_keeps_cache_outside_raw() -> None:
     assert '--cache-dir "$RUNNER_TEMP/vaastav_cache"' in text
     assert '--status-dir "$RUNNER_TEMP/status"' in text
     assert '--out "$RUNNER_TEMP/raw"' in text
+    # Publish copies only non-dot top-level entries (#339 / #350).
+    assert 'for entry in "$RUNNER_TEMP/raw"/*' in text

@@ -116,32 +116,37 @@ jobs:
             exit 0
           fi
           # Defence in depth (#339): refuse '.'-prefixed path components.
-          # Must run before checking out snapshots (that branch has no scripts/).
           python3 scripts/reject_raw_dot_paths.py "$RUNNER_TEMP/raw"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
+          # Publish via worktree so the main checkout stays on this ref (#350);
+          # push-raw's post step still needs .github/actions here.
+          wt="$RUNNER_TEMP/snapshots-wt"
           git fetch origin snapshots || true
           if git rev-parse --verify origin/snapshots >/dev/null 2>&1; then
-            git checkout --track origin/snapshots
+            git worktree add -B snapshots "$wt" origin/snapshots
           else
-            git checkout --orphan snapshots
-            git rm -rf . >/dev/null 2>&1 || true
+            git worktree add --orphan -b snapshots "$wt"
           fi
-          mkdir -p data
-          cp -a "$RUNNER_TEMP/raw/." data/raw/
+          mkdir -p "$wt/data/raw"
+          # Exclude '.'-prefixed top-level entries when copying (#339).
+          shopt -s nullglob
+          for entry in "$RUNNER_TEMP/raw"/*; do
+            cp -a "$entry" "$wt/data/raw/"
+          done
           # Drop a wrongly committed clone cache if a prior run left a gitlink.
-          if [ -e data/raw/.vaastav_cache ]; then
-            git rm -rf --ignore-unmatch data/raw/.vaastav_cache || rm -rf data/raw/.vaastav_cache
+          if [ -e "$wt/data/raw/.vaastav_cache" ]; then
+            git -C "$wt" rm -rf --ignore-unmatch data/raw/.vaastav_cache \
+              || rm -rf "$wt/data/raw/.vaastav_cache"
           fi
-          git add data/raw
-          if git diff --cached --quiet; then
+          git -C "$wt" add data/raw
+          if git -C "$wt" diff --cached --quiet; then
             echo "vaastav snapshots already present"
             exit 0
           fi
-          git commit -m "Capture vaastav raw seasons"
-          git push origin HEAD:snapshots
+          git -C "$wt" commit -m "Capture vaastav raw seasons"
+          git -C "$wt" push origin HEAD:snapshots
 
-  # Separate job: publish may check out the snapshots branch and drop .github/actions.
   alerts:
     needs: capture
     if: always()
