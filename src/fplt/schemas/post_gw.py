@@ -1,10 +1,20 @@
-"""Pandera schemas for post-gameweek analysis runs (#393 / Spec PR5)."""
+"""Pandera schemas for post-gameweek analysis runs (#393 / #394)."""
 
 from __future__ import annotations
 
 import pandera.polars as pa
 
 _GW_KINDS = ["normal", "blank", "double"]
+_MISS_REASONS = [
+    "benched",
+    "subbed_early",
+    "red_card",
+    "injury",
+    "penalty",
+    "dgw",
+    "blank",
+    "other",
+]
 
 
 class PostGwScorecardSchema(pa.DataFrameModel):
@@ -58,3 +68,25 @@ class PostGwAttributionSchema(pa.DataFrameModel):
         strict = True
         coerce = True
         unique = ["model_id", "season", "gw"]  # noqa: RUF012
+
+
+class PostGwBiggestMissSchema(pa.DataFrameModel):
+    """Top |actual − xpts| player–fixture misses for a post_gw run (#394)."""
+
+    model_id: str
+    season: str
+    gw: int = pa.Field(ge=1, le=38)
+    player_key: int
+    fixture_id: int
+    xpts: float
+    actual_pts: int
+    abs_error: float = pa.Field(ge=0.0)
+    signed_error: float
+    reason: str = pa.Field(isin=_MISS_REASONS)
+    predictable_at_T90: bool
+    rank: int = pa.Field(ge=1, le=15)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["model_id", "season", "gw", "player_key", "fixture_id"]  # noqa: RUF012

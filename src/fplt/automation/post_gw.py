@@ -1,4 +1,4 @@
-"""Post-GW analysis run for ops-tick (#393 / Spec PR5).
+"""Post-GW analysis run for ops-tick (#393 / #394).
 
 ``data_checked`` → write-once ``run_type=eval`` / ``purpose=post_gw`` run,
 fingerprinted on outcomes shas + official pointers; done = ``by_fp`` exists.
@@ -19,6 +19,10 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from fplt.automation.biggest_misses import (
+    compute_biggest_misses,
+    empty_biggest_misses,
+)
 from fplt.automation.cycle import current_season
 from fplt.automation.notify import notify_recommendation
 from fplt.automation.production import ProductionOps, load_production_ops
@@ -36,6 +40,7 @@ from fplt.optimise.realised import score_gameweek
 from fplt.optimise.weekly_report import rollup_season_to_date
 from fplt.schemas.manifests import AsOfDeadline, BuildManifest
 from fplt.schemas.post_gw import PostGwAttributionSchema, PostGwScorecardSchema
+from fplt.schemas.staged import POLARS_SCHEMAS
 from fplt.settings import Settings, get_settings
 from fplt.store.fingerprint import fp_index_exists, run_fingerprint
 from fplt.store.official import official_checkpoint_dir, pointer_path
@@ -242,12 +247,19 @@ def run_post_gw(
     scorecard, attribution = _tables(
         data_dir, key, picks, score, primary.line, model_id
     )
-    summary = format_post_gw_summary(scorecard, std, attribution)
     deadline = gw_row["deadline_time"][0]
     if not isinstance(deadline, datetime):
         deadline = datetime.now(UTC)
     elif deadline.tzinfo is None:
         deadline = deadline.replace(tzinfo=UTC)
+    misses = _biggest_misses(
+        data_dir,
+        key,
+        model_id=spec.model_id,
+        line=primary.line,
+        deadline=deadline,
+    )
+    summary = format_post_gw_summary(scorecard, std, attribution, misses)
     with RunWriter(
         data_dir,
         kind="official",
@@ -270,6 +282,7 @@ def run_post_gw(
         writer.write_parquet("scorecard.parquet", scorecard)
         writer.write_parquet("attribution.parquet", attribution)
         writer.write_parquet("season_to_date.parquet", std)
+        writer.write_parquet("biggest_misses.parquet", misses)
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False, encoding="utf-8"
         ) as handle:
@@ -288,7 +301,7 @@ def run_post_gw(
             notify_recommendation(
                 cfg,
                 f"fplt post_gw {key.season} GW{key.gw}",
-                format_post_gw_ntfy(scorecard, std),
+                format_post_gw_ntfy(scorecard, std, misses),
                 post=post,
             )
         )
@@ -341,6 +354,7 @@ def format_post_gw_summary(
     scorecard: pl.DataFrame,
     season_to_date: pl.DataFrame,
     attribution: pl.DataFrame,
+    biggest_misses: pl.DataFrame | None = None,
 ) -> str:
     """Render ``summary.md`` with season-to-date first, then this GW."""
     if scorecard.is_empty():
@@ -381,11 +395,26 @@ def format_post_gw_summary(
                 f"chip {'-' if cv is None else f'{float(cv):+.1f}'}; "
                 f"regret {int(r['regret'])}"
             )
+    misses = biggest_misses if biggest_misses is not None else empty_biggest_misses()
+    if not misses.is_empty():
+        lines.extend(["", "## Biggest misses", ""])
+        for r in misses.iter_rows(named=True):
+            flag = " T90" if bool(r["predictable_at_T90"]) else ""
+            lines.append(
+                f"- #{int(r['rank'])} player {int(r['player_key'])} "
+                f"({r['reason']}{flag}): "
+                f"actual {int(r['actual_pts'])} vs xPts {float(r['xpts']):.1f} "
+                f"(Δ {float(r['signed_error']):+.1f})"
+            )
     lines.append("")
     return "\n".join(lines)
 
 
-def format_post_gw_ntfy(scorecard: pl.DataFrame, season_to_date: pl.DataFrame) -> str:
+def format_post_gw_ntfy(
+    scorecard: pl.DataFrame,
+    season_to_date: pl.DataFrame,
+    biggest_misses: pl.DataFrame | None = None,
+) -> str:
     """Return one ntfy line for a post_gw run."""
     if scorecard.is_empty():
         return "post_gw: no scorecard"
@@ -394,11 +423,19 @@ def format_post_gw_ntfy(scorecard: pl.DataFrame, season_to_date: pl.DataFrame) -
         int(season_to_date["season_points"][0]) if not season_to_date.is_empty() else 0
     )
     pmf = r.get("pmf_percentile")
-    return (
+    line = (
         f"GW{int(r['gw'])}: {int(r['realised_points'])} pts "
         f"(exp {float(r['plan_ev']):.0f}, "
         f"{'-' if pmf is None else f'{float(pmf):.0%}'} PMF); season {std}"
     )
+    misses = biggest_misses if biggest_misses is not None else empty_biggest_misses()
+    if not misses.is_empty():
+        m = misses.row(0, named=True)
+        line += (
+            f"; biggest miss: player {int(m['player_key'])} "
+            f"({float(m['signed_error']):+.0f}, {m['reason']})"
+        )
+    return line
 
 
 def _model_frame(
@@ -515,6 +552,60 @@ def _n_fixtures(store: DataStore, key: GWKey) -> int | None:
         return None
     part = fixtures.filter((pl.col("season") == key.season) & (pl.col("gw") == key.gw))
     return int(part.height) if not part.is_empty() else 0
+
+
+def _biggest_misses(
+    data_dir: Path,
+    key: GWKey,
+    *,
+    model_id: str,
+    line: str,
+    deadline: datetime,
+) -> pl.DataFrame:
+    """Load staged tables + official predictions and rank biggest misses."""
+    store = DataStore(data_dir)
+    predictions = _official_predictions(data_dir, key, line=line)
+    if predictions.is_empty():
+        return empty_biggest_misses()
+    try:
+        outcomes = store.read("player_fixture_outcomes")
+    except (OSError, KeyError, ValueError):
+        return empty_biggest_misses()
+    return compute_biggest_misses(
+        model_id=model_id,
+        key=key,
+        predictions=predictions,
+        outcomes=outcomes,
+        stats=_optional_table(store, "player_fixture_stats"),
+        fixtures=_optional_table(store, "fixtures"),
+        player_status=_optional_table(store, "player_status"),
+        predicted_lineups=_optional_table(store, "predicted_lineups"),
+        deadline=deadline,
+        player_injuries=_optional_table(store, "player_injuries"),
+    )
+
+
+def _official_predictions(data_dir: Path, key: GWKey, *, line: str) -> pl.DataFrame:
+    path = pointer_path(
+        data_dir, season=key.season, gw=key.gw, line=line, checkpoint=_CP
+    )
+    if not path.is_file():
+        return pl.DataFrame()
+    try:
+        rid = str(json.loads(path.read_text(encoding="utf-8"))["predict_run_id"])
+    except (OSError, KeyError, TypeError, ValueError):
+        return pl.DataFrame()
+    pred_path = run_dir(data_dir, rid) / "predictions" / "player_fixture.parquet"
+    if not pred_path.is_file():
+        return pl.DataFrame()
+    return pl.read_parquet(pred_path)
+
+
+def _optional_table(store: DataStore, name: str) -> pl.DataFrame:
+    try:
+        return store.read(name)
+    except (OSError, KeyError, ValueError):
+        return pl.DataFrame(schema=POLARS_SCHEMAS.get(name, {}))
 
 
 def _chip(picks: pl.DataFrame) -> str | None:
