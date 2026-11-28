@@ -1,6 +1,8 @@
-"""Last week page: post_gw season-to-date first, then week detail (#396)."""
+"""Last week page: post_gw season-to-date first, then week detail (#396 / #397)."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import polars as pl
 import streamlit as st
@@ -9,10 +11,12 @@ from fplt.analysis.last_week import (
     LastWeekDetailPanel,
     LastWeekSeasonPanel,
     header_fields,
+    ops_review_table,
     season_panel,
     selection_from_catalog,
     week_detail,
 )
+from fplt.schemas.manifests import AppliedRecord
 from fplt.ui.data import DashboardStore
 from fplt.ui.renderers import get_renderer
 
@@ -82,6 +86,16 @@ def render(store: DashboardStore | None = None) -> None:
         scorecard=source.load_table("scorecard", run_id=selection.run_id),
         attribution=source.load_table("attribution", run_id=selection.run_id),
         biggest_misses=source.load_table("biggest_misses", run_id=selection.run_id),
+        primary=source.official_predict_table(
+            season=selection.season, gw=selection.gw, line=selection.line
+        ),
+        benchmarks=source.benchmark_projections(
+            season=selection.season, gw=selection.gw
+        ),
+        outcomes=source.player_outcomes(season=selection.season, gw=selection.gw),
+        season=selection.season,
+        gw=selection.gw,
+        ops_rows=_ops_rows(source, season=selection.season, gw=selection.gw),
     )
     _render_week(detail)
 
@@ -147,6 +161,15 @@ def _render_week(detail: LastWeekDetailPanel) -> None:
             detail.scorecard, hide_index=True
         )
 
+    st.subheader("Rank context")
+    if detail.rank_context.is_empty():
+        st.caption("No rank context.")
+    else:
+        get_renderer("table")
+        st.dataframe(  # pyright: ignore[reportUnknownMemberType]
+            detail.rank_context, hide_index=True
+        )
+
     st.subheader("Attribution")
     if detail.attribution.is_empty():
         st.caption("No attribution for this run.")
@@ -164,6 +187,82 @@ def _render_week(detail: LastWeekDetailPanel) -> None:
         st.dataframe(  # pyright: ignore[reportUnknownMemberType]
             detail.biggest_misses, hide_index=True
         )
+
+    st.subheader("Benchmarks")
+    if detail.benchmarks.is_empty():
+        st.caption("No benchmark comparison for this gameweek.")
+    else:
+        get_renderer("table")
+        st.dataframe(  # pyright: ignore[reportUnknownMemberType]
+            detail.benchmarks, hide_index=True
+        )
+
+    st.subheader("Ops review")
+    if detail.ops_review.is_empty():
+        st.caption("No ops review rows.")
+    else:
+        get_renderer("table")
+        st.dataframe(  # pyright: ignore[reportUnknownMemberType]
+            detail.ops_review, hide_index=True
+        )
+
+
+def _ops_rows(source: DashboardStore, *, season: str, gw: int) -> pl.DataFrame:
+    """Assemble ops-review rows from applied / status / timing / alarms."""
+    applied_payload = _applied_payload(source, season=season, gw=gw)
+    timings: list[dict[str, Any]] = []
+    checkpoint = None if applied_payload is None else applied_payload.get("checkpoint")
+    cps = [str(checkpoint)] if checkpoint else ["T-90m", "T-6h", "T-24h"]
+    for cp in cps:
+        record = source.ops_timing(season=season, gw=gw, checkpoint=cp)
+        if record is None:
+            continue
+        timings.append(
+            {
+                "key": cp,
+                "value": f"{record.total_s:.1f}s",
+                "detail": record.kind,
+            }
+        )
+        break
+    return ops_review_table(
+        applied=applied_payload,
+        freshness=source.status_freshness_rows(),
+        timings=timings,
+        alarms=source.gw_alarms(season=season, gw=gw),
+        last_error=source.status_last_error(),
+    )
+
+
+def _applied_payload(
+    source: DashboardStore, *, season: str, gw: int
+) -> dict[str, Any] | None:
+    pointers = source.official_lines().filter(
+        (pl.col("season") == season) & (pl.col("gw") == gw)
+    )
+    cps = sorted({str(c) for c in pointers["checkpoint"].to_list()}, reverse=True)
+    ordered = ["T-90m", *[c for c in cps if c != "T-90m"]] if cps else ["T-90m"]
+    for checkpoint in ordered:
+        record = source.applied_record(season=season, gw=gw, checkpoint=checkpoint)
+        if record is None:
+            continue
+        return _applied_dict(record, checkpoint=checkpoint)
+    # No pointers: still try the live apply target.
+    record = source.applied_record(season=season, gw=gw, checkpoint="T-90m")
+    if record is None:
+        return None
+    return _applied_dict(record, checkpoint="T-90m")
+
+
+def _applied_dict(record: AppliedRecord, *, checkpoint: str) -> dict[str, Any]:
+    submitted = record.submitted_at
+    stamp = submitted.isoformat() if hasattr(submitted, "isoformat") else str(submitted)
+    return {
+        "checkpoint": checkpoint,
+        "line": record.line,
+        "plan_run_id": record.plan_run_id,
+        "submitted_at": stamp,
+    }
 
 
 def _prior_forecast_scores(

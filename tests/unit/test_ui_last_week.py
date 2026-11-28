@@ -259,8 +259,11 @@ def test_last_week_app_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         assert any("reliability" in value for value in sub)
         assert any("selection bias" in value for value in sub)
         assert any("scorecard" in value for value in sub)
+        assert any("rank context" in value for value in sub)
         assert any("attribution" in value for value in sub)
         assert any("biggest misses" in value for value in sub)
+        assert any("benchmarks" in value for value in sub)
+        assert any("ops review" in value for value in sub)
         assert len(app.dataframe) >= 4
     finally:
         get_settings.cache_clear()
@@ -361,3 +364,49 @@ def test_prior_forecast_scores_empty_when_no_files(tmp_path: Path) -> None:
 
     store = DashboardStore(tmp_path)
     assert _prior_forecast_scores(store, season=_SEASON, through_gw=1).is_empty()
+
+
+def test_ops_rows_and_applied_payload(tmp_path: Path) -> None:
+    from fplt.schemas.manifests import AppliedRecord, OfficialPointer
+    from fplt.schemas.timing import TimingRecord
+    from fplt.store.official import official_checkpoint_dir
+    from fplt.ui.data import DashboardStore
+    from fplt.ui.pages import last_week as page
+    from fplt.utils.timing import ops_timing_path
+
+    store = DashboardStore(tmp_path)
+    # Degraded path: no applied / timing / alarms.
+    rows = page._ops_rows(store, season=_SEASON, gw=12)
+    assert not rows.is_empty()
+    assert page._applied_payload(store, season=_SEASON, gw=12) is None
+
+    cp = official_checkpoint_dir(tmp_path, season=_SEASON, gw=12, checkpoint="T-90m")
+    cp.mkdir(parents=True)
+    pointer = OfficialPointer(
+        predict_run_id="r_pred",
+        plan_run_id="r_plan",
+        written_at=_TS,
+        role="primary",
+        squad_mode="real",
+    )
+    (cp / "line=v4_h3.json").write_text(pointer.model_dump_json(), encoding="utf-8")
+    applied = AppliedRecord(line="v4_h3", plan_run_id="r_plan", submitted_at=_TS)
+    (cp / "applied.json").write_text(applied.model_dump_json(), encoding="utf-8")
+    ops_path = ops_timing_path(cp)
+    ops_path.write_text(
+        TimingRecord(
+            kind="ops_tick",
+            recorded_at=_TS,
+            phases={"ingest": 1.5},
+            total_s=1.5,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    payload = page._applied_payload(store, season=_SEASON, gw=12)
+    assert payload is not None
+    assert payload["line"] == "v4_h3"
+    assert payload["checkpoint"] == "T-90m"
+    rows = page._ops_rows(store, season=_SEASON, gw=12)
+    timing = rows.filter(pl.col("section") == "timing")
+    assert not timing.is_empty()
+    assert "1.5" in str(timing["value"][0])

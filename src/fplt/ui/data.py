@@ -23,6 +23,8 @@ from fplt.analysis.overview import (
     runs_catalog_frame,
 )
 from fplt.analysis.run_timing import discover_ops_timing, load_ops_timing_file
+from fplt.automation.checkpoints import alarm_marker_path
+from fplt.data.benchmark_projections import read_benchmark_archive
 from fplt.data.quarantine import load_quarantine
 from fplt.schemas.manifests import AppliedRecord, OfficialPointer, RunManifest
 from fplt.schemas.timing import TimingRecord
@@ -34,6 +36,8 @@ from fplt.store.official import official_checkpoint_dir
 from fplt.store.push import load_run_manifest
 from fplt.store.runs import run_dir
 from fplt.utils.timing import load_timing_records, ops_timing_path
+
+_KNOWN_ALARMS: tuple[str, ...] = ("retry", "urgent", "missing_official_slate")
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +129,13 @@ class DashboardStore:
 
     def applied_line(self, *, season: str, gw: int, checkpoint: str) -> str | None:
         """Return the applied line name for a checkpoint, if present."""
+        record = self.applied_record(season=season, gw=gw, checkpoint=checkpoint)
+        return None if record is None else record.line
+
+    def applied_record(
+        self, *, season: str, gw: int, checkpoint: str
+    ) -> AppliedRecord | None:
+        """Return the validated ``applied.json`` for a checkpoint, if present."""
         path = (
             official_checkpoint_dir(
                 self.data_dir, season=season, gw=gw, checkpoint=checkpoint
@@ -134,9 +145,7 @@ class DashboardStore:
         if not path.is_file():
             return None
         try:
-            return AppliedRecord.model_validate_json(
-                path.read_text(encoding="utf-8")
-            ).line
+            return AppliedRecord.model_validate_json(path.read_text(encoding="utf-8"))
         except ValueError as exc:
             logger.debug("skip applied %s: %s", path, exc)
             return None
@@ -213,6 +222,148 @@ class DashboardStore:
         if not frames:
             return pl.DataFrame()
         return pl.concat(frames, how="diagonal_relaxed")
+
+    def benchmark_projections(self, *, season: str, gw: int) -> pl.DataFrame:
+        """Load deadline ``benchmark_projections`` for ``season`` / ``gw``."""
+        frame = read_benchmark_archive(self.data_dir)
+        if frame.is_empty():
+            return frame
+        return frame.filter(
+            (pl.col("as_of_season") == season) & (pl.col("as_of_gw") == gw)
+        )
+
+    def player_outcomes(self, *, season: str, gw: int) -> pl.DataFrame:
+        """Load player–fixture outcomes for one GW (empty when absent)."""
+        from fplt.data.store import DataStore
+
+        try:
+            frame = DataStore(self.data_dir).read("player_fixture_outcomes")
+        except (OSError, KeyError, ValueError):
+            return pl.DataFrame()
+        if frame.is_empty():
+            return frame
+        part = frame.filter((pl.col("season") == season) & (pl.col("gw") == gw))
+        if part.is_empty() or "pts" not in part.columns:
+            return pl.DataFrame()
+        return part.select("player_key", "fixture_id", "pts")
+
+    def official_predict_table(
+        self, *, season: str, gw: int, line: str | None = None
+    ) -> pl.DataFrame:
+        """Load primary (or named) T−90m ``player_fixture`` predictions."""
+        pointers = self.official_lines().filter(
+            (pl.col("season") == season)
+            & (pl.col("gw") == gw)
+            & (pl.col("checkpoint") == "T-90m")
+        )
+        if pointers.is_empty():
+            pointers = self.official_lines().filter(
+                (pl.col("season") == season) & (pl.col("gw") == gw)
+            )
+        if pointers.is_empty():
+            return pl.DataFrame()
+        if line is not None:
+            hit = pointers.filter(pl.col("line") == line)
+            if not hit.is_empty():
+                pointers = hit
+        elif "role" in pointers.columns:
+            primary = pointers.filter(pl.col("role") == "primary")
+            if not primary.is_empty():
+                pointers = primary
+        run_id = str(pointers["predict_run_id"][0])
+        return self.load_table("player_fixture", run_id=run_id)
+
+    def gw_alarms(self, *, season: str, gw: int) -> list[dict[str, Any]]:
+        """Return alarm marker summaries for a gameweek (empty when none)."""
+        from fplt.types import GWKey
+
+        rows: list[dict[str, Any]] = []
+        key = GWKey(season, gw)
+        for alarm_id in _KNOWN_ALARMS:
+            path = alarm_marker_path(self.data_dir, key, alarm_id)
+            if not path.is_file():
+                continue
+            try:
+                payload: object = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                rows.append({"key": alarm_id, "value": "present", "detail": None})
+                continue
+            if not isinstance(payload, dict):
+                rows.append({"key": alarm_id, "value": "present", "detail": None})
+                continue
+            data = cast(dict[str, Any], payload)
+            rows.append(
+                {
+                    "key": str(data.get("alarm", alarm_id)),
+                    "value": str(data.get("kind", "alarm")),
+                    "detail": None
+                    if data.get("written_at") is None
+                    else str(data.get("written_at")),
+                }
+            )
+        return rows
+
+    def status_freshness_rows(self) -> list[dict[str, Any]]:
+        """Shape ``status.json`` capture / heartbeat freshness for ops review."""
+        payload = self.status_payload()
+        if payload is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        captures = payload.get("last_captures")
+        if isinstance(captures, list):
+            for item_raw in cast(list[object], captures):
+                if not isinstance(item_raw, dict):
+                    continue
+                item = cast(dict[str, Any], item_raw)
+                source = item.get("source")
+                name_alt = item.get("name")
+                name = (
+                    str(source)
+                    if source is not None
+                    else str(name_alt)
+                    if name_alt is not None
+                    else "capture"
+                )
+                at = item.get("captured_at")
+                if at is None:
+                    at = item.get("last_at")
+                reason = item.get("reason")
+                rows.append(
+                    {
+                        "key": name,
+                        "value": None if at is None else str(at),
+                        "detail": None if reason is None else str(reason),
+                    }
+                )
+        heartbeats = payload.get("heartbeats")
+        if isinstance(heartbeats, list):
+            for item_raw in cast(list[object], heartbeats):
+                if not isinstance(item_raw, dict):
+                    continue
+                item = cast(dict[str, Any], item_raw)
+                hb_name = item.get("name")
+                last_at = item.get("last_at")
+                reason = item.get("reason")
+                rows.append(
+                    {
+                        "key": f"hb:{'job' if hb_name is None else hb_name}",
+                        "value": None if last_at is None else str(last_at),
+                        "detail": None if reason is None else str(reason),
+                    }
+                )
+        return rows
+
+    def status_last_error(self) -> str | None:
+        """Return the last-error message from ``status.json``, if any."""
+        payload = self.status_payload()
+        if payload is None:
+            return None
+        err_raw = payload.get("last_error")
+        if not isinstance(err_raw, dict):
+            return None
+        err = cast(dict[str, Any], err_raw)
+        message = err.get("message")
+        return None if message is None else str(message)
 
     def _latest_plan_frame(self) -> pl.DataFrame:
         for run_id in reversed(_succeeded_run_ids(self.data_dir)):
