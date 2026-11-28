@@ -105,3 +105,37 @@ def test_cli_apply_unset_entry_id_exits_2_without_traceback(
     assert any("FPLT_ENTRY_ID" in r.message for r in caplog.records)
     get_settings.cache_clear()
     reset_logging_for_tests()
+
+
+def test_exit_config_error_survives_broken_handler(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failing log handler must not dump SettingsConfigError to stderr (#425)."""
+    from fplt.cli import _exit_config_error
+
+    class _BrokenHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            # Match StreamHandler-style failures: catch and handleError.
+            try:
+                raise OSError("stream closed")
+            except OSError:
+                self.handleError(record)
+
+    root = logging.getLogger()
+    broken = _BrokenHandler()
+    root.addHandler(broken)
+    previous = logging.raiseExceptions
+    try:
+        # Default True would print ``--- Logging error ---``; the helper must
+        # suppress that so the exception class never reaches stderr.
+        logging.raiseExceptions = True
+        with pytest.raises(SystemExit) as exc:
+            _exit_config_error(SettingsConfigError("FPLT_ENTRY_ID is not set"))
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "FPLT_ENTRY_ID" in err
+        assert "SettingsConfigError" not in err
+        assert "--- Logging error ---" not in err
+    finally:
+        root.removeHandler(broken)
+        logging.raiseExceptions = previous

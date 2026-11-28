@@ -174,6 +174,16 @@ def _points_pmf_bench_payload() -> dict[str, float]:
         return run_points_pmf_memory_bench()
 
 
+def _exp_component_bench_payload(data_dir: Path) -> dict[str, float]:
+    """Minutes A/B wall time on builder data (toolkit §2.4)."""
+    from fplt.backtest.component_experiment import run_component_experiment_bench
+    from fplt.data.store import DataStore
+    from tests.builders import build_league
+
+    build_league(DataStore(data_dir))
+    return run_component_experiment_bench(data_dir)
+
+
 def _pytest_top25(junit: Path, *, top: int = 25) -> tuple[float, list[dict[str, Any]]]:
     from scripts.pytest_profile import parse_junit_durations
 
@@ -244,6 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-points-pmf",
         action="store_true",
         help="Skip synthetic horizon-9 points_pmf memory bench (#372)",
+    )
+    parser.add_argument(
+        "--skip-exp-component",
+        action="store_true",
+        help="Skip toolkit §2.4 exp_component minutes A/B bench",
     )
     parser.add_argument("--mc-n-sims", type=int, default=10_000)
     parser.add_argument("--mc-repeats", type=int, default=3)
@@ -325,6 +340,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_points_pmf:
         logger.info("running points_pmf horizon-9 memory bench")
         phases.update(_points_pmf_bench_payload())
+
+    if not args.skip_exp_component:
+        logger.info("running exp_component minutes A/B bench")
+        exp_dir = (args.data_dir or (lab_dir / "_bench_data")) / "_exp_component"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        phases.update(_exp_component_bench_payload(exp_dir))
 
     pytest_top25: list[dict[str, Any]] = []
     if args.junit is not None:

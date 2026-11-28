@@ -131,8 +131,18 @@ def _not_implemented(name: str) -> int:
 
 
 def _exit_config_error(exc: BaseException) -> None:
-    """Log a config error and exit 2 without a traceback."""
-    logger.error("%s", exc)
+    """Log a config error and exit 2 without a traceback.
+
+    Disables ``logging.raiseExceptions`` for the emit so a broken handler
+    (seen under xdist + caplog) cannot dump ``--- Logging error ---`` plus
+    the exception class name onto operator stderr.
+    """
+    previous = logging.raiseExceptions
+    logging.raiseExceptions = False
+    try:
+        logger.error("%s", exc)
+    finally:
+        logging.raiseExceptions = previous
     print(str(exc), file=sys.stderr)
     raise SystemExit(2) from None
 
@@ -1816,6 +1826,56 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Override FPLT_DATA_DIR (default: settings.data_dir)",
     )
+    exp_component = exp_sub.add_parser(
+        "component",
+        parents=[log_flags],
+        help=(
+            "Component A/B with cached upstream fits (toolkit §2.4): "
+            "score component then player-fixture stages via Measure"
+        ),
+    )
+    exp_component.add_argument(
+        "--base",
+        required=True,
+        help="Base pipeline: production or a registered ModelSpec name",
+    )
+    exp_component.add_argument(
+        "--component",
+        required=True,
+        choices=("minutes", "score", "involvement", "other"),
+        help="Layered component slot under test",
+    )
+    exp_component.add_argument(
+        "--arm",
+        action="append",
+        required=True,
+        dest="arms",
+        metavar="PATCH|SPEC",
+        help=(
+            "Treatment arm (repeatable): JSON patch, path=value, "
+            "ModelSpec name for a component swap, or a YAML/JSON file"
+        ),
+    )
+    exp_component.add_argument(
+        "--window",
+        required=True,
+        help="Eval window: season or season:gw-gw (e.g. 2024-25:1-10)",
+    )
+    exp_component.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override FPLT_DATA_DIR (default: settings.data_dir)",
+    )
+    exp_component.add_argument(
+        "--build-id",
+        default="local",
+        help="Curated build id for component cache keys (default: local)",
+    )
+    exp_component.add_argument(
+        "--n-sims",
+        type=int,
+        help="Override ModelSpec n_sims for all arms (screening / tests)",
+    )
     catalog = sub.add_parser(
         "catalog",
         parents=[log_flags],
@@ -3025,7 +3085,42 @@ def _exp(args: argparse.Namespace) -> None:
     if command == "show":
         _exp_show(args)
         return
+    if command == "component":
+        _exp_component(args)
+        return
     raise SystemExit(_not_implemented(f"exp {command}"))
+
+
+def _exp_component(args: argparse.Namespace) -> None:
+    """Run toolkit §2.4 component A/B and print the experiment id."""
+    from fplt.backtest.component_experiment import run_component_experiment
+
+    data_dir = (
+        Path(args.data_dir) if args.data_dir is not None else get_settings().data_dir
+    )
+    try:
+        result = run_component_experiment(
+            data_dir,
+            base=str(args.base),
+            component=str(args.component),
+            arms=list(args.arms),
+            window=str(args.window),
+            build_id=str(args.build_id),
+            n_sims_override=args.n_sims,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        logger.error("exp component failed: %s", exc)
+        raise SystemExit(1) from exc
+    print(f"experiment_id={result.experiment_id}")
+    print(f"arms={','.join(result.arms)}")
+    print(f"window={result.window.label()}")
+    if not result.arm_metrics.is_empty():
+        print(f"arm_metrics_rows={result.arm_metrics.height}")
+    hits = sum(result.cache.hits.values())
+    misses = sum(result.cache.misses.values())
+    print(f"cache_hits={hits} cache_misses={misses}")
+    if "exp_component" in result.phases:
+        print(f"exp_component_s={result.phases['exp_component']:.3f}")
 
 
 def _exp_submit(args: argparse.Namespace) -> None:
