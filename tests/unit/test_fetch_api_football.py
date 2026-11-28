@@ -115,6 +115,51 @@ def test_main_exits_without_key(
     assert mod.main(["--out", str(tmp_path), "--season", "2024-25"]) == 2
 
 
+def test_main_unavailable_http_warns_and_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts import fetch_api_football as mod
+
+    monkeypatch.setenv("FPLT_API_FOOTBALL_KEY", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream down")
+
+    real_client = httpx.Client
+
+    def fake_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs = dict(kwargs)
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(mod.httpx, "Client", fake_client)
+    status_dir = tmp_path / "status"
+    code = mod.main(
+        [
+            "--out",
+            str(tmp_path / "raw"),
+            "--season",
+            "2024-25",
+            "--status-dir",
+            str(status_dir),
+            "--unavailable-threshold",
+            "3",
+            "--skip-fixtures",
+            "--min-interval-hours",
+            "0",
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr()
+    assert "::warning::" in out.out
+    state = json.loads(
+        (status_dir / "api_football_unavailable.json").read_text(encoding="utf-8")
+    )
+    assert state["consecutive_unavailable"] == 1
+
+
 def test_load_competitions_includes_cups_not_epl() -> None:
     pairs = load_competitions()
     assert (2, "ucl") in pairs

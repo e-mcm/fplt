@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import importlib.util
 import json
 import os
 import re
@@ -29,10 +30,34 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import httpx
 import yaml
+
+
+def _capture_health() -> ModuleType:
+    """Load ``fplt.data.capture_health`` without importing heavy ``fplt.data``."""
+    name = "fplt_data_capture_health"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "fplt"
+        / "data"
+        / "capture_health.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load capture_health from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 
 API_ROOT = "https://v3.football.api-sports.io"
 EPL_LEAGUE_ID = 39
@@ -370,6 +395,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Only capture injuries (skip cup/Europe fixtures).",
     )
+    parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=Path("data/status"),
+        help="Local status/ mirror for unavailable counters (R2 status/).",
+    )
+    parser.add_argument(
+        "--unavailable-threshold",
+        type=int,
+        default=None,
+        help="Consecutive unavailable runs before exit non-zero (default: config).",
+    )
     args = parser.parse_args(argv)
     key = resolve_api_key()
     if not key:
@@ -379,8 +416,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    health = _capture_health()
     moment = datetime.now(UTC)
     season = args.season or season_label(moment)
+    threshold = args.unavailable_threshold
     with httpx.Client(
         timeout=30.0,
         headers={
@@ -389,37 +428,60 @@ def main(argv: list[str] | None = None) -> int:
             "Accept": "application/json",
         },
     ) as client:
-        result = capture(
-            client,
-            args.out,
-            season,
-            now=moment,
-            min_interval_hours=args.min_interval_hours,
-            league=args.league,
-            delay=args.delay,
-        )
-        if result.skipped and not result.wrote:
-            print(f"season={season} injuries=skipped")
-        else:
-            print(f"season={season} injuries={'wrote' if result.wrote else 'exists'}")
-        if not args.skip_fixtures:
-            for league_id, name in load_competitions():
-                fixture_result = capture_fixtures(
-                    client,
-                    args.out,
-                    season,
-                    league_id,
-                    now=moment,
-                    min_interval_hours=args.min_interval_hours,
-                    delay=args.delay,
+        try:
+            result = capture(
+                client,
+                args.out,
+                season,
+                now=moment,
+                min_interval_hours=args.min_interval_hours,
+                league=args.league,
+                delay=args.delay,
+            )
+            if result.skipped and not result.wrote:
+                print(f"season={season} injuries=skipped")
+            else:
+                print(
+                    f"season={season} injuries={'wrote' if result.wrote else 'exists'}"
                 )
-                status = (
-                    "wrote"
-                    if fixture_result.wrote
-                    else ("skipped" if fixture_result.skipped else "exists")
-                )
-                print(f"season={season} fixtures={name} league={league_id} {status}")
-    return 0
+            if not args.skip_fixtures:
+                for league_id, name in load_competitions():
+                    fixture_result = capture_fixtures(
+                        client,
+                        args.out,
+                        season,
+                        league_id,
+                        now=moment,
+                        min_interval_hours=args.min_interval_hours,
+                        delay=args.delay,
+                    )
+                    status = (
+                        "wrote"
+                        if fixture_result.wrote
+                        else ("skipped" if fixture_result.skipped else "exists")
+                    )
+                    print(
+                        f"season={season} fixtures={name} league={league_id} {status}"
+                    )
+        except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
+            outcome = health.record_capture_outcome(
+                source="api_football",
+                status_dir=args.status_dir,
+                available=False,
+                reason=str(exc),
+                threshold=threshold,
+                now=moment,
+            )
+            print(f"season={season} unavailable: {exc}", file=sys.stderr)
+            return int(outcome.exit_code)
+    outcome = health.record_capture_outcome(
+        source="api_football",
+        status_dir=args.status_dir,
+        available=True,
+        threshold=threshold,
+        now=moment,
+    )
+    return int(outcome.exit_code)
 
 
 if __name__ == "__main__":

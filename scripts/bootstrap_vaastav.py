@@ -18,6 +18,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fplt.data.capture_health import record_capture_outcome
 from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
 from fplt.utils.process import run_command
 
@@ -318,9 +319,30 @@ def main(argv: list[str] | None = None) -> int:
         "--captured-at", default=None, help="UTC stamp YYYY-MM-DDTHH-MM-SSZ."
     )
     parser.add_argument("--repo-url", default=REPO_URL, help="Upstream git remote.")
+    parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Local status/ mirror for unavailable counters (default: …/status).",
+    )
+    parser.add_argument(
+        "--unavailable-threshold",
+        type=int,
+        default=None,
+        help="Consecutive unavailable runs before exit non-zero (default: config).",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     out = args.out if args.out is not None else default_raw_dir()
+    status_dir = (
+        args.status_dir
+        if args.status_dir is not None
+        else (
+            Path(os.environ["FPLT_DATA_DIR"]) / "status"
+            if os.environ.get("FPLT_DATA_DIR")
+            else Path("./data/status")
+        )
+    )
     captured_at: datetime | None = None
     if args.captured_at is not None:
         try:
@@ -333,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.captured_at,
             )
             return 1
+    moment = datetime.now(UTC)
     try:
         written = capture_vaastav(
             out,
@@ -342,14 +365,33 @@ def main(argv: list[str] | None = None) -> int:
             full=bool(args.full),
             captured_at=captured_at,
         )
-    except (RuntimeError, FileNotFoundError, FileExistsError, ValueError) as exc:
+    except RuntimeError as exc:
+        # Upstream git unreachable / clone-pull failure (#338).
+        outcome = record_capture_outcome(
+            source="vaastav",
+            status_dir=status_dir,
+            available=False,
+            reason=str(exc),
+            threshold=args.unavailable_threshold,
+            now=moment,
+        )
+        _log.error("%s", exc)
+        return int(outcome.exit_code)
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
         _log.error("%s", exc)
         return 1
+    outcome = record_capture_outcome(
+        source="vaastav",
+        status_dir=status_dir,
+        available=True,
+        threshold=args.unavailable_threshold,
+        now=moment,
+    )
     if written is None:
         print(f"nothing new under {out.resolve()}")
-        return 0
+        return int(outcome.exit_code)
     print(f"wrote {written.resolve()}")
-    return 0
+    return int(outcome.exit_code)
 
 
 if __name__ == "__main__":

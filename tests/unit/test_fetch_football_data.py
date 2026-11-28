@@ -105,3 +105,48 @@ def test_main_rejects_bad_captured_at(tmp_path: Path) -> None:
         fetch.main(
             ["--out", str(tmp_path), "--season", "2024-25", "--captured-at", "nope"]
         )
+
+
+def test_main_unavailable_http_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    real_client = httpx.Client
+
+    def fake_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs = dict(kwargs)
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(fetch.httpx, "Client", fake_client)
+    status_dir = tmp_path / "status"
+    code = fetch.main(
+        [
+            "--out",
+            str(tmp_path / "raw"),
+            "--season",
+            "2024-25",
+            "--status-dir",
+            str(status_dir),
+            "--unavailable-threshold",
+            "2",
+        ]
+    )
+    assert code == 0
+    assert (
+        fetch.main(
+            [
+                "--out",
+                str(tmp_path / "raw"),
+                "--season",
+                "2024-25",
+                "--status-dir",
+                str(status_dir),
+                "--unavailable-threshold",
+                "2",
+            ]
+        )
+        == 1
+    )

@@ -317,15 +317,28 @@ def test_scheduled_workflows_ping_heartbeat_on_success() -> None:
         step = heartbeats[0]
         main = _MAIN_JOB[name]
         if name in _PUSH_RAW_CAPTURE:
+            # Folded YAML ``>-`` becomes a single line; capture sources also
+            # require source_ok so unavailable runs do not ping (#338).
             expected_if = (
                 f"needs.{main}.result == 'success' "
-                f"&& needs.{main}.outputs.uploaded == 'true'"
+                f"&& needs.{main}.outputs.uploaded == 'true' "
+                f"&& needs.{main}.outputs.source_ok == 'true'"
             )
+            # snapshot.yml keeps uploaded-only gating (no capture_health yet).
+            if name == "snapshot.yml":
+                expected_if = (
+                    f"needs.{main}.result == 'success' "
+                    f"&& needs.{main}.outputs.uploaded == 'true'"
+                )
             assert step.get("if") == expected_if
             doc = _load(name)
             assert doc["jobs"][main]["outputs"]["uploaded"] == (
                 "${{ steps.upload.outputs.uploaded }}"
             )
+            if name != "snapshot.yml":
+                assert doc["jobs"][main]["outputs"]["source_ok"] == (
+                    "${{ steps.capture.outputs.source_ok }}"
+                )
         else:
             assert step.get("if") == f"needs.{main}.result == 'success'"
         assert step["with"]["ping_url"] == f"${{{{ secrets.{_PING_SECRETS[name]} }}}}"
