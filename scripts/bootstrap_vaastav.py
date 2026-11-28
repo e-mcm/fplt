@@ -8,7 +8,6 @@ sha256 digests against prior captures. Requires ``git`` on ``PATH``.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -19,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fplt.data.capture_health import record_capture_outcome
+from fplt.data.vaastav import is_complete_vaastav_capture, sha256_file
 from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
 from fplt.utils.process import run_command
 
@@ -67,15 +67,6 @@ def list_season_dirs(data_dir: Path) -> list[Path]:
     if not data_dir.is_dir():
         return []
     return sorted(p for p in data_dir.iterdir() if is_season_dir(p))
-
-
-def sha256_file(path: Path) -> str:
-    """Return the lowercase hex sha256 digest of ``path``."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
@@ -142,12 +133,16 @@ def iter_capture_dirs(raw_root: Path) -> list[Path]:
 
 
 def load_prior_file_hashes(raw_root: Path) -> dict[str, str]:
-    """Merge ``path → sha256`` from prior manifests (latest capture wins)."""
+    """Merge ``path → sha256`` from prior complete manifests (latest wins).
+
+    Incomplete captures (missing ``_source.json`` or a listed file / digest
+    mismatch) are skipped so the next run re-captures those seasons (#353).
+    """
     hashes: dict[str, str] = {}
     for capture in iter_capture_dirs(raw_root):
-        manifest_path = capture / _SOURCE
-        if not manifest_path.is_file():
+        if not is_complete_vaastav_capture(capture):
             continue
+        manifest_path = capture / _SOURCE
         manifest = VaastavSourceManifest.model_validate(
             json.loads(manifest_path.read_text(encoding="utf-8"))
         )

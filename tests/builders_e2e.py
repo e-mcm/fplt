@@ -8,6 +8,7 @@ the training-history guard (``min_prior_seasons=3``).
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,6 +18,7 @@ import polars as pl
 
 from fplt.automation.production import OfficialLine, ProductionOps
 from fplt.models.pipeline_spec import PlannerPool, live_pipeline_defaults
+from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
 
 # ---------------------------------------------------------------------------
 # Clocks (UTC). Tick ``now`` is T−90m before GW2 deadline.
@@ -121,13 +123,46 @@ def seed_e2e_bucket(bucket: Path) -> Path:
 
 
 def _seed_vaastav(raw: Path) -> None:
-    root = raw / "vaastav" / f"captured_at={_VAASTAV_STAMP}" / "data"
+    capture = raw / "vaastav" / f"captured_at={_VAASTAV_STAMP}"
+    root = capture / "data"
     for index, season in enumerate(PRIOR_SEASONS):
         _write_vaastav_season(
             root / season,
             season=season,
             kickoff=datetime(2021 + index, 8, 14, 14, 0, tzinfo=UTC),
         )
+    # Completeness marker so readers treat this capture as finished (#353).
+    _write_vaastav_source(capture, seasons=list(PRIOR_SEASONS))
+
+
+def _write_vaastav_source(capture_dir: Path, *, seasons: list[str]) -> None:
+    """Write a verified ``_source.json`` for every file under ``data/``."""
+    data = capture_dir / "data"
+    entries: list[VaastavSourceFile] = []
+    for path in sorted(data.rglob("*")):
+        if not path.is_file():
+            continue
+        payload = path.read_bytes()
+        entries.append(
+            VaastavSourceFile(
+                path=path.relative_to(capture_dir).as_posix(),
+                bytes=len(payload),
+                sha256=hashlib.sha256(payload).hexdigest(),
+            )
+        )
+    captured_at = datetime.strptime(
+        capture_dir.name.removeprefix("captured_at="), "%Y-%m-%dT%H-%M-%SZ"
+    ).replace(tzinfo=UTC)
+    manifest = VaastavSourceManifest(
+        repo="https://example.test/vaastav.git",
+        commit_sha="b" * 40,
+        captured_at=captured_at,
+        seasons=seasons,
+        files=entries,
+    )
+    (capture_dir / "_source.json").write_text(
+        manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _write_vaastav_season(season_dir: Path, *, season: str, kickoff: datetime) -> None:

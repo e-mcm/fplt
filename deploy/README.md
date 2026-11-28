@@ -327,7 +327,7 @@ GitHub's 6 h default). Sized at roughly 2–3× expected p95 wall time:
 |---|---|---|
 | `ops-tick` / `tick` | 90 | > 5× production HiGHS `time_limit_s` (600s) for chip-board solves |
 | `ops-catchup` / `catchup` | 180 | Multi-GW catch-up; > 15× one solver budget |
-| Capture `capture` jobs | 20–30 | Snapshot / fetch + R2 + branch publish |
+| Capture `capture` jobs | 20–30 (vaastav 90) | Snapshot / fetch + R2 + branch publish; vaastav full mirror needs headroom (#353) |
 | Capture / ops `alerts` | 5 | Heartbeat + ntfy only |
 | `ci` lint / tests / builds | 5–90 | Lint 20; production-governance 10; linux test 60; macOS mc build 90 |
 | `mc-release` | 15–90 | Same order as CI mc builds |

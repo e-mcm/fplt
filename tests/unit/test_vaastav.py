@@ -1,18 +1,57 @@
 """Vaastav seasons land in the same staged tables, with degraded availability."""
 
+import hashlib
+import logging
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.data.vaastav import import_available, import_season, latest_season_dirs
+from fplt.data.vaastav import (
+    import_available,
+    import_season,
+    is_complete_vaastav_capture,
+    latest_season_dirs,
+)
+from fplt.schemas.vaastav_source import VaastavSourceFile, VaastavSourceManifest
 from fplt.types import GWKey
 
 _KICKOFF = datetime(2021, 8, 14, 14, 0, tzinfo=UTC)
 _KICKOFF_GW2 = datetime(2021, 8, 21, 14, 0, tzinfo=UTC)
+
+
+def _write_complete_source(capture_dir: Path, *, seasons: list[str]) -> None:
+    """Write a verified ``_source.json`` covering every file under ``data/``."""
+    data = capture_dir / "data"
+    entries: list[VaastavSourceFile] = []
+    for path in sorted(data.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(capture_dir).as_posix()
+        payload = path.read_bytes()
+        entries.append(
+            VaastavSourceFile(
+                path=rel,
+                bytes=len(payload),
+                sha256=hashlib.sha256(payload).hexdigest(),
+            )
+        )
+    stamp = capture_dir.name.removeprefix("captured_at=")
+    captured_at = datetime.strptime(stamp, "%Y-%m-%dT%H-%M-%SZ").replace(tzinfo=UTC)
+    manifest = VaastavSourceManifest(
+        repo="https://example.test/vaastav.git",
+        commit_sha="a" * 40,
+        captured_at=captured_at,
+        seasons=seasons,
+        files=entries,
+    )
+    (capture_dir / "_source.json").write_text(
+        manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _write_season(
@@ -304,11 +343,19 @@ def _raw_season(
     season: str,
     *,
     stamp: str = "2026-11-27T12-00-00Z",
+    finalize: bool = True,
 ) -> Path:
     """Place a minimal season under ``raw/vaastav/captured_at=…/data/<season>``."""
-    root = data_dir / "raw" / "vaastav" / f"captured_at={stamp}" / "data" / season
+    capture = data_dir / "raw" / "vaastav" / f"captured_at={stamp}"
+    root = capture / "data" / season
     (root / "gws").mkdir(parents=True)
     (root / "gws" / "merged_gw.csv").write_text("element,GW\n", encoding="utf-8")
+    if finalize:
+        # Merge seasons already present under this capture into the manifest.
+        seasons = sorted(
+            p.name for p in (capture / "data").iterdir() if p.is_dir() and "-" in p.name
+        )
+        _write_complete_source(capture, seasons=seasons)
     return root
 
 
@@ -325,10 +372,16 @@ def test_import_available_skips_early_seasons(tmp_path: Path) -> None:
 
 
 def test_import_available_uses_latest_capture_per_season(tmp_path: Path) -> None:
-    first = _raw_season(tmp_path, "2022-23", stamp="2025-01-01T00-00-00Z")
+    first = _raw_season(
+        tmp_path, "2022-23", stamp="2025-01-01T00-00-00Z", finalize=False
+    )
     (first / "marker.txt").write_text("old", encoding="utf-8")
-    second = _raw_season(tmp_path, "2022-23", stamp="2026-06-01T00-00-00Z")
+    _write_complete_source(first.parents[1], seasons=["2022-23"])
+    second = _raw_season(
+        tmp_path, "2022-23", stamp="2026-06-01T00-00-00Z", finalize=False
+    )
     (second / "marker.txt").write_text("new", encoding="utf-8")
+    _write_complete_source(second.parents[1], seasons=["2022-23"])
     dirs = latest_season_dirs(tmp_path)
     assert dirs["2022-23"] == second
 
@@ -338,16 +391,11 @@ def test_raw_and_legacy_layout_stage_equivalently(tmp_path: Path) -> None:
     legacy_root = tmp_path / "legacy"
     raw_root = tmp_path / "raw_layout"
     legacy_season = _write_season(legacy_root)
-    raw_season = (
-        raw_root
-        / "raw"
-        / "vaastav"
-        / "captured_at=2026-11-01T00-00-00Z"
-        / "data"
-        / "2021-22"
-    )
+    capture = raw_root / "raw" / "vaastav" / "captured_at=2026-11-01T00-00-00Z"
+    raw_season = capture / "data" / "2021-22"
     raw_season.parent.mkdir(parents=True)
     shutil.copytree(legacy_season, raw_season)
+    _write_complete_source(capture, seasons=["2021-22"])
 
     legacy_store = DataStore(tmp_path / "legacy_store")
     import_season(legacy_store, legacy_season, "2021-22")
@@ -370,16 +418,11 @@ def test_raw_and_legacy_layout_stage_equivalently(tmp_path: Path) -> None:
 def test_pit_ignores_capture_stamp_for_history(tmp_path: Path) -> None:
     """A late captured_at still exposes 2021-22 rows by row-level available_at."""
     season = _write_season(tmp_path / "src")
-    dest = (
-        tmp_path
-        / "raw"
-        / "vaastav"
-        / "captured_at=2026-11-27T12-00-00Z"
-        / "data"
-        / "2021-22"
-    )
+    capture = tmp_path / "raw" / "vaastav" / "captured_at=2026-11-27T12-00-00Z"
+    dest = capture / "data" / "2021-22"
     dest.parent.mkdir(parents=True)
     shutil.copytree(season, dest)
+    _write_complete_source(capture, seasons=["2021-22"])
     store = DataStore(tmp_path / "store")
     assert import_available(store, tmp_path) == ["2021-22"]
     # Before kickoff+3h: results hidden; schedule visible at season_start.
@@ -390,3 +433,62 @@ def test_pit_ignores_capture_stamp_for_history(tmp_path: Path) -> None:
     assert later.table("player_fixture_stats").collect()["total_points"].to_list() == [
         8
     ]
+
+
+def test_incomplete_capture_ignored_by_import_and_latest(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Altered payload with ``_source.json`` present is skipped (#353)."""
+    good = _raw_season(tmp_path, "2021-22", stamp="2026-01-01T00-00-00Z")
+    bad_root = _raw_season(
+        tmp_path, "2024-25", stamp="2026-02-01T00-00-00Z", finalize=False
+    )
+    capture = bad_root.parents[1]
+    _write_complete_source(capture, seasons=["2024-25"])
+    # Corrupt a listed file after the manifest was written.
+    (bad_root / "gws" / "merged_gw.csv").write_text("tampered\n", encoding="utf-8")
+    assert is_complete_vaastav_capture(good.parents[1])
+    assert not is_complete_vaastav_capture(capture)
+    with caplog.at_level(logging.WARNING):
+        dirs = latest_season_dirs(tmp_path)
+    assert dirs == {"2021-22": good}
+    assert "sha256 mismatch" in caplog.text
+    store = DataStore(tmp_path / "store")
+    assert import_available(store, tmp_path) == ["2021-22"]
+
+
+def test_missing_listed_file_skips_capture(tmp_path: Path) -> None:
+    """``_source.json`` listing a missing file → incomplete (#353)."""
+    root = _raw_season(
+        tmp_path, "2021-22", stamp="2026-03-01T00-00-00Z", finalize=False
+    )
+    capture = root.parents[1]
+    _write_complete_source(capture, seasons=["2021-22"])
+    (root / "gws" / "merged_gw.csv").unlink()
+    assert not is_complete_vaastav_capture(capture)
+    assert latest_season_dirs(tmp_path) == {}
+
+
+def test_missing_source_json_skips_capture(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Capture dir without ``_source.json`` is incomplete (#353)."""
+    _raw_season(tmp_path, "2021-22", stamp="2026-04-01T00-00-00Z", finalize=False)
+    with caplog.at_level(logging.WARNING):
+        assert latest_season_dirs(tmp_path) == {}
+    assert "missing _source.json" in caplog.text
+
+
+def test_invalid_source_json_skips_capture(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Corrupt ``_source.json`` is incomplete (#353)."""
+    root = _raw_season(
+        tmp_path, "2021-22", stamp="2026-05-01T00-00-00Z", finalize=False
+    )
+    capture = root.parents[1]
+    (capture / "_source.json").write_text("{not-json\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert not is_complete_vaastav_capture(capture)
+    assert "invalid _source.json" in caplog.text
+    assert latest_season_dirs(tmp_path) == {}

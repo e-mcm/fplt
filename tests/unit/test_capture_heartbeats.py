@@ -281,6 +281,11 @@ def test_push_raw_rejects_dot_path_components() -> None:
     assert "reject_raw_dot_paths.py" in code
     assert "rclone copy" in code
     assert code.index("reject_raw_dot_paths.py") < code.index("rclone copy")
+    # Completion marker last (#353).
+    assert "--exclude '**/_source.json'" in code
+    assert "--include '**/_source.json'" in code
+    assert code.index("--exclude") < code.index("--include")
+    assert "transfers=" in helper or 'transfers="${RCLONE_TRANSFERS:-32}"' in helper
     action = (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
     assert "push_raw_upload.sh" in action
     assert "::error::" in (_REPO / "scripts" / "reject_raw_dot_paths.py").read_text(

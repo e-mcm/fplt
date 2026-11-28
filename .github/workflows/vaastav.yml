@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     environment: r2
     outputs:
       uploaded: ${{ steps.upload.outputs.uploaded }}
@@ -82,25 +82,26 @@ jobs:
             --status-dir "$RUNNER_TEMP/status" \
             $FULL_FLAG
 
-      - name: Push capture status
-        if: always()
-        uses: ./.github/actions/capture-status
-        with:
-          mode: push
-          source: vaastav
-          status_dir: ${{ runner.temp }}/status
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
-
       - name: Upload to R2
         id: upload
         if: always()
         uses: ./.github/actions/push-raw
         with:
           src: ${{ runner.temp }}/raw
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+
+      # Only after a successful upload so a timed-out R2 push cannot skip seasons (#353).
+      - name: Push capture status
+        if: steps.upload.outputs.uploaded == 'true'
+        uses: ./.github/actions/capture-status
+        with:
+          mode: push
+          source: vaastav
+          status_dir: ${{ runner.temp }}/status
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
