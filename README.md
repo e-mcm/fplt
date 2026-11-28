@@ -39,7 +39,7 @@ Useful env vars (all optional except where noted; see `.env.example`):
 |---|---|
 | `FPLT_DATA_DIR` | Data root (default `./data`) |
 | `FPLT_ENTRY_ID` | Manager entry for live-team plans (`fplt plan --from-api` / automation) |
-| `FPLT_FPL_API_TOKEN` | Bearer token for authenticated `/api/my-team/{id}/` (selling prices, bank, FT) |
+| `FPLT_FPL_API_TOKEN` | Bearer token for `my-team` cross-check and **`fplt apply`**; planning falls back to public endpoints when unset/expired |
 | `FPLT_FPL_SESSION` | Legacy `pl_profile` cookie; the live API uses `FPLT_FPL_API_TOKEN` |
 | `FPLT_NTFY_URL` | ntfy topic for failure + recommendation alerts |
 | `FPLT_SMTP_HOST` / `FPLT_SMTP_FROM` / `FPLT_SMTP_TO` | Recommendation email (all three required or email is a no-op) |
@@ -55,7 +55,7 @@ uv run fplt auth clear                     # drops the token
 # Fallback if needed: uv run fplt auth set --entry-id YOUR_ID
 ```
 
-Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux. Safari is not supported. Settings load `~/.config/fplt/env` (or `$FPLT_ENV_FILE`) **before** the repo `.env`, and the first source wins. A token that exists only in the checkout `.env` is used when the user file is missing; once that JWT is stale, `my-team` returns 403 even though logs say `token=set`. Run `auth from-browser` again after refreshing the FPL tab. Without a token, use `--entry-json` or public finished-GW picks (no selling prices). Missing ntfy/SMTP config is a no-op.
+Supported locally: Chrome / Chromium / Edge / Brave / Firefox on macOS and Linux. Safari is not supported. Settings load `~/.config/fplt/env` (or `$FPLT_ENV_FILE`) **before** the repo `.env`, and the first source wins. A token that exists only in the checkout `.env` is used when the user file is missing; once that JWT is stale, `my-team` returns 403 even though logs say `token=set` — planning then uses `public_squad_state` (selling prices / FTs from public history + PIT). Run `auth from-browser` again after refreshing the FPL tab when you need `fplt apply`. Without a token, `FPLT_ENTRY_ID` alone is enough to plan; `--entry-json` still wins. Missing ntfy/SMTP config is a no-op.
 
 Logged-in next-deadline actions (production model, not a guessed season/GW, and not `apply --confirm`): [`docs/next-gw-actions.md`](docs/next-gw-actions.md).
 
@@ -88,7 +88,7 @@ Logged-in next-deadline actions (production model, not a guessed season/GW, and 
 | Leaderboard app | `make leaderboard` |
 | Results UI (overview; localhost) | `make ui` or `uv run fplt ui` — also `uv run streamlit run src/fplt/ui/app.py --server.address localhost` |
 
-Run `fplt auth from-browser` (or `fplt auth set`) so `make plan` / `fplt plan` load your live squad with selling prices. Without the token, public finished-gameweek picks have no selling prices. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `dc_layered_v4` (same as `configs/ops/production.yaml`); pass `MODEL=` to override. `SEASON` / `GW` on that target are required and are **not** “whatever is next” — resolve them ([`docs/next-gw-actions.md`](docs/next-gw-actions.md)). Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
+With `FPLT_ENTRY_ID` set, `make plan` / `fplt plan` derive the squad from public endpoints (or authoritative `my-team` when `FPLT_FPL_API_TOKEN` is valid). The token is required only for `fplt apply --confirm`. `--entry-json` still wins over the API. `--rebuild` ignores current ownership and drafts a full fifteen with budget = bank + selling prices (same funds as a wildcard). Default model for `make plan` is `dc_layered_v4` (same as `configs/ops/production.yaml`); pass `MODEL=` to override. `SEASON` / `GW` on that target are required and are **not** “whatever is next” — resolve them ([`docs/next-gw-actions.md`](docs/next-gw-actions.md)). Live planning defaults to **optimised chips** (season scheduler → MILP, `DEFAULT_LIVE_CHIP_ARM`); pass `--chip-arm off` for chips-off. Horizon stays H=3.
 
 ## Adding things
 

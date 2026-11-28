@@ -10,8 +10,13 @@ import pytest
 from fplt.cli import main
 from fplt.optimise.decisions import DEFAULT_LIVE_CHIP_ARM
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
+from fplt.optimise.public_squad import ResolvedSquad
 from fplt.optimise.state import SquadState
 from fplt.settings import get_settings
+
+
+def _resolved(squad: SquadState, source: str = "my_team") -> ResolvedSquad:
+    return ResolvedSquad(state=squad, source=source)  # type: ignore[arg-type]
 
 
 def test_plan_from_api_resolves_squad_then_runs_plan(
@@ -32,7 +37,7 @@ def test_plan_from_api_resolves_squad_then_runs_plan(
             "owned": [],
         }
     )
-    resolve = MagicMock(return_value=squad)
+    resolve = MagicMock(return_value=_resolved(squad))
     run = MagicMock(
         return_value=(object(), tmp_path / "plan.parquet", "# ok\n", "r_test")
     )
@@ -66,6 +71,7 @@ def test_plan_from_api_resolves_squad_then_runs_plan(
     assert kwargs["event"] == 3
     run.assert_called_once()
     assert run.call_args.kwargs["squad"] is squad
+    assert run.call_args.kwargs["squad_source"] == "my_team"
     assert run.call_args.args[3] == 3
 
 
@@ -86,7 +92,7 @@ def test_plan_defaults_to_resolve_when_entry_id_set(
             "owned": [],
         }
     )
-    resolve = MagicMock(return_value=squad)
+    resolve = MagicMock(return_value=_resolved(squad))
     run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",
@@ -111,6 +117,7 @@ def test_plan_defaults_to_resolve_when_entry_id_set(
         get_settings.cache_clear()
     resolve.assert_called_once()
     assert run.call_args.kwargs["squad"] is squad
+    assert run.call_args.kwargs["squad_source"] == "my_team"
     assert run.call_args.args[4] == DEFAULT_PLAN_HORIZON
     assert DEFAULT_PLAN_HORIZON == 3
 
@@ -134,7 +141,7 @@ def test_plan_entry_json_wins_over_from_api(
             "owned": [],
         }
     )
-    resolve = MagicMock(return_value=squad)
+    resolve = MagicMock(return_value=_resolved(squad, "entry_json"))
     run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",
@@ -162,6 +169,7 @@ def test_plan_entry_json_wins_over_from_api(
         get_settings.cache_clear()
     assert resolve.call_args.kwargs["entry_json"] == entry
     assert run.call_args.kwargs["squad"] is squad
+    assert run.call_args.kwargs["squad_source"] == "entry_json"
 
 
 def test_plan_from_api_without_entry_id_exits(
@@ -297,7 +305,7 @@ def test_plan_rebuild_clears_owned_and_folds_selling_prices(
             ],
         }
     )
-    resolve = MagicMock(return_value=owned)
+    resolve = MagicMock(return_value=_resolved(owned))
     run = MagicMock(return_value=(object(), tmp_path / "p.parquet", "r\n", "r_test"))
     monkeypatch.setattr(
         "fplt.cli.PITData",

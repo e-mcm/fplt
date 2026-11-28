@@ -84,11 +84,13 @@ class Settings(BaseSettings):
 
     ``fpl_api_token`` is the Bearer value from the ``x-api-authorization``
     header on a logged-in ``my-team`` request. It authenticates
-    ``/api/my-team/{entry_id}/`` (selling prices and free transfers) and is
-    required for ``fplt apply --confirm`` (``POST /transfers/``, lineup).
-    ``fpl_session`` is the retired ``pl_profile`` cookie and is still sent
-    when set. ``api_football_key`` is the API-Sports key for injuries
-    ingest (``FPLT_API_FOOTBALL_KEY``); the fetch script also accepts
+    ``/api/my-team/{entry_id}/`` when available (authoritative live squad)
+    and is **required for ``fplt apply --confirm``** (``POST /transfers/``,
+    lineup). Planning with ``FPLT_ENTRY_ID`` does not need it: missing or
+    expired tokens fall back to ``public_squad_state``. ``fpl_session`` is
+    the retired ``pl_profile`` cookie and is still sent when set.
+    ``api_football_key`` is the API-Sports key for injuries ingest
+    (``FPLT_API_FOOTBALL_KEY``); the fetch script also accepts
     ``API_FOOTBALL_KEY`` / ``APISPORTS_KEY``. ``r2_*`` / ``data_bucket`` /
     ``lab_bucket`` configure the Cloudflare R2 remotes used by
     ``fplt.data.remote``. Credential fields are ``SecretStr`` so ``repr`` /

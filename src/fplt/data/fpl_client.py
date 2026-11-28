@@ -1,12 +1,15 @@
 """Official Fantasy Premier League API client for the user's current team.
 
-Public ``entry/{id}/event/{gw}/picks`` covers finished gameweeks only. The
-live squad (selling prices, bank, free transfers) comes from authenticated
-``my-team/{id}``. The live API expects ``x-api-authorization: Bearer`` from
-``FPLT_FPL_API_TOKEN`` (the ``pl_profile`` cookie in ``FPLT_FPL_SESSION`` is
-legacy). Writes (``POST /transfers/``, lineup) need the same Bearer token.
-Set ``FPLT_ENTRY_ID`` as well. Free-transfer and chip overrides still live in
-``configs/squad_state.yaml`` when that token is unavailable.
+Public ``entry/{id}/event/{gw}/picks``, ``entry/{id}/history/``, and
+``entry/{id}/transfers/`` are enough to plan: see
+``fplt.optimise.public_squad.public_squad_state``. Authenticated ``my-team/{id}``
+is preferred when ``FPLT_FPL_API_TOKEN`` works; on 401/403 the client falls
+back to finished-GW public picks (and ``resolve_squad_state`` rebuilds
+selling prices / FTs via the public path). Writes (``POST /transfers/``,
+lineup / ``fplt apply``) still need a valid Bearer token. The live API
+expects ``x-api-authorization: Bearer`` from ``FPLT_FPL_API_TOKEN`` (the
+``pl_profile`` cookie in ``FPLT_FPL_SESSION`` is legacy). Set
+``FPLT_ENTRY_ID`` as well.
 """
 
 from __future__ import annotations
@@ -48,7 +51,8 @@ class CurrentTeam(BaseModel):
 
     ``picks_payload`` matches ``entry/{id}/event/{gw}/picks`` closely enough
     for ``fplt.optimise.state.apply_entry_picks``. Selling prices are present
-    when the source is ``my_team``; public finished-GW picks omit them.
+    when the source is ``my_team`` or ``public`` (derived); raw
+    ``entry_picks`` omit them until ``public_squad_state`` fills them.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -60,7 +64,7 @@ class CurrentTeam(BaseModel):
     free_transfers: int | None = Field(default=None, ge=0)
     picks: list[EntryPick]
     active_chip: str | None = None
-    source: Literal["my_team", "entry_picks"]
+    source: Literal["my_team", "entry_picks", "public"]
 
     def picks_payload(self) -> dict[str, Any]:
         """Build the dict shape expected by ``apply_entry_picks``.
@@ -69,13 +73,15 @@ class CurrentTeam(BaseModel):
             A payload with ``picks`` and ``entry_history.bank``.
 
         Raises:
-            ValueError: Any pick is missing ``selling_price``.
+            ValueError: Any pick is missing ``selling_price`` (raw public
+                ``entry_picks`` without ``public_squad_state``).
         """
         owned: list[dict[str, Any]] = []
         for pick in self.picks:
             if pick.selling_price is None:
                 raise ValueError(
-                    "selling_price missing; fetch via my-team with FPLT_FPL_API_TOKEN"
+                    "selling_price missing; use public_squad_state or "
+                    "my-team with FPLT_FPL_API_TOKEN"
                 )
             row: dict[str, Any] = {
                 "element": pick.element,
@@ -272,7 +278,8 @@ class FPLClient:
         """Fetch public picks for a finished gameweek.
 
         Live (current) gameweek picks for other managers return HTTP 403 until
-        the deadline; use ``my_team`` for the live squad.
+        the deadline; use ``my_team`` or ``public_squad_state`` for the live
+        squad.
 
         Args:
             entry_id: FPL manager entry id.
@@ -282,6 +289,60 @@ class FPLClient:
             Parsed JSON object with ``picks`` and ``entry_history``.
         """
         return self._get_json(f"/entry/{entry_id}/event/{event}/picks/")
+
+    def entry_history(self, entry_id: int) -> dict[str, Any]:
+        """Fetch public season history (``current[]``, ``chips[]``, ``past[]``).
+
+        Args:
+            entry_id: FPL manager entry id.
+
+        Returns:
+            Parsed JSON object used for free-transfer replay and chip inventory.
+        """
+        return self._get_json(f"/entry/{entry_id}/history/")
+
+    def entry_transfers(self, entry_id: int) -> list[dict[str, Any]]:
+        """Fetch public transfer log for an entry.
+
+        Args:
+            entry_id: FPL manager entry id.
+
+        Returns:
+            List of transfer rows (``element_in``, ``element_out``, costs,
+            ``event``, ``time``).
+
+        Raises:
+            FPLAPIError: The API returned a non-list body.
+        """
+        path = f"/entry/{entry_id}/transfers/"
+        url = f"{self._base_url}{path}"
+        logger.debug("GET %s", url)
+        try:
+            response = self._client.get(url)
+        except httpx.HTTPError as exc:
+            logger.exception("FPL API request failed for %s: %s", path, exc)
+            raise FPLAPIError(f"request failed for {path}: {exc}") from exc
+        # Reuse status handling, then accept a list body.
+        if response.status_code in {401, 403}:
+            logger.error(
+                "FPL API forbidden for %s (need valid FPLT_FPL_API_TOKEN?)", path
+            )
+            raise FPLAPIError(
+                f"FPL API forbidden for {path}; live picks need a fresh "
+                "FPLT_FPL_API_TOKEN (uv run fplt auth set)"
+            )
+        if response.status_code == 404:
+            raise FPLAPIError(f"FPL API not found: {path}")
+        if response.status_code >= 400:
+            body = response.text[:500]
+            raise FPLAPIError(f"FPL API HTTP {response.status_code} for {path}: {body}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FPLAPIError(f"FPL API returned non-JSON for {path}") from exc
+        if not isinstance(payload, list):
+            raise FPLAPIError(f"FPL API expected list for {path}")
+        return [cast(dict[str, Any], row) for row in cast(list[Any], payload)]
 
     def my_team(self, entry_id: int) -> dict[str, Any]:
         """Fetch the authenticated live squad for ``entry_id``.
@@ -313,8 +374,11 @@ class FPLClient:
         """Load the current (or historical) team for an entry.
 
         Prefers authenticated ``my-team`` when an API token or legacy session
-        cookie is set. Falls back to public ``entry/.../picks`` for a finished
-        ``event`` (resolved from the entry summary when omitted).
+        cookie is set. On 401/403 (expired / invalid token) falls back to
+        public ``entry/.../picks`` for a finished ``event``. Callers that need
+        selling prices without a token should use
+        ``fplt.optimise.public_squad.public_squad_state`` instead of raw
+        ``entry_picks``.
 
         Args:
             entry_id: FPL manager entry id.
@@ -330,11 +394,24 @@ class FPLClient:
         """
         if prefer_my_team and (self._api_token or self._session):
             logger.info("loading live squad via my-team for entry_id=%s", entry_id)
-            return CurrentTeam.from_my_team(entry_id, self.my_team(entry_id))
+            try:
+                return CurrentTeam.from_my_team(entry_id, self.my_team(entry_id))
+            except FPLAPIError as exc:
+                if not is_auth_failure(exc):
+                    raise
+                logger.info(
+                    "my-team unauthorized for entry_id=%s (%s); "
+                    "falling back to public entry picks",
+                    entry_id,
+                    exc,
+                )
+        return self._public_entry_team(entry_id, event=event)
+
+    def _public_entry_team(self, entry_id: int, *, event: int | None) -> CurrentTeam:
         gw = event
         if gw is None:
             logger.info(
-                "no token/session; resolving current_event for entry_id=%s",
+                "resolving current_event for public picks entry_id=%s",
                 entry_id,
             )
             summary = self.entry(entry_id)
@@ -521,3 +598,22 @@ def _active_chip(payload: dict[str, Any]) -> str | None:
     if isinstance(chip, str):
         return chip
     return None
+
+
+def is_auth_failure(exc: FPLAPIError) -> bool:
+    """Return True when ``my-team`` failed for a missing/expired/forbidden token.
+
+    Args:
+        exc: Error raised by ``my_team`` / ``current_team``.
+
+    Returns:
+        Whether callers should fall back to ``public_squad_state``.
+    """
+    message = str(exc).lower()
+    return (
+        "forbidden" in message
+        or "401" in message
+        or "403" in message
+        or "fplt_fpl_api_token" in message
+        or "need valid" in message
+    )

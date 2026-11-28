@@ -777,9 +777,15 @@ def test_ensure_slate_runs_skip_and_execute(
     monkeypatch.setattr(
         "fplt.automation.official_slate.record_line_run", lambda *a, **k: None
     )
+    from fplt.optimise.public_squad import ResolvedSquad
+    from fplt.optimise.state import SquadState
+
     monkeypatch.setattr(
         "fplt.automation.official_slate.resolve_squad_state",
-        lambda *a, **k: object(),
+        lambda *a, **k: ResolvedSquad(
+            state=SquadState(bank=0, free_transfers=1, ft_bank_cap=5, owned=[]),
+            source="yaml",
+        ),
     )
     monkeypatch.setattr(
         "fplt.automation.official_slate.decisions_for_slate",
