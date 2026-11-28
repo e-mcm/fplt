@@ -77,6 +77,41 @@ def test_production_models_are_dc_layered_v4_native_at_default_horizon() -> None
     assert plans_exist.__defaults__[-1] is None
 
 
+def test_production_models_is_lazy_not_import_time() -> None:
+    """``PRODUCTION_MODELS`` must not be evaluated at cycle import (#362)."""
+    import fplt.automation.cycle as cycle
+
+    assert "PRODUCTION_MODELS" not in cycle.__dict__
+    assert cycle.PRODUCTION_MODELS == ["dc_layered_v4_native"]
+
+
+def test_automation_import_tolerates_empty_and_bad_overrides() -> None:
+    """Empty/bad production env must not crash ``import fplt.automation`` (#362)."""
+    import os
+    import subprocess
+    import sys
+
+    for environ in (
+        {
+            "FPLT_PRODUCTION_MODELS": "",
+            "FPLT_PLAN_HORIZON": "",
+            "PYTEST_CURRENT_TEST": "1",
+        },
+        {
+            "FPLT_PLAN_HORIZON": "nope",
+            "PYTEST_CURRENT_TEST": "1",
+        },
+    ):
+        completed = subprocess.run(  # noqa: S603 — controlled interpreter + const argv
+            [sys.executable, "-c", "import fplt.automation"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, **environ},
+        )
+        assert completed.returncode == 0, completed.stderr
+
+
 def test_a_deadline_is_due_only_inside_three_hours(league_dir: Path) -> None:
     store = DataStore(league_dir)
     assert due_gameweek(store, _GW3 - timedelta(hours=4)) is None

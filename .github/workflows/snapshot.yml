@@ -30,6 +30,15 @@ jobs:
       uploaded: ${{ steps.upload.outputs.uploaded }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0  # zizmor: ignore[artipacked] job git-pushes with GITHUB_TOKEN
+
+      - name: Check required secrets are non-empty
+        uses: ./.github/actions/check-nonempty-env
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        with:
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
       - name: Simulate failure
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_failure }}
         run: |
@@ -140,6 +149,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check required secrets are non-empty
+        uses: ./.github/actions/check-nonempty-env
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        with:
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
+
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
         with:
           enable-cache: true
@@ -171,6 +189,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
+
       - name: Heartbeat
         if: needs.capture.result == 'success' && needs.capture.outputs.uploaded == 'true'
         uses: ./.github/actions/heartbeat

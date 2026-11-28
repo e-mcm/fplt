@@ -1,0 +1,24 @@
+name: check-nonempty-env
+description: >
+  Fail if any listed environment variables are empty (GitHub maps missing
+  secrets/vars to ""). Never echoes values (#362).
+inputs:
+  names:
+    description: Space-separated env var names that must be non-empty
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Check required env vars are non-empty
+      shell: bash
+      run: |
+        set -euo pipefail
+        failed=0
+        # shellcheck disable=SC2086
+        for name in ${{ inputs.names }}; do
+          if [ -z "${!name:-}" ]; then
+            echo "::error::${name} is empty; set it under Settings → Environments → r2"
+            failed=1
+          fi
+        done
+        exit "$failed"

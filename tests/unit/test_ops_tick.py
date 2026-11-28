@@ -255,6 +255,51 @@ def test_cli_ops_tick_exits_on_fetch_error(
     get_settings.cache_clear()
 
 
+def test_cli_ops_tick_tolerates_empty_workflow_optional_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Empty optional/override vars from ops-tick.yml must not crash startup (#362)."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FPLT_ENV_FILE", str(tmp_path / "env"))
+    # Mirrors ops-tick.yml env: optional overrides + secrets GitHub may pass as "".
+    for key in (
+        "FPLT_PRODUCTION_MODELS",
+        "FPLT_PLAN_HORIZON",
+        "FPLT_NTFY_URL",
+        "FPLT_ENTRY_ID",
+        "FPLT_FPL_API_TOKEN",
+        "FPLT_LAB_BUCKET",
+        "FPLT_R2_ACCOUNT_ID",
+        "FPLT_R2_ACCESS_KEY_ID",
+        "FPLT_R2_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("FPLT_DATA_BUCKET", "fplt-data")
+    monkeypatch.setenv("FPLT_LOG_FORMAT", "json")
+    get_settings.cache_clear()
+
+    def fake_run(**_kwargs: object) -> OpsTickResult:
+        return OpsTickResult(
+            snapshots_fetched=0,
+            staged_snapshots=0,
+            understat_matches=0,
+            api_football_captures=0,
+            catch_up_planned=[],
+            pre_deadline_planned=None,
+            still_pending=[],
+            models=["dc_layered_v4_native"],
+            horizon=3,
+        )
+
+    monkeypatch.setattr("fplt.automation.ops_tick.run_ops_tick", fake_run)
+    main(["ops-tick", "--no-notify", "--source", "bucket"])
+    out = capsys.readouterr().out
+    assert "ops-tick status" in out
+    get_settings.cache_clear()
+
+
 def test_makefile_documents_ops_tick() -> None:
     makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "ops-tick:" in makefile

@@ -97,6 +97,18 @@ jobs:
           restore-keys: |
             ops-state-${{ runner.os }}-
 
+      - name: Check required secrets are non-empty
+        if: steps.gate.outputs.enabled == 'true'
+        uses: ./.github/actions/check-nonempty-env
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FPLT_ENTRY_ID: ${{ secrets.FPLT_ENTRY_ID }}
+          FPLT_FPL_API_TOKEN: ${{ secrets.FPLT_FPL_API_TOKEN }}
+        with:
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY FPLT_ENTRY_ID FPLT_FPL_API_TOKEN
+
       - name: Run ops-tick
         if: steps.gate.outputs.enabled == 'true'
         env:

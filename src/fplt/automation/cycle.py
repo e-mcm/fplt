@@ -39,11 +39,18 @@ from fplt.optimise.plan import covered_horizon, plan_parquet
 from fplt.types import GWKey
 
 # Live list / horizon come from ``configs/ops/production.yaml`` (or env).
-# Prefer ``load_production_ops()`` so overrides apply; this name stays for
-# docs and callers that want the committed-default snapshot at import time.
-PRODUCTION_MODELS = list(load_production_ops().models)
+# Prefer ``load_production_ops()`` so overrides apply. ``PRODUCTION_MODELS`` is
+# resolved lazily via ``__getattr__`` so a bad/empty override cannot crash
+# every ``fplt.automation`` import (#362).
 _WINDOW = timedelta(hours=3)
 logger = logging.getLogger(__name__)
+
+
+def __getattr__(name: str) -> object:
+    """Lazy ``PRODUCTION_MODELS`` mirror of ``load_production_ops().models``."""
+    if name == "PRODUCTION_MODELS":
+        return list(load_production_ops().models)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def pending_checked(

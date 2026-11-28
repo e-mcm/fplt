@@ -329,11 +329,13 @@ def _lines_from_mapping(
 
 
 def _models_from_env(raw: str | None) -> list[str] | None:
+    """Parse ``FPLT_PRODUCTION_MODELS``; empty / whitespace means unset."""
     if raw is None:
         return None
     text = raw.strip()
     if not text:
-        raise ValueError(f"{_MODELS_ENV} is set but empty")
+        # GitHub Actions passes "" for unset repository variables.
+        return None
     names = [part.strip() for part in text.split(",")]
     if not names or any(not name for name in names):
         raise ValueError(
@@ -343,11 +345,13 @@ def _models_from_env(raw: str | None) -> list[str] | None:
 
 
 def _horizon_from_env(raw: str | None) -> int | None:
+    """Parse ``FPLT_PLAN_HORIZON``; empty / whitespace means unset."""
     if raw is None:
         return None
     text = raw.strip()
     if not text:
-        raise ValueError(f"{_HORIZON_ENV} is set but empty")
+        # GitHub Actions passes "" for unset repository variables.
+        return None
     try:
         value = int(text)
     except ValueError as exc:
