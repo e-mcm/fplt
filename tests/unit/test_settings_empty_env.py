@@ -118,7 +118,7 @@ def test_exit_config_error_survives_broken_handler(
             # Match StreamHandler-style failures: catch and handleError.
             try:
                 raise OSError("stream closed")
-            except Exception:
+            except OSError:
                 self.handleError(record)
 
     root = logging.getLogger()
