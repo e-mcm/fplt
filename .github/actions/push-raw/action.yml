@@ -52,6 +52,7 @@ runs:
         export RCLONE_CONFIG_FPLT_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
         export RCLONE_CONFIG_FPLT_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
         export RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+        # Dot-path guard (#339) lives in push_raw_upload.sh before rclone.
         bash "${{ github.workspace }}/scripts/push_raw_upload.sh" \
           "${{ inputs.src }}" \
           "fplt:${DATA_BUCKET}/raw"

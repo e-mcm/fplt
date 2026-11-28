@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from fplt.schemas.vaastav_source import VaastavSourceManifest
 from scripts import bootstrap_vaastav
 
 capture_vaastav = bootstrap_vaastav.capture_vaastav
+default_vaastav_cache_dir = bootstrap_vaastav.default_vaastav_cache_dir
 fetch_vaastav_repo = bootstrap_vaastav.fetch_vaastav_repo
 is_season_dir = bootstrap_vaastav.is_season_dir
 list_season_dirs = bootstrap_vaastav.list_season_dirs
@@ -271,6 +273,62 @@ def test_default_raw_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     assert bootstrap_vaastav.default_raw_dir() == Path("./data/raw")
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path / "custom"))
     assert bootstrap_vaastav.default_raw_dir() == tmp_path / "custom" / "raw"
+
+
+def test_default_vaastav_cache_dir_is_sibling_not_child(tmp_path: Path) -> None:
+    """Library default keeps the clone outside the raw root (#339)."""
+    raw = tmp_path / "raw"
+    cache = default_vaastav_cache_dir(raw)
+    assert cache == (tmp_path / "vaastav_cache").resolve()
+    assert raw.resolve() not in cache.parents
+    assert cache != raw.resolve()
+
+
+def test_capture_default_cache_leaves_no_dot_entries_under_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Capture with ``--out X`` must not leave any '.' entries under ``X``."""
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    repo = _fake_vaastav(upstream)
+    out = tmp_path / "out" / "raw"
+
+    def fake_fetch(cache_dir: Path, *, repo_url: str = "") -> Path:
+        assert out.resolve() not in cache_dir.resolve().parents
+        assert cache_dir.resolve() != out.resolve()
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        shutil.copytree(repo, cache_dir)
+        return cache_dir
+
+    monkeypatch.setattr(bootstrap_vaastav, "fetch_vaastav_repo", fake_fetch)
+    written = capture_vaastav(
+        out,
+        full=True,
+        captured_at=datetime(2026, 11, 28, 12, 0, tzinfo=UTC),
+    )
+    assert written is not None
+    assert written.parent == out / "vaastav"
+    # Only vaastav/captured_at=*/… under out; no '.'-prefixed names anywhere.
+    names = {p.relative_to(out).as_posix() for p in out.rglob("*")}
+    assert all(not any(part.startswith(".") for part in Path(n).parts) for n in names)
+    top = sorted(p.name for p in out.iterdir())
+    assert top == ["vaastav"]
+    assert (tmp_path / "out" / "vaastav_cache").is_dir()
+
+
+def test_cache_dir_under_raw_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit cache under the raw root is rejected."""
+    out = tmp_path / "raw"
+    monkeypatch.setattr(
+        bootstrap_vaastav,
+        "fetch_vaastav_repo",
+        lambda cache_dir, **kwargs: cache_dir,
+    )
+    with pytest.raises(ValueError, match="must not be under raw root"):
+        capture_vaastav(out, cache_dir=out / ".vaastav_cache")
 
 
 def test_main_upstream_unreachable_counts_then_fails(

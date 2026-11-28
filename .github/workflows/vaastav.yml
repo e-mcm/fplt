@@ -78,6 +78,7 @@ jobs:
           fi
           uv run python scripts/bootstrap_vaastav.py \
             --out "$RUNNER_TEMP/raw" \
+            --cache-dir "$RUNNER_TEMP/vaastav_cache" \
             --status-dir "$RUNNER_TEMP/status" \
             $FULL_FLAG
 
@@ -114,6 +115,9 @@ jobs:
             echo "nothing new to publish"
             exit 0
           fi
+          # Defence in depth (#339): refuse '.'-prefixed path components.
+          # Must run before checking out snapshots (that branch has no scripts/).
+          python3 scripts/reject_raw_dot_paths.py "$RUNNER_TEMP/raw"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git fetch origin snapshots || true
@@ -125,6 +129,10 @@ jobs:
           fi
           mkdir -p data
           cp -a "$RUNNER_TEMP/raw/." data/raw/
+          # Drop a wrongly committed clone cache if a prior run left a gitlink.
+          if [ -e data/raw/.vaastav_cache ]; then
+            git rm -rf --ignore-unmatch data/raw/.vaastav_cache || rm -rf data/raw/.vaastav_cache
+          fi
           git add data/raw
           if git diff --cached --quiet; then
             echo "vaastav snapshots already present"

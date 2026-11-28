@@ -39,6 +39,15 @@ def default_raw_dir() -> Path:
     return root / "raw"
 
 
+def default_vaastav_cache_dir(raw_root: Path) -> Path:
+    """Return a sparse-clone cache path that is never under ``raw_root``.
+
+    Defaults to a sibling of ``raw_root`` named ``vaastav_cache`` so GHA
+    ``--out $RUNNER_TEMP/raw`` keeps the git checkout outside the upload tree.
+    """
+    return raw_root.resolve().parent / "vaastav_cache"
+
+
 def stamp_captured_at(moment: datetime) -> str:
     """Format ``moment`` as a ``captured_at`` directory stamp."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -275,7 +284,15 @@ def capture_vaastav(
     Returns the new capture directory, or ``None`` when nothing changed.
     """
     if repo_path is None:
-        cache = cache_dir if cache_dir is not None else raw_root / ".vaastav_cache"
+        cache = (
+            cache_dir if cache_dir is not None else default_vaastav_cache_dir(raw_root)
+        )
+        raw_resolved = raw_root.resolve()
+        cache_resolved = cache.resolve()
+        if cache_resolved == raw_resolved or raw_resolved in cache_resolved.parents:
+            raise ValueError(
+                f"vaastav cache_dir {cache} must not be under raw root {raw_root}"
+            )
         repo = fetch_vaastav_repo(cache, repo_url=repo_url)
         repo_label = repo_url
     else:

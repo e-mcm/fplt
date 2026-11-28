@@ -33,6 +33,13 @@ if [ ! -d "$src" ] || [ -z "$(find "$src" -type f | head -n 1)" ]; then
   exit 0
 fi
 
+# Defence in depth (#339): never upload '.'-prefixed path components
+# (e.g. .vaastav_cache) into write-once raw/.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! python3 "${script_dir}/reject_raw_dot_paths.py" "$src"; then
+  fail_upload "raw source contains path components starting with '.'" 1
+fi
+
 set +e
 rclone copy "$src" "$dest" --immutable --fast-list --stats-one-line -v
 copy_rc=$?

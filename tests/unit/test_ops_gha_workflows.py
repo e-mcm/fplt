@@ -148,7 +148,21 @@ def test_dual_write_capture_workflows_untouched() -> None:
         "understat.yml",
         "api_football.yml",
         "football_data.yml",
+        "vaastav.yml",
     ):
         text = (_WORKFLOWS / name).read_text(encoding="utf-8")
         assert "push-raw" in text, name
         assert "Publish to the snapshots branch" in text, name
+        # Dot-path guard must run before checkout of orphan snapshots (#339).
+        assert "reject_raw_dot_paths.py" in text, name
+        guard_at = text.index("reject_raw_dot_paths.py")
+        checkout_at = text.index("origin/snapshots")
+        assert guard_at < checkout_at, name
+
+
+def test_vaastav_workflow_keeps_cache_outside_raw() -> None:
+    """vaastav.yml passes --cache-dir under RUNNER_TEMP, not under raw/ (#339)."""
+    text = (_WORKFLOWS / "vaastav.yml").read_text(encoding="utf-8")
+    assert '--cache-dir "$RUNNER_TEMP/vaastav_cache"' in text
+    assert '--status-dir "$RUNNER_TEMP/status"' in text
+    assert '--out "$RUNNER_TEMP/raw"' in text
