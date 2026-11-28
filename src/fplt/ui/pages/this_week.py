@@ -100,6 +100,8 @@ def render(store: DashboardStore | None = None) -> None:
         players=curated["players"],
         teams=curated["teams"],
         status=curated["player_status"],
+        season=selection.season,
+        as_of=deadline,
     )
     _render_plan(panel)
 
@@ -116,6 +118,8 @@ def render(store: DashboardStore | None = None) -> None:
         horizon=horizon,
         squad_keys=squad,
         my_squad_only=my_squad,
+        season=selection.season,
+        as_of=deadline,
     )
     st.subheader("Players")
     if table.is_empty():

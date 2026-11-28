@@ -11,7 +11,12 @@ from fplt.schemas.outcomes import FixtureOutcomesSchema, PlayerFixtureOutcomesSc
 
 
 class PlayersSchema(pa.DataFrameModel):
-    """One row per player per season, from the first snapshot that contained them."""
+    """One row per player per season per capture (``available_at``).
+
+    PIT-versioned: readers outside ``PITView`` must take the latest row per
+    ``player_key`` (e.g. ``fplt.analysis.this_week.latest_rows``); joining raw
+    fans out every player (#379).
+    """
 
     season: str
     player_key: int
@@ -28,7 +33,11 @@ class PlayersSchema(pa.DataFrameModel):
 
 
 class TeamsSchema(pa.DataFrameModel):
-    """One row per team per season, from the first snapshot that contained them."""
+    """One row per team per season per capture (``available_at``).
+
+    PIT-versioned like ``PlayersSchema``: take the latest row per ``team_key``
+    before joining (#379).
+    """
 
     season: str
     team_key: int
