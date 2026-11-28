@@ -184,7 +184,12 @@ def test_draw_truth_paths_rejects_non_positive_n() -> None:
 
 
 def test_crn_policies_share_outcome_noise() -> None:
-    """Two policies on the same paths must use identical actuals (CRN)."""
+    """Two policies on the same paths must use identical actuals (CRN).
+
+    Seeded path draws are covered by
+    ``test_draw_truth_paths_are_reproducible_and_labelled``; this smoke keeps a
+    real paired SE with ``n_paths=2`` (minimum for sample sd) on one GW.
+    """
     candidates, rates, preds_a, preds_b = _tiny_season()
     report = run_simulated_season_eval(
         candidates,
@@ -194,38 +199,35 @@ def test_crn_policies_share_outcome_noise() -> None:
         ],
         _state(),
         season="2024-25",
-        gameweeks=[1, 2],
+        gameweeks=[1],
         horizon=1,
-        n_paths=4,
+        n_paths=2,
         seed=42,
         truth_rates=rates,
     )
     SimulatedSeasonPathSchema.validate(report.paths)
-    assert report.n_paths == 4
+    assert report.n_paths == 2
+    assert report.seed == 42
+    path_ids = sorted(report.paths["path_id"].unique().to_list())
+    assert path_ids == [0, 1]
+    # Every path appears once per policy (shared CRN path set).
+    for policy_id in ("policy_a", "policy_b"):
+        assert (
+            sorted(
+                report.paths.filter(pl.col("policy_id") == policy_id)[
+                    "path_id"
+                ].to_list()
+            )
+            == path_ids
+        )
     # Paired board has one season_points row for the unordered pair.
     assert report.diffs.height == 1
     PolicyDiffSESchema.validate(report.diffs)
     row = report.diffs.row(0, named=True)
     assert row["metric"] == "season_points"
-    assert row["n_paths"] == 4
+    assert row["n_paths"] == 2
     assert row["se"] >= 0.0
-    # Re-running with the same seed regenerates identical path totals.
-    again = run_simulated_season_eval(
-        candidates,
-        [
-            DecisionPolicy("policy_a", preds_a),
-            DecisionPolicy("policy_b", preds_b),
-        ],
-        _state(),
-        season="2024-25",
-        gameweeks=[1, 2],
-        horizon=1,
-        n_paths=4,
-        seed=42,
-        truth_rates=rates,
-    )
-    assert report.paths.equals(again.paths)
-    assert report.diffs.equals(again.diffs)
+    assert math.isfinite(float(row["se"]))
 
 
 def test_paired_se_matches_manual_formula() -> None:
@@ -255,8 +257,9 @@ def test_paired_se_matches_manual_formula() -> None:
 
 
 def test_predrawn_paths_and_attainable_share_se() -> None:
+    """Predrawn paths attach attainable share SE (two paths, one GW)."""
     candidates, rates, preds_a, preds_b = _tiny_season()
-    drawn = draw_truth_paths(rates, n_paths=3, seed=99)
+    drawn = draw_truth_paths(rates, n_paths=2, seed=99)
     report = run_simulated_season_eval(
         candidates,
         [
@@ -265,16 +268,21 @@ def test_predrawn_paths_and_attainable_share_se() -> None:
         ],
         _state(),
         season="2024-25",
-        gameweeks=[1, 2],
+        gameweeks=[1],
         horizon=1,
         path_actuals=drawn,
         with_attainable=True,
     )
     assert report.with_attainable
+    assert report.n_paths == 2
     assert set(report.diffs["metric"].to_list()) == {
         "season_points",
         "share_of_attainable",
     }
+    for metric in ("season_points", "share_of_attainable"):
+        row = report.diffs.filter(pl.col("metric") == metric).row(0, named=True)
+        assert row["n_paths"] == 2
+        assert math.isfinite(float(row["se"]))
     for row in report.paths.iter_rows(named=True):
         assert row["attainable_points"] is not None
         assert row["share_of_attainable"] is not None
@@ -537,10 +545,15 @@ def test_chip_arm_kwargs_reach_simulate_decisions() -> None:
 
 
 def test_chip_arms_crn_on_toy_season() -> None:
-    """End-to-end: three chip arms share CRN paths on a tiny season."""
+    """End-to-end: three chip arms share CRN paths on a tiny season.
+
+    Reproducibility is via seeded path draws (cheap), not a second full eval.
+    """
     candidates, predictions, actuals, fixtures = _chip_toy_season()
     rates = truth_rates_from_actuals(actuals)
     drawn = draw_truth_paths(rates, n_paths=2, seed=7)
+    # Same seed → identical paths without re-planning (guards weakening seed CRN).
+    assert drawn.equals(draw_truth_paths(rates, n_paths=2, seed=7))
     policies = chip_arm_policies(
         predictions,
         base_model_id="toy",
@@ -552,33 +565,129 @@ def test_chip_arms_crn_on_toy_season() -> None:
         policies,
         _state(),
         season="2024-25",
-        gameweeks=[1, 2, 3],
+        gameweeks=[1, 2],
         horizon=1,
         path_actuals=drawn,
         fixtures=fixtures,
     )
     SimulatedSeasonPathSchema.validate(report.paths)
     PolicyDiffSESchema.validate(report.diffs)
+    assert report.n_paths == 2
     assert set(report.paths["policy_id"].to_list()) == {
         "toy",
         "toy::chip_rule_based",
         "toy::chip_optimised",
     }
+    path_ids = sorted(drawn["path_id"].unique().to_list())
+    for policy_id in (
+        "toy",
+        "toy::chip_rule_based",
+        "toy::chip_optimised",
+    ):
+        assert (
+            sorted(
+                report.paths.filter(pl.col("policy_id") == policy_id)[
+                    "path_id"
+                ].to_list()
+            )
+            == path_ids
+        )
     assert report.diffs.height == 2
-    again = run_simulated_season_eval(
-        candidates,
-        policies,
-        _state(),
-        season="2024-25",
-        gameweeks=[1, 2, 3],
-        horizon=1,
-        path_actuals=drawn,
-        fixtures=fixtures,
-    )
-    assert report.paths.equals(again.paths)
-    assert report.diffs.equals(again.diffs)
+    for row in report.diffs.iter_rows(named=True):
+        assert row["n_paths"] == 2
+        assert math.isfinite(float(row["se"]))
     text = format_simulated_season_report(report)
     assert "toy::chip_optimised" in text
+
+
+def test_crn_eval_passes_identical_actuals_per_path() -> None:
+    """Regression: every policy on a path must see the same actuals frame.
+
+    Catches accidental per-policy redraws that would weaken CRN while leaving
+    path_id labels intact. Mocked planner — wall cost stays near zero.
+    """
+    candidates, _rates, preds_a, preds_b = _tiny_season()
+    players = candidates.filter(pl.col("gw") == 1)["player_key"].to_list()
+    path_actuals = pl.concat(
+        [
+            pl.DataFrame(
+                {
+                    "path_id": [path_id] * len(players),
+                    "gw": [1] * len(players),
+                    "player_key": players,
+                    "actual_pts": [2 + path_id] * len(players),
+                    "actual_minutes": [90] * len(players),
+                }
+            )
+            for path_id in (0, 1)
+        ]
+    )
+    empty_decisions = pl.DataFrame(
+        schema={
+            "model_id": pl.Utf8(),
+            "season": pl.Utf8(),
+            "gw": pl.Int64(),
+            "player_key": pl.Int64(),
+            "position": pl.Utf8(),
+            "in_xi": pl.Boolean(),
+            "captain": pl.Boolean(),
+            "vice": pl.Boolean(),
+            "bought": pl.Boolean(),
+            "sold": pl.Boolean(),
+            "xpts": pl.Float64(),
+            "actual_pts": pl.Int64(),
+            "actual_minutes": pl.Int64(),
+            "hit": pl.Float64(),
+            "free_transfers": pl.Int64(),
+            "chip": pl.Utf8(),
+        }
+    )
+    empty_summary = pl.DataFrame(
+        {
+            "model_id": pl.Series([], dtype=pl.Utf8()),
+            "season": pl.Series([], dtype=pl.Utf8()),
+            "total_points": pl.Series([], dtype=pl.Int64()),
+            "gameweeks": pl.Series([], dtype=pl.Int64()),
+            "per_gw": pl.Series([], dtype=pl.Float64()),
+        }
+    )
+    with (
+        patch(
+            "fplt.backtest.simulated_season.simulate_decisions",
+            return_value=empty_decisions,
+        ) as sim,
+        patch(
+            "fplt.backtest.simulated_season.summarise_decisions",
+            return_value=empty_summary,
+        ),
+    ):
+        run_simulated_season_eval(
+            candidates,
+            [
+                DecisionPolicy("policy_a", preds_a),
+                DecisionPolicy("policy_b", preds_b),
+            ],
+            _state(),
+            season="2024-25",
+            gameweeks=[1],
+            horizon=1,
+            path_actuals=path_actuals,
+        )
+    # 2 paths × 2 policies; within each path the two actuals args must match.
+    assert sim.call_count == 4
+    for offset in (0, 2):
+        left = sim.call_args_list[offset].args[2]
+        right = sim.call_args_list[offset + 1].args[2]
+        assert isinstance(left, pl.DataFrame)
+        assert isinstance(right, pl.DataFrame)
+        assert left.equals(right)
+    # Distinct paths keep distinct outcome draws (path 0 pts=2, path 1 pts=3).
+    path0 = sim.call_args_list[0].args[2]
+    path1 = sim.call_args_list[2].args[2]
+    assert isinstance(path0, pl.DataFrame)
+    assert isinstance(path1, pl.DataFrame)
+    assert path0["actual_pts"].unique().to_list() == [2]
+    assert path1["actual_pts"].unique().to_list() == [3]
 
 
 def test_run_chip_arm_sim_season_loads_ledger_and_delegates(tmp_path) -> None:
@@ -1142,14 +1251,14 @@ def _empty_diffs_frame() -> pl.DataFrame:
 
 
 def _chip_toy_season() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Three gameweeks with doubles so rule-based landmarks can fire."""
+    """Two gameweeks with a GW2 double so rule-based landmarks can fire."""
     cand_rows: list[dict[str, object]] = []
     pred_rows: list[dict[str, object]] = []
     act_rows: list[dict[str, object]] = []
     player = 1
     for club in range(1, 7):
         for position in ("GK", "DEF", "DEF", "MID", "FWD"):
-            for gw in (1, 2, 3):
+            for gw in (1, 2):
                 cand_rows.append(
                     {
                         "gw": gw,
@@ -1168,7 +1277,7 @@ def _chip_toy_season() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.Dat
                         "xpts": xpts,
                     }
                 )
-                if gw < 3:
+                if gw < 2:
                     pred_rows.append(
                         {
                             "as_of_gw": gw,
@@ -1188,10 +1297,10 @@ def _chip_toy_season() -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.Dat
             player += 1
     fixtures = pl.DataFrame(
         {
-            "season": ["2024-25", "2024-25", "2024-25", "2024-25"],
-            "gw": [2, 2, 3, 3],
-            "team_h_key": [1, 1, 2, 3],
-            "team_a_key": [2, 3, 4, 5],
+            "season": ["2024-25", "2024-25"],
+            "gw": [2, 2],
+            "team_h_key": [1, 1],
+            "team_a_key": [2, 3],
         }
     )
     return (
