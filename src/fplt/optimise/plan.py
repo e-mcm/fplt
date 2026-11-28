@@ -16,12 +16,10 @@ restricts or forces chips by gameweek (Wave C3 hooks for C5).
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 import highspy
 import numpy as np
@@ -510,91 +508,6 @@ def covered_horizon(gameweek: int, horizon: int) -> int:
     if horizon < 1 or gameweek > 38:
         return 0
     return sum(1 for offset in range(horizon) if gameweek + offset <= 38)
-
-
-def plan_parquet(
-    root: Path, model_id: str, season: str, gameweek: int, horizon: int
-) -> Path:
-    """Parquet path for one model's plan at one deadline and horizon.
-
-    Args:
-        root: Data directory that contains ``plans/``.
-        model_id: Predictor id. This is a hash of the model spec, not the plan.
-        season: Season label.
-        gameweek: Deadline the plan was built at.
-        horizon: Weeks the plan covers, including that deadline.
-
-    Returns:
-        ``plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet``.
-    """
-    stamp = f"as_of={season}_gw{gameweek:02d}_h{horizon:02d}"
-    return root / "plans" / model_id / stamp / "part.parquet"
-
-
-def plan_code_sha_path(plan_parquet_path: Path) -> Path:
-    """Sidecar path that records the git sha that wrote a plan parquet."""
-    return plan_parquet_path.parent / "code_sha.txt"
-
-
-def plan_metadata_path(plan_parquet_path: Path) -> Path:
-    """JSON metadata beside a plan parquet (``code_sha``, optional ``prod_tag``)."""
-    return plan_parquet_path.parent / "metadata.json"
-
-
-def write_plan(
-    root: Path,
-    frame: pl.DataFrame,
-    *,
-    code_sha: str | None = None,
-    prod_tag: str | None = None,
-) -> Path:
-    """Write a plan parquet. The same deadline and horizon are never replaced.
-
-    Also writes ``code_sha.txt`` and ``metadata.json`` beside the parquet so
-    every plan traces to the code that produced it (ops-04).
-
-    Args:
-        root: Data directory that contains ``plans/``.
-        frame: Rows matching ``PlanSchema`` for one model and one deadline.
-        code_sha: Git HEAD to record; defaults to ``git_sha()``.
-        prod_tag: Optional moving-tag label (for example ``prod``) from ops.
-
-    Returns:
-        The parquet path.
-
-    Raises:
-        FileExistsError: That deadline and horizon were already written.
-        ValueError: The frame mixes deadlines or skips a horizon step.
-    """
-    from fplt.models.spec import git_sha
-
-    checked = _frame(frame, PlanSchema)
-    seasons = checked["as_of_season"].unique().to_list()
-    gameweeks = checked["as_of_gw"].unique().to_list()
-    models = checked["model_id"].unique().to_list()
-    if len(seasons) != 1 or len(gameweeks) != 1 or len(models) != 1:
-        raise ValueError("a plan file is one model and one deadline")
-    steps = sorted(int(step) for step in checked["step"].unique().to_list())
-    horizon = max(steps) + 1 if steps else 0
-    if steps != list(range(horizon)):
-        raise ValueError("a plan file needs one row set per horizon step")
-    path = plan_parquet(
-        root, str(models[0]), str(seasons[0]), int(gameweeks[0]), horizon
-    )
-    if path.exists():
-        raise FileExistsError(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    checked.write_parquet(path)
-    sha = code_sha if code_sha is not None else git_sha()
-    plan_code_sha_path(path).write_text(sha + "\n", encoding="utf-8")
-    meta: dict[str, str] = {"code_sha": sha}
-    if prod_tag:
-        meta["prod_tag"] = prod_tag
-    plan_metadata_path(path).write_text(
-        json.dumps(meta, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return path
 
 
 _POSITION_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}

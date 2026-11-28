@@ -105,6 +105,30 @@ def test_overview_app_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         get_settings.cache_clear()
 
 
+def test_overview_empty_plan_runs_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty ``runs/`` plan catalog shows the cut-over empty-state copy."""
+    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+
+        def _overview_only() -> None:
+            from fplt.ui.pages.overview import render
+
+            render()
+
+        app = AppTest.from_function(_overview_only, default_timeout=10)
+        app.run()
+        assert not app.exception
+        texts = [str(item.value) for item in app.markdown] + [
+            str(item.value) for item in app.text
+        ]
+        assert any("No plan runs found under `runs/`." in text for text in texts)
+    finally:
+        get_settings.cache_clear()
+
+
 def test_app_navigation_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()

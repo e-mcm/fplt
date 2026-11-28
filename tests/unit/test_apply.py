@@ -25,10 +25,10 @@ from fplt.optimise.apply import (
     build_apply_payload,
     format_apply_preview,
 )
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, plan_parquet, write_plan
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.settings import Settings
 from fplt.types import GWKey
-from tests.builders import dual_write_plan
+from tests.builders import write_test_plan_run
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "fpl_api"
@@ -270,7 +270,7 @@ def test_apply_plan_dry_run_and_confirm(tmp_path: Path) -> None:
     owned = [pick.element for pick in team.picks]
     buy_key = 9001
     _view(tmp_path, element_ids=owned + [buy_key])
-    dual_write_plan(tmp_path, _swap_plan(team, buy_key))
+    write_test_plan_run(tmp_path, _swap_plan(team, buy_key))
 
     posts: list[tuple[str, dict[str, Any]]] = []
 
@@ -330,7 +330,7 @@ def test_apply_plan_transfers_only(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned + [9001])
-    dual_write_plan(tmp_path, _swap_plan(team))
+    write_test_plan_run(tmp_path, _swap_plan(team))
     posts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -419,19 +419,6 @@ def test_cli_apply_dry_run(
     assert "mode=dry_run" in out
     assert "dry-run: nothing posted" in out
     assert seen["horizon"] == DEFAULT_PLAN_HORIZON
-
-
-def test_plan_parquet_path_matches_write(tmp_path: Path) -> None:
-    team = CurrentTeam.from_my_team(42, _load("my_team.json"))
-    elements = [pick.element for pick in team.picks]
-    frame = _plan_rows(
-        elements=elements,
-        bought=[False] * 15,
-        sold=[False] * 15,
-    )
-    path = write_plan(tmp_path, frame)
-    spec = load_model_specs()[_MODEL]
-    assert path == plan_parquet(tmp_path, spec.model_id, _SEASON, _GW, _HORIZON)
 
 
 def test_build_payload_missing_maps_and_prices() -> None:
@@ -539,7 +526,7 @@ def test_apply_plan_builds_client_from_secret_settings(
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    dual_write_plan(
+    write_test_plan_run(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )
@@ -646,7 +633,7 @@ def test_apply_plan_lineup_only_and_no_transfers(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    dual_write_plan(
+    write_test_plan_run(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )
@@ -705,7 +692,7 @@ def test_apply_plan_dry_run_fetches_team(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    dual_write_plan(
+    write_test_plan_run(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )

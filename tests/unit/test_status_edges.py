@@ -99,7 +99,7 @@ def test_format_status_human_rich_fields(tmp_path: Path) -> None:
                     written_at=_NOW,
                     path="plans/rm/as_of=2024-25_gw01_h01/part.parquet",
                 ),
-                PlanDeadlineStatus(model="missing", reason="no plan parquet"),
+                PlanDeadlineStatus(model="missing", reason="no plan run"),
             ],
             "next_deadline": NextDeadlineStatus(
                 season="2024-25",
@@ -125,19 +125,54 @@ def test_format_status_human_rich_fields(tmp_path: Path) -> None:
     assert "last_error: boom" in text
 
 
-def test_unknown_model_and_bad_plan_dirs(tmp_path: Path) -> None:
+def test_unknown_model_and_plan_run_horizon_filter(tmp_path: Path) -> None:
     plans = _last_plans(tmp_path, ["definitely_not_a_model"], 1)
     assert plans[0].reason
     assert "not registered" in plans[0].reason
 
+    # Legacy plans/ trees are ignored; only succeeded plan runs count.
     base = tmp_path / "plans" / "mid"
-    (base / "as_of=not-a-stamp").mkdir(parents=True)
-    (base / "as_of=not-a-stamp" / "part.parquet").write_text("x", encoding="utf-8")
     good = base / "as_of=2024-25_gw01_h02"
     good.mkdir(parents=True)
     (good / "part.parquet").write_text("x", encoding="utf-8")
-    assert _plans_for_model(tmp_path, "mid", horizon=1) == []
-    found = _plans_for_model(tmp_path, "mid", horizon=2)
+    assert _plans_for_model(tmp_path, "mid", horizon=2) == []
+
+    from datetime import UTC, datetime
+
+    from fplt.models.spec import load_model_specs
+    from fplt.store.runs import write_plan_run
+    from fplt.types import GWKey
+
+    spec = load_model_specs()["rolling_mean_v1"]
+    frame = pl.DataFrame(
+        {
+            "model_id": [spec.model_id, spec.model_id],
+            "as_of_season": ["2024-25", "2024-25"],
+            "as_of_gw": [1, 1],
+            "target_gw": [1, 2],
+            "step": [0, 1],
+            "player_key": [100, 100],
+            "position": ["MID", "MID"],
+            "team_key": [3, 3],
+            "in_xi": [True, True],
+            "captain": [True, True],
+            "vice": [False, False],
+            "bought": [False, False],
+            "sold": [False, False],
+            "xpts": [1.0, 1.0],
+            "hit": [0.0, 0.0],
+        }
+    )
+    write_plan_run(
+        tmp_path,
+        spec=spec,
+        as_of=GWKey("2024-25", 1),
+        deadline_utc=datetime(2024, 8, 16, 17, 30, tzinfo=UTC),
+        horizon=2,
+        frame=frame,
+    )
+    assert _plans_for_model(tmp_path, spec.model_id, horizon=1) == []
+    found = _plans_for_model(tmp_path, spec.model_id, horizon=2)
     assert len(found) == 1
 
 

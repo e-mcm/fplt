@@ -9,8 +9,8 @@ import pytest
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.baselines import EpNextPredictor, RollingMeanPredictor
-from fplt.models.predictions import write_predictions
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
+from fplt.schemas.predictions import PredictionSchema
 from fplt.types import GWKey
 from tests.builders import build_league
 
@@ -128,8 +128,5 @@ def test_save_load_and_prediction_write_once(tmp_path: Path) -> None:
     assert got.equals(expected.sort(keys))
     with pytest.raises(FileExistsError):
         model.save(artifact)
-    path = write_predictions(tmp_path, spec, _AS_OF, expected)
-    assert path.name == "part.parquet"
-    assert "predictions" in path.parts
-    with pytest.raises(FileExistsError):
-        write_predictions(tmp_path, spec, _AS_OF, expected)
+    checked = PredictionSchema.validate(expected)
+    assert checked.height == expected.height

@@ -98,7 +98,6 @@ from fplt.optimise.attainable import (
 from fplt.optimise.decisions import (
     DEFAULT_LIVE_CHIP_ARM,
     DEFAULT_LIVE_PRICE_FORECAST_METHOD,
-    PlanExistsError,
     explain_decision_gameweek,
     format_chip_decision_scoreboard,
     format_decision_scoreboard,
@@ -3181,7 +3180,7 @@ def _plan(args: argparse.Namespace) -> None:
                 owned_n,
                 squad.bank,
             )
-        _solved, path, report, _run_id = run_plan(
+        _solved, path, report, run_id = run_plan(
             data_dir,
             args.model,
             args.season,
@@ -3198,10 +3197,6 @@ def _plan(args: argparse.Namespace) -> None:
                 str(args.horizon_decay), int(args.horizon)
             ),
         )
-    except PlanExistsError as exc:
-        print(exc.report, end="")
-        print(f"plan already exists: {exc}", file=sys.stderr)
-        raise SystemExit(2) from exc
     except (
         FileExistsError,
         FileNotFoundError,
@@ -3213,8 +3208,8 @@ def _plan(args: argparse.Namespace) -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(report, end="")
+    print(run_id)
     print(path)
-    print(path.parent / "report.md")
 
 
 def _minutes_measure(args: argparse.Namespace) -> None:

@@ -39,7 +39,7 @@ def render(store: DashboardStore | None = None) -> None:
     st.subheader("Latest plan summary")
     plan = source.latest_plan_summary()
     if plan.is_empty():
-        st.write("No plan runs or legacy `plans/` parquet found.")
+        st.write("No plan runs found under `runs/`.")
     else:
         _show_table(table(plan))
 

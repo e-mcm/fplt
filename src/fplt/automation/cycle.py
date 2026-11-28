@@ -28,7 +28,7 @@ from pathlib import Path
 
 import polars as pl
 
-from fplt.automation.late_refresh import plans_stale_vs_signals, retire_plans
+from fplt.automation.late_refresh import plans_stale_vs_signals
 from fplt.automation.plan_index import catalog_has_plans, resolve_plan_catalog
 from fplt.automation.production import load_production_ops
 from fplt.backtest.run import run_backtest
@@ -237,9 +237,9 @@ def plan_deadline(
         models: YAML spec names. Defaults to ``load_production_ops().models``.
         horizon: Weeks the plan looks ahead. Defaults to
             ``load_production_ops().plan_horizon``.
-        refresh_if_stale: When true (default), retire write-once plans whose
-            mtime is older than the latest ``player_status`` /
-            ``predicted_lineups`` / ``player_injuries`` signal and rebuild.
+        refresh_if_stale: When true (default), create a new plan run when the
+            newest plan run finished before the latest ``player_status`` /
+            ``predicted_lineups`` / ``player_injuries`` signal.
 
     Returns:
         True when a plan was written (or rebuilt) this call.
@@ -254,10 +254,8 @@ def plan_deadline(
         if refresh_if_stale and plans_stale_vs_signals(
             data_dir, store, chosen, key, steps, now=now
         ):
-            retired = retire_plans(data_dir, chosen, key, steps, retired_at=now)
             logger.info(
-                "plan_deadline: retired %s stale plan(s) for %s; re-predicting",
-                len(retired),
+                "plan_deadline: plans stale vs late signals for %s; re-planning",
                 key,
             )
         else:
@@ -336,19 +334,15 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
     view = PITData(DataStore(data_dir)).view(key)
     resolved = resolve_squad_state(view, event=key.gw)
     for name in models:
-        try:
-            run_plan(
-                data_dir,
-                name,
-                key.season,
-                key.gw,
-                horizon,
-                squad=resolved.state,
-                squad_source=resolved.source,
-            )
-        except FileExistsError:
-            logger.info("plan already exists for %s / %s; skipping", name, key)
-            continue
+        run_plan(
+            data_dir,
+            name,
+            key.season,
+            key.gw,
+            horizon,
+            squad=resolved.state,
+            squad_source=resolved.source,
+        )
 
 
 def plans_exist(

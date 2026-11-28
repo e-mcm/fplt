@@ -155,34 +155,38 @@ def build_league(root: DataStore) -> DataStore:
     return root
 
 
-def dual_write_plan(
+def write_test_plan_run(
     data_dir: Path,
     frame: pl.DataFrame,
     *,
     report: str | None = None,
     code_sha: str = "stub",
     deadline: datetime | None = None,
-) -> Path:
-    """Write a plan the way ``run_plan`` does: legacy ``plans/`` + a plan run.
+) -> str:
+    """Write a plan run the way ``run_plan`` does (``runs/`` only).
 
     Readers resolve plans from ``runs/`` (data-model cut-over), so tests that
-    need "a plan exists" must create the run, not only the legacy parquet.
-    The spec is found by ``model_id`` among ``configs/models``.
+    need "a plan exists" must create the run. The spec is found by ``model_id``
+    among ``configs/models``.
+
+    Args:
+        data_dir: Local data root.
+        frame: ``PlanSchema`` rows for one model and deadline.
+        report: Optional ``report.md`` body inside the plan run.
+        code_sha: Unused; kept for call-site compatibility.
+        deadline: Manifest deadline; defaults to a fixed 2024-08-16 UTC.
 
     Returns:
-        The legacy parquet path (``plans/<model_id>/as_of=…/part.parquet``).
+        The plan ``run_id``.
     """
     from fplt.models.spec import load_model_specs
-    from fplt.optimise.plan import write_plan
     from fplt.store.runs import write_plan_run
     from fplt.types import GWKey
 
-    path = write_plan(data_dir, frame, code_sha=code_sha)
-    if report is not None:
-        (path.parent / "report.md").write_text(report, encoding="utf-8")
+    _ = code_sha
     model_id = str(frame["model_id"][0])
     spec = next(s for s in load_model_specs().values() if s.model_id == model_id)
-    write_plan_run(
+    plan_run = write_plan_run(
         data_dir,
         spec=spec,
         as_of=GWKey(str(frame["as_of_season"][0]), int(frame["as_of_gw"][0])),
@@ -191,4 +195,4 @@ def dual_write_plan(
         frame=frame,
         report_md=report,
     )
-    return path
+    return plan_run.run_id

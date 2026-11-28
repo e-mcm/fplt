@@ -12,7 +12,6 @@ from fplt.data.pit import PITData
 from fplt.data.store import DataStore
 from fplt.models.composite import CompositePredictor, _sample_minutes_crn
 from fplt.models.distributions import MINUTE_BINS, MinutesDist
-from fplt.models.predictions import write_predictions
 from fplt.models.spec import ModelSpec, get_model, load_model_specs
 from fplt.schemas.predictions import PredictionSchema
 from fplt.types import GWKey
@@ -187,8 +186,7 @@ def test_a_gameweek_is_scored_and_written(
     checked = PredictionSchema.validate(frame)
     assert checked.height == 4
     assert checked["xpts"].is_not_null().all()
-    path = write_predictions(tmp_path, spec, view.as_of, frame)
-    assert path.name == "part.parquet"
+    assert checked["target_gw"].is_not_null().all()
 
 
 def test_bad_layered_specs_are_rejected() -> None:

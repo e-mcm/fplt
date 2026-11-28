@@ -1119,15 +1119,15 @@ def test_gameweek_plan_from_table_and_player_names(tmp_path) -> None:
 def test_run_explain_decision_with_plan(tmp_path, monkeypatch) -> None:
     from fplt.data.pit import PITData
     from fplt.data.store import DataStore
+    from fplt.models.spec import load_model_specs
     from fplt.optimise import explain as mod
-    from fplt.optimise.plan import covered_horizon, plan_parquet
+    from fplt.optimise.plan import plan_table
     from fplt.types import GWKey
-    from tests.builders import build_league
+    from tests.builders import build_league, write_test_plan_run
 
     store = build_league(DataStore(tmp_path))
     view = PITData(store).view(GWKey("2024-25", 2))
     pool = _pool()
-    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
     state = SquadState.model_validate(
         {
             "bank": 1000,
@@ -1139,17 +1139,16 @@ def test_run_explain_decision_with_plan(tmp_path, monkeypatch) -> None:
             "owned": [],
         }
     )
-    plan = plan_squad(pool.drop("xpts"), points, state, initial=True, horizon=1)
-    covered = covered_horizon(2, 3)
-    path = plan_parquet(tmp_path, "rolling_mean_v1", "2024-25", 2, covered)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    plan.picks.with_columns(
-        pl.lit(0.0).alias("hit"),
-        pl.lit("rolling_mean_v1").alias("model_id"),
-        pl.lit("2024-25").alias("as_of_season"),
-        pl.lit(2).alias("as_of_gw"),
-        (pl.col("step") + 2).alias("target_gw"),
-    ).write_parquet(path)
+    multi_points = pl.concat(
+        [
+            pool.select("player_key", pl.lit(step).alias("step"), "xpts")
+            for step in range(3)
+        ]
+    )
+    plan = plan_squad(pool.drop("xpts"), multi_points, state, initial=True, horizon=3)
+    spec = load_model_specs()["rolling_mean_v1"]
+    frame = plan_table(plan, spec.model_id, "2024-25", 2, [2, 3, 4])
+    write_test_plan_run(tmp_path, frame)
 
     preds = pl.DataFrame(
         {

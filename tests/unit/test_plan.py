@@ -12,7 +12,6 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import (
     DEFAULT_LIVE_CHIP_ARM,
-    PlanExistsError,
     _require_usable_points,
     actual_rows_from_ledger,
     points_from_ledger,
@@ -28,13 +27,10 @@ from fplt.optimise.plan import (
     GameweekPlan,
     covered_horizon,
     ensure_plan_chip_column,
-    plan_code_sha_path,
-    plan_metadata_path,
     plan_squad,
     plan_step_chip,
     plan_table,
     render_report,
-    write_plan,
 )
 from fplt.optimise.squad import select_squad
 from fplt.optimise.state import (
@@ -46,6 +42,7 @@ from fplt.optimise.state import (
 from fplt.schemas.ledger import LedgerSchema
 from fplt.schemas.manifests import RunManifest
 from fplt.settings import get_settings
+from tests.builders import write_test_plan_run
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 
@@ -201,27 +198,24 @@ def test_entry_picks_replace_the_squad_and_the_bank() -> None:
         apply_entry_picks(state, {}, {})
 
 
-def test_a_plan_file_is_written_once(tmp_path: Path) -> None:
-    pool = _pool()
-    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
-    plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
-    frame = plan_table(plan, "model", "2024-25", 1, [1])
-    assert "chip" in frame.columns
-    path = write_plan(tmp_path, frame, code_sha="deadbeef")
-    assert path.parent.name == "as_of=2024-25_gw01_h01"
-    with pytest.raises(FileExistsError):
-        write_plan(path.parents[3], frame)
-
-    longer = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=2)
-    other = write_plan(tmp_path, plan_table(longer, "model", "2024-25", 1, [1, 2]))
-    assert other.parent.name == "as_of=2024-25_gw01_h02"
+def test_covered_horizon_and_plan_run_writes(tmp_path: Path) -> None:
     assert covered_horizon(11, 2) == 2
     assert covered_horizon(38, 2) == 1
     assert covered_horizon(1, 0) == 0
     assert covered_horizon(39, 1) == 0
-    broken = frame.with_columns(pl.lit(2).alias("step"))
-    with pytest.raises(ValueError, match="horizon step"):
-        write_plan(tmp_path, broken)
+
+    pool = _pool()
+    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
+    plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
+    spec = load_model_specs()["rolling_mean_v1"]
+    frame = plan_table(plan, spec.model_id, "2024-25", 1, [1])
+    assert "chip" in frame.columns
+    first_id = write_test_plan_run(tmp_path, frame, report="# one")
+    assert not (tmp_path / "plans").exists()
+    second_id = write_test_plan_run(tmp_path, frame, report="# two")
+    assert first_id != second_id
+    reports = list((tmp_path / "runs").rglob("report.md"))
+    assert len(reports) >= 2
 
 
 def test_plan_table_persists_chip_and_legacy_coerces() -> None:
@@ -283,23 +277,6 @@ def test_plan_table_persists_chip_and_legacy_coerces() -> None:
     )
     padded = plan_table(no_chip, "model", "2024-25", 1, [1])
     assert set(padded["chip"].to_list()) == {None}
-
-
-def test_write_plan_records_code_sha_in_metadata(tmp_path: Path) -> None:
-    """ops-04: every plan directory carries code_sha (sidecar + metadata.json)."""
-    import json
-
-    pool = _pool()
-    points = pool.select("player_key", pl.lit(0).alias("step"), "xpts")
-    plan = plan_squad(pool.drop("xpts"), points, _state(), initial=True, horizon=1)
-    frame = plan_table(plan, "model", "2024-25", 1, [1])
-    path = write_plan(tmp_path, frame, code_sha="abc1234deadbeef", prod_tag="prod")
-    sidecar = plan_code_sha_path(path)
-    meta_path = plan_metadata_path(path)
-    assert sidecar.read_text(encoding="utf-8").strip() == "abc1234deadbeef"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta["code_sha"] == "abc1234deadbeef"
-    assert meta["prod_tag"] == "prod"
 
 
 def test_decision_bakeoff_rejects_inflated_mean_ppg(tmp_path: Path) -> None:
@@ -614,7 +591,7 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
             ]
         )
         printed = capsys.readouterr().out
-        saved = list((tmp_path / "plans").rglob("report.md"))
+        saved = list((tmp_path / "runs").rglob("report.md"))
         assert len(saved) == 1
         assert str(saved[0]) in printed
         text = saved[0].read_text(encoding="utf-8")
@@ -622,27 +599,34 @@ def test_plan_command_writes_the_report_and_rejects_unknown_models(
         assert "(C)" in text
         assert "| Name | Pos | Team | Price | xPts |" in text
         assert "| p" in text
-        with pytest.raises(SystemExit) as raised:
-            main(
-                [
-                    "plan",
-                    "--model",
-                    "rolling_mean_v1",
-                    "--season",
-                    "2024-25",
-                    "--gw",
-                    "1",
-                    "--horizon",
-                    "1",
-                ]
-            )
-        assert raised.value.code == 2
+        main(
+            [
+                "plan",
+                "--model",
+                "rolling_mean_v1",
+                "--season",
+                "2024-25",
+                "--gw",
+                "1",
+                "--horizon",
+                "1",
+            ]
+        )
         again = capsys.readouterr()
         assert "(C)" in again.out
         assert "### Starting XI" in again.out
-        assert "plan already exists" in again.err
-        with pytest.raises(PlanExistsError):
-            run_plan(tmp_path, "rolling_mean_v1", "2024-25", 1, 1)
+        assert "plan already exists" not in again.err
+        plan_runs = list((tmp_path / "runs").glob("run=*/manifest.json"))
+        assert len(plan_runs) == 2
+        replan_lines = [ln for ln in again.out.splitlines() if ln.endswith("report.md")]
+        assert len(replan_lines) == 1
+        assert replan_lines[0] != str(saved[0])
+        _s2, path2, _r2, rid2 = run_plan(
+            tmp_path, "rolling_mean_v1", "2024-25", 1, 1, squad=_state()
+        )
+        assert path2.exists()
+        assert "runs" in path2.parts
+        assert rid2
         path = run_decisions(tmp_path, "rolling_mean_v1", "2024-25", 1, 2, 1)
         decisions = pl.read_parquet(path)
         assert set(decisions["gw"].unique().to_list()) == {1, 2}

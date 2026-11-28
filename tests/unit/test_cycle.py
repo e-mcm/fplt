@@ -34,7 +34,7 @@ from fplt.schemas.ledger import LedgerSchema
 from fplt.settings import get_settings
 from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
-from tests.builders import dual_write_plan
+from tests.builders import write_test_plan_run
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
@@ -356,10 +356,10 @@ def test_stub_plan_writer_marks_plans_exist(league_dir: Path) -> None:
     Guards against a stub that records squad kwargs but forgets to satisfy
     the catch-up / pre-deadline completion check (assertion weakening).
     """
-    path = _write_stub_plan(league_dir, _MODEL, "2024-25", 1, 1)
-    assert path.exists()
-    assert (path.parent / "report.md").read_text(encoding="utf-8")
-    assert "GW 1" in (path.parent / "report.md").read_text(encoding="utf-8")
+    report_path, _run_id = _write_stub_plan(league_dir, _MODEL, "2024-25", 1, 1)
+    assert report_path.exists()
+    text = report_path.read_text(encoding="utf-8")
+    assert "GW 1" in text
     assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is True
 
 
@@ -391,9 +391,9 @@ def _stub_predict_and_plan(
     ) -> tuple[None, Path, str, str]:
         if seen is not None:
             seen.append(squad)
-        path = _write_stub_plan(data_dir, model_name, season, gameweek, horizon)
-        report = (path.parent / "report.md").read_text(encoding="utf-8")
-        return None, path, report, "stub-run"
+        path, run_id = _write_stub_plan(data_dir, model_name, season, gameweek, horizon)
+        report = path.read_text(encoding="utf-8")
+        return None, path, report, run_id
 
     monkeypatch.setattr("fplt.automation.cycle.run_plan", fake_run_plan)
 
@@ -404,8 +404,10 @@ def _write_stub_plan(
     season: str,
     gameweek: int,
     horizon: int,
-) -> Path:
-    """Write a minimal plan parquet (+ report) for one deadline/horizon."""
+) -> tuple[Path, str]:
+    """Write a minimal plan run (+ report) for one deadline/horizon."""
+    from fplt.store.runs import run_dir
+
     model_id = load_model_specs()[model_name].model_id
     weeks = covered_horizon(gameweek, horizon)
     rows = [
@@ -428,9 +430,10 @@ def _write_stub_plan(
         }
         for step in range(weeks)
     ]
-    return dual_write_plan(
+    run_id = write_test_plan_run(
         data_dir, pl.DataFrame(rows), report=f"# {season}\n\nGW {gameweek}\n"
     )
+    return run_dir(data_dir, run_id) / "report.md", run_id
 
 
 def _live_payload() -> dict[str, object]:

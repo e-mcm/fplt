@@ -30,7 +30,6 @@ from fplt.automation.ops_tick import run_ops_tick
 from fplt.data.remote import Remote
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import plan_parquet
 from fplt.settings import Settings, get_settings
 from fplt.store.api import Store
 from fplt.store.official import official_checkpoint_dir
@@ -73,6 +72,28 @@ def _patch_local_remote(monkeypatch: pytest.MonkeyPatch, remote: Remote) -> None
     )
 
 
+def _minimal_plan_frame(model_id: str, season: str, gw: int) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "model_id": [model_id],
+            "as_of_season": [season],
+            "as_of_gw": [gw],
+            "target_gw": [gw],
+            "step": [0],
+            "player_key": [100],
+            "position": ["MID"],
+            "team_key": [1],
+            "in_xi": [True],
+            "captain": [True],
+            "vice": [False],
+            "bought": [False],
+            "sold": [False],
+            "xpts": [1.0],
+            "hit": [0.0],
+        }
+    )
+
+
 def _seed_catchup_plan_markers(data_dir: Path) -> None:
     """Mark every checked GW as planned so catch_up finds nothing pending.
 
@@ -80,14 +101,15 @@ def _seed_catchup_plan_markers(data_dir: Path) -> None:
     the 15-man MILP; the T−90m official path under test covers fit → predict →
     plan for the current GW2. Catch_up still runs for real with an empty list.
     """
+    from tests.builders import write_test_plan_run
     from tests.builders_e2e import PRIOR_SEASONS
 
     spec = load_model_specs()[E2E_MODEL]
     keys = [(CURRENT_SEASON, 1), *((season, 1) for season in PRIOR_SEASONS)]
     for season, gw in keys:
-        path = plan_parquet(data_dir, spec.model_id, season, gw, 1)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        pl.DataFrame({"player_key": [1], "step": [0]}).write_parquet(path)
+        write_test_plan_run(
+            data_dir, _minimal_plan_frame(spec.model_id, season, gw), report="# stub"
+        )
 
 
 def _configure_tick(

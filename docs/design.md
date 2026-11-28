@@ -113,7 +113,7 @@ L3 index        official/ pointers, experiments/,      pointers write-once; cata
 
 **Schemas (Stage B2).** Pydantic manifests and pandera tables for the contracts above live under `src/fplt/schemas/`: `manifests.py` (`RunManifest` including `fp` + `build_id`, `BuildManifest`, `CuratedLatestPointer`, `OfficialPointer`, `AppliedRecord`, `InterventionRecord`), `l2.py` (L2 standard-key mixin + `schema_version`), `outcomes.py` (`player_fixture_outcomes`, `fixture_outcomes`), `squad_state_table.py` (virtual-line in/out). Experiment and batch manifests wait for Stage C. Writers and producers land in later Stage B PRs; this section names the field contracts only.
 
-**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/` remains the working ingest target; `fplt.store.builds.build_from_staged` snapshots non-empty staged tables into content-addressed `curated/` builds (`STAGING_VERSION` + golden-hash test). `predictions/`, `plans/`, `ledger/` and `artifacts/` stay until readers move fully onto `runs/` and curated outcomes; `fplt legacy import` wraps those trees (plus eval output dirs) as `kind=legacy` runs for `fplt-lab` (B10; see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B).
+**Local mirror.** Library code still reads a **local** `$FPLT_DATA_DIR` (default `./data`, gitignored) through `DataStore` / `PITView`. The bucket is a durable mirror pulled from and pushed to at the edges. No model or feature code touches the network (AGENTS.md §2). During migration, local `staged/` remains the working ingest target; `fplt.store.builds.build_from_staged` snapshots non-empty staged tables into content-addressed `curated/` builds (`STAGING_VERSION` + golden-hash test). Live predict/plan writers write **only** under `runs/`; legacy top-level `predictions/` and `plans/` trees are read-only archives (importable as `kind=legacy` via `fplt legacy import` for `fplt-lab`; B10; see [`proposals/data-rollout-plan.md`](proposals/data-rollout-plan.md) Stage B). `ledger/` remains a transitional view target (§7.2); `artifacts/` stay for fitted models.
 
 ```
 data/
@@ -154,11 +154,12 @@ data/
 │   └── builds/build=<build_id>.json   # BuildManifest; build_id = hash(raw, staging_version, schemas)
 ├── features/<feature_name>/v=<version>/season=.../gw=.../part.parquet
 ├── artifacts/<model_id>/as_of=<season>_gw<gw>/   # fitted model files + spec.json
-├── predictions/<model_id>/as_of=<season>_gw<gw>/part.parquet  # migration: → runs/
+├── predictions/<model_id>/as_of=…/  # read-only archive (legacy import); writers → runs/
 ├── benchmark_projections/as_of=<season>_gw<gw>/part.parquet  # N1 deadline archives (§7.5)
 ├── archive_compare/<stamp>/     # N2 paired board vs archives (§7.5)
 ├── ledger/                      # transitional mutating store; target is a view (§7.2)
-├── plans/<model_id>/as_of=.../  # optimiser outputs (migration: → runs/)
+├── plans/<model_id>/as_of=…/    # read-only archive (legacy import); writers → runs/
+├── runs/run=<run_id>/           # sole live output layout (predict + plan + report.md)
 ├── quarantine/part.parquet      # ops-06 capture skip list (mirrored to R2 status/quarantine/)
 ├── status/<source>_unavailable.json  # capture-health consecutive counter (#338; R2 status/)
 ├── reports/gw=<n>/weekly.md     # post-GW decision scoring (ops-08; §7.3)
@@ -589,7 +590,7 @@ Key workflows: `snapshot.yml` (capture + curate), `ops-tick.yml`, `ops-catchup.y
 | New raw under `fplt-data/raw/` (or `snapshots` branch during dual-write) | GHA capture + `fplt data curate` / `ops-catchup` | Pull into `data/raw`, restage staged tables |
 | New Understat / API-Football / football-data raw | GHA capture workflows + curate / ops | Stage Understat, injuries/cup fixtures, match odds |
 | GW `data_checked` and plan missing | `ops-tick` / `ops-catchup` (`catch_up`) | Join actuals → ledger path; refit; predict; re-optimise. Processes missing GWs so downtime self-heals |
-| Next deadline within checkpoint windows | `ops-tick` checkpoints (ops-02) | Archive benchmarks; re-predict; re-optimise; notify. Late refresh when plan is stale vs availability signals |
+| Next deadline within checkpoint windows | `ops-tick` checkpoints (ops-02) | Archive benchmarks; re-predict; re-optimise; notify. Stale = newest plan run `finished_at` older than newest `player_status` / `predicted_lineups` / `player_injuries` `available_at` at or before the deadline — a new plan run is written (`fplt.automation.late_refresh.plans_stale_vs_signals`; no `retire_plans`) |
 | Workflow failure / cancel | GHA `alerts` / `notify-failure` | ntfy (workflow, job, run URL; no logs) |
 | Snapshot curate (GHA `snapshot.yml` job `curate`) | after successful `capture` | Incremental `fplt data curate` → curated build → `status/curated/latest.json` |
 | Weekly curated full rebuild (GHA `curate-full.yml`) | schedule `0 7 * * 1` + `workflow_dispatch` | `fplt data curate --full` |
@@ -706,7 +707,7 @@ v1: single-GW XI + captain. v2: multi-period transfers. v3: chips in MILP (BB/TC
 
 ### 10.3 Output
 
-`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence uses `PlanSchema` parquet at `data/plans/<model_id>/as_of=<season>_gwNN_hHH/part.parquet`, one row per player kept or sold in each horizon week (`target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`, nullable `chip` — `wildcard` / `freehit` / `bboost` / `3xc` when that step plays a chip; null otherwise), plus a markdown report in the same directory. `<model_id>` is the model-spec hash. `hHH` is the horizon actually covered, capped at gameweek 38. The report labels players with the staged `web_name`, and falls back to `player_key` when that name is missing. The same model, deadline, and horizon are never overwritten. A repeat run still prints the transfer summary, then reports that the parquet already exists. `fplt plan` raises before solving when this deadline has no ledger rows, when a horizon week is missing or all zero, or when a week covers fewer than half the candidates. Missing rows are not treated as zero. Legacy plan parquets without `chip` coerce to null on read (`ensure_plan_chip_column`); the This-week UI and `fplt apply` both read step-0 `chip` so a Free Hit / Wildcard plan is not shown or POSTed as ordinary transfers.
+`optimize_transfers` returns a `TransferPlan` (first-week transfers in/out, XI, captain, vice, hit, plus full-horizon picks). Persistence is a plan run under `runs/run=<run_id>/` with `plans/plan.parquet` (`PlanSchema`: one row per player kept or sold in each horizon week — `target_gw`, `in_xi`, `captain`, `vice`, `bought`, `sold`, `xpts`, `hit`, nullable `chip`) and `report.md` in that run. Readers resolve the newest succeeded `run_type=plan` for `(spec_label, season, gw, plan_horizon)` via `fplt.store.plan_runs`. A re-plan creates a new run; there is no `PlanExistsError`. `fplt plan` prints the plan run id and its `report.md` path. It raises before solving when this deadline has no ledger rows, when a horizon week is missing or all zero, or when a week covers fewer than half the candidates. Missing rows are not treated as zero. Legacy archive plan parquets without `chip` coerce to null on read (`ensure_plan_chip_column`); the This-week UI and `fplt apply` both read step-0 `chip` so a Free Hit / Wildcard plan is not shown or POSTed as ordinary transfers.
 
 `fplt apply` (library: `fplt.optimise.apply.apply_plan`) maps step-0 buys/sells onto paired FPL transfer rows and the planned XI/captain onto a lineup body, including step-0 `chip` on both POST bodies. Dry-run is the default; `--confirm` POSTs with `FPLT_FPL_API_TOKEN`. Initial drafts (15 buys, no sells) are refused. Automation never calls this path.
 

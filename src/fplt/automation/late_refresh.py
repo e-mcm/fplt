@@ -1,28 +1,23 @@
 """Late pre-deadline re-predict hooks when availability inputs move (FDB-253).
 
-Plans are write-once. When ``player_status``, ``predicted_lineups``, or
-``player_injuries`` gain rows newer than an existing plan's mtime inside the
-pre-deadline window, retire the plan directory so ``pre_deadline`` can rebuild.
-No LLM press parsing; no odds rotation model — those stay deferred.
+When ``player_status``, ``predicted_lineups``, or ``player_injuries`` gain rows
+newer than an existing plan run's ``finished_at`` inside the pre-deadline
+window, ``plans_stale_vs_signals`` is true and the caller creates a new plan
+run. No LLM press parsing; no odds rotation model — those stay deferred.
 """
 
 from __future__ import annotations
 
-import logging
-import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
 
 from fplt.data.store import DataStore
-from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.optimise.plan import covered_horizon
 from fplt.store.catalog import scan_succeeded_runs
 from fplt.store.plan_runs import plan_runs
 from fplt.types import GWKey
-
-logger = logging.getLogger(__name__)
 
 # Staged tables whose ``available_at`` can invalidate a near-deadline plan.
 _LATE_SIGNAL_TABLES: tuple[str, ...] = (
@@ -73,13 +68,6 @@ def latest_late_signal_at(
     return max(peaks)
 
 
-def artifact_mtime(path: Path) -> datetime | None:
-    """UTC mtime of ``path``, or ``None`` when missing."""
-    if not path.exists():
-        return None
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-
-
 def plans_stale_vs_signals(
     root: Path,
     store: DataStore,
@@ -92,7 +80,7 @@ def plans_stale_vs_signals(
     """Whether any model plan is older than the latest late availability signal.
 
     Args:
-        root: Data directory containing ``plans/``.
+        root: Data directory containing ``runs/``.
         store: Staged tables.
         models: YAML spec names that must each have a plan.
         key: Deadline.
@@ -103,8 +91,7 @@ def plans_stale_vs_signals(
         True when every model has a plan run and at least one model's newest
         plan run finished strictly before ``latest_late_signal_at``. False
         when plans are missing (caller should create them) or signals are not
-        newer. Plan times come from ``runs/`` manifests (``finished_at``), not
-        ``plans/`` file mtimes (data-model cut-over).
+        newer. Plan times come from ``runs/`` manifests (``finished_at``).
     """
     weeks = covered_horizon(key.gw, horizon)
     if weeks < 1:
@@ -148,53 +135,6 @@ def latest_plan_finished_at(
     return _aware(rows.get_column("finished_at")[-1])
 
 
-def retire_plans(
-    root: Path,
-    models: list[str],
-    key: GWKey,
-    horizon: int,
-    *,
-    retired_at: datetime | None = None,
-) -> list[Path]:
-    """Move existing plan directories aside so a fresh write-once plan can land.
-
-    Renames ``plans/<model_id>/as_of=…/`` to
-    ``plans/<model_id>/superseded/as_of=…_at_<UTC stamp>/`` (including
-    sibling ``report.md`` when present).
-
-    Args:
-        root: Data directory containing ``plans/``.
-        models: YAML spec names.
-        key: Deadline.
-        horizon: Weeks the plan covers.
-        retired_at: Stamp embedded in the superseded directory name.
-
-    Returns:
-        Paths of directories that were moved.
-    """
-    weeks = covered_horizon(key.gw, horizon)
-    if weeks < 1:
-        return []
-    when = _aware(retired_at if retired_at is not None else datetime.now(UTC))
-    stamp = when.strftime("%Y%m%dT%H%M%SZ")
-    specs = load_model_specs()
-    moved: list[Path] = []
-    for name in models:
-        path = plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks)
-        folder = path.parent
-        if not folder.exists():
-            continue
-        dest_root = folder.parent / "superseded"
-        dest_root.mkdir(parents=True, exist_ok=True)
-        dest = dest_root / f"{folder.name}_at_{stamp}"
-        if dest.exists():
-            dest = dest_root / f"{folder.name}_at_{stamp}_{len(moved)}"
-        shutil.move(str(folder), str(dest))
-        logger.info("retired stale plan %s → %s", folder, dest)
-        moved.append(dest)
-    return moved
-
-
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -203,8 +143,6 @@ def _aware(value: datetime) -> datetime:
 
 __all__ = [
     "latest_plan_finished_at",
-    "artifact_mtime",
     "latest_late_signal_at",
     "plans_stale_vs_signals",
-    "retire_plans",
 ]
