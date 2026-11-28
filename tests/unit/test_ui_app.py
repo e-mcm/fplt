@@ -118,6 +118,14 @@ def test_app_navigation_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         get_settings.cache_clear()
 
 
+def test_ui_app_imports_last_week_page() -> None:
+    import fplt.ui.app as app
+
+    assert callable(app.last_week.render)
+    assert callable(app.this_week.render)
+    assert callable(app.overview.render)
+
+
 def test_ui_app_main_configures_navigation(monkeypatch: pytest.MonkeyPatch) -> None:
     """main() sets page config and runs This-week + Overview navigation.
 
@@ -138,8 +146,9 @@ def test_ui_app_main_configures_navigation(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(app, "st", fake_st)
     monkeypatch.setattr(app, "overview", SimpleNamespace(render=lambda: None))
     monkeypatch.setattr(app, "this_week", SimpleNamespace(render=lambda: None))
+    monkeypatch.setattr(app, "last_week", SimpleNamespace(render=lambda: None))
     app.main()
     fake_st.set_page_config.assert_called_once()
-    assert fake_st.Page.call_count == 2
+    assert fake_st.Page.call_count == 3
     fake_st.navigation.assert_called_once()
     nav.run.assert_called_once()

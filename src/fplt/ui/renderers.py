@@ -136,6 +136,91 @@ def render_timing_stacked_bar(frame: pl.DataFrame) -> Any:
     )
 
 
+@renderer("pit_hist")
+def render_pit_hist(frame: pl.DataFrame) -> Any:
+    """Plotly bar chart of a randomised PIT histogram.
+
+    Args:
+        frame: Columns ``label``, ``density`` (``LastWeekPitHistSchema``).
+
+    Returns:
+        A Plotly ``Figure``.
+    """
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+
+    return go.Figure(
+        data=[
+            go.Bar(
+                x=frame["label"].to_list(),
+                y=frame["density"].to_list(),
+                name="PIT density",
+            )
+        ],
+        layout=go.Layout(
+            xaxis_title="PIT bin",
+            yaxis_title="Density",
+            height=280,
+            margin={"l": 40, "r": 20, "t": 20, "b": 40},
+        ),
+    )
+
+
+@renderer("reliability")
+def render_reliability(frame: pl.DataFrame) -> Any:
+    """Plotly reliability diagram (mean predicted vs observed rate).
+
+    Args:
+        frame: Columns ``mean_pred``, ``observed``, ``event``, ``n``
+            (``LastWeekReliabilitySchema``). One event at a time, or multiple
+            events as separate traces.
+
+    Returns:
+        A Plotly ``Figure``.
+    """
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+
+    traces: list[Any] = []
+    if "event" in frame.columns:
+        groups = [
+            (str(event), frame.filter(pl.col("event") == event))
+            for event in frame["event"].unique().to_list()
+        ]
+    else:
+        groups = [("all", frame)]
+    for name, part in groups:
+        traces.append(
+            go.Scatter(
+                x=part["mean_pred"].to_list(),
+                y=part["observed"].to_list(),
+                mode="markers+lines",
+                name=name,
+                text=[f"n={int(n)}" for n in part["n"].to_list()],
+                hovertemplate="%{text}<br>pred=%{x:.2f}<br>obs=%{y:.2f}<extra></extra>",
+            )
+        )
+    traces.append(
+        go.Scatter(
+            x=[0.0, 1.0],
+            y=[0.0, 1.0],
+            mode="lines",
+            name="perfect",
+            line={"dash": "dash", "color": "gray"},
+            hoverinfo="skip",
+        )
+    )
+    return go.Figure(
+        data=traces,
+        layout=go.Layout(
+            xaxis_title="Mean predicted",
+            yaxis_title="Observed rate",
+            xaxis={"range": [0, 1]},
+            yaxis={"range": [0, 1]},
+            height=320,
+            margin={"l": 40, "r": 20, "t": 20, "b": 40},
+        ),
+    )
+
+
 @renderer("timing_trend")
 def render_timing_trend(frame: pl.DataFrame) -> Any:
     """Line chart of ``total_s`` (and optional phase columns) across gameweeks.

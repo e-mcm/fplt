@@ -43,6 +43,37 @@ def test_timing_renderers() -> None:
     assert "timing_trend" in renderers.registered_views()
 
 
+def test_pit_hist_and_reliability_renderers() -> None:
+    pit = pl.DataFrame(
+        {
+            "bin_lo": [0.0, 0.1],
+            "bin_hi": [0.1, 0.2],
+            "density": [0.1, 0.2],
+            "label": ["0.0-0.1", "0.1-0.2"],
+        }
+    )
+    pit_fig = renderers.get_renderer("pit_hist")(pit)
+    assert pit_fig is not None
+    assert "pit_hist" in renderers.registered_views()
+
+    rel = pl.DataFrame(
+        {
+            "event": ["played", "played"],
+            "pred_bin": ["0.0-0.1", "0.9-1.0"],
+            "mean_pred": [0.05, 0.95],
+            "observed": [0.1, 0.9],
+            "n": [10, 12],
+        }
+    )
+    rel_fig = renderers.get_renderer("reliability")(rel)
+    assert rel_fig is not None
+    assert "reliability" in renderers.registered_views()
+    # No ``event`` column → single ``all`` trace.
+    plain = rel.drop("event")
+    plain_fig = renderers.get_renderer("reliability")(plain)
+    assert plain_fig is not None
+
+
 def test_points_pmf_bar_renderer() -> None:
     pytest.importorskip("plotly")
     frame = pl.DataFrame({"points_bin": [0, 5], "probability": [0.4, 0.6]})
