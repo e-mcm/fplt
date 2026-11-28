@@ -1,8 +1,11 @@
 """Run identity fingerprints: required tables, fp, fit_fp, and ``by_fp`` index.
 
-A run's identity is what it ran on (#346). ``fp`` hashes the resolved spec,
-prod tag, target GW, run type, and content shas of ``required_tables(spec)``.
-When ``runs/by_fp/fp=<fp>.json`` already exists, ops skips the work.
+A run's identity is what it ran on (#346 / #374). ``fp`` hashes the resolved
+spec, prod tag, target GW, run type, run kind, and content shas of
+``required_tables(spec)``. Kind is part of the hash so mid-week
+``kind=adhoc`` fingerprint runs do not collide with official T−90m
+``by_fp`` entries (AGENTS.md §7). When ``runs/by_fp/fp=<fp>.json`` already
+exists, ops skips the work.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from fplt.models.spec import ModelSpec
 from fplt.models.spec_identity import spec_hash
-from fplt.schemas.manifests import BuildManifest, RunType
+from fplt.schemas.manifests import BuildManifest, RunKind, RunType
 from fplt.schemas.staged import STAGED_SCHEMAS
 from fplt.types import GWKey
 
@@ -177,16 +180,18 @@ def run_fingerprint(
     target_gw: GWKey,
     run_type: RunType,
     prod_tag: str | None = None,
+    kind: RunKind = "official",
     tables: set[str] | None = None,
     extra: Mapping[str, object] | None = None,
 ) -> str:
     """Compute the run identity fingerprint for one spec / build / GW.
 
-    ``fp = sha256(spec_hash, prod_tag, target_gw, run_type, sorted table shas)``.
-    Plan runs pass ``extra`` (#380): official line, horizon, squad mode and a
-    squad-state digest, so lines sharing a spec never collide and a changed
-    squad re-plans. ``extra`` is hashed under ``"extra"`` with ``"v": 2``;
-    when omitted the payload (and so predict fingerprints) is unchanged.
+    ``fp = sha256(spec_hash, prod_tag, target_gw, run_type, kind, table shas)``.
+    Kind is part of the hash (#374) so mid-week ``adhoc`` fingerprint runs
+    do not collide with official T−90m. Plan runs also pass ``extra`` (#380):
+    official line, horizon, squad mode and a squad-state digest, so lines
+    sharing a spec never collide and a changed squad re-plans. ``extra`` is
+    hashed under ``"extra"`` with ``"v": 2``.
 
     Args:
         spec: Model that will run.
@@ -194,6 +199,9 @@ def run_fingerprint(
         target_gw: Deadline gameweek the run covers.
         run_type: ``predict`` / ``plan`` / ``eval``.
         prod_tag: Moving ops tag label, or ``None``.
+        kind: Run kind (``official`` vs ``adhoc`` fingerprint, …). Part of
+            the hash so light mid-week runs do not block official PMF runs
+            (#374 / AGENTS.md §7).
         tables: Override for ``required_tables(spec)`` (tests).
         extra: Additional identity fields (JSON-serialisable), or ``None``.
 
@@ -209,6 +217,7 @@ def run_fingerprint(
         "prod_tag": prod_tag,
         "target_gw": {"season": target_gw.season, "gw": target_gw.gw},
         "run_type": run_type,
+        "kind": kind,
         "tables": pairs,
     }
     if extra is not None:

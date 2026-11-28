@@ -86,6 +86,9 @@ class ProductionOps(BaseModel):
     min_run_interval_minutes: int = Field(ge=1, default=60)
     # #346: T−90m / T−30m refuse builds older than this (ntfy instead).
     max_build_age_minutes: int = Field(ge=1, default=30)
+    # #374: skip mid-week fingerprint runs when a checkpoint is due within
+    # this many minutes (avoids colliding with T−90m / T−30m / …).
+    background_quiet_minutes: int = Field(ge=1, default=45)
     # #369: catch-up only fills current-season GWs from this GW onwards
     # (never staged history such as vaastav seasons).
     catch_up_from_gw: int = Field(ge=1, le=38, default=1)
@@ -230,6 +233,7 @@ def load_production_ops(
         min_prior_seasons=ops.min_prior_seasons,
         min_run_interval_minutes=ops.min_run_interval_minutes,
         max_build_age_minutes=ops.max_build_age_minutes,
+        background_quiet_minutes=ops.background_quiet_minutes,
         catch_up_from_gw=ops.catch_up_from_gw,
         max_catch_up_per_tick=ops.max_catch_up_per_tick,
     )
@@ -289,6 +293,10 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
         raw.get("max_build_age_minutes", 30),
         name="max_build_age_minutes",
     )
+    quiet = _positive_int(
+        raw.get("background_quiet_minutes", 45),
+        name="background_quiet_minutes",
+    )
     catch_up_from_gw = _positive_int(
         raw.get("catch_up_from_gw", 1),
         name="catch_up_from_gw",
@@ -305,6 +313,7 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
         min_prior_seasons=min_prior,
         min_run_interval_minutes=min_interval,
         max_build_age_minutes=max_age,
+        background_quiet_minutes=quiet,
         catch_up_from_gw=catch_up_from_gw,
         max_catch_up_per_tick=max_catch_up,
     )

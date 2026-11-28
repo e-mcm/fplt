@@ -324,6 +324,25 @@ def test_committed_catch_up_scope_defaults() -> None:
     assert ops.max_catch_up_per_tick == 4
 
 
+def test_background_quiet_minutes_default_and_validation(tmp_path: Path) -> None:
+    """#374: quiet window before checkpoints (default 45)."""
+    ops = load_production_ops()
+    assert ops.background_quiet_minutes == 45
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "background_quiet_minutes": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="background_quiet_minutes"):
+        load_production_ops(path, environ={})
+
+
 def test_catch_up_scope_parsed_and_kept_by_env_override(tmp_path: Path) -> None:
     path = tmp_path / "production.yaml"
     path.write_text(

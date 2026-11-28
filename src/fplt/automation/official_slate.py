@@ -1,4 +1,4 @@
-"""Run the official T−90m slate: curated build, predict, plan, pointers.
+"""Official T−90m slate and light mid-week fingerprint runs (#346 / #374).
 
 Implements the B12 caller contract on ``ProductionOps.official_slate``:
 one predict per distinct ModelSpec (longest horizon), one plan per line,
@@ -8,6 +8,11 @@ then ``finalize_official_checkpoint``. Writes ``points_pmf`` /
 #346: uses a pulled curated ``build_id`` (never ``build_from_staged`` /
 never ``raw/``). Run manifests carry ``fp`` + ``build_id``; skip-if-done is
 decided by the caller via ``runs/by_fp/``.
+
+#374 (AGENTS.md §7): non-checkpoint fingerprint runs are ``kind=adhoc``,
+``purpose=fingerprint`` — predict + plan for the **primary line only**,
+no PMF, pushed to ``fplt-lab``, with a ``runs/by_fp/`` index entry. Kind is
+part of ``fp`` so these do not collide with official T−90m reuse.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import polars as pl
 
@@ -40,7 +46,7 @@ from fplt.models.predictions import require_scored_predictions, write_prediction
 from fplt.models.spec import load_model_specs
 from fplt.optimise.decisions import PlanExistsError, resolve_squad_state, run_plan
 from fplt.optimise.state import SquadState
-from fplt.schemas.manifests import BuildManifest
+from fplt.schemas.manifests import BuildManifest, RunKind
 from fplt.settings import Settings, get_settings
 from fplt.store.builds import load_build_manifest
 from fplt.store.fingerprint import fit_fingerprint, last_completed_gw
@@ -54,6 +60,8 @@ from fplt.store.push import load_run_manifest, maybe_push_official
 from fplt.store.runs import write_plan_run, write_predict_run
 from fplt.types import GWKey
 from fplt.utils.timing import timed_phase
+
+_FINGERPRINT_PURPOSE = "fingerprint"
 
 logger = logging.getLogger(__name__)
 
@@ -91,26 +99,44 @@ def ensure_slate_runs(
     decisions: list[LineFpDecision] | None = None,
     checkpoint: str | None = None,
     now: datetime | None = None,
+    slate: Literal["official", "fingerprint"] = "official",
 ) -> tuple[str, tuple[LineRunPair, ...]]:
     """Fit/predict/plan for the slate; write ``by_fp``; do not touch official/.
 
-    Used by mid-week ticks (#346) so a fingerprint run exists before the
-    T−90m pointer is written. Checkpoints call ``run_official_checkpoint``,
-    which wraps this and finalizes pointers.
+    ``slate="official"`` (checkpoints / ``run_now``): full lines, ``kind=official``,
+    points PMF, longest predict horizon per spec.
+
+    ``slate="fingerprint"`` (#374): primary line only, ``kind=adhoc``,
+    ``purpose=fingerprint``, no PMF, primary horizon; pushed to lab via
+    ``maybe_push_run``. Mid-week ticks call this so a light run exists before
+    T−90m; checkpoints call ``run_official_checkpoint`` instead.
 
     Returns:
         ``(build_id, pairs)``.
+
+    Raises:
+        ValueError: ``slate="fingerprint"`` with a non-``None`` checkpoint.
     """
+    if slate == "fingerprint" and checkpoint is not None:
+        raise ValueError("fingerprint slate must not set checkpoint")
     cfg = get_settings() if settings is None else settings
     moment = datetime.now(UTC) if now is None else now
-    predict_horizons, lines, _default_cp = ops.official_slate()
-    # Mid-week ensure passes checkpoint=None; T−90m passes ``T-90m``.
-    # Manifests accept None; helpers below take ``str | None`` via cast at call.
+    run_kind: RunKind = "adhoc" if slate == "fingerprint" else "official"
+    write_pmf = slate == "official"
+    if slate == "fingerprint":
+        primary = ops.primary_line()
+        lines: tuple[OfficialLine, ...] = (primary,)
+        predict_horizons = {primary.spec: primary.horizon}
+        purpose = _FINGERPRINT_PURPOSE
+    else:
+        predict_horizons, lines, _default_cp = ops.official_slate()
+        purpose = None
     cp_label: str | None = checkpoint
     resolved_build_id = _resolve_build_id(data_dir, build_id)
     build = load_build_manifest(data_dir, resolved_build_id)
     logger.info(
-        "official_slate: build_id=%s key=%s predicts=%s lines=%s",
+        "official_slate: slate=%s build_id=%s key=%s predicts=%s lines=%s",
+        slate,
         resolved_build_id,
         key,
         predict_horizons,
@@ -126,13 +152,15 @@ def ensure_slate_runs(
             data_dir=data_dir,
             prod_tag=prod_tag,
             squad_digest=safe_entry_state_digest(cfg),
+            kind=run_kind,
+            lines=lines,
         )
     by_line = {item.line: item for item in slate_decisions}
 
     pull_required_tables(
         data_dir,
         resolved_build_id,
-        tables_for_slate(ops),
+        tables_for_slate(ops, lines=lines),
         settings=cfg,
     )
 
@@ -145,7 +173,7 @@ def ensure_slate_runs(
         line_fp = next(
             item.predict_fp for item in slate_decisions if item.spec_name == spec_name
         )
-        predict_ids[spec_name] = _official_predict(
+        predict_ids[spec_name] = _slate_predict(
             data_dir,
             spec_name,
             key=key,
@@ -155,6 +183,9 @@ def ensure_slate_runs(
             fp=line_fp,
             prod_tag=prod_tag,
             build=build,
+            kind=run_kind,
+            purpose=purpose,
+            write_pmf=write_pmf,
         )
         push_fp_index(data_dir, line_fp, settings=cfg)
 
@@ -171,7 +202,7 @@ def ensure_slate_runs(
         if reusable and decision.plan_run_id is not None:
             plan_id = decision.plan_run_id
         else:
-            plan_id = _official_plan(
+            plan_id = _slate_plan(
                 data_dir,
                 line,
                 key=key,
@@ -183,6 +214,8 @@ def ensure_slate_runs(
                 build_id=resolved_build_id,
                 fp=decision.plan_fp,
                 prod_tag=prod_tag,
+                kind=run_kind,
+                purpose=purpose,
             )
             push_fp_index(data_dir, decision.plan_fp, settings=cfg)
             record_line_run(data_dir, line.line, now=moment)
@@ -340,7 +373,7 @@ def _reuse_predict_id(spec_name: str, decisions: list[LineFpDecision]) -> str | 
     return None
 
 
-def _official_predict(
+def _slate_predict(
     data_dir: Path,
     model_name: str,
     *,
@@ -351,8 +384,11 @@ def _official_predict(
     fp: str,
     prod_tag: str | None,
     build: BuildManifest,
+    kind: RunKind,
+    purpose: str | None,
+    write_pmf: bool,
 ) -> str:
-    """Fit/load, predict, write official run with components and points PMFs."""
+    """Fit/load, predict, write a slate run (official PMF or light fingerprint)."""
     with timed_phase("predict"):
         specs = load_model_specs()
         if model_name not in specs:
@@ -377,15 +413,23 @@ def _official_predict(
             )
         rows = ledger_rows(predicted, view, key, "live")
         deadline_utc = store.deadline(key)
-        n_sims = n_sims_of(spec) or 100
-        pmf_builder = _pmf_builder(
-            model,
-            view,
-            as_of=key,
-            deadline_utc=deadline_utc,
-            horizon=horizon,
-            n_sims=n_sims,
-        )
+        pmf_builder = None
+        if write_pmf:
+            n_sims = n_sims_of(spec) or 100
+            pmf_builder = _pmf_builder(
+                model,
+                view,
+                as_of=key,
+                deadline_utc=deadline_utc,
+                horizon=horizon,
+                n_sims=n_sims,
+            )
+        if purpose is not None:
+            predict_purpose = purpose
+        else:
+            predict_purpose = (
+                f"official {checkpoint} {spec.name} {key.season} gw{key.gw}"
+            )
         run = write_predict_run(
             data_dir,
             spec=spec,
@@ -393,9 +437,9 @@ def _official_predict(
             deadline_utc=deadline_utc,
             horizon=horizon,
             frame=rows,
-            kind="official",
+            kind=kind,
             checkpoint=checkpoint,
-            purpose=f"official {checkpoint} {spec.name} {key.season} gw{key.gw}",
+            purpose=predict_purpose,
             components_for_run_id=component_builder_for(
                 model, view, as_of=key, deadline_utc=deadline_utc, horizon=horizon
             ),
@@ -405,15 +449,16 @@ def _official_predict(
             prod_tag=prod_tag,
         )
     logger.info(
-        "official_slate: predict run_id=%s spec=%s fp=%s",
+        "official_slate: predict run_id=%s kind=%s spec=%s fp=%s",
         run.run_id,
+        kind,
         model_name,
         fp[:12],
     )
     return run.run_id
 
 
-def _official_plan(
+def _slate_plan(
     data_dir: Path,
     line: OfficialLine,
     *,
@@ -425,9 +470,11 @@ def _official_plan(
     build_id: str,
     fp: str,
     prod_tag: str | None,
+    kind: RunKind,
+    purpose: str | None,
     squad_source: str | None = None,
 ) -> str:
-    """Plan one official line; dual-write even when legacy plan already exists."""
+    """Plan one slate line; dual-write even when legacy plan already exists."""
     if not isinstance(squad, SquadState):
         raise TypeError(f"expected SquadState, got {type(squad).__name__}")
     with timed_phase("plan"):
@@ -441,7 +488,7 @@ def _official_plan(
                 squad=squad,
                 squad_source=squad_source,
                 chip_arm=chip_arm,  # type: ignore[arg-type]
-                run_kind="official",
+                run_kind=kind,
                 checkpoint=checkpoint,
                 line=line.line,
                 squad_mode=line.squad_mode,
@@ -449,17 +496,26 @@ def _official_plan(
                 build_id=build_id,
                 fp=fp,
                 prod_tag=prod_tag,
+                purpose=purpose,
             )
             return run_id
         except PlanExistsError as exc:
             logger.info(
-                "official_slate: legacy plan exists for %s h=%s; writing official run",
+                "official_slate: legacy plan exists for %s h=%s; writing %s run",
                 key,
                 line.horizon,
+                kind,
             )
             frame = pl.read_parquet(Path(str(exc)))
             spec = load_model_specs()[line.spec]
             store = DataStore(data_dir)
+            if purpose is not None:
+                plan_purpose = purpose
+            else:
+                plan_purpose = (
+                    f"official {checkpoint} {line.line} {key.season} gw{key.gw} "
+                    f"h{line.horizon}"
+                )
             run = write_plan_run(
                 data_dir,
                 spec=spec,
@@ -467,15 +523,12 @@ def _official_plan(
                 deadline_utc=store.deadline(key),
                 horizon=line.horizon,
                 frame=frame,
-                kind="official",
+                kind=kind,
                 checkpoint=checkpoint,
                 line=line.line,
                 squad_mode=line.squad_mode,
                 parent_run_id=parent_run_id,
-                purpose=(
-                    f"official {checkpoint} {line.line} {key.season} gw{key.gw} "
-                    f"h{line.horizon}"
-                ),
+                purpose=plan_purpose,
                 build_id=build_id,
                 fp=fp,
                 prod_tag=prod_tag,
