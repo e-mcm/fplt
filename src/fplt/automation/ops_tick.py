@@ -70,6 +70,7 @@ from fplt.automation.ops_data import (
 )
 from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
+from fplt.automation.post_gw import has_pending_post_gw, run_pending_post_gw
 from fplt.automation.production import ProductionOps, load_production_ops
 from fplt.automation.release import resolve_prod_tag_label
 from fplt.automation.runbook import (
@@ -96,6 +97,11 @@ logger = logging.getLogger(__name__)
 
 def _empty_ids() -> list[str]:
     """Empty mutable list for dataclass defaults."""
+    return []
+
+
+def _empty_gw_keys() -> list[GWKey]:
+    """Empty GWKey list for dataclass defaults."""
     return []
 
 
@@ -133,6 +139,8 @@ class OpsTickResult:
         auth_level: ops-01 token check level (``ok`` / ``soft_skip`` / …).
         auth_manual_apply: True when plan notifications carry the manual-apply
             banner because the token is already dead.
+        post_gw_runs: Checked gameweeks that received a new ``purpose=post_gw``
+            analysis run this tick (#393).
     """
 
     snapshots_fetched: int
@@ -149,6 +157,7 @@ class OpsTickResult:
     upcoming: GWKey | None = None
     auth_level: str = "ok"
     auth_manual_apply: bool = False
+    post_gw_runs: list[GWKey] = field(default_factory=_empty_gw_keys)
 
 
 def run_ops_tick(
@@ -234,6 +243,7 @@ def run_ops_tick(
             store = DataStore(root)
             checkpoint_ids: list[str] = []
             alarm_ids: list[str] = []
+            post_gw_keys: list[GWKey] = []
             upcoming_key: GWKey | None = None
             notified_plan = False
             upcoming_deadline: datetime | None = None
@@ -319,9 +329,19 @@ def run_ops_tick(
                     timedelta(minutes=ops.background_quiet_minutes),
                 )
 
+            # #393: a checked GW without a post_gw by_fp entry is work due.
+            post_gw_due = has_pending_post_gw(
+                root,
+                store,
+                ctx.build,
+                ops=ops,
+                prod_tag=prod_tag,
+                remote_by_fp=ctx.remote_by_fp,
+            )
+
             # run_now always continues: reuse by_fp runs but write a new
             # manual-* pointer even when fingerprints are unchanged (#364).
-            if all_fps_done and not due and not run_now:
+            if all_fps_done and not due and not run_now and not post_gw_due:
                 logger.info(
                     "ops_tick: idle — fingerprints unchanged, no checkpoint due"
                 )
@@ -394,6 +414,25 @@ def run_ops_tick(
             else:
                 logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
                 caught = catch_up(root, chosen, horizon=steps)
+
+                # #393: write-once post_gw analysis when data_checked flips.
+                try:
+                    with timed_phase("post_gw"):
+                        post_results = run_pending_post_gw(
+                            root,
+                            store,
+                            ctx.build,
+                            ops=ops,
+                            prod_tag=prod_tag,
+                            settings=cfg,
+                            notify=notify_live,
+                            remote_by_fp=ctx.remote_by_fp,
+                        )
+                    post_gw_keys = [
+                        item.key for item in post_results if not item.skipped
+                    ]
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    logger.exception("ops_tick: post_gw failed (non-fatal): %s", exc)
 
                 # Mid-week light fingerprint (#374): adhoc primary-only,
                 # no PMF / official pointers. Skip inside the quiet window
@@ -620,6 +659,7 @@ def run_ops_tick(
                 upcoming=upcoming_key,
                 auth_level=auth.level,
                 auth_manual_apply=auth.manual_apply,
+                post_gw_runs=post_gw_keys,
             )
             due_key = result.pre_deadline_planned
             logger.info(
@@ -1033,6 +1073,9 @@ def format_ops_tick_status(result: OpsTickResult) -> str:
     pending = (
         ", ".join(f"{key.season} gw{key.gw}" for key in result.still_pending) or "none"
     )
+    post_gw = (
+        ", ".join(f"{key.season} gw{key.gw}" for key in result.post_gw_runs) or "none"
+    )
     models = ", ".join(result.models)
     checkpoints = ", ".join(result.checkpoints_run) or "none"
     alarms = ", ".join(result.no_plan_alarms) or "none"
@@ -1051,6 +1094,7 @@ def format_ops_tick_status(result: OpsTickResult) -> str:
         f"  auth check:        {result.auth_level}"
         + (" (manual apply)" if result.auth_manual_apply else ""),
         f"  catch_up planned:  {caught}",
+        f"  post_gw runs:      {post_gw}",
         f"  upcoming deadline: {upcoming}",
         f"  checkpoints run:   {checkpoints}",
         f"  alarms:            {alarms}",
