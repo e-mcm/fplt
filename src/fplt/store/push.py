@@ -108,7 +108,25 @@ def push_run(
         prefix,
     )
     push(target, path, prefix)
+    # Durable catch-up done check (#371): inbox rows are unique per run_id, so
+    # an immutable push keeps the remote catalog queryable without a rebuild.
+    _push_catalog_inbox(data_dir, run_id, target)
     return target
+
+
+def _push_catalog_inbox(data_dir: Path, run_id: str, remote: Remote) -> None:
+    """Push ``catalog/inbox/run=<run_id>.parquet`` when present."""
+    from fplt.store.catalog import catalog_inbox_dir
+
+    inbox = catalog_inbox_dir(data_dir) / f"run={run_id}.parquet"
+    if not inbox.is_file():
+        return
+    logger.info(
+        "pushing catalog inbox run_id=%s → %s/catalog/inbox/",
+        run_id,
+        remote.target,
+    )
+    push(remote, inbox.parent, "catalog/inbox")
 
 
 def maybe_push_run(
