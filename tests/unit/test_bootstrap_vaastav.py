@@ -354,3 +354,36 @@ def test_main_upstream_unreachable_counts_then_fails(
         (status_dir / "vaastav_unavailable.json").read_text(encoding="utf-8")
     )
     assert state["consecutive_unavailable"] == 3
+
+
+def test_load_prior_file_hashes_skips_incomplete_capture(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Partial capture with ``_source.json`` but a missing file is ignored (#353)."""
+    import logging
+
+    repo = _fake_vaastav(tmp_path)
+    raw = tmp_path / "raw"
+    written = capture_vaastav(
+        raw,
+        repo_path=repo,
+        full=True,
+        captured_at=datetime(2026, 11, 27, 12, 0, tzinfo=UTC),
+    )
+    assert written is not None
+    # Drop a listed payload file so the capture looks like a timed-out upload.
+    victim = next(written.joinpath("data").rglob("merged_gw.csv"))
+    victim.unlink()
+    with caplog.at_level(logging.WARNING):
+        prior = load_prior_file_hashes(raw)
+    assert prior == {}
+    assert "missing" in caplog.text
+    # Next full capture must rewrite seasons rather than treat them as known.
+    again = capture_vaastav(
+        raw,
+        repo_path=repo,
+        full=True,
+        captured_at=datetime(2026, 11, 27, 13, 0, tzinfo=UTC),
+    )
+    assert again is not None
+    assert load_prior_file_hashes(raw)

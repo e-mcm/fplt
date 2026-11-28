@@ -169,3 +169,27 @@ def test_vaastav_workflow_keeps_cache_outside_raw() -> None:
     assert '--out "$RUNNER_TEMP/raw"' in text
     # Publish copies only non-dot top-level entries (#339 / #350).
     assert 'for entry in "$RUNNER_TEMP/raw"/*' in text
+
+
+def test_vaastav_capture_timeout_is_90() -> None:
+    """Full vaastav mirror needs headroom beyond the default 30 (#353)."""
+    doc = _load("vaastav.yml")
+    assert doc["jobs"]["capture"]["timeout-minutes"] == 90
+
+
+def test_capture_status_pushed_only_after_successful_upload() -> None:
+    """Status push runs after Upload and only when uploaded=true (#353)."""
+    for name in (
+        "vaastav.yml",
+        "understat.yml",
+        "api_football.yml",
+        "football_data.yml",
+    ):
+        doc = _load(name)
+        steps = doc["jobs"]["capture"]["steps"]
+        names = [s.get("name") for s in steps]
+        assert "Upload to R2" in names, name
+        assert "Push capture status" in names, name
+        assert names.index("Upload to R2") < names.index("Push capture status"), name
+        status = next(s for s in steps if s.get("name") == "Push capture status")
+        assert status.get("if") == "steps.upload.outputs.uploaded == 'true'", name

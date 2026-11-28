@@ -4,6 +4,14 @@ inputs:
   src:
     description: Local directory of raw captures to upload
     required: true
+  transfers:
+    description: rclone --transfers (default 32; many small objects)
+    required: false
+    default: "32"
+  checkers:
+    description: rclone --checkers (default 32)
+    required: false
+    default: "32"
 outputs:
   uploaded:
     description: >
@@ -47,12 +55,14 @@ runs:
         RCLONE_CONFIG_FPLT_TYPE: s3
         RCLONE_CONFIG_FPLT_PROVIDER: Cloudflare
         RCLONE_CONFIG_FPLT_NO_CHECK_BUCKET: "true"
+        RCLONE_TRANSFERS: ${{ inputs.transfers }}
+        RCLONE_CHECKERS: ${{ inputs.checkers }}
       run: |
         set -euo pipefail
         export RCLONE_CONFIG_FPLT_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
         export RCLONE_CONFIG_FPLT_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
         export RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-        # Dot-path guard (#339) lives in push_raw_upload.sh before rclone.
+        # Dot-path guard (#339) and _source.json-last (#353) live in the helper.
         bash "${{ github.workspace }}/scripts/push_raw_upload.sh" \
           "${{ inputs.src }}" \
           "fplt:${DATA_BUCKET}/raw"

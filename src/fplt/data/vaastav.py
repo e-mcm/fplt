@@ -17,6 +17,9 @@ present (2022-23 onwards); earlier seasons leave them null.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -26,6 +29,7 @@ import polars as pl
 
 from fplt.data.store import DataStore
 from fplt.schemas.staged import POLARS_SCHEMAS
+from fplt.schemas.vaastav_source import VaastavSourceManifest
 
 _RESULT_LAG = timedelta(hours=3)
 _MIN_SEASON = "2021-22"
@@ -33,6 +37,8 @@ _POSITIONS = {"GK", "DEF", "MID", "FWD"}
 _UTC = pl.Datetime("us", "UTC")
 _CAP_RE = re.compile(r"^captured_at=(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)$")
 _SEASON_RE = re.compile(r"^\d{4}-\d{2}$")
+_SOURCE = "_source.json"
+_log = logging.getLogger(__name__)
 
 
 def season_start(season: str) -> datetime:
@@ -41,8 +47,75 @@ def season_start(season: str) -> datetime:
     return datetime(year, 7, 1, tzinfo=UTC)
 
 
+def sha256_file(path: Path) -> str:
+    """Return the lowercase hex sha256 digest of ``path``."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_complete_vaastav_capture(capture_dir: Path) -> bool:
+    """True when ``_source.json`` exists and every listed file matches sha256.
+
+    Partial R2 uploads can leave a write-once capture with a manifest but
+    missing payload files. Readers and prior-hash loading must skip those
+    (#353); ``_source.json`` is uploaded last as the completion marker.
+
+    Args:
+        capture_dir: One ``raw/vaastav/captured_at=…`` directory.
+
+    Returns:
+        ``True`` only for a fully verified capture; otherwise logs a WARNING
+        and returns ``False``.
+    """
+    manifest_path = capture_dir / _SOURCE
+    if not manifest_path.is_file():
+        _log.warning(
+            "skipping incomplete vaastav capture %s: missing %s",
+            capture_dir.name,
+            _SOURCE,
+        )
+        return False
+    try:
+        manifest = VaastavSourceManifest.model_validate(
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        _log.warning(
+            "skipping incomplete vaastav capture %s: invalid %s (%s)",
+            capture_dir.name,
+            _SOURCE,
+            exc,
+        )
+        return False
+    for entry in manifest.files:
+        path = capture_dir / entry.path
+        if not path.is_file():
+            _log.warning(
+                "skipping incomplete vaastav capture %s: missing %s",
+                capture_dir.name,
+                entry.path,
+            )
+            return False
+        digest = sha256_file(path)
+        if digest != entry.sha256:
+            _log.warning(
+                "skipping incomplete vaastav capture %s: sha256 mismatch for %s",
+                capture_dir.name,
+                entry.path,
+            )
+            return False
+    return True
+
+
 def iter_vaastav_captures(raw_root: Path) -> list[Path]:
-    """Return ``raw_root/vaastav/captured_at=*`` dirs sorted by stamp ascending."""
+    """Return complete ``raw_root/vaastav/captured_at=*`` dirs sorted by stamp.
+
+    Incomplete captures (missing ``_source.json`` or a listed file / digest
+    mismatch) are skipped with a WARNING (#353).
+    """
     base = raw_root / "vaastav"
     if not base.is_dir():
         return []
@@ -55,7 +128,7 @@ def iter_vaastav_captures(raw_root: Path) -> list[Path]:
             tzinfo=UTC
         )
         found.append((stamp, path))
-    return [path for _, path in sorted(found)]
+    return [path for _, path in sorted(found) if is_complete_vaastav_capture(path)]
 
 
 def latest_season_dirs(data_dir: Path) -> dict[str, Path]:
@@ -63,13 +136,14 @@ def latest_season_dirs(data_dir: Path) -> dict[str, Path]:
 
     ``captured_at`` is provenance only: a 2026 capture of 2022-23 is still the
     source for a 2022-23 backtest. Callers apply row-level ``available_at`` via
-    ``PITView``; do not filter seasons by capture stamp.
+    ``PITView``; do not filter seasons by capture stamp. Only complete captures
+    (verified ``_source.json``) count (#353).
 
     Args:
         data_dir: ``$FPLT_DATA_DIR`` (contains ``raw/``).
 
     Returns:
-        Season folders from the newest capture that includes each season.
+        Season folders from the newest complete capture that includes each season.
     """
     by_season: dict[str, Path] = {}
     for capture in iter_vaastav_captures(data_dir / "raw"):
