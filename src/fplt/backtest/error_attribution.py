@@ -287,16 +287,15 @@ def attribute_errors(
                 .agg(pl.col(col).mean().alias("gain"), pl.len().alias("n"))
                 .sort("gw")
             )
+            gw_series = gw_means["gain"].to_numpy()
             interval = paired_interval(
-                gw_means["gain"].to_numpy(),
+                gw_series,
                 metric=metric,
                 bootstrap_reps=bootstrap_reps,
                 bootstrap_seed=bootstrap_seed,
             )
-            if np.isfinite(interval.mean):
-                mean_gain = float(interval.mean)
-            else:
-                mean_gain = float(np.mean(group[col].to_numpy()))
+            # Equal-weight mean across GWs (matches the bootstrap series).
+            mean_gain = float(np.mean(gw_series))
             out_rows.append(
                 {
                     "model_id": model_id,

@@ -87,6 +87,21 @@ def _toy_sim_inputs(
     return players, scorelines, minutes, other
 
 
+def test_dense_pmf_ignores_oob_bins_and_zero_mass() -> None:
+    from fplt.backtest.points_scores import _dense_pmf
+
+    oob = _dense_pmf(
+        np.array([POINTS_PMF_MIN - 5, 0], dtype=np.int64),
+        np.array([0.5, 0.5], dtype=np.float64),
+    )
+    assert oob.sum() == pytest.approx(1.0)
+    zero = _dense_pmf(
+        np.array([0], dtype=np.int64),
+        np.array([0.0], dtype=np.float64),
+    )
+    assert zero.sum() == pytest.approx(0.0)
+
+
 def test_hand_computed_rps_log_mse() -> None:
     """RPS / log / MSE match a two-bin hand example (clipped into −5…30)."""
     dense = np.zeros(_WIDTH, dtype=np.float64)
@@ -334,6 +349,10 @@ def test_attribute_errors_schema_and_bootstrap_ci() -> None:
     assert std["n"][0] == 6
     per = table.filter(pl.col("gw").is_not_null())
     assert per.height == 9  # 3 GWs × 3 metrics
+    std_only = attribute_errors(
+        gains, model_id="toy_v1", bootstrap_reps=100, bootstrap_seed=1
+    )
+    assert std_only.filter(pl.col("gw").is_not_null()).is_empty()
 
 
 def test_scores_from_ledger_and_pmf() -> None:
@@ -355,6 +374,10 @@ def test_scores_from_ledger_and_pmf() -> None:
     assert scored["season"][0] == "2024-25"
     assert scored["gw"][0] == 5
     assert scored["rps"][0] == pytest.approx(0.0)
+    # Already-renamed season/gw columns skip the target_* rename branch.
+    ledger2 = ledger.rename({"target_season": "season", "target_gw": "gw"})
+    scored2 = scores_from_ledger_and_pmf(pmf, ledger2)
+    assert scored2["season"][0] == "2024-25"
 
 
 def test_realised_involvement_and_price_band() -> None:
@@ -384,3 +407,234 @@ def test_error_attribution_schema_columns() -> None:
         "involvement",
         "other",
     }
+
+
+def test_score_helpers_reject_bad_inputs() -> None:
+    bad = np.ones(3, dtype=np.float64)
+    with pytest.raises(ValueError, match="length"):
+        discrete_rps(bad, 0)
+    with pytest.raises(ValueError, match="length"):
+        log_score_pmf(bad, 0)
+    with pytest.raises(ValueError, match="length"):
+        mse_mean_pmf(bad, 0)
+    with pytest.raises(ValueError, match="pts or actual_pts"):
+        score_points_pmf(
+            _long_pmf(1, 1, _delta_pmf(1)),
+            pl.DataFrame({"player_key": [1], "fixture_id": [1]}),
+        )
+    with pytest.raises(ValueError, match="missing columns"):
+        score_points_pmf(
+            pl.DataFrame({"player_key": [1], "fixture_id": [1]}),
+            pl.DataFrame({"player_key": [1], "fixture_id": [1], "pts": [1]}),
+        )
+
+
+def test_score_points_pmf_maps_target_keys_when_present() -> None:
+    """Outcomes carrying only target_* still populate season/gw on scores."""
+    pmf = _long_pmf(1, 10, _delta_pmf(2))
+    outcomes = pl.DataFrame(
+        {
+            "player_key": [1],
+            "fixture_id": [10],
+            "pts": [2],
+            "target_season": ["2024-25"],
+            "target_gw": [3],
+        }
+    )
+    scored = score_points_pmf(pmf, outcomes)
+    assert scored["season"][0] == "2024-25"
+    assert scored["gw"][0] == 3
+
+
+def test_replace_component_error_and_oracle_paths() -> None:
+    players, scorelines, minutes, other = _toy_sim_inputs(n=8)
+    with pytest.raises(ValueError, match="unknown component"):
+        replace_component_inputs(
+            component="bonus",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+        )
+    with pytest.raises(ValueError, match="realised_minutes required"):
+        replace_component_inputs(
+            component="minutes",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+        )
+    with pytest.raises(ValueError, match="length must match"):
+        replace_component_inputs(
+            component="minutes",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+            realised_minutes=np.array([90], dtype=np.int64),
+        )
+    with pytest.raises(ValueError, match="realised_scoreline required"):
+        replace_component_inputs(
+            component="scoreline",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+        )
+    mins_s, scores_s, players_s, other_s = replace_component_inputs(
+        component="scoreline",
+        minutes=minutes,
+        scorelines=scorelines,
+        sim_players=players,
+        other_grid=other,
+        realised_scoreline=(3, 1),
+    )
+    assert np.all(scores_s[:, 0] == 3)
+    assert np.all(scores_s[:, 1] == 1)
+    assert np.array_equal(mins_s, minutes)
+    assert players_s.equals(players)
+    assert np.array_equal(other_s, other)
+
+    with pytest.raises(ValueError, match="realised_weights required"):
+        replace_component_inputs(
+            component="involvement",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+        )
+    weights = pl.DataFrame(
+        {
+            "player_key": [1, 2],
+            "goal_weight": [1.0, 0.0],
+            "assist_weight": [0.0, 1.0],
+        }
+    )
+    _, _, players_i, _ = replace_component_inputs(
+        component="involvement",
+        minutes=minutes,
+        scorelines=scorelines,
+        sim_players=players,
+        other_grid=other,
+        realised_weights=weights,
+    )
+    assert players_i["goal_weight"].to_list() == pytest.approx([1.0, 0.0])
+
+    with pytest.raises(ValueError, match="realised_other_total required"):
+        replace_component_inputs(
+            component="other",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+        )
+    with pytest.raises(ValueError, match="length must match"):
+        replace_component_inputs(
+            component="other",
+            minutes=minutes,
+            scorelines=scorelines,
+            sim_players=players,
+            other_grid=other,
+            realised_other_total=np.array([1.0], dtype=np.float64),
+        )
+    # With realised minutes → bucket from those; without → mean control minutes.
+    _, _, _, other_o = replace_component_inputs(
+        component="other",
+        minutes=minutes,
+        scorelines=scorelines,
+        sim_players=players,
+        other_grid=other,
+        realised_minutes=np.array([0, 45], dtype=np.int64),
+        realised_other_total=np.array([2.0, 3.0], dtype=np.float64),
+    )
+    assert other_o[0, 0] == pytest.approx(2.0)
+    assert other_o[1, 1] == pytest.approx(3.0)
+    _, _, _, other_mean = replace_component_inputs(
+        component="other",
+        minutes=minutes,
+        scorelines=scorelines,
+        sim_players=players,
+        other_grid=other,
+        realised_other_total=np.array([1.5, 1.5], dtype=np.float64),
+    )
+    assert other_mean[0, 2] == pytest.approx(1.5)  # mean minutes 90 → 60+
+
+
+def test_points_pmf_from_simulation_edges() -> None:
+    with pytest.raises(ValueError, match="shape must be"):
+        points_pmf_from_simulation(
+            np.zeros(3), np.array([1, 2, 3], dtype=np.int64), fixture_id=1
+        )
+    empty = points_pmf_from_simulation(
+        np.zeros((2, 0), dtype=np.float64),
+        np.array([1, 2], dtype=np.int64),
+        fixture_id=9,
+    )
+    assert empty.is_empty()
+
+
+def test_oracle_gains_and_attribute_errors_edges() -> None:
+    with pytest.raises(ValueError, match="unknown component"):
+        oracle_gains(
+            pl.DataFrame(
+                {
+                    "player_key": [1],
+                    "fixture_id": [1],
+                    "rps": [0.1],
+                    "log_score": [0.2],
+                    "mse_mean": [0.3],
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "player_key": [1],
+                    "fixture_id": [1],
+                    "rps": [0.0],
+                    "log_score": [0.0],
+                    "mse_mean": [0.0],
+                }
+            ),
+            component="chips",
+        )
+    with pytest.raises(ValueError, match="missing columns"):
+        attribute_errors(pl.DataFrame({"season": ["2024-25"]}), model_id="m")
+    empty = attribute_errors(
+        pl.DataFrame(
+            schema={
+                "season": pl.Utf8(),
+                "gw": pl.Int64(),
+                "position": pl.Utf8(),
+                "price_band": pl.Utf8(),
+                "component": pl.Utf8(),
+                "gain_rps": pl.Float64(),
+                "gain_log_score": pl.Float64(),
+                "gain_mse_mean": pl.Float64(),
+            }
+        ),
+        model_id="m",
+    )
+    assert empty.is_empty()
+
+
+def test_realised_involvement_requires_columns() -> None:
+    with pytest.raises(ValueError, match="missing columns"):
+        realised_involvement_weights(
+            pl.DataFrame({"player_key": [1], "fixture_id": [1]})
+        )
+
+
+def test_oracle_fixture_pmf_scoreline_component() -> None:
+    players, scorelines, minutes, other = _toy_sim_inputs(n=16)
+    pmf = oracle_fixture_pmf(
+        component="scoreline",
+        minutes=minutes,
+        scorelines=scorelines,
+        sim_players=players,
+        other_grid=other,
+        rules=_RULES,
+        rng=np.random.default_rng(1),
+        fixture_id=42,
+        realised_scoreline=(0, 0),
+    )
+    assert not pmf.is_empty()
+    assert set(pmf["fixture_id"].to_list()) == {42}
