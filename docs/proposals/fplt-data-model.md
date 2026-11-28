@@ -102,7 +102,7 @@ runs/run=<run_id>/
   "purpose": "free text, e.g. 'GW12 T-90m' or 'try xg_blend 0.5'",
   "experiment_id": null,
   "arm": null,
-  "run_type": "predict | plan | eval",
+  "run_type": "predict | plan | eval | component",
   "spec_hash": "sha256 of the fully resolved spec, defaults included, name excluded (§3.7)",
   "spec_label": "dc_layered_v4_native, or base[path=value,…] for unnamed variants",
   "model_id": "existing id, kept for compatibility",

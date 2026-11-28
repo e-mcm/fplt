@@ -209,7 +209,7 @@ class RunWriter:
             data_dir: Local data root (``$FPLT_DATA_DIR``).
             kind: Official / adhoc / experiment / benchmark.
             mode: Live or backtest.
-            run_type: Predict, plan, or eval.
+            run_type: Predict, plan, eval, or component (#405).
             spec_hash: ``fplt.models.spec_identity.spec_hash`` digest.
             spec_label: Human label (usually the ModelSpec name).
             model_id: Existing model id (compatibility).

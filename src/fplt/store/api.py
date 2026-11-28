@@ -121,7 +121,8 @@ class Store:
         Args:
             spec_name: Match ``spec_label`` (human registered / auto label).
             kind: Match ``kind`` (``official`` / ``adhoc`` / …).
-            run_type: Match ``run_type`` (``predict`` / ``plan`` / ``eval``).
+            run_type: Match ``run_type`` (``predict`` / ``plan`` / ``eval`` /
+                ``component``).
             status: Match ``status``; default ``succeeded``. Pass ``None`` to
                 skip the status filter.
 
