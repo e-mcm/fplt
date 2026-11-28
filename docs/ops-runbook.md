@@ -75,6 +75,16 @@ Soft skip of missing R2 credentials is allowed **only off `main`** (PR / feature
 Heartbeat table and secrets: [`../deploy/README.md`](../deploy/README.md#capture-job-heartbeats-and-failure-alerts-ops-03--a7).
 Do not add a keepalive workflow; heartbeats are the dead-man's switch.
 
+### Source unavailable {#source-unavailable}
+
+| | |
+|---|---|
+| **Means** | A capture job reached the upstream but got an error / maintenance / empty-error page (Understat maintenance HTML, API-Football HTTP failure, football-data unreachable, vaastav git clone/pull failure). The run emits a GitHub `::warning::`, writes `status/<source>_unavailable.json` (consecutive counter on the rewritable `status/` prefix), and **does not** ping the heartbeat. After K consecutive unavailable runs (`configs/ops/capture_health.yaml`, default 3) the job exits non-zero and `notify-failure` fires. |
+| **Urgency** | **Warning** while consecutive &lt; K (heartbeat miss is the dead-man's switch). **High** once ntfy fires (outage outlasted the threshold). |
+| **Fix** | Open the workflow run annotation / logs. Confirm the upstream in a browser (Understat league page, API-Football status, football-data.co.uk, vaastav GitHub). Wait for the source to recover, or re-run once it is up: `gh workflow run understat.yml` (or `api_football` / `football_data` / `vaastav`). A successful capture resets the counter and resumes heartbeats. |
+
+Inspect the counter: `rclone cat fplt:fplt-data/status/understat_unavailable.json` (same pattern for other sources). Do not confuse this with healthy "nothing new" (exit 0 + heartbeat ping, no warning).
+
 ### ops-04: Bad release
 
 | | |

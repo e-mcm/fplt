@@ -273,11 +273,26 @@ def test_default_raw_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     assert bootstrap_vaastav.default_raw_dir() == tmp_path / "custom" / "raw"
 
 
-def test_main_returns_one_on_error(
+def test_main_upstream_unreachable_counts_then_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(*args: object, **kwargs: object) -> Path | None:
         raise RuntimeError("git failed")
 
     monkeypatch.setattr(bootstrap_vaastav, "capture_vaastav", boom)
-    assert bootstrap_vaastav.main(["--out", str(tmp_path)]) == 1
+    status_dir = tmp_path / "status"
+    args = [
+        "--out",
+        str(tmp_path / "raw"),
+        "--status-dir",
+        str(status_dir),
+        "--unavailable-threshold",
+        "3",
+    ]
+    assert bootstrap_vaastav.main(args) == 0
+    assert bootstrap_vaastav.main(args) == 0
+    assert bootstrap_vaastav.main(args) == 1
+    state = json.loads(
+        (status_dir / "vaastav_unavailable.json").read_text(encoding="utf-8")
+    )
+    assert state["consecutive_unavailable"] == 3

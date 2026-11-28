@@ -1,0 +1,61 @@
+name: capture-status
+description: Pull or push status/<source>_unavailable.json (rewritable status/)
+inputs:
+  mode:
+    description: pull or push
+    required: true
+  source:
+    description: Capture source key (understat, api_football, …)
+    required: true
+  status_dir:
+    description: Local directory mirroring R2 status/
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Sync capture unavailable status
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        SOURCE: ${{ inputs.source }}
+        STATUS_DIR: ${{ inputs.status_dir }}
+      run: |
+        set -euo pipefail
+        missing=false
+        if [ -z "${R2_ACCOUNT_ID:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] \
+          || [ -z "${R2_SECRET_ACCESS_KEY:-}" ] || [ -z "${DATA_BUCKET:-}" ]; then
+          missing=true
+        fi
+        if [ "$missing" = true ]; then
+          echo "soft skip: R2 credentials unset; status counter is local-only this run"
+          mkdir -p "$STATUS_DIR"
+          exit 0
+        fi
+        if ! command -v rclone >/dev/null 2>&1; then
+          echo "::error::rclone required for capture-status; install-rclone first"
+          exit 1
+        fi
+        export RCLONE_CONFIG_FPLT_TYPE=s3
+        export RCLONE_CONFIG_FPLT_PROVIDER=Cloudflare
+        export RCLONE_CONFIG_FPLT_NO_CHECK_BUCKET=true
+        export RCLONE_CONFIG_FPLT_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        export RCLONE_CONFIG_FPLT_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+        export RCLONE_CONFIG_FPLT_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+        key="status/${SOURCE}_unavailable.json"
+        remote="fplt:${DATA_BUCKET}/${key}"
+        mkdir -p "$STATUS_DIR"
+        local_path="${STATUS_DIR}/${SOURCE}_unavailable.json"
+        if [ "$MODE" = "pull" ]; then
+          # Missing remote object is fine (first unavailable / after success wipe).
+          rclone copyto "$remote" "$local_path" --fast-list 2>/dev/null \
+            || echo "no remote status yet for ${SOURCE}"
+        elif [ "$MODE" = "push" ]; then
+          if [ ! -f "$local_path" ]; then
+            echo "no local status file to push for ${SOURCE}"
+            exit 0
+          fi
+          rclone copyto "$local_path" "$remote" --fast-list -v
+        else
+          echo "::error::mode must be pull or push, got ${MODE}"
+          exit 1
+        fi

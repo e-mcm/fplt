@@ -154,7 +154,55 @@ def test_capture_raises_on_maintenance_html(tmp_path: Path) -> None:
         fetch.capture(client, tmp_path / "raw", "2025-26", now=_NOW, delay=0)
 
 
-def test_main_exits_zero_when_understat_unavailable(
+def test_main_maintenance_warns_suppresses_heartbeat_and_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Maintenance HTML must not look like a healthy nothing-new run (#338)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_MAINTENANCE_HTML)
+
+    real_client = httpx.Client
+
+    def fake_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs = dict(kwargs)
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(fetch.httpx, "Client", fake_client)
+    status_dir = tmp_path / "status"
+    github_out = tmp_path / "github_output"
+    github_out.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_out))
+    code = fetch.main(
+        [
+            "--out",
+            str(tmp_path / "raw"),
+            "--season",
+            "2025-26",
+            "--status-dir",
+            str(status_dir),
+            "--unavailable-threshold",
+            "3",
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "::warning::" in out
+    assert "understat unavailable" in out
+    gho = github_out.read_text(encoding="utf-8")
+    assert "source_ok=false" in gho
+    assert "ping_heartbeat=false" in gho
+    state_path = status_dir / "understat_unavailable.json"
+    assert state_path.is_file()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["consecutive_unavailable"] == 1
+    assert state["available"] is False
+
+
+def test_main_unavailable_threshold_exits_nonzero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -168,4 +216,93 @@ def test_main_exits_zero_when_understat_unavailable(
         return real_client(*args, **kwargs)
 
     monkeypatch.setattr(fetch.httpx, "Client", fake_client)
-    assert fetch.main(["--out", str(tmp_path / "raw"), "--season", "2025-26"]) == 0
+    status_dir = tmp_path / "status"
+    args = [
+        "--out",
+        str(tmp_path / "raw"),
+        "--season",
+        "2025-26",
+        "--status-dir",
+        str(status_dir),
+        "--unavailable-threshold",
+        "3",
+    ]
+    assert fetch.main(args) == 0
+    assert fetch.main(args) == 0
+    assert fetch.main(args) == 1
+    state = json.loads(
+        (status_dir / "understat_unavailable.json").read_text(encoding="utf-8")
+    )
+    assert state["consecutive_unavailable"] == 3
+
+
+def test_main_nothing_new_resets_and_pings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful capture with no new matches is healthy (heartbeat ok)."""
+    dates = _load("dates.json")
+    assert isinstance(dates, list)
+    # All matches already on disk → nothing new to write, still available.
+    root = tmp_path / "raw"
+    for match_id in fetch.finished_match_ids(dates):
+        path = fetch.match_path(root, "2024-25", match_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump({"id": match_id}, handle)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/league/EPL/2024":
+            return httpx.Response(200, text=_LEAGUE_HTML)
+        if path == "/getLeagueData/EPL/2024":
+            body = {"dates": dates, "teams": _load("teams.json"), "players": []}
+            return httpx.Response(200, json=body)
+        raise AssertionError(path)
+
+    real_client = httpx.Client
+
+    def fake_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs = dict(kwargs)
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(fetch.httpx, "Client", fake_client)
+    status_dir = tmp_path / "status"
+    # Seed a prior unavailable streak that success must clear.
+    prior = status_dir / "understat_unavailable.json"
+    prior.parent.mkdir(parents=True, exist_ok=True)
+    prior.write_text(
+        json.dumps(
+            {
+                "source": "understat",
+                "consecutive_unavailable": 2,
+                "threshold": 3,
+                "last_reason": "prior",
+                "updated_at": "2026-11-27T00:00:00Z",
+                "available": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    github_out = tmp_path / "github_output"
+    github_out.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_out))
+    code = fetch.main(
+        [
+            "--out",
+            str(root),
+            "--season",
+            "2024-25",
+            "--status-dir",
+            str(status_dir),
+            "--delay",
+            "0",
+        ]
+    )
+    assert code == 0
+    gho = github_out.read_text(encoding="utf-8")
+    assert "source_ok=true" in gho
+    assert "ping_heartbeat=true" in gho
+    state = json.loads(prior.read_text(encoding="utf-8"))
+    assert state["consecutive_unavailable"] == 0
+    assert state["available"] is True

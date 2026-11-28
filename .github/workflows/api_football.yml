@@ -28,6 +28,7 @@ jobs:
     environment: r2
     outputs:
       uploaded: ${{ steps.upload.outputs.uploaded }}
+      source_ok: ${{ steps.capture.outputs.source_ok }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0  # zizmor: ignore[artipacked] job git-pushes with GITHUB_TOKEN
       - name: Simulate failure
@@ -43,7 +44,22 @@ jobs:
       - name: Install httpx + PyYAML
         run: pip install httpx pyyaml
 
+      - uses: ./.github/actions/install-rclone
+
+      - name: Pull capture status
+        uses: ./.github/actions/capture-status
+        with:
+          mode: pull
+          source: api_football
+          status_dir: ${{ runner.temp }}/status
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
+
       - name: Capture API-Football injuries + cup/Europe fixtures
+        id: capture
         env:
           # Prefer repo secret API_FOOTBALL_KEY (also accepts APISPORTS_KEY).
           # Local / Settings name is FPLT_API_FOOTBALL_KEY.
@@ -54,12 +70,29 @@ jobs:
           set -euo pipefail
           if [ -z "${FPLT_API_FOOTBALL_KEY:-}${API_FOOTBALL_KEY:-}${APISPORTS_KEY:-}" ]; then
             echo "No API-Football key in secrets (API_FOOTBALL_KEY / APISPORTS_KEY / FPLT_API_FOOTBALL_KEY); skipping."
+            # Soft-skip is healthy (nothing to check); keep heartbeat eligible.
+            echo "source_ok=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # Prefer the same resolution order as scripts/fetch_api_football.py; mask it.
           key="${FPLT_API_FOOTBALL_KEY:-${API_FOOTBALL_KEY:-${APISPORTS_KEY:-}}}"
           echo "::add-mask::${key}"
-          python scripts/fetch_api_football.py --out "$RUNNER_TEMP/raw"
+          python scripts/fetch_api_football.py \
+            --out "$RUNNER_TEMP/raw" \
+            --status-dir "$RUNNER_TEMP/status"
+
+      - name: Push capture status
+        if: always()
+        uses: ./.github/actions/capture-status
+        with:
+          mode: push
+          source: api_football
+          status_dir: ${{ runner.temp }}/status
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_BUCKET: ${{ vars.DATA_BUCKET }}
 
       - name: Upload to R2
         id: upload
@@ -111,7 +144,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Heartbeat
-        if: needs.capture.result == 'success' && needs.capture.outputs.uploaded == 'true'
+        if: >-
+          needs.capture.result == 'success'
+          && needs.capture.outputs.uploaded == 'true'
+          && needs.capture.outputs.source_ok == 'true'
         uses: ./.github/actions/heartbeat
         with:
           ping_url: ${{ secrets.HC_PING_URL_API_FOOTBALL }}

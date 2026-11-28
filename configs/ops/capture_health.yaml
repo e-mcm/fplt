@@ -1,0 +1,4 @@
+# Consecutive source-unavailable capture runs before exit non-zero (ntfy via
+# notify-failure). Default 3 ≈ a day and a half on Understat's Sat/Sun/Mon cron.
+# Override per job with --unavailable-threshold or FPLT_CAPTURE_UNAVAILABLE_THRESHOLD.
+unavailable_threshold: 3

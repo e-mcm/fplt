@@ -8,13 +8,38 @@ monthly refresh captures under ``season=…/captured_at=…/E0.csv``.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import httpx
+
+
+def _capture_health() -> ModuleType:
+    """Load ``fplt.data.capture_health`` without importing heavy ``fplt.data``."""
+    name = "fplt_data_capture_health"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "fplt"
+        / "data"
+        / "capture_health.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load capture_health from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 
 API_ROOT = "https://www.football-data.co.uk/mmz4281"
 _USER_AGENT = (
@@ -106,6 +131,18 @@ def main(argv: list[str] | None = None) -> int:
             "Omit for legacy season=/E0.csv."
         ),
     )
+    parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=Path("data/status"),
+        help="Local status/ mirror for unavailable counters (R2 status/).",
+    )
+    parser.add_argument(
+        "--unavailable-threshold",
+        type=int,
+        default=None,
+        help="Consecutive unavailable runs before exit non-zero (default: config).",
+    )
     args = parser.parse_args(argv)
     captured_at: str | None = args.captured_at
     if captured_at is not None and _CAPTURED_AT.match(captured_at) is None:
@@ -113,17 +150,39 @@ def main(argv: list[str] | None = None) -> int:
     seasons: list[str] = (
         list(args.season) if args.season else [season_label(datetime.now(tz=UTC))]
     )
+    health = _capture_health()
+    threshold = args.unavailable_threshold
+    moment = datetime.now(tz=UTC)
     # football-data.co.uk 302s www → apex; httpx defaults to not following.
     with httpx.Client(
         headers={"User-Agent": _USER_AGENT},
         timeout=60.0,
         follow_redirects=True,
     ) as client:
-        for season in seasons:
-            result = fetch_season(client, args.out, season, captured_at=captured_at)
-            state = "wrote" if result.wrote else "exists"
-            print(f"{state} {result.path}", file=sys.stderr)
-    return 0
+        try:
+            for season in seasons:
+                result = fetch_season(client, args.out, season, captured_at=captured_at)
+                state = "wrote" if result.wrote else "exists"
+                print(f"{state} {result.path}", file=sys.stderr)
+        except httpx.HTTPError as exc:
+            outcome = health.record_capture_outcome(
+                source="football_data",
+                status_dir=args.status_dir,
+                available=False,
+                reason=str(exc),
+                threshold=threshold,
+                now=moment,
+            )
+            print(f"football_data unavailable: {exc}", file=sys.stderr)
+            return int(outcome.exit_code)
+    outcome = health.record_capture_outcome(
+        source="football_data",
+        status_dir=args.status_dir,
+        available=True,
+        threshold=threshold,
+        now=moment,
+    )
+    return int(outcome.exit_code)
 
 
 if __name__ == "__main__":

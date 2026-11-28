@@ -14,15 +14,41 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import importlib.util
 import json
 import re
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import httpx
+
+
+def _capture_health() -> ModuleType:
+    """Load ``fplt.data.capture_health`` without importing heavy ``fplt.data``."""
+    name = "fplt_data_capture_health"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "fplt"
+        / "data"
+        / "capture_health.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load capture_health from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 
 API_ROOT = "https://understat.com"
 _AJAX = {
@@ -318,7 +344,11 @@ def capture(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Capture into ``--out`` (default ``./data/raw``). Exit 0 when unavailable."""
+    """Capture into ``--out`` (default ``./data/raw``).
+
+    Distinguishes healthy "nothing new" (exit 0, heartbeat ok) from source
+    unavailable (warning + status counter; no heartbeat; non-zero after K).
+    """
     parser = argparse.ArgumentParser(prog="fetch_understat")
     parser.add_argument("--out", type=Path, default=Path("data/raw"))
     parser.add_argument(
@@ -333,9 +363,23 @@ def main(argv: list[str] | None = None) -> int:
         default=0.2,
         help="Seconds to wait between match requests.",
     )
+    parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=Path("data/status"),
+        help="Local status/ mirror for unavailable counters (R2 status/).",
+    )
+    parser.add_argument(
+        "--unavailable-threshold",
+        type=int,
+        default=None,
+        help="Consecutive unavailable runs before exit non-zero (default: config).",
+    )
     args = parser.parse_args(argv)
+    health = _capture_health()
     moment = datetime.now(UTC)
     season = args.season or season_label(moment)
+    threshold = args.unavailable_threshold
     with httpx.Client(
         timeout=30.0,
         headers={"User-Agent": _USER_AGENT},
@@ -344,14 +388,40 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = capture(client, args.out, season, now=moment, delay=args.delay)
         except UnderstatUnavailable as exc:
+            outcome = health.record_capture_outcome(
+                source="understat",
+                status_dir=args.status_dir,
+                available=False,
+                reason=str(exc),
+                threshold=threshold,
+                now=moment,
+            )
             print(f"season={season} unavailable: {exc}")
-            return 0
+            return int(outcome.exit_code)
+        except httpx.HTTPError as exc:
+            outcome = health.record_capture_outcome(
+                source="understat",
+                status_dir=args.status_dir,
+                available=False,
+                reason=f"HTTP error: {exc}",
+                threshold=threshold,
+                now=moment,
+            )
+            print(f"season={season} unavailable: {exc}")
+            return int(outcome.exit_code)
+    outcome = health.record_capture_outcome(
+        source="understat",
+        status_dir=args.status_dir,
+        available=True,
+        threshold=threshold,
+        now=moment,
+    )
     print(
         f"season={season} dates={'wrote' if result.wrote_dates else 'skipped'} "
         f"teams={'wrote' if result.wrote_teams else 'skipped'} "
         f"matches={result.match_ids}"
     )
-    return 0
+    return int(outcome.exit_code)
 
 
 if __name__ == "__main__":
