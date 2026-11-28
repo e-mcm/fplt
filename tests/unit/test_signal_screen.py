@@ -10,6 +10,7 @@ import pytest
 
 from fplt.backtest.signal_screen import (
     DERIVED_COVARIATES,
+    _binned_residual_delta,
     apply_pit_guard,
     benjamini_hochberg,
     residuals_from_ledger,
@@ -195,6 +196,153 @@ def test_screen_signals_empty_covariates_and_schema() -> None:
 def test_screen_signals_rejects_missing_panel_columns() -> None:
     with pytest.raises(ValueError, match="missing columns"):
         screen_signals(pl.DataFrame({"residual": [1.0]}), {"x": pl.Series("x", [1.0])})
+
+
+def test_residuals_from_ledger_empty_when_no_actuals() -> None:
+    ledger = pl.DataFrame(
+        {
+            "model_id": ["m"],
+            "run_kind": ["official"],
+            "as_of_season": ["2024-25"],
+            "as_of_gw": [1],
+            "target_season": ["2024-25"],
+            "target_gw": [2],
+            "horizon": [1],
+            "player_key": [1],
+            "position": ["MID"],
+            "fixture_id": [10],
+            "xpts": [4.0],
+            "xpts_sd": [1.0],
+            "p_played": [0.9],
+            "p_60": [0.7],
+            "p_goal": [0.2],
+            "p_assist": [0.1],
+            "p_cs": [0.3],
+            "p_haul": [0.1],
+            "actual_pts": [None],
+            "actual_minutes": [None],
+            "actual_goals": [None],
+            "actual_assists": [None],
+            "actual_cs": [None],
+        },
+        schema=LEDGER_COLUMNS,
+    )
+    panel = residuals_from_ledger(ledger)
+    assert panel.is_empty()
+    assert "residual" in panel.columns
+
+
+def test_pit_guard_cutoff_length_mismatch() -> None:
+    values = pl.Series("x", [1.0, 2.0])
+    available = pl.Series(
+        "available_at",
+        [
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 1, 2, tzinfo=UTC),
+        ],
+    )
+    with pytest.raises(ValueError, match="cutoff series"):
+        apply_pit_guard(
+            values,
+            available,
+            pl.Series("cutoff", [datetime(2025, 1, 3, tzinfo=UTC)]),
+        )
+
+
+def test_benjamini_hochberg_all_nan() -> None:
+    q, rejected = benjamini_hochberg([np.nan, np.nan])
+    assert np.isnan(q).all()
+    assert not rejected.any()
+
+
+def test_screen_signals_dataframe_sources_and_length() -> None:
+    rng = np.random.default_rng(5)
+    n = 40
+    residual = rng.normal(size=n)
+    panel = _panel(residual=residual, mu_hat=rng.normal(size=n), seed=9)
+    wide = pl.DataFrame(
+        {
+            "rest_days": rng.normal(size=n),
+            "staged_col": rng.normal(size=n),
+        }
+    )
+    screened = screen_signals(
+        panel,
+        wide,
+        sources={"staged_col": "staged"},
+        fdr_alpha=0.10,
+    )
+    by_name = {row["covariate"]: row for row in screened.to_dicts()}
+    assert by_name["rest_days"]["source"] == "derived"
+    assert by_name["staged_col"]["source"] == "staged"
+    with pytest.raises(ValueError, match="length"):
+        screen_signals(panel, {"bad": pl.Series("bad", [1.0])})
+
+
+def test_screen_one_early_returns_low_n_constant_and_collinear() -> None:
+    # Too few rows after null filter.
+    tiny = pl.DataFrame(
+        {
+            "residual": [1.0, 2.0],
+            "mu_hat": [0.5, 0.5],
+            "position": ["MID", "MID"],
+            "fixture_id": [1, 2],
+            "gw": [1, 1],
+        }
+    )
+    low_n = screen_signals(tiny, {"x": pl.Series("x", [0.1, 0.2])})
+    assert low_n["n"].to_list() == [2]
+    assert low_n["effect_size"].to_list() == [None]
+
+    # Constant covariate (n unique < 2) with enough rows.
+    n = 20
+    constant = screen_signals(
+        _panel(residual=np.arange(n, dtype=float), mu_hat=np.ones(n), seed=4),
+        {"const": pl.Series("const", [1.0] * n)},
+    )
+    assert constant["n"].to_list()[0] == n
+    assert constant["effect_size"].to_list()[0] is None
+
+    # Covariate collinear with μ̂ → residualized x has ~0 variance.
+    mu = np.linspace(-2.0, 2.0, n)
+    panel = pl.DataFrame(
+        {
+            "residual": np.linspace(0.0, 1.0, n),
+            "mu_hat": mu,
+            "position": ["MID"] * n,
+            "fixture_id": list(range(n)),
+            "gw": [1] * n,
+        }
+    )
+    collinear = screen_signals(panel, {"x": pl.Series("x", mu.copy())})
+    assert collinear["effect_size"].to_list()[0] is None
+
+
+def test_binned_residual_delta_edge_branches() -> None:
+    empty = np.array([], dtype=np.float64)
+    assert _binned_residual_delta(empty, empty, empty.astype(np.int64)) == (
+        None,
+        None,
+        None,
+    )
+    # Equal tercile cuts (all equal values).
+    x = np.ones(12, dtype=np.float64)
+    y = np.linspace(-1.0, 1.0, 12)
+    gw = np.arange(12, dtype=np.int64)
+    assert _binned_residual_delta(y, x, gw) == (None, None, None)
+    # Too few rows in a bin after cut (two distinct values, tiny n).
+    x2 = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    y2 = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    gw2 = np.array([1, 1, 1], dtype=np.int64)
+    assert _binned_residual_delta(y2, x2, gw2)[0] is None
+    # Delta computable but only one GW contributes → CI None.
+    x3 = np.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=np.float64)
+    y3 = np.array([0.0, 0.1, -0.1, 1.0, 1.1, 0.9], dtype=np.float64)
+    gw3 = np.ones(6, dtype=np.int64)
+    delta, lo, hi = _binned_residual_delta(y3, x3, gw3)
+    assert delta is not None
+    assert lo is None
+    assert hi is None
 
 
 def _panel(

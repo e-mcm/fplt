@@ -400,10 +400,9 @@ def _binned_residual_delta(
     gw: NDArray[np.integer],
 ) -> tuple[float | None, float | None, float | None]:
     """Top-minus-bottom tercile mean residual with a GW-clustered SE CI."""
-    try:
-        q_low, q_high = np.quantile(covariate, [1 / 3, 2 / 3])
-    except ValueError:
+    if residual.size < 2 or covariate.size < 2:
         return None, None, None
+    q_low, q_high = np.quantile(covariate, [1 / 3, 2 / 3])
     if not np.isfinite(q_low) or not np.isfinite(q_high) or q_low == q_high:
         return None, None, None
     low = residual[covariate <= q_low]
