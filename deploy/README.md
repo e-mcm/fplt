@@ -47,7 +47,7 @@ real cookie or password values in git.
    local CLI use. `deploy/launchd/run-with-env.sh` sources the same file before
    exec when wrapping a command.
 
-After a successful catch-up or pre-deadline plan, recommendation `report.md` is
+After a successful pre-deadline / checkpoint plan, recommendation `report.md` is
 pushed when ntfy and/or SMTP are configured. Workflow failures POST to
 `FPLT_NTFY_URL` / `NTFY_URL` when set.
 

@@ -190,7 +190,7 @@ def ensure_slate_runs(
         push_fp_index(data_dir, line_fp, settings=cfg)
 
     view = PITData(DataStore(data_dir)).view(key)
-    resolved = resolve_squad_state(view, event=key.gw)
+    resolved = resolve_squad_state(view, event=key.gw, as_of_gw=key.gw)
     pairs: list[LineRunPair] = []
     for line in lines:
         decision = by_line[line.line]

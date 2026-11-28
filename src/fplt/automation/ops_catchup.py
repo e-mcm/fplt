@@ -1,8 +1,10 @@
 """One-shot post-downtime recovery via the ``fplt`` CLI / GHA.
 
 Runs ``fetch_raw`` → restage FPL (+ vaastav) → Understat / API-Football ingest
-→ ``catch_up`` → status summary. Prefer this after travel or long sleep when
-scheduled ops ticks have not drained the backlog yet.
+→ ``catch_up`` (predict-only for past checked GWs; #381) → status summary.
+Prefer this after travel or long sleep when scheduled ops ticks have not
+drained the backlog yet. Plans for the upcoming deadline come from
+``ops-tick`` checkpoints / ``pre_deadline`` / ``run_now``.
 """
 
 from __future__ import annotations
@@ -16,10 +18,8 @@ from fplt.automation.bench import load_bench_config
 from fplt.automation.cycle import (
     catch_up,
     pending_checked,
-    reports,
 )
 from fplt.automation.history_guard import enforce_training_history
-from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_feeds import refresh_ops_feeds
 from fplt.automation.ops_timing import finalize_ops_timing, record_job_setup
 from fplt.automation.production import load_production_ops
@@ -43,10 +43,11 @@ class OpsCatchupResult:
         staged_snapshots: Bootstrap captures ingested by ``ingest_raw``.
         understat_matches: Understat match files staged.
         api_football_captures: API-Football injury captures staged.
-        planned: Checked gameweeks planned by ``catch_up`` this run.
-        still_pending: Checked gameweeks still missing a plan after the run.
+        planned: Checked gameweeks predicted by ``catch_up`` this run
+            (predict-only; #381).
+        still_pending: Checked gameweeks still missing a predict after the run.
         models: Spec names used for catch-up.
-        horizon: Plan horizon used for catch-up.
+        horizon: Predict / plan horizon used for catch-up.
     """
 
     snapshots_fetched: int
@@ -70,25 +71,31 @@ def run_ops_catchup(
     settings: Settings | None = None,
     notify: bool = True,
 ) -> OpsCatchupResult:
-    """Fetch raw captures, restage feeds, catch up plans, and return status counts.
+    """Fetch raw captures, restage feeds, catch up predicts, and return status.
+
+    Catch-up is predict-only for past checked GWs (#381); it does not write
+    plans or push recommendation ntfy. Upcoming-deadline plans and notifies
+    stay on ``ops-tick`` checkpoints / ``pre_deadline``.
 
     Args:
-        data_dir: Root with ``raw/``, ``staged/``, and ``plans/``. Defaults to
+        data_dir: Root with ``raw/``, ``staged/``, and ``runs/``. Defaults to
             ``Settings.data_dir``.
         models: YAML spec names for catch-up. Defaults to
             ``load_production_ops().models``.
-        horizon: Weeks each plan looks ahead. Defaults to ``DEFAULT_PLAN_HORIZON``.
+        horizon: Weeks each predict looks ahead. Defaults to
+            ``DEFAULT_PLAN_HORIZON``.
         source: Raw fetch source: ``auto`` (bucket when configured, else branch),
             ``bucket``, or ``branch``.
         remote: Git remote (or local path in tests) for the snapshots branch.
         branch: Branch that holds write-once captures (default ``snapshots``).
-        settings: Optional settings for recommendation notify and bucket
-            credentials. Defaults to ``get_settings()``.
-        notify: When True and at least one gameweek was planned, push the
-            concatenated ``report.md`` via ntfy/SMTP.
+        settings: Optional settings for bucket credentials. Defaults to
+            ``get_settings()``.
+        notify: Kept for CLI compatibility; catch-up no longer pushes plan
+            recommendations (predict-only). Training-history alerts still
+            honour this flag.
 
     Returns:
-        Counts and pending/planned gameweeks for the operator status print.
+        Counts and pending/caught-up gameweeks for the operator status print.
 
     Raises:
         SnapshotFetchError: The snapshots branch could not be cloned, or
@@ -124,11 +131,12 @@ def run_ops_catchup(
                 source="ops-catchup",
             )
 
-            logger.info("ops_catchup: catch_up models=%s horizon=%s", chosen, horizon)
+            logger.info(
+                "ops_catchup: catch_up (predict-only) models=%s horizon=%s",
+                chosen,
+                horizon,
+            )
             done = catch_up(root, chosen, horizon=horizon)
-            if notify and done:
-                text = reports(root) or "No plan yet."
-                notify_recommendation(cfg, "fplt recommendation", text)
 
             waiting = pending_checked(store, root, chosen, horizon)
             result = OpsCatchupResult(
@@ -194,7 +202,7 @@ def format_ops_catchup_status(result: OpsCatchupResult) -> str:
         f"  understat matches: {result.understat_matches}",
         f"  api_football:      {result.api_football_captures}",
         f"  models / horizon:  {models} / H={result.horizon}",
-        f"  planned this run:  {planned}",
-        f"  still pending:     {pending}",
+        f"  predicted this run: {planned}",
+        f"  still pending:      {pending}",
     ]
     return "\n".join(lines) + "\n"

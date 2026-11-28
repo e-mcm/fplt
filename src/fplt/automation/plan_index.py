@@ -1,11 +1,13 @@
-"""Remote plan-done index for catch-up cold-cache skips (#371).
+"""Remote run-done index for catch-up cold-cache skips (#371 / #381).
 
-Local ``plans/`` is the fast path. When ``FPLT_DATA_BUCKET`` is set, catch-up
+Local ``runs/`` is the fast path. When ``FPLT_DATA_BUCKET`` is set, catch-up
 also consults the durable R2 catalog (``catalog/runs.parquet`` plus
-``catalog/inbox/``) on the lab and/or data remotes, keyed by
-``(spec_label, season, gw, plan_horizon, run_type=plan)``. Ops fingerprint
-``runs/by_fp/`` remains the skip-if-done path for official ticks (#346); this
-module covers historical catch-up GWs whose local plan cache was evicted.
+``catalog/inbox/``) on the lab and/or data remotes. Catch-up for past GWs is
+**predict-only** (#381), keyed by
+``(spec_label, season, gw, horizon, run_type=predict)``. Upcoming-deadline
+plans still use ``run_type=plan`` / ``plan_horizon`` via ``catalog_has_plans``.
+Ops fingerprint ``runs/by_fp/`` remains the skip-if-done path for official
+ticks (#346).
 """
 
 from __future__ import annotations
@@ -60,6 +62,41 @@ def catalog_has_plans(
     if plans.is_empty():
         return False
     labels = set(plans.get_column("spec_label").to_list())
+    return all(name in labels for name in models)
+
+
+def catalog_has_predicts(
+    catalog: pl.DataFrame,
+    models: Sequence[str],
+    key: GWKey,
+    horizon: int,
+) -> bool:
+    """Return whether every model has a succeeded predict row for ``key``.
+
+    Used by catch-up done checks (#381): past checked GWs need ledger /
+    outcome coverage, not a plan against the live squad.
+
+    Args:
+        catalog: ``CatalogRunSchema`` rows (possibly empty).
+        models: YAML spec names (matched on ``spec_label``).
+        key: Deadline to look up.
+        horizon: Walk-forward / predict horizon (matched on ``horizon``).
+
+    Returns:
+        True when each model has at least one ``run_type=predict`` row for the
+        season/gw/horizon key.
+    """
+    if not models or catalog.is_empty() or horizon < 1:
+        return False
+    predicts = catalog.filter(
+        (pl.col("run_type") == "predict")
+        & (pl.col("as_of_season") == key.season)
+        & (pl.col("as_of_gw") == key.gw)
+        & (pl.col("horizon") == horizon)
+    )
+    if predicts.is_empty():
+        return False
+    labels = set(predicts.get_column("spec_label").to_list())
     return all(name in labels for name in models)
 
 
