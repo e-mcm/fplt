@@ -65,6 +65,13 @@ _LOAD_TABLES: dict[str, str] = {
     "plans": "plans/plan.parquet",
     "plan": "plans/plan.parquet",
     "decisions": "plans/decisions.parquet",
+    # post_gw analysis run tables (#396)
+    "scorecard": "scorecard.parquet",
+    "attribution": "attribution.parquet",
+    "season_to_date": "season_to_date.parquet",
+    "biggest_misses": "biggest_misses.parquet",
+    "forecast_scores": "forecast_scores.parquet",
+    "forecast_score_agg": "forecast_score_agg.parquet",
 }
 
 

@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import polars as pl
 
+from fplt.analysis.last_week import post_gw_catalog
 from fplt.analysis.overview import (
     official_pointers_frame,
     plan_summary_frame,
@@ -182,6 +183,36 @@ class DashboardStore:
     ) -> list[tuple[str, int, str, TimingRecord]]:
         """Scan pulled ``ops_timing.json`` files for trend charts."""
         return discover_ops_timing(self.data_dir, season=season, checkpoint=checkpoint)
+
+    def post_gw_runs(self) -> pl.DataFrame:
+        """Return succeeded ``purpose=post_gw`` runs for the Last-week selector.
+
+        Returns:
+            Frame from ``post_gw_catalog`` (newest GW first).
+        """
+        return post_gw_catalog(_scan_run_manifests(self.data_dir))
+
+    def post_gw_scorecards(self, *, season: str, through_gw: int) -> pl.DataFrame:
+        """Load and concat scorecards from post_gw runs through ``through_gw``.
+
+        Args:
+            season: Season key.
+            through_gw: Inclusive gameweek ceiling.
+
+        Returns:
+            Combined scorecard rows (possibly empty).
+        """
+        catalog = self.post_gw_runs().filter(
+            (pl.col("season") == season) & (pl.col("gw") <= through_gw)
+        )
+        frames: list[pl.DataFrame] = []
+        for run_id in catalog["run_id"].to_list():
+            frame = self.load_table("scorecard", run_id=str(run_id))
+            if not frame.is_empty():
+                frames.append(frame)
+        if not frames:
+            return pl.DataFrame()
+        return pl.concat(frames, how="diagonal_relaxed")
 
     def _latest_plan_frame(self) -> pl.DataFrame:
         for run_id in reversed(_succeeded_run_ids(self.data_dir)):

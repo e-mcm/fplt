@@ -299,3 +299,77 @@ def test_dashboard_store_this_week_loaders(tmp_path: Path) -> None:
     assert loaded.total_s == 2.0
     assert len(store.ops_timing_history(season="2025-26")) == 1
     assert store.remote_timing_records() == []
+
+
+def test_dashboard_store_post_gw_loaders(tmp_path: Path) -> None:
+    deadline = AsOfDeadline(season="2025-26", gw=12, deadline_utc=_TS)
+    scorecard = pl.DataFrame(
+        {
+            "model_id": ["deadbeef"],
+            "season": ["2025-26"],
+            "gw": [12],
+            "gw_kind": ["normal"],
+            "plan_ev": [50.0],
+            "realised_points": [55],
+            "realised_minus_plan_ev": [5.0],
+            "pmf_percentile": [0.6],
+            "fpl_average": [None],
+            "fpl_highest": [None],
+            "rank_change": [None],
+            "season_points_to_date": [55],
+            "points_at_rank": [None],
+            "percentile": [None],
+            "realised_ex_chips": [55],
+            "chip": [None],
+        }
+    )
+    with RunWriter(
+        tmp_path,
+        kind="official",
+        mode="live",
+        run_type="eval",
+        spec_hash="a" * 64,
+        spec_label="demo",
+        model_id="deadbeef",
+        as_of=[deadline],
+        horizon=1,
+        purpose="post_gw",
+        code_sha="abc1234",
+        lockfile_hash="b" * 64,
+        host="test",
+        started_at=_TS,
+        run_id="r_20261128T120000Z_post01",
+        line="primary",
+        auto_build_id=False,
+    ) as writer:
+        writer.write_parquet("scorecard.parquet", scorecard)
+        writer.write_parquet(
+            "season_to_date.parquet",
+            pl.DataFrame(
+                {
+                    "model_id": ["deadbeef"],
+                    "season": ["2025-26"],
+                    "through_gw": [12],
+                    "gameweeks": [1],
+                    "season_points": [55],
+                    "plan_ev_sum": [50.0],
+                    "regret_sum": [0],
+                    "captaincy_regret_sum": [0],
+                    "hits_sum": [0.0],
+                    "hit_payback_to_date": [0.0],
+                    "points_at_rank": [None],
+                    "percentile": [None],
+                }
+            ),
+        )
+
+    store = DashboardStore(tmp_path)
+    catalog = store.post_gw_runs()
+    assert catalog.height == 1
+    assert catalog["gw"].to_list() == [12]
+    cards = store.post_gw_scorecards(season="2025-26", through_gw=12)
+    assert cards.height == 1
+    assert int(cards["realised_points"][0]) == 55
+    loaded = store.load_table("scorecard", run_id="r_20261128T120000Z_post01")
+    assert loaded.height == 1
+    assert store.post_gw_scorecards(season="2025-26", through_gw=1).is_empty()
