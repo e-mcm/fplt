@@ -1,7 +1,7 @@
 """Map a saved plan onto FPL transfer / lineup POST payloads.
 
 Dry-run by default. ``confirm=True`` (CLI ``--confirm``) POSTs via
-``FPLClient`` using ``FPLT_FPL_API_TOKEN``. Never called from Dagster sensors.
+``FPLClient`` using ``FPLT_FPL_API_TOKEN``. Never called from unattended ops.
 """
 
 from __future__ import annotations

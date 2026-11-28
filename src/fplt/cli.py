@@ -1225,7 +1225,7 @@ def main(argv: list[str] | None = None) -> None:
         parents=[log_flags],
         help=(
             "Post-downtime recovery: fetch raw → restage → "
-            "understat/AF ingest → catch_up → status (no Dagster UI)"
+            "understat/AF ingest → catch_up → status"
         ),
     )
     ops_catchup.add_argument(

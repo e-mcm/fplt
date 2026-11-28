@@ -6,9 +6,9 @@ Authoritative architecture is **[`design.md`](design.md)**. Everything else here
 
 | Doc | Audience | Use when |
 |---|---|---|
-| [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, Dagster §8, storage layout |
+| [`design.md`](design.md) | Humans + agents | Contracts, PIT, schemas, models, optimiser, GHA+CLI orchestration §8, storage layout |
 | [`ops-runbook.md`](ops-runbook.md) | Ops / agents | Live alert → one-command fix (ops-01..ops-11), season rollover, hand-run GW |
-| [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Ops / agents | GHA capture cadence, sensors, always-on setup |
+| [`dagster-cadence-and-setup.md`](dagster-cadence-and-setup.md) | Historic | Pre-removal Dagster cadence notes; prefer design §8 + ops-runbook |
 | [`blank-week-prod-plan.md`](blank-week-prod-plan.md) | Ops / agents | Empty-squad / blank-week `fplt plan` with production model + live defaults |
 | [`next-gw-actions.md`](next-gw-actions.md) | Ops / agents | Logged-in squad: browser auth → production `fplt predict` → next-deadline `fplt plan` (not `apply --confirm`) |
 | [`../deploy/README.md`](../deploy/README.md) § Season rollover | Ops / agents | `fplt preflight` / `fplt idmap suggest` checklist (ops-07) |

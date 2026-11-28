@@ -1,1 +1,1 @@
-"""End-to-end tests that exercise Dagster definitions."""
+"""End-to-end tests that exercise library integration paths."""

@@ -1,6 +1,6 @@
 # scripts/
 
-Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt …`** when a library CLI exists; use these when GHA or a thin stdlib job must stay Dagster-free.
+Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt …`** when a library CLI exists; use these when GHA or a thin stdlib job needs a script entrypoint.
 
 | Script | Purpose | Typical invoke |
 |---|---|---|
@@ -27,11 +27,11 @@ Standalone capture / bootstrap helpers. Prefer **`make …`** or **`uv run fplt 
 - **Raw is write-once.** Never overwrite an existing capture path.
 - Snapshot / fetch scripts must stay network-thin and fixture-testable; unit tests use `tests/fixtures/`, never live HTTP.
 - Secrets (`FPLT_API_FOOTBALL_KEY`, etc.) come from env / `~/.config/fplt/env` — never argv, never commit.
-- Cadence for GHA vs local: [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md).
+- Cadence for GHA vs local: [`docs/design.md`](../docs/design.md) §8; historic notes in [`docs/dagster-cadence-and-setup.md`](../docs/dagster-cadence-and-setup.md).
 
 ## Agents
 
-- Do not put business logic here that belongs in `src/fplt/` — Dagster and CLI must call the library.
+- Do not put business logic here that belongs in `src/fplt/` — workflows and CLI must call the library.
 - Lint scope includes `scripts/` (`make check`).
 - Runtime dependency equivalence (ops-12) lives in `fplt.automation.deps_equivalence`
   / `fplt deps-equivalence` + `.github/workflows/deps-equivalence.yml`, not here.

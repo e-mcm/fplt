@@ -28,7 +28,7 @@ import logging
 import sys
 from typing import Literal
 
-from fplt.orchestration.eval_job import (
+from fplt.backtest.eval_board import (
     CORE_MODELS,
     OPENFPL_COMPARE_FROM,
     OPENFPL_MODEL,

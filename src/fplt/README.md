@@ -1,6 +1,6 @@
 # `fplt` package
 
-Library-first FPL points prediction and team selection. Dagster / CLI / apps are thin callers — **all logic lives here**.
+Library-first FPL points prediction and team selection. GitHub Actions / CLI / apps are thin callers — **all logic lives here**.
 
 | Module | Role |
 |---|---|
@@ -14,7 +14,6 @@ Library-first FPL points prediction and team selection. Dagster / CLI / apps are
 | `models/` | `PointsPredictor`, components, simulation, `ModelSpec` / `PipelineSpec` |
 | `backtest/` | Walk-forward, ledger, compare / promote-eval / bakeoff |
 | `optimise/` | Squad MILP, chips, plans, apply |
-| `orchestration/` | Thin Dagster assets / sensors / factories |
 | `automation/` | Catch-up, pre-deadline, production ops, governance, drift, notify |
 | `ops/` | Season preflight + idmap suggest (ops-07) |
 | `cli.py` | `uv run fplt …` entry |

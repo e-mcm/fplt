@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
-from pathlib import Path
 from typing import ClassVar
 from urllib.request import Request
 
-import dagster as dg
-import pytest
-
 from fplt.automation.notify import email, notify, notify_recommendation, with_runbook
 from fplt.automation.runbook import OPS_03_WORKFLOW_FAILURE, RECOMMENDATION, footer
-from fplt.orchestration.assets import pre_deadline_plan, recommendation_report
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings
 
 
 class _FakeSmtp:
@@ -183,71 +178,3 @@ def test_notify_recommendation_noop_when_nothing_configured() -> None:
     )
     assert posts == []
     assert _FakeSmtp.instances == []
-
-
-def test_recommendation_report_notifies_only_when_plans_were_made(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    calls: list[tuple[str, str]] = []
-
-    def fake_notify(settings: Settings, title: str, message: str, **_: object) -> bool:
-        calls.append((title, message))
-        return True
-
-    monkeypatch.setattr("fplt.orchestration.assets.notify_recommendation", fake_notify)
-    monkeypatch.setattr(
-        "fplt.orchestration.assets.catch_up",
-        lambda *_a, **_k: [],
-    )
-    monkeypatch.setattr("fplt.orchestration.assets.reports", lambda _d: "")
-    result = dg.materialize([recommendation_report])
-    assert result.success
-    assert calls == []
-
-    key = type("K", (), {"season": "2024-25", "gw": 1})()
-    monkeypatch.setattr(
-        "fplt.orchestration.assets.catch_up",
-        lambda *_a, **_k: [key],
-    )
-    monkeypatch.setattr(
-        "fplt.orchestration.assets.reports", lambda _d: "# GW 1\ntransfers"
-    )
-    result = dg.materialize([recommendation_report])
-    assert result.success
-    assert calls == [("fplt recommendation", "# GW 1\ntransfers")]
-    get_settings.cache_clear()
-
-
-def test_pre_deadline_plan_notifies_only_when_a_deadline_was_planned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FPLT_DATA_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    calls: list[str] = []
-
-    def fake_notify(settings: Settings, title: str, message: str, **_: object) -> bool:
-        calls.append(message)
-        return True
-
-    monkeypatch.setattr("fplt.orchestration.assets.notify_recommendation", fake_notify)
-    monkeypatch.setattr(
-        "fplt.orchestration.assets.pre_deadline",
-        lambda *_a, **_k: None,
-    )
-    monkeypatch.setattr("fplt.orchestration.assets.reports", lambda _d: "old")
-    result = dg.materialize([pre_deadline_plan])
-    assert result.success
-    assert calls == []
-
-    key = type("K", (), {"season": "2024-25", "gw": 3})()
-    monkeypatch.setattr(
-        "fplt.orchestration.assets.pre_deadline",
-        lambda *_a, **_k: key,
-    )
-    monkeypatch.setattr("fplt.orchestration.assets.reports", lambda _d: "# GW 3\nxi")
-    result = dg.materialize([pre_deadline_plan])
-    assert result.success
-    assert calls == ["# GW 3\nxi"]
-    get_settings.cache_clear()

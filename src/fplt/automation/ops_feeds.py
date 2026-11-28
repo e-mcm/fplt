@@ -55,7 +55,7 @@ def refresh_ops_feeds(
 
     Idempotent: already-local raw objects are skipped, and ingest helpers
     no-op when nothing new is present. Used by ``ops-tick`` and
-    ``ops-catchup`` so both stay aligned with the Dagster refresh jobs.
+    ``ops-catchup`` so both share the same refresh path.
 
     Args:
         data_dir: Root with ``raw/`` and ``staged/``. Defaults to

@@ -1,4 +1,4 @@
-"""Catch-up plans a skipped week. The deadline sensor fires inside three hours."""
+"""Catch-up plans a skipped week. Pre-deadline fires inside three hours."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import dagster as dg
 import polars as pl
 import pytest
 
@@ -22,7 +21,6 @@ from fplt.automation.cycle import (
     reports,
 )
 from fplt.automation.production import (
-    OfficialLine,
     ProductionOps,
     load_production_ops,
 )
@@ -32,9 +30,6 @@ from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon
 from fplt.optimise.state import SquadState
-from fplt.orchestration import defs
-from fplt.orchestration.assets import recommendation_report
-from fplt.orchestration.sensors import catchup_sensor, pre_deadline_sensor
 from fplt.schemas.ledger import LedgerSchema
 from fplt.settings import get_settings
 from fplt.store.runs import write_backtest_run
@@ -43,7 +38,6 @@ from tests.builders import dual_write_plan
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
-_ROOT = Path(__file__).resolve().parents[2]
 _MODEL = "rolling_mean_v1"
 
 
@@ -367,70 +361,6 @@ def test_stub_plan_writer_marks_plans_exist(league_dir: Path) -> None:
     assert (path.parent / "report.md").read_text(encoding="utf-8")
     assert "GW 1" in (path.parent / "report.md").read_text(encoding="utf-8")
     assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is True
-
-
-def test_sensors_request_a_run_and_then_skip(
-    league_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _use(league_dir, monkeypatch)
-    catch = catchup_sensor.evaluate_tick(dg.build_sensor_context())
-    assert catch.run_requests[0].run_key == "catchup-2024-25-1"
-    moment = _GW3 - timedelta(hours=1)
-    monkeypatch.setattr(
-        "fplt.orchestration.sensors.datetime",
-        type("Clock", (), {"now": staticmethod(lambda _tz: moment)}),
-    )
-    upcoming = pre_deadline_sensor.evaluate_tick(dg.build_sensor_context())
-    assert upcoming.run_requests[0].run_key == "deadline-2024-25-3"
-    names = {sensor.name for sensor in defs.sensors}
-    assert "notify_run_failure" in names
-    get_settings.cache_clear()
-
-
-def test_deploy_templates_name_the_dagster_processes() -> None:
-    web = (_ROOT / "deploy" / "launchd" / "dev.fplt.webserver.plist").read_text()
-    daemon = (_ROOT / "deploy" / "launchd" / "dev.fplt.daemon.plist").read_text()
-    compose = (_ROOT / "deploy" / "docker-compose.yml").read_text()
-    assert "dagster-webserver" in web
-    assert "dagster-daemon" in daemon
-    assert "dagster-webserver" in compose
-    assert "dagster-daemon" in compose
-
-
-@pytest.mark.slow
-def test_materialize_attaches_the_report(
-    league_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _use(league_dir, monkeypatch)
-    # Synthetic league has rolling-mean ledger rows only; keep the asset path
-    # under that model and H=1 so the report-attachment check stays cheap.
-    from fplt.models.pipeline_spec import live_pipeline_defaults
-
-    monkeypatch.setattr(
-        "fplt.automation.cycle.load_production_ops",
-        lambda: ProductionOps(
-            models=[_MODEL],
-            plan_horizon=1,
-            pipeline=live_pipeline_defaults(
-                model=_MODEL, horizon=1, mc_backend="python"
-            ),
-            lines=[
-                OfficialLine(
-                    line="primary",
-                    spec=_MODEL,
-                    horizon=1,
-                    role="primary",
-                )
-            ],
-        ),
-    )
-    result = dg.materialize([recommendation_report])
-    assert result.success
-    events = result.get_asset_materialization_events()
-    metadata = events[0].event_specific_data.materialization.metadata
-    assert "GW 1" in metadata["report"].value
-    assert "2024-25 gw1" in metadata["processed"].value
-    get_settings.cache_clear()
 
 
 def _use(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
