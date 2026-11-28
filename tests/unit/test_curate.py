@@ -450,3 +450,610 @@ def test_full_parity_mismatch_raises(
             notify_parity=False,
             data_remote=None,
         )
+
+
+def test_load_curated_latest_missing(tmp_path: Path) -> None:
+    assert load_curated_latest(tmp_path) is None
+
+
+def test_push_curated_latest_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.automation.curate import push_curated_latest
+    from fplt.settings import Settings
+
+    with pytest.raises(FileNotFoundError):
+        push_curated_latest(tmp_path)
+
+    pointer = CuratedLatestPointer(
+        build_id="cafe" * 16,
+        created_at=datetime(2026, 11, 28, tzinfo=UTC),
+        raw_cutoff=datetime(2026, 11, 28, tzinfo=UTC),
+        code_sha="abc",
+    )
+    write_curated_latest(tmp_path, pointer)
+
+    monkeypatch.setattr(
+        "fplt.automation.curate.Remote.from_settings", lambda *_a, **_k: None
+    )
+    assert push_curated_latest(tmp_path, settings=Settings()) is None
+
+    lab = Remote(target=str(tmp_path / "lab"), kind="lab", env={})
+    with pytest.raises(ValueError, match="data bucket"):
+        push_curated_latest(tmp_path, remote=lab)
+
+    seen: list[str] = []
+
+    def fake_replace(_remote: Remote, src: Path, key: str) -> None:
+        seen.append(key)
+        assert src.is_file()
+
+    monkeypatch.setattr("fplt.automation.curate.push_replace", fake_replace)
+    data = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+    assert push_curated_latest(tmp_path, remote=data) is data
+    assert seen == ["status/curated/latest.json"]
+
+
+def test_pull_curated_latest_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.automation.curate import pull_curated_latest
+    from fplt.data.remote import RemoteError
+
+    remote = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+
+    def missing(_remote: Remote, _prefix: str, _dest: Path) -> list[Path]:
+        raise RemoteError("directory not found")
+
+    monkeypatch.setattr("fplt.automation.curate.pull", missing)
+    assert pull_curated_latest(tmp_path, remote) is None
+
+    def boom(_remote: Remote, _prefix: str, _dest: Path) -> list[Path]:
+        raise RemoteError("permission denied")
+
+    monkeypatch.setattr("fplt.automation.curate.pull", boom)
+    with pytest.raises(RemoteError, match="permission"):
+        pull_curated_latest(tmp_path, remote)
+
+    pointer = CuratedLatestPointer(
+        build_id="cafe" * 16,
+        created_at=datetime(2026, 11, 28, tzinfo=UTC),
+        raw_cutoff=datetime(2026, 11, 28, tzinfo=UTC),
+        code_sha="abc",
+    )
+
+    def ok(_remote: Remote, _prefix: str, dest: Path) -> list[Path]:
+        write_curated_latest(dest.parent.parent.parent, pointer)
+        # dest is status/curated; write via data_dir
+        return []
+
+    # pull writes into dest.parent of curated_latest_path → status/curated
+    def ok_write(_remote: Remote, _prefix: str, dest: Path) -> list[Path]:
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "latest.json").write_text(
+            pointer.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+        return [dest / "latest.json"]
+
+    monkeypatch.setattr("fplt.automation.curate.pull", ok_write)
+    loaded = pull_curated_latest(tmp_path, remote)
+    assert loaded == pointer
+
+
+def test_publish_pointer_unchanged_and_updated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fplt.automation.curate import _publish_pointer, pointer_for_build
+    from fplt.settings import Settings
+
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    manifest = build_from_staged(tmp_path, code_sha="x")
+    cutoff = datetime(2024, 8, 10, 12, 0, tzinfo=UTC)
+    first = pointer_for_build(manifest, cutoff=cutoff)
+    write_curated_latest(tmp_path, first)
+
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest",
+        lambda *a, **k: None,
+    )
+    same, updated = _publish_pointer(
+        tmp_path,
+        manifest,
+        cutoff=cutoff,
+        settings=Settings(),
+        push_remote=None,
+    )
+    assert updated is False
+    assert same == first
+
+    newer = datetime(2024, 8, 11, 12, 0, tzinfo=UTC)
+    pointer, updated = _publish_pointer(
+        tmp_path,
+        manifest,
+        cutoff=newer,
+        settings=Settings(),
+        push_remote=None,
+    )
+    assert updated is True
+    assert pointer.raw_cutoff == newer
+
+
+def test_compare_parity_missing_prior(tmp_path: Path) -> None:
+    from fplt.automation.curate import _compare_parity
+
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    manifest = build_from_staged(tmp_path, code_sha="x")
+    fake = CuratedLatestPointer(
+        build_id="dead" * 16,
+        created_at=manifest.created_at,
+        raw_cutoff=datetime(2024, 8, 10, tzinfo=UTC),
+        code_sha="x",
+    )
+    assert _compare_parity(manifest, fake, tmp_path) is False
+
+
+def test_incremental_requires_data_remote(tmp_path: Path) -> None:
+    write_curated_latest(
+        tmp_path,
+        CuratedLatestPointer(
+            build_id="cafe" * 16,
+            created_at=datetime(2026, 11, 28, tzinfo=UTC),
+            raw_cutoff=datetime(2026, 11, 28, tzinfo=UTC),
+            code_sha="abc",
+        ),
+    )
+    with pytest.raises(ValueError, match="data bucket remote"):
+        run_curate(tmp_path, data_remote=None, notify_parity=False)
+
+
+def test_bootstrap_full_when_no_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_bootstrap(tmp_path / "raw", index=0)
+    monkeypatch.setattr("fplt.automation.curate.fetch_raw", lambda *a, **k: [])
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+    result = run_curate(
+        tmp_path,
+        source="branch",
+        data_remote=None,
+        notify_parity=False,
+        code_sha="boot",
+    )
+    assert result.full is True
+    assert result.manifest is not None
+    assert result.pointer_updated is True
+    assert load_curated_latest(tmp_path) is not None
+
+
+def test_incremental_with_new_captures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Prior build from captures 0..1
+    _write_bootstrap(tmp_path / "raw", index=0)
+    _write_bootstrap(tmp_path / "raw", index=1)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    first = build_from_staged(tmp_path, code_sha="p1")
+    cutoff = datetime(2024, 8, 11, 12, 0, tzinfo=UTC)
+    write_curated_latest(
+        tmp_path,
+        CuratedLatestPointer(
+            build_id=first.build_id,
+            created_at=first.created_at,
+            raw_cutoff=cutoff,
+            code_sha="p1",
+        ),
+    )
+
+    # Add later captures under raw for staging after pull.
+    _write_bootstrap(tmp_path / "raw", index=2)
+    _write_event_live(tmp_path / "raw", index=2)
+
+    remote = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+
+    def fake_lsjson(_remote: Remote, _prefix: str) -> list[RemoteObject]:
+        return [
+            RemoteObject(
+                path=(
+                    "fpl_api/season=2024-25/captured_at=2024-08-12T12-00-00Z/"
+                    "bootstrap_static.json.gz"
+                ),
+                size=10,
+            ),
+            RemoteObject(
+                path=(
+                    "fpl_api/season=2024-25/event_live/gw=1/"
+                    "captured_at=2024-08-12T12-00-00Z/event_live.json.gz"
+                ),
+                size=10,
+            ),
+        ]
+
+    monkeypatch.setattr("fplt.automation.curate.lsjson", fake_lsjson)
+    monkeypatch.setattr("fplt.automation.curate.pull_build", lambda *a, **k: 0)
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "fplt.automation.curate.pull_capture_dirs",
+        lambda *_a, **_k: [
+            "fpl_api/season=2024-25/captured_at=2024-08-12T12-00-00Z",
+            "fpl_api/season=2024-25/event_live/gw=1/captured_at=2024-08-12T12-00-00Z",
+        ],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+
+    result = run_curate(
+        tmp_path,
+        data_remote=remote,
+        push_remote=remote,
+        notify_parity=False,
+        code_sha="p2",
+    )
+    assert result.skipped_no_new is False
+    assert result.full is False
+    assert result.manifest is not None
+    assert result.pointer_updated is True
+    assert len(result.new_capture_dirs) == 2
+
+
+def test_incremental_pulls_remote_pointer_when_local_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+    pointer = CuratedLatestPointer(
+        build_id="cafe" * 16,
+        created_at=datetime(2026, 11, 28, tzinfo=UTC),
+        raw_cutoff=datetime(2026, 11, 28, 12, 0, tzinfo=UTC),
+        code_sha="abc",
+    )
+
+    def fake_pull_latest(_data_dir: Path, _remote: Remote) -> CuratedLatestPointer:
+        write_curated_latest(tmp_path, pointer)
+        return pointer
+
+    monkeypatch.setattr("fplt.automation.curate.pull_curated_latest", fake_pull_latest)
+    monkeypatch.setattr("fplt.automation.curate.lsjson", lambda *_a, **_k: [])
+    monkeypatch.setattr("fplt.automation.curate.pull_build", lambda *a, **k: 0)
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+
+    result = run_curate(
+        tmp_path, data_remote=remote, push_remote=remote, notify_parity=False
+    )
+    assert result.skipped_no_new is True
+
+
+def test_full_with_data_remote_and_parity_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    first = build_from_staged(tmp_path, code_sha="same")
+    write_curated_latest(
+        tmp_path,
+        CuratedLatestPointer(
+            build_id=first.build_id,
+            created_at=first.created_at,
+            raw_cutoff=datetime(2024, 8, 10, 12, 0, tzinfo=UTC),
+            code_sha="same",
+        ),
+    )
+
+    bucket = tmp_path / "bucket"
+    shutil.copytree(tmp_path / "raw", bucket / "raw")
+    remote = Remote(target=str(bucket), kind="data", env={})
+
+    pulled: list[str] = []
+
+    def fake_pull(_remote: Remote, prefix: str, dest: Path) -> list[Path]:
+        pulled.append(prefix)
+        if prefix == "raw":
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(bucket / "raw", dest)
+        return []
+
+    monkeypatch.setattr("fplt.automation.curate.pull", fake_pull)
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+
+    result = run_curate(
+        tmp_path,
+        full=True,
+        source="bucket",
+        data_remote=remote,
+        push_remote=remote,
+        notify_parity=False,
+        code_sha="same",
+    )
+    assert result.full is True
+    assert result.parity_ok is True
+    assert "raw" in pulled
+
+
+def test_full_parity_notifies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prior = tmp_path / "prior"
+    _write_bootstrap(prior / "raw", index=0)
+    ingest_raw(DataStore(prior), prior / "raw")
+    prior_build = build_from_staged(prior, code_sha="prior")
+
+    root = tmp_path / "full"
+    _write_bootstrap(root / "raw", index=1)
+    shutil.copytree(prior / "curated", root / "curated")
+    write_curated_latest(
+        root,
+        CuratedLatestPointer(
+            build_id=prior_build.build_id,
+            created_at=prior_build.created_at,
+            raw_cutoff=datetime(2024, 8, 10, 12, 0, tzinfo=UTC),
+            code_sha="prior",
+        ),
+    )
+
+    notified: list[str] = []
+
+    def fake_notify(url: str | None, title: str, message: str, **_k: object) -> bool:
+        notified.append(title)
+        return True
+
+    monkeypatch.setattr("fplt.automation.curate.fetch_raw", lambda *a, **k: [])
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr("fplt.automation.curate.notify", fake_notify)
+    monkeypatch.setattr(
+        "fplt.automation.curate.secret_value", lambda v: "https://ntfy.test/x"
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+
+    with pytest.raises(CurateParityError):
+        run_curate(
+            root,
+            full=True,
+            source="branch",
+            notify_parity=True,
+            data_remote=None,
+        )
+    assert notified == ["fplt curate parity"]
+
+
+def test_full_skips_parity_when_prior_build_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No local pointer; remote returns one whose build cannot be pulled.
+    pointer = CuratedLatestPointer(
+        build_id="dead" * 16,
+        created_at=datetime(2026, 11, 28, tzinfo=UTC),
+        raw_cutoff=datetime(2024, 8, 10, 12, 0, tzinfo=UTC),
+        code_sha="x",
+    )
+    _write_bootstrap(tmp_path / "raw", index=0)
+    remote = Remote(target=str(tmp_path / "bucket"), kind="data", env={})
+
+    monkeypatch.setattr(
+        "fplt.automation.curate.pull_curated_latest",
+        lambda *_a, **_k: pointer,
+    )
+
+    from fplt.store.pull_official import OfficialPullError
+
+    def boom(*_a: object, **_k: object) -> int:
+        raise OfficialPullError("missing")
+
+    monkeypatch.setattr("fplt.automation.curate.pull_build", boom)
+    monkeypatch.setattr("fplt.automation.curate.fetch_raw", lambda *a, **k: [])
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+
+    result = run_curate(
+        tmp_path,
+        full=True,
+        source="branch",
+        data_remote=remote,
+        notify_parity=False,
+        code_sha="new",
+    )
+    assert result.full is True
+    assert result.parity_ok is None
+
+
+def test_quarantined_event_live_skipped(tmp_path: Path) -> None:
+    import polars as pl
+
+    raw = tmp_path / "raw"
+    _write_bootstrap(raw, index=0)
+    _write_event_live(raw, index=0)
+    bad = "fpl_api/season=2024-25/event_live/gw=1/captured_at=2024-08-10T12-00-00Z"
+    append_quarantine(
+        tmp_path,
+        pl.DataFrame(
+            {
+                "season": ["2024-25"],
+                "source": ["fpl_api"],
+                "capture_path": [bad],
+                "captured_at": [datetime(2024, 8, 10, 12, 0, tzinfo=UTC)],
+                "gate": ["player_count"],
+                "detail": ["test"],
+                "previous_capture_path": [None],
+                "available_at": [datetime(2024, 8, 10, 12, 0, tzinfo=UTC)],
+                "schema_version": [1],
+            }
+        ),
+    )
+    store = DataStore(tmp_path)
+    count = ingest_raw(store, raw)
+    assert count == 1  # bootstrap only
+    assert store.read("player_fixture_stats").is_empty()
+
+
+def test_hydrate_missing_table_raises(tmp_path: Path) -> None:
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    manifest = build_from_staged(tmp_path, code_sha="x")
+    name, entry = next(iter(manifest.tables.items()))
+    from fplt.store.builds import table_sha_path
+
+    table_sha_path(tmp_path, name, entry.sha).unlink()
+    with pytest.raises(FileNotFoundError):
+        hydrate_staged_from_build(tmp_path, manifest.build_id)
+
+
+def test_cli_data_curate_success_and_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fplt.automation.curate import CurateResult
+    from fplt.cli import main
+
+    skipped = CurateResult(
+        manifest=None,
+        pointer=None,
+        pointer_updated=False,
+        full=False,
+        new_capture_dirs=(),
+        skipped_no_new=True,
+        parity_ok=None,
+    )
+    monkeypatch.setattr("fplt.automation.curate.run_curate", lambda *a, **k: skipped)
+    main(["data", "curate", "--data-dir", str(tmp_path)])
+    assert "pointer unchanged" in capsys.readouterr().out
+
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    manifest = build_from_staged(tmp_path, code_sha="cli")
+    pointer = CuratedLatestPointer(
+        build_id=manifest.build_id,
+        created_at=manifest.created_at,
+        raw_cutoff=datetime(2024, 8, 10, 12, 0, tzinfo=UTC),
+        code_sha="cli",
+    )
+    ok = CurateResult(
+        manifest=manifest,
+        pointer=pointer,
+        pointer_updated=True,
+        full=True,
+        new_capture_dirs=(),
+        skipped_no_new=False,
+        parity_ok=True,
+    )
+    monkeypatch.setattr("fplt.automation.curate.run_curate", lambda *a, **k: ok)
+    main(["data", "curate", "--full", "--data-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "mode=full" in out
+    assert "parity_ok=True" in out
+
+
+def test_cli_data_curate_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fplt.cli import main
+
+    def boom(*_a: object, **_k: object) -> object:
+        raise ValueError("no bucket")
+
+    monkeypatch.setattr("fplt.automation.curate.run_curate", boom)
+    with pytest.raises(SystemExit) as exc:
+        main(["data", "curate", "--data-dir", str(tmp_path)])
+    assert exc.value.code == 1
+
+
+def test_full_uses_previous_cutoff_when_raw_epoch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When raw_cutoff is epoch, pointer watermark is preserved."""
+    from fplt.automation.curate import _EPOCH
+
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    first = build_from_staged(tmp_path, code_sha="e")
+    prior_cutoff = datetime(2024, 8, 10, 12, 0, tzinfo=UTC)
+    write_curated_latest(
+        tmp_path,
+        CuratedLatestPointer(
+            build_id=first.build_id,
+            created_at=first.created_at,
+            raw_cutoff=prior_cutoff,
+            code_sha="e",
+        ),
+    )
+
+    monkeypatch.setattr("fplt.automation.curate.fetch_raw", lambda *a, **k: [])
+    monkeypatch.setattr("fplt.automation.curate.pull_quarantine", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "fplt.automation.curate.push_curated_latest", lambda *a, **k: None
+    )
+    monkeypatch.setattr("fplt.automation.curate._side_ingest", lambda *a, **k: None)
+    monkeypatch.setattr("fplt.automation.curate.raw_cutoff", lambda _d: _EPOCH)
+
+    result = run_curate(
+        tmp_path,
+        full=True,
+        source="branch",
+        data_remote=None,
+        notify_parity=False,
+        code_sha="e",
+    )
+    assert result.pointer is not None
+    assert result.pointer.raw_cutoff == prior_cutoff
+    assert result.parity_ok is True
+
+
+def test_pull_build_tables_none_and_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``tables=None`` pulls every sha; an allow-list skips the rest."""
+    from fplt.store import pull_official as po
+    from fplt.store.builds import table_sha_path
+    from fplt.store.pull_official import pull_build
+
+    _write_bootstrap(tmp_path / "raw", index=0)
+    ingest_raw(DataStore(tmp_path), tmp_path / "raw")
+    manifest = build_from_staged(tmp_path, code_sha="all")
+    assert len(manifest.tables) >= 2
+    bucket = tmp_path / "bucket"
+    shutil.copytree(tmp_path / "curated", bucket / "curated")
+    remote = Remote(target=str(bucket), kind="data", env={})
+
+    def fake_safe_pull(_remote: Remote, prefix: str, dest: Path) -> int:
+        src = bucket / prefix
+        if not src.exists():
+            return 0
+        dest.mkdir(parents=True, exist_ok=True)
+        if src.is_file():
+            target = dest / src.name
+            if target.is_file():
+                return 0
+            shutil.copy2(src, target)
+            return 1
+        before = {p for p in dest.rglob("*") if p.is_file()}
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+        after = {p for p in dest.rglob("*") if p.is_file()}
+        return len(after - before)
+
+    monkeypatch.setattr(po, "_safe_pull", fake_safe_pull)
+
+    dest_all = tmp_path / "local_all"
+    dest_all.mkdir()
+    n_all = pull_build(dest_all, remote, manifest.build_id, tables=None)
+    assert n_all >= 1 + len(manifest.tables)
+    for table, entry in manifest.tables.items():
+        assert table_sha_path(dest_all, table, entry.sha).is_file()
+
+    keep = next(iter(manifest.tables))
+    dest_one = tmp_path / "local_one"
+    dest_one.mkdir()
+    n_one = pull_build(dest_one, remote, manifest.build_id, tables=frozenset({keep}))
+    assert table_sha_path(dest_one, keep, manifest.tables[keep].sha).is_file()
+    skipped = [t for t in manifest.tables if t != keep]
+    assert skipped
+    assert not table_sha_path(
+        dest_one, skipped[0], manifest.tables[skipped[0]].sha
+    ).is_file()
+    assert n_one == 2  # manifest + one table

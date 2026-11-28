@@ -415,10 +415,7 @@ def _run_incremental(
 
     with timed_phase("remote/pull"):
         pull_quarantine(root, cfg)
-        try:
-            pull_build(root, data_remote, previous.build_id)
-        except OfficialPullError:
-            raise
+        pull_build(root, data_remote, previous.build_id)
         objects = lsjson(data_remote, "raw")
         new_dirs = capture_dirs_after(objects, previous.raw_cutoff)
         if not new_dirs:

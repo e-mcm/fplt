@@ -234,6 +234,34 @@ def test_lsjson_parses_files_only(
     assert objects[0].size == 12
 
 
+def test_lsjson_missing_prefix_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("directory not found")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", missing)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    assert lsjson(remote, "raw/missing") == []
+
+
+def test_lsjson_invalid_json_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", lambda args, *, env: "not-json{")
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(RemoteError, match="invalid JSON"):
+        lsjson(remote, "raw")
+
+
+def test_lsjson_other_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("permission denied")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", boom)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(RemoteError, match="permission"):
+        lsjson(remote, "raw")
+
+
 def test_lsf_missing_prefix_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
