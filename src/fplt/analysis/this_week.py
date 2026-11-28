@@ -68,23 +68,23 @@ def default_official_selection(
     pointers: pl.DataFrame,
     *,
     applied_line: str | None = None,
-    preferred_checkpoint: str = "T-90m",
+    preferred_checkpoint: str | None = None,
 ) -> OfficialSelection | None:
-    """Pick applied line → primary at ``preferred_checkpoint``, else any.
+    """Pick the default This-week official pointer.
 
-    Within a match set the highest ``gw`` wins. Returns ``None`` when empty.
+    Default (#364): newest pointer of any checkpoint (highest ``gw``, then
+    newest ``written_at`` / checkpoint id), preferring ``applied_line`` when
+    set. When ``preferred_checkpoint`` is given, try that checkpoint first
+    (legacy callers / tests), then fall back to any.
     """
     if pointers.is_empty():
         return None
-    for checkpoint_only in (True, False):
-        pool = pointers
-        if checkpoint_only:
-            pool = pointers.filter(pl.col("checkpoint") == preferred_checkpoint)
-            if pool.is_empty():
-                continue
-        chosen = _pick_line(pool, applied_line=applied_line)
-        if chosen is not None:
-            return chosen
+    if preferred_checkpoint is not None:
+        preferred = pointers.filter(pl.col("checkpoint") == preferred_checkpoint)
+        if not preferred.is_empty():
+            chosen = _pick_line(preferred, applied_line=applied_line)
+            if chosen is not None:
+                return chosen
     return _pick_line(pointers, applied_line=applied_line)
 
 
@@ -381,7 +381,14 @@ def _pick_line(
     else:
         primary = pool.filter(pl.col("role") == "primary")
         ranked = primary if not primary.is_empty() else pool
-    row = ranked.sort("gw", descending=True).to_dicts()[0]
+    sort_cols = ["gw"]
+    descending = [True]
+    if "written_at" in ranked.columns:
+        sort_cols.append("written_at")
+        descending.append(True)
+    sort_cols.append("checkpoint")
+    descending.append(True)
+    row = ranked.sort(sort_cols, descending=descending).to_dicts()[0]
     return OfficialSelection(
         season=str(row["season"]),
         gw=int(row["gw"]),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from fplt.automation.production import load_production_ops
@@ -22,6 +23,8 @@ from fplt.store.runs import run_dir
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CHECKPOINT = "T-90m"
+_CHECKPOINT_ALIASES = frozenset({"manual", "latest"})
+_MANUAL_PREFIX = "manual-"
 _UI_TABLES = frozenset({"players", "teams", "fixtures", "gameweeks", "player_status"})
 _GW_RE = re.compile(r"^gw=(\d+)$")
 _CRED_MSG = (
@@ -82,7 +85,19 @@ def resolve_latest_gw(
     checkpoint: str = _DEFAULT_CHECKPOINT,
     primary_line: str | None = None,
 ) -> int:
-    """Highest GW with a primary-line pointer at ``checkpoint``."""
+    """Highest GW with a primary-line pointer at ``checkpoint``.
+
+    ``checkpoint`` may be a concrete id (``T-90m``, ``manual-…``) or an alias
+    (``manual`` / ``latest``); aliases resolve via ``resolve_checkpoint_target``.
+    """
+    if checkpoint in _CHECKPOINT_ALIASES:
+        gw, _ = resolve_checkpoint_target(
+            official_root,
+            season=season,
+            checkpoint=checkpoint,
+            primary_line=primary_line,
+        )
+        return gw
     line = primary_line or load_production_ops().primary_line().line
     best: int | None = None
     season_dir = official_root / f"season={season}"
@@ -101,6 +116,137 @@ def resolve_latest_gw(
         f"no official pointer for season={season} checkpoint={checkpoint} "
         f"line={line}; available: {', '.join(avail) if avail else '(none)'}"
     )
+
+
+def resolve_checkpoint_target(
+    official_root: Path,
+    *,
+    season: str,
+    checkpoint: str,
+    gw: int | None = None,
+    primary_line: str | None = None,
+) -> tuple[int, str]:
+    """Resolve ``checkpoint`` alias / concrete id to ``(gw, concrete_id)``.
+
+    Aliases (#364):
+    - ``manual``: newest ``manual-*`` on the highest GW that has one.
+    - ``latest``: newest pointer of any checkpoint (by ``written_at``, then
+      checkpoint id) for the primary line.
+
+    A concrete checkpoint id with ``gw=None`` picks the highest GW that has
+    that checkpoint (same as ``resolve_latest_gw``).
+    """
+    line = primary_line or load_production_ops().primary_line().line
+    if checkpoint == "manual":
+        return _resolve_manual_alias(official_root, season=season, line=line, gw=gw)
+    if checkpoint == "latest":
+        return _resolve_latest_alias(official_root, season=season, line=line, gw=gw)
+    if gw is not None:
+        path = (
+            official_root
+            / f"season={season}"
+            / f"gw={gw}"
+            / f"checkpoint={checkpoint}"
+            / f"line={line}.json"
+        )
+        if path.is_file():
+            return gw, checkpoint
+        avail = list_official_availability(official_root, season=season)
+        raise OfficialPullError(
+            f"no official pointer for season={season} gw={gw} "
+            f"checkpoint={checkpoint} line={line}; available: "
+            f"{', '.join(avail) if avail else '(none)'}"
+        )
+    resolved_gw = resolve_latest_gw(
+        official_root, season=season, checkpoint=checkpoint, primary_line=line
+    )
+    return resolved_gw, checkpoint
+
+
+def _resolve_manual_alias(
+    official_root: Path, *, season: str, line: str, gw: int | None
+) -> tuple[int, str]:
+    """Newest ``manual-*`` checkpoint for ``line`` (optionally pinned GW)."""
+    candidates = _primary_pointer_candidates(
+        official_root, season=season, line=line, gw=gw
+    )
+    manuals = [
+        item for item in candidates if item.checkpoint.startswith(_MANUAL_PREFIX)
+    ]
+    if not manuals:
+        avail = list_official_availability(official_root, season=season)
+        raise OfficialPullError(
+            f"no manual-* official pointer for season={season} line={line}"
+            + (f" gw={gw}" if gw is not None else "")
+            + f"; available: {', '.join(avail) if avail else '(none)'}"
+        )
+    # Prefer highest GW, then lexicographic stamp (second-resolution ids).
+    best = max(manuals, key=lambda item: (item.gw, item.checkpoint, item.written_at))
+    return best.gw, best.checkpoint
+
+
+def _resolve_latest_alias(
+    official_root: Path, *, season: str, line: str, gw: int | None
+) -> tuple[int, str]:
+    """Newest pointer of any checkpoint for ``line`` (by written_at)."""
+    candidates = _primary_pointer_candidates(
+        official_root, season=season, line=line, gw=gw
+    )
+    if not candidates:
+        avail = list_official_availability(official_root, season=season)
+        raise OfficialPullError(
+            f"no official pointer for season={season} line={line}"
+            + (f" gw={gw}" if gw is not None else "")
+            + f"; available: {', '.join(avail) if avail else '(none)'}"
+        )
+    best = max(candidates, key=lambda item: (item.written_at, item.gw, item.checkpoint))
+    return best.gw, best.checkpoint
+
+
+@dataclass(frozen=True)
+class _PointerCandidate:
+    """One primary-line pointer under ``official/`` for alias resolution."""
+
+    gw: int
+    checkpoint: str
+    written_at: datetime
+
+
+def _primary_pointer_candidates(
+    official_root: Path, *, season: str, line: str, gw: int | None
+) -> list[_PointerCandidate]:
+    """List primary-line pointers, optionally filtered to one GW."""
+    season_dir = official_root / f"season={season}"
+    if not season_dir.is_dir():
+        return []
+    out: list[_PointerCandidate] = []
+    for gw_dir in season_dir.glob("gw=*"):
+        m = _GW_RE.match(gw_dir.name)
+        if not m or not gw_dir.is_dir():
+            continue
+        gw_n = int(m.group(1))
+        if gw is not None and gw_n != gw:
+            continue
+        for cp_dir in gw_dir.glob("checkpoint=*"):
+            if not cp_dir.is_dir():
+                continue
+            path = cp_dir / f"line={line}.json"
+            if not path.is_file():
+                continue
+            try:
+                pointer = OfficialPointer.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except ValueError:
+                continue
+            out.append(
+                _PointerCandidate(
+                    gw=gw_n,
+                    checkpoint=cp_dir.name.removeprefix("checkpoint="),
+                    written_at=pointer.written_at,
+                )
+            )
+    return out
 
 
 def mirror_official_index(data_dir: Path, remote: Remote) -> Path:

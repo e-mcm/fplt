@@ -41,11 +41,13 @@ def render(store: DashboardStore | None = None) -> None:
         )
         return
 
-    # Discover applied line for the latest T-90m GW (if any) for defaults.
+    # Prefer applied.json on the latest GW when present; else newest pointer.
     latest_gw = int(pointers["gw"].max())  # type: ignore[arg-type]
     seasons = pointers.filter(pl.col("gw") == latest_gw)["season"].to_list()
     season_guess = str(seasons[0]) if seasons else str(pointers["season"][0])
-    applied = source.applied_line(season=season_guess, gw=latest_gw, checkpoint="T-90m")
+    applied = _applied_for_gw(
+        source, season=season_guess, gw=latest_gw, pointers=pointers
+    )
     selection = default_official_selection(pointers, applied_line=applied)
     if selection is None:
         st.warning("Could not pick an official pointer.")
@@ -211,6 +213,32 @@ def _draw_timing_panel(panel: RunTimingPanel) -> None:
         st.markdown("**Trend across pulled gameweeks**")
         fig = get_renderer("timing_trend")(panel.trend)
         st.plotly_chart(fig, use_container_width=True)  # pyright: ignore[reportUnknownMemberType]
+
+
+def _applied_for_gw(
+    source: DashboardStore,
+    *,
+    season: str,
+    gw: int,
+    pointers: pl.DataFrame,
+) -> str | None:
+    """Return applied line for ``gw`` if any checkpoint has ``applied.json``."""
+    cps = sorted(
+        {
+            str(c)
+            for c in pointers.filter(
+                (pl.col("season") == season) & (pl.col("gw") == gw)
+            )["checkpoint"].to_list()
+        },
+        reverse=True,
+    )
+    # Prefer T-90m when present (live apply target), else any checkpoint.
+    ordered = ["T-90m", *[c for c in cps if c != "T-90m"]] if "T-90m" in cps else cps
+    for checkpoint in ordered:
+        applied = source.applied_line(season=season, gw=gw, checkpoint=checkpoint)
+        if applied:
+            return applied
+    return None
 
 
 def _render_header(header: dict[str, object]) -> None:

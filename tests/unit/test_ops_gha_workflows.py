@@ -28,6 +28,20 @@ def test_ops_tick_workflow_has_offset_schedule_and_dispatch() -> None:
     assert "7,22,37,52 * * * *" in crons
     assert "workflow_dispatch" in on
     assert on["workflow_dispatch"]["inputs"]["simulate_failure"]["type"] == "boolean"
+    run_now = on["workflow_dispatch"]["inputs"]["run_now"]
+    assert run_now["type"] == "boolean"
+    assert run_now["default"] is False
+
+
+def test_ops_tick_workflow_passes_run_now_to_cli() -> None:
+    """``run_now`` dispatch input is forwarded as ``fplt ops-tick --run-now`` (#364)."""
+    text = (_WORKFLOWS / "ops-tick.yml").read_text(encoding="utf-8")
+    assert "inputs.run_now" in text
+    assert "--run-now" in text
+    tick_steps = _load("ops-tick.yml")["jobs"]["tick"]["steps"]
+    run_step = next(s for s in tick_steps if s.get("name") == "Run ops-tick")
+    assert "fplt ops-tick" in run_step["run"]
+    assert "--run-now" in run_step["run"]
 
 
 def test_ops_catchup_workflow_is_dispatch_only() -> None:

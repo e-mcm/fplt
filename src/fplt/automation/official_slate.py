@@ -199,6 +199,8 @@ def run_official_checkpoint(
     prod_tag: str | None = None,
     decisions: list[LineFpDecision] | None = None,
     now: datetime | None = None,
+    checkpoint: str | None = None,
+    apply_primary: bool | None = None,
 ) -> OfficialCheckpointResult:
     """Run the official slate against a curated build, finalize, and push.
 
@@ -211,8 +213,14 @@ def run_official_checkpoint(
         build_id: Curated build id (#346). Required — callers pull/hydrate
             first. When omitted, falls back to ``status/curated/latest.json``.
         prod_tag: Moving ops tag for fingerprints / manifests.
-        decisions: Optional precomputed skip-if-done decisions.
+        decisions: Optional precomputed skip-if-done decisions. When every
+            line is ``skip``, predict/plan runs are reused and only pointers
+            are written (``run_now`` still gets a fresh ``manual-*`` pointer).
         now: Clock for throttle recording.
+        checkpoint: Override checkpoint id (default ``T-90m``; ``run_now``
+            passes ``manual-<UTC stamp>``).
+        apply_primary: Write ``applied.json`` for the primary line. Defaults
+            to True for ``T-90m`` and False for ``manual-*`` previews.
 
     Returns:
         Paths and run ids for the written checkpoint.
@@ -224,7 +232,11 @@ def run_official_checkpoint(
         FileNotFoundError: Build manifest or required tables are missing.
     """
     cfg = get_settings() if settings is None else settings
-    _, _, checkpoint = ops.official_slate()
+    _, _, default_cp = ops.official_slate()
+    cp = default_cp if checkpoint is None else checkpoint
+    write_applied = (
+        (not cp.startswith("manual-")) if apply_primary is None else apply_primary
+    )
     resolved_build_id, pairs = ensure_slate_runs(
         data_dir,
         ops,
@@ -234,7 +246,7 @@ def run_official_checkpoint(
         build_id=build_id,
         prod_tag=prod_tag,
         decisions=decisions,
-        checkpoint=checkpoint,
+        checkpoint=cp,
         now=now,
     )
 
@@ -243,22 +255,23 @@ def run_official_checkpoint(
         season=key.season,
         gw=key.gw,
         pairs=list(pairs),
-        checkpoint=checkpoint,
+        checkpoint=cp,
+        apply_primary=write_applied,
     )
     cp_dir = official_checkpoint_dir(
-        data_dir, season=key.season, gw=key.gw, checkpoint=checkpoint
+        data_dir, season=key.season, gw=key.gw, checkpoint=cp
     )
     maybe_push_official(
         data_dir,
         season=key.season,
         gw=key.gw,
-        checkpoint=checkpoint,
+        checkpoint=cp,
         settings=cfg,
     )
     return OfficialCheckpointResult(
         season=key.season,
         gw=key.gw,
-        checkpoint=checkpoint,
+        checkpoint=cp,
         pairs=pairs,
         checkpoint_dir=cp_dir,
         build_id=resolved_build_id,

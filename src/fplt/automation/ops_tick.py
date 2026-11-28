@@ -87,6 +87,19 @@ def _empty_ids() -> list[str]:
     return []
 
 
+def manual_checkpoint_id(now: datetime) -> str:
+    """Return a write-once ``manual-<UTC stamp>`` checkpoint id (second grain).
+
+    Args:
+        now: Clock used for the stamp (converted to UTC).
+
+    Returns:
+        Id such as ``manual-20261128T073015Z``.
+    """
+    moment = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    return f"manual-{moment.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+
+
 @dataclass(frozen=True)
 class OpsTickResult:
     """Counts and gameweeks from one ``run_ops_tick`` call.
@@ -136,6 +149,7 @@ def run_ops_tick(
     branch: str = "snapshots",
     settings: Settings | None = None,
     notify: bool = True,
+    run_now: bool = False,
 ) -> OpsTickResult:
     """Hydrate from curated build, catch up, run due checkpoints, raise alarms.
 
@@ -155,6 +169,12 @@ def run_ops_tick(
         branch: Ignored (#346).
         settings: Optional settings for notify and bucket credentials.
         notify: When True, push recommendation / alarm messages via ntfy/SMTP.
+        run_now: When True, hydrate the curated build then run the official
+            slate under a new ``manual-<UTC stamp>`` checkpoint for the
+            upcoming GW (#364). Reuses ``by_fp`` runs when fingerprints match
+            and still writes a fresh manual pointer. Does not mark T−*
+            checkpoints done, write ``applied.json``, or send recommendation
+            ntfy.
 
     Returns:
         Counts and planned / pending gameweeks for the operator status print.
@@ -162,6 +182,7 @@ def run_ops_tick(
     Raises:
         RemoteError: An rclone pull against the curated / by_fp prefix failed.
         StaleBuildError: A refresh checkpoint refused an aged curated build.
+        ValueError: ``run_now`` requested with no upcoming deadline.
     """
     del source, remote, branch  # curated path only (#346); no raw/
     cfg = get_settings() if settings is None else settings
@@ -171,6 +192,8 @@ def run_ops_tick(
     steps = ops.plan_horizon if horizon is None else horizon
     moment = datetime.now(UTC) if now is None else now
     prod_tag = resolve_prod_tag_label()
+    # Manual previews never push recommendation / alarm ntfy (#364).
+    notify_live = False if run_now else notify
     # Feed counts stay zero: ops no longer pulls/stages raw snapshots.
     feeds = FeedRefreshResult(0, 0, 0, 0)
 
@@ -211,7 +234,7 @@ def run_ops_tick(
                 deadline_aware=True,
                 allow_missing=True,
             )
-            _notify_auth_check(cfg, auth, notify=notify)
+            _notify_auth_check(cfg, auth, notify=notify_live)
 
             slate_decisions = (
                 decisions_for_slate(
@@ -249,7 +272,9 @@ def run_ops_tick(
                 )
                 due = list(due_checkpoints(moment, upcoming_deadline, done))
 
-            if all_fps_done and not due:
+            # run_now always continues: reuse by_fp runs but write a new
+            # manual-* pointer even when fingerprints are unchanged (#364).
+            if all_fps_done and not due and not run_now:
                 logger.info(
                     "ops_tick: idle — fingerprints unchanged, no checkpoint due"
                 )
@@ -298,176 +323,199 @@ def run_ops_tick(
                 now=moment,
                 min_prior_seasons=ops.min_prior_seasons,
                 settings=cfg,
-                notify=notify,
+                notify=notify_live,
                 source="ops-tick",
             )
 
-            logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
-            caught = catch_up(root, chosen, horizon=steps)
-
-            # Mid-week: ensure predict/plan runs for the current fp (throttled).
-            # Does not write official/ pointers — checkpoints do that.
-            if (
-                upcoming_key is not None
-                and slate_decisions
-                and not all(item.skip for item in slate_decisions)
-                and any(
-                    throttle_allows(
-                        root,
-                        item.line,
-                        now=moment,
-                        min_interval=timedelta(minutes=ops.min_run_interval_minutes),
-                        checkpoint=False,
-                    )
-                    for item in slate_decisions
-                    if not item.skip
-                )
-            ):
-                logger.info(
-                    "ops_tick: fingerprint run for %s (non-checkpoint)",
-                    upcoming_key,
-                )
-                ensure_slate_runs(
+            if run_now:
+                official = _run_manual_preview(
                     root,
-                    ops,
-                    upcoming_key,
+                    moment,
+                    ops=ops,
+                    upcoming=upcoming,
                     settings=cfg,
+                    auth=auth,
                     build_id=ctx.build.build_id,
                     prod_tag=prod_tag,
                     decisions=slate_decisions,
-                    checkpoint=None,
-                    now=moment,
                 )
+                checkpoint_ids.append(official.checkpoint)
+                official_cp_dir = official.checkpoint_dir
+                upcoming_key = GWKey(official.season, official.gw)
+                caught: list[GWKey] = []
+                due_gw: GWKey | None = None
+            else:
+                logger.info("ops_tick: catch_up models=%s horizon=%s", chosen, steps)
+                caught = catch_up(root, chosen, horizon=steps)
 
-            if upcoming is not None:
-                upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
-                upcoming_deadline = require_not_none(
-                    upcoming_deadline, what="upcoming_deadline"
-                )
-                deadline = upcoming_deadline
-                logger.info(
-                    "ops_tick: checkpoints key=%s due=%s",
-                    upcoming_key,
-                    [cp.id for cp in due],
-                )
-                for checkpoint in due:
-                    if checkpoint.id in ("T-90m", "T-30m"):
-                        try:
-                            enforce_build_freshness(
-                                ctx.pointer,
-                                now=moment,
-                                ops=ops,
-                                settings=cfg,
-                                notify=notify,
-                                checkpoint=checkpoint.id,
-                            )
-                        except StaleBuildError:
-                            logger.exception(
-                                "ops_tick: skipping %s — curated build stale",
-                                checkpoint.id,
-                            )
-                            continue
-                    _, sent, official = _run_checkpoint(
-                        root,
+                # Mid-week: ensure predict/plan runs for the current fp (throttled).
+                # Does not write official/ pointers — checkpoints do that.
+                if (
+                    upcoming_key is not None
+                    and slate_decisions
+                    and not all(item.skip for item in slate_decisions)
+                    and any(
+                        throttle_allows(
+                            root,
+                            item.line,
+                            now=moment,
+                            min_interval=timedelta(
+                                minutes=ops.min_run_interval_minutes
+                            ),
+                            checkpoint=False,
+                        )
+                        for item in slate_decisions
+                        if not item.skip
+                    )
+                ):
+                    logger.info(
+                        "ops_tick: fingerprint run for %s (non-checkpoint)",
                         upcoming_key,
-                        checkpoint,
-                        moment,
-                        chosen,
-                        steps,
-                        cfg,
-                        ops=ops,
-                        notify=notify,
-                        auth=auth,
+                    )
+                    ensure_slate_runs(
+                        root,
+                        ops,
+                        upcoming_key,
+                        settings=cfg,
                         build_id=ctx.build.build_id,
                         prod_tag=prod_tag,
                         decisions=slate_decisions,
+                        checkpoint=None,
+                        now=moment,
                     )
-                    _record_checkpoint_done(
-                        root,
+
+                if upcoming is not None:
+                    upcoming_key = require_not_none(upcoming_key, what="upcoming_key")
+                    upcoming_deadline = require_not_none(
+                        upcoming_deadline, what="upcoming_deadline"
+                    )
+                    deadline = upcoming_deadline
+                    logger.info(
+                        "ops_tick: checkpoints key=%s due=%s",
                         upcoming_key,
-                        checkpoint,
-                        primary_line=primary_line,
-                        notified=sent,
-                        notify_enabled=notify,
-                        settings=cfg,
+                        [cp.id for cp in due],
                     )
-                    checkpoint_ids.append(checkpoint.id)
-                    if sent:
-                        notified_plan = True
-                    if official is not None:
-                        official_cp_dir = official.checkpoint_dir
-                    # Apply is ops-05; never call apply here even when checkpoint.apply.
-                    if checkpoint.apply:
-                        logger.info(
-                            "ops_tick: skipping apply at %s (ops-05 not landed)",
-                            checkpoint.id,
+                    for checkpoint in due:
+                        if checkpoint.id in ("T-90m", "T-30m"):
+                            try:
+                                enforce_build_freshness(
+                                    ctx.pointer,
+                                    now=moment,
+                                    ops=ops,
+                                    settings=cfg,
+                                    notify=notify_live,
+                                    checkpoint=checkpoint.id,
+                                )
+                            except StaleBuildError:
+                                logger.exception(
+                                    "ops_tick: skipping %s — curated build stale",
+                                    checkpoint.id,
+                                )
+                                continue
+                        _, sent, official = _run_checkpoint(
+                            root,
+                            upcoming_key,
+                            checkpoint,
+                            moment,
+                            chosen,
+                            steps,
+                            cfg,
+                            ops=ops,
+                            notify=notify_live,
+                            auth=auth,
+                            build_id=ctx.build.build_id,
+                            prod_tag=prod_tag,
+                            decisions=slate_decisions,
                         )
+                        _record_checkpoint_done(
+                            root,
+                            upcoming_key,
+                            checkpoint,
+                            primary_line=primary_line,
+                            notified=sent,
+                            notify_enabled=notify_live,
+                            settings=cfg,
+                        )
+                        checkpoint_ids.append(checkpoint.id)
+                        if sent:
+                            notified_plan = True
+                        if official is not None:
+                            official_cp_dir = official.checkpoint_dir
+                        # Apply is ops-05; never call apply here even when
+                        # checkpoint.apply.
+                        if checkpoint.apply:
+                            logger.info(
+                                "ops_tick: skipping apply at %s (ops-05 not landed)",
+                                checkpoint.id,
+                            )
 
-                has_plan = plans_exist(root, chosen, upcoming_key, steps)
-                # Refresh alarm done set after checkpoints may have written markers.
-                _, alarms_done = resolve_done_sets(
-                    root,
-                    upcoming_key,
-                    primary_line=primary_line,
-                    slate_lines=slate_lines,
-                    settings=cfg,
-                )
-                alarms = due_no_plan_alarms(
-                    moment,
-                    deadline,
-                    has_plan=has_plan,
-                    alarms_done=alarms_done,
-                )
-                for alarm in alarms:
-                    # A successful T−3h retry can create the plan; skip later alarms.
-                    if plans_exist(root, chosen, upcoming_key, steps):
-                        break
-                    _run_no_plan_alarm(
+                    has_plan = plans_exist(root, chosen, upcoming_key, steps)
+                    # Refresh alarm done set after checkpoints may have written
+                    # markers.
+                    _, alarms_done = resolve_done_sets(
                         root,
                         upcoming_key,
-                        alarm,
-                        moment,
-                        chosen,
-                        steps,
-                        cfg,
-                        notify=notify,
-                    )
-                    write_alarm_marker(root, upcoming_key, alarm.id)
-                    push_alarm_markers(root, upcoming_key, settings=cfg)
-                    alarm_ids.append(alarm.id)
-
-            logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
-            due_gw = pre_deadline(root, moment, chosen, horizon=steps)
-
-            if notify and (caught or due_gw is not None) and not notified_plan:
-                text = with_manual_apply_banner(
-                    reports(root) or "No plan yet.",
-                    auth,
-                )
-                notify_recommendation(cfg, "fplt recommendation", text)
-
-            # ops-09: alert-only live drift vs backtest (never auto-switch models).
-            if caught:
-                try:
-                    from fplt.automation.drift import run_live_drift_monitor
-
-                    drift_reports = run_live_drift_monitor(
-                        root,
-                        model_names=chosen,
+                        primary_line=primary_line,
+                        slate_lines=slate_lines,
                         settings=cfg,
-                        notify=notify,
                     )
-                    for drift in drift_reports:
-                        if drift.alerted:
-                            logger.warning(
-                                "ops_tick drift alert model_id=%s metrics=%s",
-                                drift.model_id,
-                                [alert.metric for alert in drift.alerts],
-                            )
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    logger.exception(
-                        "ops_tick: drift monitor failed (non-fatal): %s", exc
+                    alarms = due_no_plan_alarms(
+                        moment,
+                        deadline,
+                        has_plan=has_plan,
+                        alarms_done=alarms_done,
                     )
+                    for alarm in alarms:
+                        # A successful T−3h retry can create the plan; skip
+                        # later alarms.
+                        if plans_exist(root, chosen, upcoming_key, steps):
+                            break
+                        _run_no_plan_alarm(
+                            root,
+                            upcoming_key,
+                            alarm,
+                            moment,
+                            chosen,
+                            steps,
+                            cfg,
+                            notify=notify_live,
+                        )
+                        write_alarm_marker(root, upcoming_key, alarm.id)
+                        push_alarm_markers(root, upcoming_key, settings=cfg)
+                        alarm_ids.append(alarm.id)
+
+                logger.info("ops_tick: pre_deadline now=%s", moment.isoformat())
+                due_gw = pre_deadline(root, moment, chosen, horizon=steps)
+
+                if notify_live and (caught or due_gw is not None) and not notified_plan:
+                    text = with_manual_apply_banner(
+                        reports(root) or "No plan yet.",
+                        auth,
+                    )
+                    notify_recommendation(cfg, "fplt recommendation", text)
+
+                # ops-09: alert-only live drift vs backtest (never auto-switch).
+                if caught:
+                    try:
+                        from fplt.automation.drift import run_live_drift_monitor
+
+                        drift_reports = run_live_drift_monitor(
+                            root,
+                            model_names=chosen,
+                            settings=cfg,
+                            notify=notify_live,
+                        )
+                        for drift in drift_reports:
+                            if drift.alerted:
+                                logger.warning(
+                                    "ops_tick drift alert model_id=%s metrics=%s",
+                                    drift.model_id,
+                                    [alert.metric for alert in drift.alerts],
+                                )
+                    except (OSError, ValueError, KeyError, TypeError) as exc:
+                        logger.exception(
+                            "ops_tick: drift monitor failed (non-fatal): %s", exc
+                        )
 
             waiting = pending_checked(store, root, chosen, steps)
             result = OpsTickResult(
@@ -539,6 +587,74 @@ def run_ops_tick(
             except Exception:
                 logger.exception("failed to publish status after ops-tick error")
             raise
+
+
+def _run_manual_preview(
+    root: Path,
+    moment: datetime,
+    *,
+    ops: ProductionOps,
+    upcoming: tuple[GWKey, datetime] | None,
+    settings: Settings,
+    auth: AuthCheckResult,
+    build_id: str,
+    prod_tag: str | None,
+    decisions: list[LineFpDecision],
+) -> OfficialCheckpointResult:
+    """Run the official slate under a new ``manual-<stamp>`` checkpoint (#364).
+
+    Passes ``decisions`` so unchanged fingerprints reuse existing runs
+    (#346) while still writing a fresh manual pointer. Does not mark T−*
+    checkpoints, write ``applied.json``, or send ntfy.
+    """
+    if upcoming is None:
+        raise ValueError(
+            "run_now requires an upcoming deadline in staged gameweeks; "
+            "none found"
+        )
+    key, _deadline = upcoming
+    checkpoint = manual_checkpoint_id(moment)
+    logger.info(
+        "ops_tick: run_now official slate checkpoint=%s key=%s "
+        "build_id=%s skip_lines=%s",
+        checkpoint,
+        key,
+        build_id,
+        sum(1 for item in decisions if item.skip),
+    )
+    with (
+        log_context(
+            checkpoint=checkpoint,
+            season=key.season,
+            gw=key.gw,
+        ),
+        capture_ops_log() as ops_log,
+    ):
+        official = run_official_checkpoint(
+            root,
+            ops,
+            key,
+            settings=settings,
+            build_id=build_id,
+            prod_tag=prod_tag,
+            decisions=decisions,
+            now=moment,
+            checkpoint=checkpoint,
+            apply_primary=False,
+        )
+        try:
+            write_ops_log_once(official.checkpoint_dir, ops_log.lines)
+        except FileExistsError:
+            logger.info(
+                "ops_tick: ops_log already present at %s (write-once)",
+                official.checkpoint_dir,
+            )
+    logger.info(
+        "ops_tick: run_now done checkpoint=%s auth=%s (no T-* / applied / ntfy)",
+        official.checkpoint,
+        auth.level,
+    )
+    return official
 
 
 def _notify_auth_check(
