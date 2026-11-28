@@ -382,6 +382,29 @@ class RunWriter:
         frame.write_parquet(dest)
         return dest
 
+    def write_text(self, relative: str, text: str) -> Path:
+        """Write a UTF-8 text file (e.g. ``report.md``) once under the run.
+
+        Args:
+            relative: Path relative to the run folder.
+            text: File contents.
+
+        Returns:
+            Absolute path written.
+
+        Raises:
+            RuntimeError: The writer is not open or already finalized.
+            FileExistsError: That relative path was already written.
+            ValueError: ``relative`` escapes the run directory.
+        """
+        self._require_open()
+        dest = self._resolve(relative)
+        if dest.exists():
+            raise FileExistsError(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+        return dest
+
     def write_json(self, relative: str, payload: object) -> Path:
         """Write a JSON document once under the run directory.
 
@@ -708,6 +731,7 @@ def write_plan_run(
     fp: str | None = None,
     prod_tag: str | None = None,
     tags: dict[str, str] | None = None,
+    report_md: str | None = None,
 ) -> RunManifest:
     """Dual-write a plan table into a new run folder.
 
@@ -728,6 +752,8 @@ def write_plan_run(
         fp: Run fingerprint for skip-if-done (#346).
         prod_tag: Moving ops tag label when known.
         tags: Optional manifest tags (e.g. ``squad_source=public``).
+        report_md: Optional plan report, written as ``report.md`` in the run
+            (readers use ``fplt.store.plan_runs``, not ``plans/``).
 
     Returns:
         The succeeded ``RunManifest``.
@@ -761,6 +787,8 @@ def write_plan_run(
         tags=tags,
     ) as writer:
         writer.write_parquet("plans/plan.parquet", frame)
+        if report_md is not None:
+            writer.write_text("report.md", report_md)
     _push_if_configured(data_dir, writer.run_id)
     return writer.manifest
 

@@ -18,6 +18,8 @@ import polars as pl
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import covered_horizon, plan_parquet
+from fplt.store.catalog import scan_succeeded_runs
+from fplt.store.plan_runs import plan_runs
 from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
@@ -98,9 +100,11 @@ def plans_stale_vs_signals(
         now: Optional clock for signal cutoff.
 
     Returns:
-        True when every plan exists and at least one plan parquet mtime is
-        strictly older than ``latest_late_signal_at``. False when plans are
-        missing (caller should create them) or signals are not newer.
+        True when every model has a plan run and at least one model's newest
+        plan run finished strictly before ``latest_late_signal_at``. False
+        when plans are missing (caller should create them) or signals are not
+        newer. Plan times come from ``runs/`` manifests (``finished_at``), not
+        ``plans/`` file mtimes (data-model cut-over).
     """
     weeks = covered_horizon(key.gw, horizon)
     if weeks < 1:
@@ -108,15 +112,40 @@ def plans_stale_vs_signals(
     signal = latest_late_signal_at(store, key, now=now)
     if signal is None:
         return False
-    specs = load_model_specs()
-    mtimes: list[datetime] = []
+    catalog = scan_succeeded_runs(root)
+    finished: list[datetime] = []
     for name in models:
-        path = plan_parquet(root, specs[name].model_id, key.season, key.gw, weeks)
-        stamp = artifact_mtime(path)
+        stamp = latest_plan_finished_at(root, name, key, weeks, catalog=catalog)
         if stamp is None:
             return False
-        mtimes.append(stamp)
-    return any(stamp < signal for stamp in mtimes)
+        finished.append(stamp)
+    return any(stamp < signal for stamp in finished)
+
+
+def latest_plan_finished_at(
+    root: Path,
+    model: str,
+    key: GWKey,
+    weeks: int,
+    *,
+    catalog: pl.DataFrame | None = None,
+) -> datetime | None:
+    """UTC ``finished_at`` of the newest succeeded plan run, or ``None``.
+
+    Args:
+        root: Data directory containing ``runs/``.
+        model: YAML spec name.
+        key: Deadline.
+        weeks: Covered plan weeks.
+        catalog: Optional preloaded run catalog.
+
+    Returns:
+        The newest matching plan run's finish time, or ``None`` when absent.
+    """
+    rows = plan_runs(root, spec_label=model, key=key, horizon=weeks, catalog=catalog)
+    if rows.is_empty():
+        return None
+    return _aware(rows.get_column("finished_at")[-1])
 
 
 def retire_plans(
@@ -173,6 +202,7 @@ def _aware(value: datetime) -> datetime:
 
 
 __all__ = [
+    "latest_plan_finished_at",
     "artifact_mtime",
     "latest_late_signal_at",
     "plans_stale_vs_signals",

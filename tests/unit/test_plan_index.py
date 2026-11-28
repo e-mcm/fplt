@@ -27,6 +27,31 @@ _MODEL = "rolling_mean_v1"
 _TS = datetime(2026, 8, 1, tzinfo=UTC)
 
 
+def _one_step_plan(model_id: str, season: str, gw: int) -> pl.DataFrame:
+    """Minimal ``PlanSchema`` rows for one deadline at horizon 1."""
+    return pl.DataFrame(
+        [
+            {
+                "model_id": model_id,
+                "as_of_season": season,
+                "as_of_gw": gw,
+                "target_gw": gw,
+                "step": 0,
+                "player_key": 1,
+                "position": "MID",
+                "team_key": 1,
+                "in_xi": True,
+                "captain": True,
+                "vice": False,
+                "bought": False,
+                "sold": False,
+                "xpts": 1.0,
+                "hit": 0.0,
+            }
+        ]
+    )
+
+
 def _gameweeks_only(root: Path, rows: list[tuple[str, int, bool]]) -> DataStore:
     """Data dir whose only staged table is ``gameweeks`` (season, gw, checked)."""
     store = DataStore(root)
@@ -328,15 +353,20 @@ def test_pending_checked_skips_local_plans_and_empty_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fplt.models.spec import load_model_specs
-    from fplt.optimise.plan import covered_horizon, plan_parquet
+    from fplt.store.runs import write_plan_run
 
     store = _gameweeks_only(tmp_path, [("2026-27", 1, True), ("2026-27", 2, True)])
-    specs = load_model_specs()
-    model_id = specs[_MODEL].model_id
+    spec = load_model_specs()[_MODEL]
     for gw in (1, 2):
-        path = plan_parquet(tmp_path, model_id, "2026-27", gw, covered_horizon(gw, 1))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("", encoding="utf-8")
+        # A local plan *run* (runs/), not a legacy plans/ parquet (cut-over).
+        write_plan_run(
+            tmp_path,
+            spec=spec,
+            as_of=GWKey("2026-27", gw),
+            deadline_utc=datetime(2026, 8, 1, tzinfo=UTC),
+            horizon=1,
+            frame=_one_step_plan(spec.model_id, "2026-27", gw),
+        )
     monkeypatch.setenv("FPLT_DATA_BUCKET", "fplt-data")
     get_settings.cache_clear()
     try:

@@ -1,6 +1,7 @@
 """Synthetic staged seasons for contract tests. No network and no real FPL dumps."""
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import polars as pl
 
@@ -152,3 +153,42 @@ def build_league(root: DataStore) -> DataStore:
         ),
     )
     return root
+
+
+def dual_write_plan(
+    data_dir: Path,
+    frame: pl.DataFrame,
+    *,
+    report: str | None = None,
+    code_sha: str = "stub",
+    deadline: datetime | None = None,
+) -> Path:
+    """Write a plan the way ``run_plan`` does: legacy ``plans/`` + a plan run.
+
+    Readers resolve plans from ``runs/`` (data-model cut-over), so tests that
+    need "a plan exists" must create the run, not only the legacy parquet.
+    The spec is found by ``model_id`` among ``configs/models``.
+
+    Returns:
+        The legacy parquet path (``plans/<model_id>/as_of=…/part.parquet``).
+    """
+    from fplt.models.spec import load_model_specs
+    from fplt.optimise.plan import write_plan
+    from fplt.store.runs import write_plan_run
+    from fplt.types import GWKey
+
+    path = write_plan(data_dir, frame, code_sha=code_sha)
+    if report is not None:
+        (path.parent / "report.md").write_text(report, encoding="utf-8")
+    model_id = str(frame["model_id"][0])
+    spec = next(s for s in load_model_specs().values() if s.model_id == model_id)
+    write_plan_run(
+        data_dir,
+        spec=spec,
+        as_of=GWKey(str(frame["as_of_season"][0]), int(frame["as_of_gw"][0])),
+        deadline_utc=deadline or datetime(2024, 8, 16, 17, 30, tzinfo=UTC),
+        horizon=int(frame["step"].n_unique()),
+        frame=frame,
+        report_md=report,
+    )
+    return path

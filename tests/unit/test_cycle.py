@@ -28,12 +28,13 @@ from fplt.backtest.ledger import align_ledger_columns
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
-from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon, write_plan
+from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon
 from fplt.optimise.state import SquadState
 from fplt.schemas.ledger import LedgerSchema
 from fplt.settings import get_settings
 from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
+from tests.builders import dual_write_plan
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _GW3 = datetime(2024, 9, 1, 17, tzinfo=UTC)
@@ -165,10 +166,10 @@ def test_pre_deadline_refreshes_when_availability_signal_is_newer(
             }
         ),
     )
-    # Plan mtime is "now"; force it older than the new status signal.
+    # Plan run finished "now"; force it older than the new status signal.
     monkeypatch.setattr(
-        "fplt.automation.late_refresh.artifact_mtime",
-        lambda _path: moment - timedelta(hours=2),
+        "fplt.automation.late_refresh.latest_plan_finished_at",
+        lambda *_a, **_k: moment - timedelta(hours=2),
     )
     later = moment + timedelta(minutes=10)
     assert pre_deadline(league_dir, later, [_MODEL], horizon=1) is not None
@@ -427,12 +428,9 @@ def _write_stub_plan(
         }
         for step in range(weeks)
     ]
-    path = write_plan(data_dir, pl.DataFrame(rows), code_sha="stub")
-    (path.parent / "report.md").write_text(
-        f"# {season}\n\nGW {gameweek}\n",
-        encoding="utf-8",
+    return dual_write_plan(
+        data_dir, pl.DataFrame(rows), report=f"# {season}\n\nGW {gameweek}\n"
     )
-    return path
 
 
 def _live_payload() -> dict[str, object]:

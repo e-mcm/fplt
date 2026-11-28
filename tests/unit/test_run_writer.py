@@ -259,3 +259,14 @@ def test_run_writer_writes_by_fp_index(tmp_path: Path) -> None:
     still = load_fp_index(tmp_path, fp)
     assert still is not None
     assert still.run_id == "r_20261124T125601Z_fp0001"
+
+
+def test_write_text_is_write_once_inside_the_run(tmp_path: Path) -> None:
+    """``RunWriter.write_text`` (plan ``report.md``) refuses a second write."""
+    with _writer(tmp_path) as writer:
+        path = writer.write_text("report.md", "# plan")
+        assert path.read_text(encoding="utf-8") == "# plan"
+        with pytest.raises(FileExistsError):
+            writer.write_text("report.md", "# again")
+        with pytest.raises(ValueError, match="escape|outside|relative"):
+            writer.write_text("../escape.md", "x")
