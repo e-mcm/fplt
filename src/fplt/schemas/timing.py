@@ -8,7 +8,7 @@ official ``ops_timing.json`` (issue #291). Schema version stays aligned with
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,6 +21,8 @@ class TimingRecord(BaseModel):
     ``phases`` maps phase name → seconds. Nested names (``fit/score``) sit
     beside their parents so ``perf-report`` can aggregate across surfaces.
     ``total_s`` is the kind's top-level sum (not the sum of every nested key).
+    ``peak_rss_kb`` maps phase name → process high-water RSS (KiB) observed
+    at the end of that phase (#372).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -30,6 +32,7 @@ class TimingRecord(BaseModel):
     recorded_at: datetime
     meta: dict[str, Any] = Field(default_factory=dict)
     phases: dict[str, float] = Field(default_factory=dict)
+    peak_rss_kb: dict[str, int] = Field(default_factory=dict)
     total_s: float = Field(ge=0.0)
 
     @field_validator("phases")
@@ -46,6 +49,29 @@ class TimingRecord(BaseModel):
             if as_float <= 0:
                 continue
             cleaned[name] = as_float
+        return cleaned
+
+    @field_validator("peak_rss_kb", mode="before")
+    @classmethod
+    def _nonneg_rss(cls, value: object) -> dict[str, int]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("peak_rss_kb must be a mapping")
+        raw_map = cast(dict[object, object], value)
+        cleaned: dict[str, int] = {}
+        for name, raw in raw_map.items():
+            key = str(name)
+            if not key.strip():
+                raise ValueError("peak_rss phase names must be non-empty")
+            if isinstance(raw, bool):
+                raise ValueError(f"peak_rss {key!r} must be numeric")
+            if not isinstance(raw, (int, float)):
+                raise ValueError(f"peak_rss {key!r} must be numeric")
+            as_int = int(raw)
+            if as_int <= 0:
+                continue
+            cleaned[key] = as_int
         return cleaned
 
     def model_dump_json_doc(self) -> dict[str, Any]:

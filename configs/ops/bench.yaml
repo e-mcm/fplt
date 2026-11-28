@@ -16,11 +16,17 @@ ops_budget_pct: 50.0
 # Default ops-tick job timeout (minutes); overridden by OPS_TIMEOUT_MINUTES.
 ops_timeout_minutes: 90
 
+# Peak-RSS WARN (#372): log when a timed phase's process high-water RSS
+# reaches this fraction of runner_memory_gb (GitHub ubuntu-latest ≈ 16 GiB).
+runner_memory_gb: 16.0
+rss_warn_pct: 70.0
+
 # Phases compared against the rolling median baseline.
 tracked_phases:
   - fit
   - predict
   - plan
+  - points_pmf
   - optimise/milp
   - mc_bench_total
   - pytest_suite

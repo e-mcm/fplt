@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fplt.auth import AuthCheckResult, check_token, with_manual_apply_banner
+from fplt.automation.bench import load_bench_config
 from fplt.automation.checkpoints import (
     Checkpoint,
     MissingOfficialSlateAlarm,
@@ -83,7 +84,7 @@ from fplt.utils.logging import (
     log_context,
     write_ops_log_once,
 )
-from fplt.utils.timing import timing_session
+from fplt.utils.timing import rss_warn_threshold, timing_session
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,10 @@ def run_ops_tick(
     # Feed counts stay zero: ops no longer pulls/stages raw snapshots.
     feeds = FeedRefreshResult(0, 0, 0, 0)
 
-    with timing_session() as timings:
+    with (
+        timing_session() as timings,
+        rss_warn_threshold(load_bench_config().rss_warn_kb()),
+    ):
         record_job_setup(timings)
         try:
             ctx = load_ops_build_context(root, settings=cfg)

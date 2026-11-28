@@ -199,12 +199,21 @@ def test_ops_budget_warning_in_step_summary() -> None:
     assert "WARNING" not in ok
 
 
+def test_bench_config_rss_warn_kb() -> None:
+    cfg = _cfg(runner_memory_gb=16.0, rss_warn_pct=70.0)
+    assert cfg.rss_warn_kb() == int(16.0 * 0.70 * 1024 * 1024)
+    loaded = load_bench_config()
+    assert "points_pmf" in loaded.tracked_phases
+    assert loaded.rss_warn_pct == pytest.approx(70.0)
+
+
 def test_consolidate_fixture_phases_skips_nested_subphases() -> None:
     raw = {
         "fit/dc_layered_v4_e2e": 12.0,
         "fit/score": 3.0,
         "predict/dc_layered_v4_e2e": 40.0,
         "predict/setup": 1.0,
+        "points_pmf": 6.0,
         "plan/e2e_primary": 8.0,
         "plan/setup": 0.5,
         "optimise/milp": 5.0,
@@ -214,6 +223,7 @@ def test_consolidate_fixture_phases_skips_nested_subphases() -> None:
     assert out["fit"] == pytest.approx(12.0)
     assert out["predict"] == pytest.approx(40.0)
     assert out["plan"] == pytest.approx(8.0)
+    assert out["points_pmf"] == pytest.approx(6.0)
     assert out["optimise/milp"] == pytest.approx(5.0)
     assert "ingest" not in out
 

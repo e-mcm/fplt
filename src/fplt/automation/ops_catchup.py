@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fplt.automation.bench import load_bench_config
 from fplt.automation.cycle import (
     catch_up,
     pending_checked,
@@ -28,7 +29,7 @@ from fplt.data.store import DataStore
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
-from fplt.utils.timing import timing_session
+from fplt.utils.timing import rss_warn_threshold, timing_session
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,10 @@ def run_ops_catchup(
     ops = load_production_ops()
     chosen = list(ops.models) if models is None else models
 
-    with timing_session() as timings:
+    with (
+        timing_session() as timings,
+        rss_warn_threshold(load_bench_config().rss_warn_kb()),
+    ):
         record_job_setup(timings)
         try:
             feeds = refresh_ops_feeds(

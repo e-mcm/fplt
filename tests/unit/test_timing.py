@@ -23,14 +23,17 @@ from fplt.utils.timing import (
     binds_timing_artifacts,
     build_timing_record,
     classify_phase,
+    current_max_rss_kb,
     format_gw_breakdown,
     format_hotspot_report,
     format_kind_summary,
     format_run_summary,
     load_timing_records,
+    maybe_warn_peak_rss,
     ops_phase_total,
     ops_timing_path,
     rank_hotspots,
+    rss_warn_threshold,
     run_timing_path,
     timed_phase,
     timing_artifacts,
@@ -243,9 +246,129 @@ def test_timing_record_model_and_ops_total() -> None:
     assert record["total_s"] == ops_phase_total(session.phases())
     assert record["total_s"] == 33.0
     assert "fit/score" in record["phases"]
+    assert record["peak_rss_kb"] == {}
     parsed = TimingRecord.model_validate(record)
     assert parsed.meta["predict_run_ids"] == ["r_a"]
     assert parsed.total_s == 33.0
+
+
+def test_timed_phase_records_peak_rss(caplog: pytest.LogCaptureFixture) -> None:
+    session = TimingSession()
+    rss = current_max_rss_kb()
+    assert rss > 0
+    with timing_session(session), rss_warn_threshold(rss + 10_000_000):
+        with timed_phase("points_pmf"):
+            pass
+        with timed_phase("predict"):
+            pass
+    assert session.peak_rss()["points_pmf"] >= rss
+    assert session.peak_rss()["predict"] >= rss
+    record = build_timing_record("ops_tick", session)
+    assert record["peak_rss_kb"]["points_pmf"] == session.peak_rss()["points_pmf"]
+    # Threshold far above current RSS → no WARN.
+    assert "at/above warn threshold" not in caplog.text
+    with caplog.at_level(logging.WARNING):
+        maybe_warn_peak_rss("points_pmf", rss)
+        with rss_warn_threshold(1):
+            maybe_warn_peak_rss("points_pmf", rss)
+    assert "at/above warn threshold" in caplog.text
+
+
+def test_peak_rss_helpers_and_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fplt.utils.timing import configure_rss_warn_kb
+
+    session = TimingSession()
+    session.record_peak_rss("predict", 0)
+    session.record_peak_rss("predict", -1)
+    assert session.peak_rss() == {}
+    session.record_peak_rss("predict", 100)
+    session.record_peak_rss("predict", 50)
+    assert session.peak_rss()["predict"] == 100
+    other = TimingSession()
+    other.record_peak_rss("plan", 80)
+    session.merge(other)
+    assert session.peak_rss()["plan"] == 80
+
+    configure_rss_warn_kb(12345)
+    with rss_warn_threshold(None):
+        maybe_warn_peak_rss("x", 999999)
+    configure_rss_warn_kb(None)
+
+    monkeypatch.setattr("fplt.utils.timing.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "fplt.utils.timing.resource.getrusage",
+        lambda _who: type("U", (), {"ru_maxrss": 2048 * 1024})(),
+    )
+    assert current_max_rss_kb() == 2048
+
+    empty = TimingRecord.model_validate(
+        {
+            "schema_version": 1,
+            "kind": "ops_tick",
+            "recorded_at": "2026-11-28T00:00:00Z",
+            "phases": {"predict": 1.0},
+            "peak_rss_kb": None,
+            "total_s": 1.0,
+        }
+    )
+    assert empty.peak_rss_kb == {}
+    with pytest.raises(ValueError, match="must be a mapping"):
+        TimingRecord.model_validate(
+            {
+                "schema_version": 1,
+                "kind": "ops_tick",
+                "recorded_at": "2026-11-28T00:00:00Z",
+                "phases": {"predict": 1.0},
+                "peak_rss_kb": ["bad"],
+                "total_s": 1.0,
+            }
+        )
+    with pytest.raises(ValueError, match="non-empty"):
+        TimingRecord.model_validate(
+            {
+                "schema_version": 1,
+                "kind": "ops_tick",
+                "recorded_at": "2026-11-28T00:00:00Z",
+                "phases": {"predict": 1.0},
+                "peak_rss_kb": {"": 5},
+                "total_s": 1.0,
+            }
+        )
+    with pytest.raises(ValueError, match="must be numeric"):
+        TimingRecord.model_validate(
+            {
+                "schema_version": 1,
+                "kind": "ops_tick",
+                "recorded_at": "2026-11-28T00:00:00Z",
+                "phases": {"predict": 1.0},
+                "peak_rss_kb": {"predict": True},
+                "total_s": 1.0,
+            }
+        )
+    with pytest.raises(ValueError, match="must be numeric"):
+        TimingRecord.model_validate(
+            {
+                "schema_version": 1,
+                "kind": "ops_tick",
+                "recorded_at": "2026-11-28T00:00:00Z",
+                "phases": {"predict": 1.0},
+                "peak_rss_kb": {"predict": "big"},
+                "total_s": 1.0,
+            }
+        )
+    skipped = TimingRecord.model_validate(
+        {
+            "schema_version": 1,
+            "kind": "ops_tick",
+            "recorded_at": "2026-11-28T00:00:00Z",
+            "phases": {"predict": 1.0},
+            "peak_rss_kb": {"predict": 12, "zero": 0},
+            "total_s": 1.0,
+        }
+    )
+    assert skipped.peak_rss_kb == {"predict": 12}
 
 
 def test_write_run_and_ops_timing_write_once(tmp_path: Path) -> None:
