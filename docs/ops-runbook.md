@@ -36,13 +36,23 @@ manifest). Apply must be done by hand until refreshed. Check:
 Confirm `OPS_LIVE=true` on the repo before expecting GHA to plan. See
 [`../deploy/README.md`](../deploy/README.md) (ops-tick / ops-catchup).
 
+### ops-02: Official slate missing
+
+| | |
+|---|---|
+| **Means** | At/after T−60m the upcoming GW still has no write-once T−90m official slate pointers (`official/.../checkpoint=T-90m/line=<line>.json`). Often a cancelled / OOM ops-tick at T−90m that never alerted before (#373). |
+| **Urgency** | **Urgent** — the official slate should already exist; apply / compare windows are closing. |
+| **Fix** | `gh workflow run ops-tick.yml -f force_live=true` — or locally `make ops-catchup` / `uv run fplt ops-catchup`. Confirm the prior `ops-tick` run was not cancelled (runner shutdown / timeout). |
+
+Write-once marker: `alarms/missing_official_slate.json` under the GW prefix.
+
 ### ops-03: Workflow failure
 
 | | |
 |---|---|
-| **Means** | A scheduled or dispatched GitHub Actions job (or a Dagster run-failure sensor) failed. The alert carries the workflow, job, and run URL — no log excerpts (public repo). |
-| **Urgency** | **Urgent** if the failing job is `ops-tick` / `ops-catchup` inside T−6h. Otherwise **high** until the next successful capture / tick. |
-| **Fix** | Open the run URL in the alert, fix the cause, then `gh run rerun <run-id> --failed` (or re-dispatch the workflow). |
+| **Means** | A scheduled or dispatched GitHub Actions job (or a Dagster run-failure sensor) **failed or was cancelled** (runner OOM / shutdown, job timeout, manual cancel). The alert carries the workflow, job, result, and run URL — no log excerpts (public repo). |
+| **Urgency** | **Urgent** if the failing / cancelled job is `ops-tick` / `ops-catchup` inside T−6h. Otherwise **high** until the next successful capture / tick. |
+| **Fix** | Open the run URL in the alert, fix the cause, then `gh run rerun <run-id> --failed` (or re-dispatch the workflow). Cancelled runs with no failure step still need a fresh dispatch. |
 
 Composite action: `.github/actions/notify-failure`. Dagster path:
 `notify_run_failure` → same runbook section.

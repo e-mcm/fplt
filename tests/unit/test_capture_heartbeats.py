@@ -305,11 +305,21 @@ def test_notify_failure_soft_skips_when_ntfy_url_unset() -> None:
             "NTFY_URL": "",
             "WORKFLOW": "snapshot",
             "JOB": "alerts",
+            "RESULT": "failure",
             "RUN_URL": "https://example.test/run/1",
         },
     )
     assert result.returncode == 0
     assert "soft skip" in result.stdout
+
+
+def test_notify_failure_action_mentions_cancelled() -> None:
+    """Composite action titles/bodies distinguish cancelled from failure (#373)."""
+    text = (_ACTIONS / "notify-failure" / "action.yml").read_text(encoding="utf-8")
+    assert "result:" in text
+    assert "cancelled: runner shutdown or timeout" in text
+    assert "fplt ${WORKFLOW} cancelled" in text
+    assert "fplt ${WORKFLOW} failed" in text
 
 
 def test_scheduled_workflows_have_simulate_failure_input() -> None:
@@ -406,8 +416,29 @@ def test_scheduled_workflows_notify_on_failure() -> None:
         assert len(alerts) == 1, name
         step = alerts[0]
         main = _MAIN_JOB[name]
-        assert step.get("if") == f"needs.{main}.result == 'failure'"
+        cond = step.get("if")
+        assert f"needs.{main}.result == 'failure'" in cond, name
+        assert f"needs.{main}.result == 'cancelled'" in cond, name
         assert step["with"]["ntfy_url"] == "${{ secrets.NTFY_URL }}"
+        assert step["with"]["result"] == f"${{{{ needs.{main}.result }}}}"
+
+
+def test_alerts_jobs_notify_on_cancelled() -> None:
+    """Every alerts job notify step covers cancelled as well as failure (#373)."""
+    for path in sorted(_WORKFLOWS.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        jobs = doc.get("jobs") or {}
+        if "alerts" not in jobs:
+            continue
+        steps = list(jobs["alerts"]["steps"])
+        notifies = [
+            s for s in steps if s.get("uses") == "./.github/actions/notify-failure"
+        ]
+        assert len(notifies) == 1, path.name
+        cond = str(notifies[0].get("if", ""))
+        assert "cancelled" in cond, path.name
+        assert "failure" in cond, path.name
+        assert "result" in notifies[0].get("with", {}), path.name
 
 
 def test_simulate_failure_step_runs_only_on_dispatch() -> None:

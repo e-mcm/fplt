@@ -171,7 +171,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_OPS_CATCHUP }}
 
       - name: Notify failure
-        if: needs.catchup.result == 'failure'
+        if: needs.catchup.result == 'failure' || needs.catchup.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.catchup.result }}

@@ -87,7 +87,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_CURATE_FULL }}
 
       - name: Notify failure
-        if: needs.curate_full.result == 'failure'
+        if: needs.curate_full.result == 'failure' || needs.curate_full.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.curate_full.result }}

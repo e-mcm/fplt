@@ -139,7 +139,8 @@ jobs:
           ping_url: ${{ secrets.HC_PING_URL_BENCH }}
 
       - name: Notify failure
-        if: needs.bench.result == 'failure'
+        if: needs.bench.result == 'failure' || needs.bench.result == 'cancelled'
         uses: ./.github/actions/notify-failure
         with:
           ntfy_url: ${{ secrets.NTFY_URL }}
+          result: ${{ needs.bench.result }}
