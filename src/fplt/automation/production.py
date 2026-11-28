@@ -86,6 +86,11 @@ class ProductionOps(BaseModel):
     min_run_interval_minutes: int = Field(ge=1, default=60)
     # #346: T−90m / T−30m refuse builds older than this (ntfy instead).
     max_build_age_minutes: int = Field(ge=1, default=30)
+    # #369: catch-up only fills current-season GWs from this GW onwards
+    # (never staged history such as vaastav seasons).
+    catch_up_from_gw: int = Field(ge=1, le=38, default=1)
+    # #369: bound catch-up work per tick; the rest continues next tick.
+    max_catch_up_per_tick: int = Field(ge=1, default=4)
 
     @field_validator("models")
     @classmethod
@@ -225,6 +230,8 @@ def load_production_ops(
         min_prior_seasons=ops.min_prior_seasons,
         min_run_interval_minutes=ops.min_run_interval_minutes,
         max_build_age_minutes=ops.max_build_age_minutes,
+        catch_up_from_gw=ops.catch_up_from_gw,
+        max_catch_up_per_tick=ops.max_catch_up_per_tick,
     )
 
 
@@ -282,6 +289,14 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
         raw.get("max_build_age_minutes", 30),
         name="max_build_age_minutes",
     )
+    catch_up_from_gw = _positive_int(
+        raw.get("catch_up_from_gw", 1),
+        name="catch_up_from_gw",
+    )
+    max_catch_up = _positive_int(
+        raw.get("max_catch_up_per_tick", 4),
+        name="max_catch_up_per_tick",
+    )
     return ProductionOps(
         models=models,
         plan_horizon=horizon,
@@ -290,6 +305,8 @@ def _ops_from_mapping(raw: dict[str, Any]) -> ProductionOps:
         min_prior_seasons=min_prior,
         min_run_interval_minutes=min_interval,
         max_build_age_minutes=max_age,
+        catch_up_from_gw=catch_up_from_gw,
+        max_catch_up_per_tick=max_catch_up,
     )
 
 

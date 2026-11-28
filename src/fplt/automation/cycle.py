@@ -53,13 +53,39 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+class CatchUpSeasonError(ValueError):
+    """A live automation play was asked for a season other than the current one.
+
+    The live squad (``FPLT_ENTRY_ID``) only exists for the current FPL season,
+    so planning a past season with it would price current-season element ids
+    against a past-season view (#369).
+    """
+
+
+def current_season(store: DataStore) -> str | None:
+    """Return the latest season in staged ``gameweeks``, or ``None`` when empty.
+
+    Season keys are ``YYYY-YY`` strings, so the lexicographic maximum is the
+    most recent season. Staged history (e.g. vaastav seasons) sits alongside
+    the live season in the same table; this picks the live one.
+    """
+    frame = store.read("gameweeks")
+    if frame.is_empty():
+        return None
+    return str(frame.get_column("season").max())
+
+
 def pending_checked(
     store: DataStore,
     root: Path,
     models: list[str] | None = None,
     horizon: int | None = None,
 ) -> list[GWKey]:
-    """Checked gameweeks that are still missing a plan, earliest first.
+    """Current-season checked gameweeks that are still missing a plan.
+
+    Only the current season (``current_season``) from
+    ``ProductionOps.catch_up_from_gw`` onwards is considered: catch-up fills
+    weeks live ops missed, it does not backtest staged history (#369).
 
     Args:
         store: Staged tables, including ``gameweeks``.
@@ -70,12 +96,20 @@ def pending_checked(
             ``load_production_ops().plan_horizon``.
 
     Returns:
-        Deadlines whose ``data_checked`` flag is set and whose plan is absent.
+        Deadlines whose ``data_checked`` flag is set and whose plan is absent,
+        earliest first.
     """
     ops = load_production_ops()
     chosen = ops.models if models is None else models
     steps = ops.plan_horizon if horizon is None else horizon
-    frame = store.read("gameweeks").filter(pl.col("data_checked"))
+    season = current_season(store)
+    if season is None:
+        return []
+    frame = store.read("gameweeks").filter(
+        pl.col("data_checked")
+        & (pl.col("season") == season)
+        & (pl.col("gw") >= ops.catch_up_from_gw)
+    )
     waiting: list[GWKey] = []
     seen: set[GWKey] = set()
     for season, gameweek in frame.select("season", "gw").iter_rows():
@@ -115,7 +149,11 @@ def catch_up(
     models: list[str] | None = None,
     horizon: int | None = None,
 ) -> list[GWKey]:
-    """Fit, score, and plan every checked gameweek that has no plan yet.
+    """Fit, score, and plan missed current-season gameweeks, oldest first.
+
+    At most ``ProductionOps.max_catch_up_per_tick`` gameweeks are played per
+    call; the rest stay pending for the next tick, so one tick cannot burn
+    the job timeout (#369).
 
     Args:
         data_dir: Root that contains ``staged/`` and receives ``ledger/`` and
@@ -131,14 +169,17 @@ def catch_up(
     chosen = list(ops.models) if models is None else models
     steps = ops.plan_horizon if horizon is None else horizon
     waiting = pending_checked(DataStore(data_dir), data_dir, chosen, steps)
+    batch = waiting[: ops.max_catch_up_per_tick]
     logger.info(
-        "catch_up models=%s pending=%s horizon=%s",
+        "catch_up models=%s pending=%s playing=%s deferred=%s horizon=%s",
         chosen,
-        [str(key) for key in waiting],
+        len(waiting),
+        [str(key) for key in batch],
+        len(waiting) - len(batch),
         steps,
     )
     done: list[GWKey] = []
-    for key in waiting:
+    for key in batch:
         _play(data_dir, chosen, key, steps)
         done.append(key)
     return done
@@ -258,6 +299,13 @@ def reports(root: Path) -> str:
 
 def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
     logger.info("automation play %s models=%s horizon=%s", key, models, horizon)
+    live = current_season(DataStore(data_dir))
+    if key.season != live:
+        raise CatchUpSeasonError(
+            f"refusing to play {key}: live automation only plans the current "
+            f"season ({live}); the live squad cannot be priced against "
+            f"{key.season}"
+        )
     run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
     # Live squad when FPLT_ENTRY_ID is set; otherwise YAML draft / empty owned.
     view = PITData(DataStore(data_dir)).view(key)

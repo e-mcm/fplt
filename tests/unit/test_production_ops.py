@@ -315,3 +315,51 @@ def test_min_run_interval_and_max_build_age_validation(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="max_build_age_minutes"):
         load_production_ops(path, environ={})
+
+
+def test_committed_catch_up_scope_defaults() -> None:
+    """#369: catch-up starts at GW1 of the current season, bounded per tick."""
+    ops = load_production_ops()
+    assert ops.catch_up_from_gw == 1
+    assert ops.max_catch_up_per_tick == 4
+
+
+def test_catch_up_scope_parsed_and_kept_by_env_override(tmp_path: Path) -> None:
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "catch_up_from_gw": 10,
+                "max_catch_up_per_tick": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    ops = load_production_ops(path, environ={})
+    assert (ops.catch_up_from_gw, ops.max_catch_up_per_tick) == (10, 2)
+    # Emergency env override rebuilds ProductionOps; scope must survive it.
+    over = load_production_ops(path, environ={"FPLT_PLAN_HORIZON": "5"})
+    assert (over.catch_up_from_gw, over.max_catch_up_per_tick) == (10, 2)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("catch_up_from_gw", 0),
+        ("catch_up_from_gw", 39),
+        ("catch_up_from_gw", True),
+        ("max_catch_up_per_tick", 0),
+    ],
+)
+def test_catch_up_scope_rejects_invalid_values(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump({"models": ["dc_layered_v4"], "plan_horizon": 3, field: value}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=field):
+        load_production_ops(path, environ={})

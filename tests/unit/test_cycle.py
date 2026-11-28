@@ -12,7 +12,9 @@ import pytest
 
 from fplt.automation.cycle import (
     PRODUCTION_MODELS,
+    CatchUpSeasonError,
     catch_up,
+    current_season,
     due_gameweek,
     pending_checked,
     plans_exist,
@@ -257,6 +259,100 @@ def test_catch_up_without_entry_id_keeps_yaml_draft(
         assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
     finally:
         get_settings.cache_clear()
+
+
+def _gameweeks_only(root: Path, rows: list[tuple[str, int, bool]]) -> DataStore:
+    """Data dir whose only staged table is ``gameweeks`` (season, gw, checked)."""
+    store = DataStore(root)
+    store.write(
+        "gameweeks",
+        pl.DataFrame(
+            {
+                "season": [season for season, _, _ in rows],
+                "gw": [gw for _, gw, _ in rows],
+                "deadline_time": [
+                    datetime(int(season[:4]), 8, 1, tzinfo=UTC) + timedelta(weeks=gw)
+                    for season, gw, _ in rows
+                ],
+                "finished": [checked for _, _, checked in rows],
+                "data_checked": [checked for _, _, checked in rows],
+                "available_at": [_WHEN] * len(rows),
+                "source": ["test"] * len(rows),
+            }
+        ),
+    )
+    return store
+
+
+def _ops_with(**update: object) -> ProductionOps:
+    return load_production_ops().model_copy(update=update)
+
+
+def test_pending_checked_ignores_past_seasons(tmp_path: Path) -> None:
+    """Regression #369: staged history (e.g. vaastav 2021-22) is never pending.
+
+    Before the fix, every checked GW since 2021-22 counted as a missed live
+    week, and catch-up tried to plan 2021-22 GW1 with the 2026-27 squad.
+    """
+    rows = [("2021-22", gw, True) for gw in range(1, 39)]
+    rows += [("2025-26", gw, True) for gw in range(1, 39)]
+    rows += [("2026-27", gw, gw <= 12) for gw in range(1, 39)]
+    store = _gameweeks_only(tmp_path, rows)
+    assert current_season(store) == "2026-27"
+    waiting = pending_checked(store, tmp_path, [_MODEL], horizon=1)
+    assert waiting == [GWKey("2026-27", gw) for gw in range(1, 13)]
+
+
+def test_pending_checked_respects_catch_up_from_gw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _gameweeks_only(tmp_path, [("2026-27", gw, True) for gw in range(1, 6)])
+    monkeypatch.setattr(
+        "fplt.automation.cycle.load_production_ops",
+        lambda: _ops_with(catch_up_from_gw=4),
+    )
+    waiting = pending_checked(store, tmp_path, [_MODEL], horizon=1)
+    assert waiting == [GWKey("2026-27", 4), GWKey("2026-27", 5)]
+
+
+def test_pending_checked_empty_gameweeks(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    assert current_season(store) is None
+    assert pending_checked(store, tmp_path, [_MODEL], horizon=1) == []
+
+
+def test_catch_up_is_bounded_per_tick(
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#369: at most max_catch_up_per_tick GWs per call; the rest next tick."""
+    monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
+    get_settings.cache_clear()
+    _stub_predict_and_plan(monkeypatch)
+    monkeypatch.setattr(
+        "fplt.automation.cycle.load_production_ops",
+        lambda: _ops_with(max_catch_up_per_tick=1),
+    )
+    try:
+        assert catch_up(league_dir, [_MODEL], horizon=1) == [GWKey("2024-25", 1)]
+        assert catch_up(league_dir, [_MODEL], horizon=1) == [GWKey("2024-25", 2)]
+        assert catch_up(league_dir, [_MODEL], horizon=1) == []
+    finally:
+        get_settings.cache_clear()
+
+
+def test_play_refuses_a_past_season(
+    league_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression #369: never resolve the live squad against a past season."""
+    import fplt.automation.cycle as cycle
+
+    def boom(*_: object, **__: object) -> None:
+        raise AssertionError("must refuse before predicting or resolving a squad")
+
+    monkeypatch.setattr("fplt.automation.cycle.run_backtest", boom)
+    monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", boom)
+    with pytest.raises(CatchUpSeasonError, match="2023-24"):
+        cycle._play(league_dir, [_MODEL], GWKey("2023-24", 1), 1)
 
 
 def test_stub_plan_writer_marks_plans_exist(league_dir: Path) -> None:
