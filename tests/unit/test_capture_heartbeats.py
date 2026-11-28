@@ -268,8 +268,16 @@ def test_push_raw_rejects_dot_path_components() -> None:
     """push_raw_upload.sh guards '.'-prefixed paths before rclone (#339)."""
     helper = (_REPO / "scripts" / "push_raw_upload.sh").read_text(encoding="utf-8")
     assert "reject_raw_dot_paths.py" in helper
-    assert "rclone copy" in helper
-    assert helper.index("reject_raw_dot_paths.py") < helper.index("rclone copy")
+    # Strip comments so the header docstring mentioning rclone does not confuse order.
+    code_lines = [
+        line
+        for line in helper.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    code = "\n".join(code_lines)
+    assert "reject_raw_dot_paths.py" in code
+    assert "rclone copy" in code
+    assert code.index("reject_raw_dot_paths.py") < code.index("rclone copy")
     action = (_ACTIONS / "push-raw" / "action.yml").read_text(encoding="utf-8")
     assert "push_raw_upload.sh" in action
     assert "::error::" in (_REPO / "scripts" / "reject_raw_dot_paths.py").read_text(
