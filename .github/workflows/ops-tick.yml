@@ -109,9 +109,18 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           FPLT_ENTRY_ID: ${{ secrets.FPLT_ENTRY_ID }}
-          FPLT_FPL_API_TOKEN: ${{ secrets.FPLT_FPL_API_TOKEN }}
         with:
-          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY FPLT_ENTRY_ID FPLT_FPL_API_TOKEN
+          names: R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY FPLT_ENTRY_ID
+
+      # Token is optional since #363: planning falls back to public squad state.
+      - name: Warn if FPL API token is unset
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          FPLT_FPL_API_TOKEN: ${{ secrets.FPLT_FPL_API_TOKEN }}
+        run: |
+          if [ -z "${FPLT_FPL_API_TOKEN:-}" ]; then
+            echo "::warning::FPLT_FPL_API_TOKEN is empty; planning uses public squad state (apply needs a token)"
+          fi
 
       - name: Run ops-tick
         if: steps.gate.outputs.enabled == 'true'
