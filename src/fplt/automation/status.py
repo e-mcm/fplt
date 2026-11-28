@@ -555,7 +555,7 @@ def _checkpoint_state(
             data_dir,
             key,
             primary_line=ops.primary_line().line,
-            slate_lines=tuple(line.line for line in ops.lines),
+            slate_lines=tuple(line.line for line in ops.decision_lines()),
         )
         due = due_checkpoints(now, deadline, done_set)
         done = sorted(done_set)

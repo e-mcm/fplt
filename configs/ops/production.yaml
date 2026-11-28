@@ -23,8 +23,12 @@
 #
 # B12: `lines:` is the official slate (data model §4.1). Exactly one
 # primary (applied); candidates are recorded only. One predict per
-# distinct spec at max horizon; one plan per line. Primary is always
-# real squad; candidates default to virtual.
+# distinct spec at max horizon; one plan per decision line. Primary is
+# always real squad; candidates default to virtual.
+#
+# #389: `shadow_predict` lines are predict-only (no plan / PMF / pointer).
+# They run after T−90m pointers are written and never fail the decision
+# slate. Horizons are predict-only (do not lengthen decision predicts).
 
 models:
   - dc_layered_v4_native
@@ -57,6 +61,14 @@ lines:
   - {line: v4_h5, spec: dc_layered_v4_native, horizon: 5, role: candidate, squad_mode: virtual}
   - {line: v4_h7, spec: dc_layered_v4_native, horizon: 7, role: candidate, squad_mode: virtual}
   - {line: v4_h9, spec: dc_layered_v4_native, horizon: 9, role: candidate, squad_mode: virtual}
+  # Prediction-only weekly lines (#389 / weekly-lines §1.2).
+  - {line: ep_next_h1, spec: ep_next_v1, horizon: 1, role: shadow_predict}
+  - {line: openfpl_h1, spec: openfpl_v1, horizon: 1, role: shadow_predict}
+  - {line: dc_v3_h1, spec: dc_layered_v3, horizon: 1, role: shadow_predict}
+  - {line: dc_v2_h1, spec: dc_layered_v2, horizon: 1, role: shadow_predict}
+  - {line: rolling_mean_h1, spec: rolling_mean_v1, horizon: 1, role: shadow_predict}
+  - {line: lgbm_probs_h1, spec: lgbm_probs_v1, horizon: 1, role: shadow_predict}
+  - {line: forecast_combine_h1, spec: forecast_combine_probs_v1, horizon: 1, role: shadow_predict}
 
 pipeline:
   data:

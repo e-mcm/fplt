@@ -1,8 +1,8 @@
 """Official T−90m slate and light mid-week fingerprint runs (#346 / #374).
 
 Implements the B12 caller contract on ``ProductionOps.official_slate``:
-one predict per distinct ModelSpec (longest horizon), one plan per line,
-then ``finalize_official_checkpoint``. Writes ``points_pmf`` /
+one predict per distinct ModelSpec (longest horizon), one plan per
+decision line, then ``finalize_official_checkpoint``. Writes ``points_pmf`` /
 ``points_pmf_gw`` on official predict runs from ``sample()`` draws.
 
 #346: uses a pulled curated ``build_id`` (never ``build_from_staged`` /
@@ -13,6 +13,10 @@ decided by the caller via ``runs/by_fp/``.
 ``purpose=fingerprint`` — predict + plan for the **primary line only**,
 no PMF, pushed to ``fplt-lab``, with a ``runs/by_fp/`` index entry. Kind is
 part of ``fp`` so these do not collide with official T−90m reuse.
+
+#389: ``shadow_predict`` lines run after pointers are written — predict-only
+``kind=official``, no plan / PMF / pointer, fingerprint skip-if-done, and
+failures alert without failing the decision slate.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from typing import Literal
 
 import polars as pl
 
+from fplt.automation.notify import notify_recommendation
 from fplt.automation.ops_data import (
     LineFpDecision,
     decisions_for_slate,
@@ -77,6 +82,9 @@ class OfficialCheckpointResult:
         pairs: Per-line predict/plan run ids written to pointers.
         checkpoint_dir: Local ``official/.../checkpoint=…`` directory.
         build_id: Curated build id attached to the predict runs.
+        shadow_predict_run_ids: Line → predict run id for ``shadow_predict``
+            lines that completed (#389); empty when none or all skipped/failed.
+        shadow_predict_failures: ``(line, error)`` for non-blocking failures.
     """
 
     season: str
@@ -85,6 +93,25 @@ class OfficialCheckpointResult:
     pairs: tuple[LineRunPair, ...]
     checkpoint_dir: Path
     build_id: str
+    shadow_predict_run_ids: tuple[tuple[str, str], ...] = ()
+    shadow_predict_failures: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ShadowPredictResult:
+    """Outcome of one ``run_shadow_predicts`` call (#389).
+
+    Attributes:
+        build_id: Curated build id used for predicts.
+        run_ids: ``(line, predict_run_id)`` pairs that succeeded or were
+            reused via fingerprint skip.
+        failures: ``(line, error)`` for models that raised; never fails the
+            decision slate.
+    """
+
+    build_id: str
+    run_ids: tuple[tuple[str, str], ...]
+    failures: tuple[tuple[str, str], ...]
 
 
 def ensure_slate_runs(
@@ -340,6 +367,18 @@ def run_official_checkpoint(
         checkpoint=cp,
         settings=cfg,
     )
+    # #389: shadow_predict after pointers — never blocks / fails the slate.
+    shadow = run_shadow_predicts(
+        data_dir,
+        ops,
+        key,
+        settings=cfg,
+        build_id=resolved_build_id,
+        prod_tag=prod_tag,
+        checkpoint=cp,
+        now=now,
+        notify=True,
+    )
     return OfficialCheckpointResult(
         season=key.season,
         gw=key.gw,
@@ -347,6 +386,137 @@ def run_official_checkpoint(
         pairs=pairs,
         checkpoint_dir=cp_dir,
         build_id=resolved_build_id,
+        shadow_predict_run_ids=shadow.run_ids,
+        shadow_predict_failures=shadow.failures,
+    )
+
+
+def run_shadow_predicts(
+    data_dir: Path,
+    ops: ProductionOps,
+    key: GWKey,
+    *,
+    settings: Settings | None = None,
+    build_id: str | None = None,
+    prod_tag: str | None = None,
+    decisions: list[LineFpDecision] | None = None,
+    checkpoint: str | None = "T-90m",
+    now: datetime | None = None,
+    notify: bool = True,
+) -> ShadowPredictResult:
+    """Run ``shadow_predict`` lines: predict-only, no plan / PMF / pointer.
+
+    Call after the decision slate's pointers are written so a failure here
+    cannot leave T−90m incomplete (#389). Each model is fingerprinted
+    (skip-if-done); exceptions are logged (and optionally ntfy'd) without
+    raising.
+
+    Args:
+        data_dir: Local data root.
+        ops: Production config (``shadow_predict_lines``).
+        key: Upcoming deadline GW.
+        settings: Optional settings for pull / notify.
+        build_id: Curated build id (#346).
+        prod_tag: Moving ops tag for fingerprints / manifests.
+        decisions: Optional precomputed predict-only skip decisions.
+        checkpoint: Label recorded on predict manifests (default ``T-90m``).
+        now: Clock for throttle recording.
+        notify: When True, ntfy each failure.
+
+    Returns:
+        Succeeded / reused run ids and per-line failure messages.
+    """
+    cfg = get_settings() if settings is None else settings
+    moment = datetime.now(UTC) if now is None else now
+    lines = ops.shadow_predict_lines()
+    if not lines:
+        if build_id is not None:
+            return ShadowPredictResult(build_id=build_id, run_ids=(), failures=())
+        try:
+            empty_build = _resolve_build_id(data_dir, None)
+        except ValueError:
+            empty_build = ""
+        return ShadowPredictResult(build_id=empty_build, run_ids=(), failures=())
+
+    resolved_build_id = _resolve_build_id(data_dir, build_id)
+    build = load_build_manifest(data_dir, resolved_build_id)
+    predict_horizons = ops.shadow_predict_groups()
+    slate_decisions = decisions
+    if slate_decisions is None:
+        slate_decisions = decisions_for_slate(
+            ops,
+            build,
+            key,
+            data_dir=data_dir,
+            prod_tag=prod_tag,
+            kind="official",
+            lines=lines,
+            predict_only=True,
+        )
+    pull_required_tables(
+        data_dir,
+        resolved_build_id,
+        tables_for_slate(ops, lines=lines),
+        settings=cfg,
+    )
+
+    predict_ids: dict[str, str] = {}
+    run_ids: list[tuple[str, str]] = []
+    failures: list[tuple[str, str]] = []
+    for line in lines:
+        decision = next(item for item in slate_decisions if item.line == line.line)
+        try:
+            with timed_phase(f"shadow_predict/{line.line}"):
+                if line.spec in predict_ids:
+                    predict_id = predict_ids[line.spec]
+                else:
+                    reused = _reuse_predict_id(line.spec, slate_decisions)
+                    if reused is not None:
+                        predict_id = reused
+                    else:
+                        predict_id = _slate_predict(
+                            data_dir,
+                            line.spec,
+                            key=key,
+                            horizon=predict_horizons[line.spec],
+                            checkpoint=checkpoint,
+                            build_id=resolved_build_id,
+                            fp=decision.predict_fp,
+                            prod_tag=prod_tag,
+                            build=build,
+                            kind="official",
+                            purpose=(
+                                f"shadow_predict {checkpoint} {line.line} "
+                                f"{key.season} gw{key.gw}"
+                            ),
+                            write_pmf=False,
+                        )
+                        push_fp_index(data_dir, decision.predict_fp, settings=cfg)
+                    predict_ids[line.spec] = predict_id
+                record_line_run(data_dir, line.line, now=moment)
+            run_ids.append((line.line, predict_id))
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            logger.exception(
+                "official_slate: shadow_predict failed line=%s spec=%s",
+                line.line,
+                line.spec,
+            )
+            failures.append((line.line, message))
+            if notify:
+                notify_recommendation(
+                    cfg,
+                    f"fplt shadow_predict {line.line}",
+                    (
+                        f"shadow_predict {line.line} ({line.spec}) failed for "
+                        f"{key.season} gw{key.gw}: {message}"
+                    ),
+                    priority="4",
+                )
+    return ShadowPredictResult(
+        build_id=resolved_build_id,
+        run_ids=tuple(run_ids),
+        failures=tuple(failures),
     )
 
 
