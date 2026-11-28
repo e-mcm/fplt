@@ -1210,3 +1210,133 @@ def test_run_shadow_predicts_isolates_per_line_exceptions(
     assert result.failures[0][0] == "shadow_ep"
     assert "ValueError" in result.failures[0][1]
     assert notified == ["ntfy"]
+
+
+def test_run_shadow_predicts_empty_lines_resolves_or_misses_build(
+    tmp_path: Path,
+) -> None:
+    """No shadow lines: resolve curated build when present, else empty id."""
+    from fplt.automation.official_slate import run_shadow_predicts
+    from fplt.schemas.manifests import CuratedLatestPointer
+
+    empty = run_shadow_predicts(
+        tmp_path, _tiny_ops(), GWKey("2024-25", 2), build_id=None, notify=False
+    )
+    assert empty.build_id == ""
+    assert empty.run_ids == ()
+
+    (tmp_path / "status" / "curated").mkdir(parents=True)
+    pointer = CuratedLatestPointer(
+        build_id="e" * 64,
+        created_at=_DEADLINE,
+        raw_cutoff=_DEADLINE,
+        code_sha="abc",
+    )
+    (tmp_path / "status" / "curated" / "latest.json").write_text(
+        pointer.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    resolved = run_shadow_predicts(
+        tmp_path, _tiny_ops(), GWKey("2024-25", 2), build_id=None, notify=False
+    )
+    assert resolved.build_id == "e" * 64
+    with_id = run_shadow_predicts(
+        tmp_path, _tiny_ops(), GWKey("2024-25", 2), build_id="f" * 64, notify=False
+    )
+    assert with_id.build_id == "f" * 64
+
+
+def test_run_shadow_predicts_computes_decisions_and_reuses_shared_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """decisions=None computes fps; two lines sharing a spec predict once."""
+    from fplt.automation.official_slate import run_shadow_predicts
+    from fplt.automation.ops_data import LineFpDecision
+    from fplt.store.builds import build_manifest_path
+    from tests.builders import build_league
+
+    build_league(DataStore(tmp_path))
+    build = _stub_build()
+    path = build_manifest_path(tmp_path, build.build_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(build.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    pipeline = live_pipeline_defaults(model="rolling_mean_v1", horizon=1)
+    ops = ProductionOps(
+        models=["rolling_mean_v1"],
+        plan_horizon=1,
+        pipeline=pipeline,
+        lines=[
+            OfficialLine(
+                line="e2e_primary",
+                spec="rolling_mean_v1",
+                horizon=1,
+                role="primary",
+                squad_mode="real",
+            ),
+            OfficialLine(
+                line="shadow_a",
+                spec="ep_next_v1",
+                horizon=1,
+                role="shadow_predict",
+            ),
+            OfficialLine(
+                line="shadow_b",
+                spec="ep_next_v1",
+                horizon=1,
+                role="shadow_predict",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.pull_required_tables",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.push_fp_index", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.record_line_run", lambda *a, **k: None
+    )
+    predict_calls: list[str] = []
+
+    def fake_predict(*_a: Any, **_k: Any) -> str:
+        predict_calls.append("pred")
+        return "shared-pred"
+
+    monkeypatch.setattr("fplt.automation.official_slate._slate_predict", fake_predict)
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.decisions_for_slate",
+        lambda *_a, **_k: [
+            LineFpDecision(
+                line="shadow_a",
+                spec_name="ep_next_v1",
+                predict_fp="a" * 64,
+                plan_fp="b" * 64,
+                skip=False,
+                predict_run_id=None,
+                plan_run_id=None,
+            ),
+            LineFpDecision(
+                line="shadow_b",
+                spec_name="ep_next_v1",
+                predict_fp="a" * 64,
+                plan_fp="c" * 64,
+                skip=False,
+                predict_run_id=None,
+                plan_run_id=None,
+            ),
+        ],
+    )
+    result = run_shadow_predicts(
+        tmp_path,
+        ops,
+        GWKey("2024-25", 2),
+        build_id=build.build_id,
+        decisions=None,
+        notify=False,
+    )
+    assert result.run_ids == (
+        ("shadow_a", "shared-pred"),
+        ("shadow_b", "shared-pred"),
+    )
+    assert predict_calls == ["pred"]
