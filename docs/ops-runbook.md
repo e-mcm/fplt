@@ -256,6 +256,10 @@ onto the Mac and open the UI. Needs owner R2 creds in `~/.config/fplt/env`
 # Latest GW with a primary T-90m pointer (prints predict/plan run ids)
 uv run fplt data pull --official latest
 
+# Newest manual-* preview (run_now) or newest pointer of any checkpoint
+uv run fplt data pull --official --checkpoint manual
+uv run fplt data pull --official --checkpoint latest
+
 # Or a specific slate
 uv run fplt data pull --official --gw 14 --season 2026-27
 uv run fplt data pull --official --gw 14 --checkpoint T-24h --line v4_h5
@@ -263,9 +267,35 @@ uv run fplt data pull --official --gw 14 --checkpoint T-24h --line v4_h5
 uv run fplt ui
 ```
 
+The This-week header shows the checkpoint id. Default selection is the newest
+pointer of any checkpoint for the latest GW, unless that GW has an
+`applied.json` (then the applied line wins).
+
 Idempotent (`--immutable`): a second pull downloads nothing. Missing
 `FPLT_R2_*` fails loudly (no soft skip). Spec:
 [`proposals/weekly-ui-milestone.md`](proposals/weekly-ui-milestone.md) §3.2.
+
+### On-demand preview (`run_now`)
+
+Before the first T−* checkpoint (or after news mid-week), dispatch a preview
+slate that writes write-once pointers under
+`official/…/checkpoint=manual-<UTC stamp>/` for every production line — same
+predict / plan / points PMF shape as T−90m, but **no** T−* markers, **no**
+`applied.json`, and **no** recommendation ntfy.
+
+```bash
+# OPS_LIVE=true already, or force_live when scaffolding
+gh workflow run ops-tick.yml -f run_now=true -f force_live=true
+
+# After the run finishes:
+uv run fplt data pull --official --checkpoint manual
+uv run fplt ui
+```
+
+Locally: `uv run fplt ops-tick --run-now` (same library path). Two dispatches
+produce two distinct `manual-*` stamps (second-resolution). Unchanged curated
+fingerprints (#346 skip-if-done) reuse the prior run and still write a new
+manual pointer.
 
 ---
 

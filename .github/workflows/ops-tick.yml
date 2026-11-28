@@ -23,6 +23,10 @@ on:
         description: Run planning even when OPS_LIVE is unset (manual only)
         type: boolean
         default: false
+      run_now:
+        description: On-demand official-slate preview (checkpoint=manual-<stamp>; no T-*/applied/ntfy)
+        type: boolean
+        default: false
 
 concurrency:
   group: ops
@@ -139,7 +143,11 @@ jobs:
           fi
           remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           echo "::add-mask::${remote}"
-          uv run fplt ops-tick --source "$OPS_SOURCE" --remote "$remote" --branch snapshots
+          args=(--source "$OPS_SOURCE" --remote "$remote" --branch snapshots)
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.run_now }}" = "true" ]; then
+            args+=(--run-now)
+          fi
+          uv run fplt ops-tick "${args[@]}"
           # Timing table is appended to $GITHUB_STEP_SUMMARY by fplt.automation.ops_timing.
 
   alerts:

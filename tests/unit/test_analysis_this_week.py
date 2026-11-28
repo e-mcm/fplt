@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -237,17 +238,67 @@ def test_default_selection_applied_then_primary_t90m() -> None:
     assert sel.line == "v4_h5"
     assert sel.checkpoint == "T-90m"
     assert sel.gw == 13
-    # No applied → primary at T-90m, highest gw.
+    # No applied → newest primary pointer (same written_at → T-90m > T-24h).
     sel2 = default_official_selection(pointers, applied_line=None)
     assert sel2 is not None
     assert sel2.line == "v4_h3"
     assert sel2.role == "primary"
     assert sel2.gw == 13
     assert sel2.checkpoint == "T-90m"
+    # preferred_checkpoint still scopes when callers ask for T-90m only.
+    sel3 = default_official_selection(
+        pointers, applied_line=None, preferred_checkpoint="T-90m"
+    )
+    assert sel3 is not None
+    assert sel3.checkpoint == "T-90m"
+
+
+def test_default_selection_prefers_newest_manual_checkpoint() -> None:
+    """Without applied.json, newest written_at checkpoint wins (#364)."""
+    from fplt.analysis.overview import official_pointers_frame
+
+    older = OfficialPointer(
+        predict_run_id=_RUN,
+        plan_run_id="r_plan",
+        role="primary",
+        squad_mode="real",
+        written_at=datetime(2026, 11, 27, 11, 30, tzinfo=UTC),
+    )
+    newer = OfficialPointer(
+        predict_run_id=_RUN,
+        plan_run_id="r_plan_manual",
+        role="primary",
+        squad_mode="real",
+        written_at=datetime(2026, 11, 28, 7, 30, 15, tzinfo=UTC),
+    )
+    pointers = official_pointers_frame(
+        [
+            (_SEASON, 13, "T-90m", "v4_h3", older),
+            (_SEASON, 13, "manual-20261128T073015Z", "v4_h3", newer),
+        ]
+    )
+    sel = default_official_selection(pointers, applied_line=None)
+    assert sel is not None
+    assert sel.checkpoint == "manual-20261128T073015Z"
+    assert sel.plan_run_id == "r_plan_manual"
+    # Applied line still wins even when an older checkpoint.
+    sel_applied = default_official_selection(pointers, applied_line="v4_h3")
+    assert sel_applied is not None
+    assert sel_applied.checkpoint == "manual-20261128T073015Z"
 
 
 def test_default_selection_empty() -> None:
     assert default_official_selection(pl.DataFrame()) is None
+
+
+def test_applied_for_gw_prefers_t90m_then_none(tmp_path: Path) -> None:
+    """``_applied_for_gw`` scans checkpoints; returns None when none applied."""
+    from fplt.ui.data import DashboardStore
+    from fplt.ui.pages.this_week import _applied_for_gw
+
+    pointers = _pointers_frame()
+    store = DashboardStore(tmp_path)
+    assert _applied_for_gw(store, season=_SEASON, gw=13, pointers=pointers) is None
 
 
 def test_players_table_horizon_double_and_blank() -> None:

@@ -1326,6 +1326,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip ntfy/SMTP recommendation push even when plans were made",
     )
+    ops_tick.add_argument(
+        "--run-now",
+        action="store_true",
+        help=(
+            "On-demand official-slate preview under checkpoint=manual-<UTC stamp> "
+            "(no T-* markers, applied.json, or recommendation ntfy; #364)"
+        ),
+    )
     preflight = sub.add_parser(
         "preflight",
         parents=[log_flags],
@@ -1649,7 +1657,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     data_pull.add_argument("--gw", type=int, help="Gameweek (xor latest)")
     data_pull.add_argument("--season", help="Season key (default: max under official/)")
-    data_pull.add_argument("--checkpoint", default="T-90m", help="Default: T-90m")
+    data_pull.add_argument(
+        "--checkpoint",
+        default="T-90m",
+        help=(
+            "Concrete id (default T-90m) or alias: manual (newest manual-*), "
+            "latest (newest pointer of any checkpoint)"
+        ),
+    )
     data_pull.add_argument("--line", help="Line filter (default: all at checkpoint)")
     data_pull.add_argument("--data-dir", type=Path, help="Override FPLT_DATA_DIR")
     data_curate = data_sub.add_parser(
@@ -2349,15 +2364,25 @@ def _data_pull(args: argparse.Namespace) -> None:
         mirror_official_index,
         pull_official,
         require_data_remote,
-        resolve_latest_gw,
+        resolve_checkpoint_target,
     )
 
     if not args.official:
         print("fplt data pull: pass --official", file=sys.stderr)
         raise SystemExit(2)
-    if (args.selector == "latest") == (args.gw is not None):
+    checkpoint_arg = str(args.checkpoint)
+    alias = checkpoint_arg in ("manual", "latest")
+    if alias:
+        if args.selector == "latest" and args.gw is not None:
+            print(
+                "fplt data pull --official: pass at most one of 'latest' or --gw",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    elif (args.selector == "latest") == (args.gw is not None):
         print(
-            "fplt data pull --official: pass exactly one of 'latest' or --gw",
+            "fplt data pull --official: pass exactly one of 'latest' or --gw "
+            "(or use --checkpoint manual|latest)",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2368,19 +2393,22 @@ def _data_pull(args: argparse.Namespace) -> None:
         remote = require_data_remote()
         official_root = mirror_official_index(data_dir, remote)
         season = infer_official_season(official_root, args.season)
-        gw = (
-            resolve_latest_gw(
-                official_root, season=season, checkpoint=str(args.checkpoint)
+        pinned_gw = None if args.gw is None else int(args.gw)
+        if alias or args.selector == "latest" or pinned_gw is None:
+            gw, checkpoint = resolve_checkpoint_target(
+                official_root,
+                season=season,
+                checkpoint=checkpoint_arg,
+                gw=pinned_gw,
             )
-            if args.selector == "latest"
-            else int(args.gw)
-        )
+        else:
+            gw, checkpoint = pinned_gw, checkpoint_arg
         result = pull_official(
             data_dir,
             remote,
             season=season,
             gw=gw,
-            checkpoint=str(args.checkpoint),
+            checkpoint=checkpoint,
             line=args.line,
         )
     except (RemoteError, OfficialPullError) as exc:
@@ -2586,8 +2614,9 @@ def _ops_tick(args: argparse.Namespace) -> None:
             branch=str(args.branch),
             horizon=horizon,
             notify=not bool(args.no_notify),
+            run_now=bool(args.run_now),
         )
-    except (SnapshotFetchError, RemoteError) as exc:
+    except (SnapshotFetchError, RemoteError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
     print(format_ops_tick_status(result), end="")
