@@ -316,7 +316,11 @@ _LIVE_SLATE_KEYS = frozenset({"models", "plan_horizon", "pipeline", "lines"})
 
 
 def _live_slate_changed(base_yaml: str | None, head_yaml: str | None) -> bool:
-    """True when live-slate keys differ between base and head production YAML."""
+    """True when decision-slate keys differ between base and head production YAML.
+
+    ``shadow_predict`` line additions/edits (#389) do not retarget what we play,
+    so they alone do not require a promote-eval gate.
+    """
     if base_yaml is None and head_yaml is None:
         return False
     if base_yaml is None or head_yaml is None:
@@ -328,9 +332,31 @@ def _live_slate_changed(base_yaml: str | None, head_yaml: str | None) -> bool:
     base_map = cast(dict[str, Any], base_raw)
     head_map = cast(dict[str, Any], head_raw)
     for key in _LIVE_SLATE_KEYS:
+        if key == "lines":
+            base_lines = _decision_lines_payload(base_map.get("lines"))
+            head_lines = _decision_lines_payload(head_map.get("lines"))
+            if base_lines != head_lines:
+                return True
+            continue
         if base_map.get(key) != head_map.get(key):
             return True
     return False
+
+
+def _decision_lines_payload(raw: object) -> object:
+    """Return ``lines`` with ``shadow_predict`` entries stripped for gating."""
+    if not isinstance(raw, list):
+        return raw
+    kept: list[Any] = []
+    for item in cast(list[Any], raw):
+        if isinstance(item, dict):
+            entry = cast(dict[str, Any], item)
+            if entry.get("role") == "shadow_predict":
+                continue
+            kept.append(entry)
+        else:
+            kept.append(item)
+    return kept
 
 
 def _require_passing_promote_eval(

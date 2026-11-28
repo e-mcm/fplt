@@ -8,11 +8,14 @@ import polars as pl
 import pytest
 
 from fplt.analysis.last_week import (
+    benchmarks_table,
     default_post_gw_selection,
     header_fields,
     lines_season_to_date,
+    ops_review_table,
     pit_histogram,
     post_gw_catalog,
+    rank_context,
     reliability_diagram,
     season_panel,
     selection_bias_table,
@@ -56,7 +59,16 @@ def _manifest(
     )
 
 
-def _scorecard(*, gw: int, pts: int, ex: int | None, chip: str | None = None) -> dict:
+def _scorecard(
+    *,
+    gw: int,
+    pts: int,
+    ex: int | None,
+    chip: str | None = None,
+    fpl_average: float | None = None,
+    fpl_highest: float | None = None,
+    rank_change: float | None = None,
+) -> dict:
     return {
         "model_id": _MODEL,
         "season": _SEASON,
@@ -66,9 +78,9 @@ def _scorecard(*, gw: int, pts: int, ex: int | None, chip: str | None = None) ->
         "realised_points": pts,
         "realised_minus_plan_ev": 1.0,
         "pmf_percentile": 0.5,
-        "fpl_average": None,
-        "fpl_highest": None,
-        "rank_change": None,
+        "fpl_average": fpl_average,
+        "fpl_highest": fpl_highest,
+        "rank_change": rank_change,
         "season_points_to_date": pts,
         "points_at_rank": None,
         "percentile": None,
@@ -293,11 +305,115 @@ def test_season_and_week_panels_and_header() -> None:
         biggest_misses=pl.DataFrame(),
     )
     assert detail.scorecard.height == 1
+    assert detail.rank_context.height == 3
+    assert not detail.ops_review.is_empty()
     sel = default_post_gw_selection(post_gw_catalog([_manifest(run_id="r1", gw=1)]))
     assert sel is not None
     fields = header_fields(sel, finished_at="2026-11-28T12:00:00Z")
     assert fields["gw"] == 1
     assert fields["run_id"] == "r1"
+
+
+def test_rank_context_populated_and_missing() -> None:
+    filled = pl.DataFrame(
+        [
+            _scorecard(
+                gw=12,
+                pts=61,
+                ex=61,
+                fpl_average=45.0,
+                fpl_highest=120.0,
+                rank_change=1500.0,
+            )
+        ]
+    )
+    ctx = rank_context(filled)
+    assert ctx.height == 3
+    by_field = {str(r["field"]): r for r in ctx.iter_rows(named=True)}
+    assert float(by_field["fpl_average"]["value"]) == pytest.approx(45.0)
+    assert float(by_field["rank_change"]["value"]) == pytest.approx(1500.0)
+    assert by_field["rank_change"]["note"] == "positive = climbed"
+    empty = rank_context(pl.DataFrame())
+    assert empty.height == 3
+    assert all(r["note"] == "no scorecard" for r in empty.iter_rows(named=True))
+    missing = rank_context(pl.DataFrame([_scorecard(gw=1, pts=10, ex=10)]))
+    assert all(r["value"] is None for r in missing.iter_rows(named=True))
+
+
+def test_benchmarks_same_fixtures_and_openfpl_guard() -> None:
+    from datetime import UTC, datetime
+
+    stamp = datetime(2025, 11, 1, tzinfo=UTC)
+    primary = pl.DataFrame(
+        {
+            "player_key": [1, 2],
+            "fixture_id": [10, 11],
+            "xpts": [6.0, 4.0],
+        }
+    )
+    outcomes = pl.DataFrame(
+        {
+            "player_key": [1, 2],
+            "fixture_id": [10, 11],
+            "pts": [8, 2],
+        }
+    )
+    benches = pl.DataFrame(
+        {
+            "source": ["ep_next", "ep_next", "openfpl", "openfpl"],
+            "as_of_season": [_SEASON] * 4,
+            "as_of_gw": [12] * 4,
+            "target_season": [_SEASON] * 4,
+            "target_gw": [12] * 4,
+            "player_key": [1, 2, 1, 2],
+            "fixture_id": [10, 11, 10, 11],
+            "xpts": [5.0, 5.0, 7.0, 3.0],
+            "available_at": [stamp] * 4,
+            "quality_flag": [None, None, None, None],
+        }
+    )
+    table = benchmarks_table(primary, benches, outcomes, season=_SEASON, gw=12)
+    assert set(table["arm"].to_list()) == {"primary", "ep_next", "openfpl"}
+    primary_row = table.filter(pl.col("arm") == "primary").row(0, named=True)
+    assert int(primary_row["n"]) == 2
+    assert primary_row["rmse"] is not None
+    early = benchmarks_table(primary, benches, outcomes, season="2022-23", gw=12)
+    openfpl = early.filter(pl.col("arm") == "openfpl").row(0, named=True)
+    assert int(openfpl["n"]) == 0
+    assert "season guard" in str(openfpl["note"])
+    assert (
+        benchmarks_table(
+            pl.DataFrame(), pl.DataFrame(), pl.DataFrame(), season=_SEASON, gw=1
+        ).filter(pl.col("arm") == "primary")["note"][0]
+        == "no primary predictions"
+    )
+
+
+def test_ops_review_degrades_without_inputs() -> None:
+    empty = ops_review_table(
+        applied=None, freshness=[], timings=[], alarms=[], last_error=None
+    )
+    sections = {str(r["section"]) for r in empty.iter_rows(named=True)}
+    assert {"applied", "freshness", "timing", "alarm", "failure"} <= sections
+    applied = ops_review_table(
+        applied={
+            "checkpoint": "T-90m",
+            "line": "v4_h3",
+            "plan_run_id": "r_plan",
+            "submitted_at": "2026-11-28T12:00:00Z",
+        },
+        freshness=[{"key": "fpl_api", "value": "2026-11-28T10:00:00Z"}],
+        timings=[{"key": "T-90m", "value": "12.5s", "detail": "ops"}],
+        alarms=[{"key": "retry", "value": "alarm", "detail": "2026-11-28T11:00:00Z"}],
+        last_error="boom",
+    )
+    assert applied.filter(pl.col("section") == "applied").height == 4
+    assert (
+        applied.filter(
+            (pl.col("section") == "failure") & (pl.col("key") == "last_error")
+        )["value"][0]
+        == "boom"
+    )
 
 
 def test_parse_bin_slice_fallback() -> None:
@@ -385,3 +501,74 @@ def test_catalog_finished_at_naive_and_none() -> None:
     sel = default_post_gw_selection(post_gw_catalog([running_like]))
     assert sel is not None
     assert header_fields(sel)["finished_at"] == "—"
+
+
+def test_benchmarks_edge_paths_and_helpers() -> None:
+    from datetime import UTC, datetime
+
+    from fplt.analysis import last_week as mod
+
+    stamp = datetime(2025, 11, 1, tzinfo=UTC)
+    assert benchmarks_table(
+        pl.DataFrame(), pl.DataFrame(), pl.DataFrame(), season="", gw=1
+    ).is_empty()
+    # Source present in archive but empty after filter → no rows for source.
+    benches = pl.DataFrame(
+        {
+            "source": ["ep_next"],
+            "as_of_season": [_SEASON],
+            "as_of_gw": [12],
+            "target_season": [_SEASON],
+            "target_gw": [12],
+            "player_key": [99],
+            "fixture_id": [99],
+            "xpts": [1.0],
+            "available_at": [stamp],
+            "quality_flag": [None],
+        }
+    )
+    # Primary keys exclude the only bench row → scored overlap empty after join.
+    primary = pl.DataFrame({"player_key": [1], "fixture_id": [10], "xpts": [5.0]})
+    outcomes = pl.DataFrame({"player_key": [1], "fixture_id": [10], "pts": [4]})
+    table = benchmarks_table(primary, benches, outcomes, season=_SEASON, gw=12)
+    ep = table.filter(pl.col("arm") == "ep_next").row(0, named=True)
+    assert int(ep["n"]) == 0
+    assert ep["note"] in {"no scored overlap", "no rows for source"}
+
+    # actual_pts alias + missing pts columns + no overlap join.
+    aliased = mod._outcome_pts(
+        pl.DataFrame({"player_key": [1], "fixture_id": [1], "actual_pts": [3]})
+    )
+    assert "pts" in aliased.columns
+    assert mod._outcome_pts(
+        pl.DataFrame({"player_key": [1], "fixture_id": [1], "noise": [1]})
+    ).is_empty()
+    arm = mod._arm_on_fixtures(
+        pl.DataFrame({"player_key": [1], "fixture_id": [1], "xpts": [2.0]}),
+        pl.DataFrame({"player_key": [2], "fixture_id": [2], "pts": [1]}),
+        arm="ep_next",
+    )
+    assert arm["note"] == "no scored overlap"
+    assert mod._arm_on_fixtures(
+        pl.DataFrame({"player_key": [1]}),  # missing columns
+        pl.DataFrame({"player_key": [1], "fixture_id": [1], "pts": [1]}),
+        arm="primary",
+    )["note"] in {"no predictions", "no primary predictions", "no outcomes"}
+    assert (
+        mod._arm_on_fixtures(
+            pl.DataFrame({"player_key": [1], "fixture_id": [1], "xpts": [1.0]}),
+            pl.DataFrame(),
+            arm="ep_next",
+        )["note"]
+        == "no outcomes"
+    )
+    assert mod._season_before("not-a-season", "2024-25") is True
+    assert mod._as_str(None) is None
+    assert mod._as_str(3) == "3"
+    # week_detail without season/gw and empty scorecard uses empty benchmarks.
+    detail = week_detail(
+        scorecard=pl.DataFrame(),
+        attribution=pl.DataFrame(),
+        biggest_misses=pl.DataFrame(),
+    )
+    assert detail.benchmarks.is_empty()

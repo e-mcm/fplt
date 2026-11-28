@@ -23,19 +23,37 @@ def test_committed_production_yaml_defaults() -> None:
     assert ops.min_prior_seasons == 3
     assert default_production_path().is_file()
     assert default_production_path().name == "production.yaml"
-    assert [entry.line for entry in ops.lines] == [
+    assert [entry.line for entry in ops.decision_lines()] == [
         "v4_h3",
         "v4_h5",
         "v4_h7",
         "v4_h9",
+    ]
+    assert [entry.line for entry in ops.shadow_predict_lines()] == [
+        "ep_next_h1",
+        "openfpl_h1",
+        "dc_v3_h1",
+        "dc_v2_h1",
+        "rolling_mean_h1",
+        "lgbm_probs_h1",
+        "forecast_combine_h1",
     ]
     primary = ops.primary_line()
     assert primary.role == "primary"
     assert primary.squad_mode == "real"
     assert primary.horizon == 3
     assert ops.predict_groups() == {"dc_layered_v4_native": 9}
+    assert ops.shadow_predict_groups() == {
+        "ep_next_v1": 1,
+        "openfpl_v1": 1,
+        "dc_layered_v3": 1,
+        "dc_layered_v2": 1,
+        "rolling_mean_v1": 1,
+        "lgbm_probs_v1": 1,
+        "forecast_combine_probs_v1": 1,
+    }
     for entry in ops.lines:
-        if entry.role == "candidate":
+        if entry.role in ("candidate", "shadow_predict"):
             assert entry.squad_mode == "virtual"
 
 
@@ -271,6 +289,91 @@ def test_primary_rejects_virtual_squad_mode() -> None:
             role="primary",
             squad_mode="virtual",
         )
+
+
+def test_shadow_predict_defaults_virtual_and_is_excluded_from_slate() -> None:
+    """#389: shadow_predict is predict-only; official_slate omits it."""
+    pipeline = live_pipeline_defaults(model="dc_layered_v4", horizon=3)
+    ops = ProductionOps(
+        models=["dc_layered_v4"],
+        plan_horizon=3,
+        pipeline=pipeline,
+        lines=[
+            OfficialLine(
+                line="primary",
+                spec="dc_layered_v4",
+                horizon=3,
+                role="primary",
+            ),
+            OfficialLine(
+                line="shadow_rm",
+                spec="rolling_mean_v1",
+                horizon=1,
+                role="shadow_predict",
+            ),
+        ],
+    )
+    assert ops.shadow_predict_lines()[0].squad_mode == "virtual"
+    assert ops.predict_groups() == {"dc_layered_v4": 3}
+    assert ops.shadow_predict_groups() == {"rolling_mean_v1": 1}
+    horizons, lines, _cp = ops.official_slate()
+    assert horizons == {"dc_layered_v4": 3}
+    assert [line.line for line in lines] == ["primary"]
+
+
+def test_shadow_predict_must_not_extend_shared_decision_horizon() -> None:
+    """#389: validator — shadow_predict needs no horizon beyond decision predict."""
+    pipeline = live_pipeline_defaults(model="dc_layered_v4", horizon=3)
+    with pytest.raises(ValidationError, match="must not extend the decision slate"):
+        ProductionOps(
+            models=["dc_layered_v4"],
+            plan_horizon=3,
+            pipeline=pipeline,
+            lines=[
+                OfficialLine(
+                    line="primary",
+                    spec="dc_layered_v4",
+                    horizon=3,
+                    role="primary",
+                ),
+                OfficialLine(
+                    line="shadow_same_spec",
+                    spec="dc_layered_v4",
+                    horizon=9,
+                    role="shadow_predict",
+                ),
+            ],
+        )
+
+
+def test_yaml_shadow_predict_line_loads(tmp_path: Path) -> None:
+    path = tmp_path / "production.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "models": ["dc_layered_v4"],
+                "plan_horizon": 3,
+                "lines": [
+                    {
+                        "line": "primary",
+                        "spec": "dc_layered_v4",
+                        "horizon": 3,
+                        "role": "primary",
+                    },
+                    {
+                        "line": "rm_h1",
+                        "spec": "rolling_mean_v1",
+                        "horizon": 1,
+                        "role": "shadow_predict",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ops = load_production_ops(path, environ={})
+    assert len(ops.shadow_predict_lines()) == 1
+    assert ops.shadow_predict_lines()[0].line == "rm_h1"
 
 
 def test_yaml_lines_reject_non_mapping_entries(tmp_path: Path) -> None:

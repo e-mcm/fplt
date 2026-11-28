@@ -1,4 +1,4 @@
-"""Pandera schemas for the Last-week UI page (#396 / Spec PR8)."""
+"""Pandera schemas for the Last-week UI page (#396 / #397)."""
 
 from __future__ import annotations
 
@@ -97,6 +97,49 @@ class LastWeekSelectionBiasSchema(pa.DataFrameModel):
         coerce = True
 
 
+class LastWeekRankContextSchema(pa.DataFrameModel):
+    """FPL average / highest and manager rank change (#397 / Spec §2.2 A)."""
+
+    field: str
+    label: str
+    value: float = pa.Field(nullable=True)
+    note: str = pa.Field(nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["field"]  # noqa: RUF012
+
+
+class LastWeekBenchmarksSchema(pa.DataFrameModel):
+    """Primary vs ep_next / OpenFPL on shared fixtures (#397 / Spec §2.2 C)."""
+
+    arm: str
+    n: int = pa.Field(ge=0)
+    rmse: float = pa.Field(nullable=True)
+    mae: float = pa.Field(nullable=True)
+    mean_error: float = pa.Field(nullable=True)
+    note: str = pa.Field(nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+        unique = ["arm"]  # noqa: RUF012
+
+
+class LastWeekOpsReviewSchema(pa.DataFrameModel):
+    """Applied checkpoint, freshness, timings, alarms (#397 / Spec §2.2 D)."""
+
+    section: str
+    key: str
+    value: str = pa.Field(nullable=True)
+    detail: str = pa.Field(nullable=True)
+
+    class Config(pa.DataFrameModel.Config):
+        strict = True
+        coerce = True
+
+
 LAST_WEEK_CATALOG_COLUMNS: dict[str, pl.DataType] = {
     "run_id": pl.Utf8(),
     "season": pl.Utf8(),
@@ -150,16 +193,45 @@ LAST_WEEK_SELECTION_BIAS_COLUMNS: dict[str, pl.DataType] = {
     "n": pl.Int64(),
 }
 
+LAST_WEEK_RANK_CONTEXT_COLUMNS: dict[str, pl.DataType] = {
+    "field": pl.Utf8(),
+    "label": pl.Utf8(),
+    "value": pl.Float64(),
+    "note": pl.Utf8(),
+}
+
+LAST_WEEK_BENCHMARKS_COLUMNS: dict[str, pl.DataType] = {
+    "arm": pl.Utf8(),
+    "n": pl.Int64(),
+    "rmse": pl.Float64(),
+    "mae": pl.Float64(),
+    "mean_error": pl.Float64(),
+    "note": pl.Utf8(),
+}
+
+LAST_WEEK_OPS_REVIEW_COLUMNS: dict[str, pl.DataType] = {
+    "section": pl.Utf8(),
+    "key": pl.Utf8(),
+    "value": pl.Utf8(),
+    "detail": pl.Utf8(),
+}
+
 __all__ = [
+    "LAST_WEEK_BENCHMARKS_COLUMNS",
     "LAST_WEEK_CATALOG_COLUMNS",
     "LAST_WEEK_LINES_STD_COLUMNS",
+    "LAST_WEEK_OPS_REVIEW_COLUMNS",
     "LAST_WEEK_PIT_HIST_COLUMNS",
+    "LAST_WEEK_RANK_CONTEXT_COLUMNS",
     "LAST_WEEK_RELIABILITY_COLUMNS",
     "LAST_WEEK_SELECTION_BIAS_COLUMNS",
     "LAST_WEEK_SKILL_COLUMNS",
+    "LastWeekBenchmarksSchema",
     "LastWeekCatalogSchema",
     "LastWeekLinesStdSchema",
+    "LastWeekOpsReviewSchema",
     "LastWeekPitHistSchema",
+    "LastWeekRankContextSchema",
     "LastWeekReliabilitySchema",
     "LastWeekSelectionBiasSchema",
     "LastWeekSkillSchema",
