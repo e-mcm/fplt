@@ -105,7 +105,7 @@ def run_minutes_measurement(
         spec,
         doubtful_chance=doubtful_chance,
     )
-    summary = _summarise(detail, store, season=season, model_name=spec.name)
+    summary = summarise_minutes_detail(detail, model_name=spec.name)
     misses = weekly_minutes_misses(detail, top_per_gw=top_misses_per_gw)
     out = output_dir or (
         data_dir / "minutes_measurement" / f"{season}_gw{from_gw}-{to_gw}"
@@ -432,14 +432,23 @@ def _collect_detail(
     return pl.DataFrame(rows)
 
 
-def _summarise(
+def summarise_minutes_detail(
     detail: pl.DataFrame,
-    store: DataStore,
     *,
-    season: str,
     model_name: str,
 ) -> pl.DataFrame:
-    del store, season  # reserved for future pool rebuilds; pool flag is on detail
+    """Build the minutes-measurement summary from a collected detail frame.
+
+    Same rows as ``run_minutes_measurement`` writes to ``summary.parquet``.
+    Exposed for the Measure adapter (toolkit §2.3) without re-running fits.
+
+    Args:
+        detail: Player–fixture minutes diagnostic rows (pool flag on frame).
+        model_name: Arm label written into the summary ``model_name`` column.
+
+    Returns:
+        Validated ``MinutesMeasurementSummarySchema`` rows.
+    """
     rows: list[dict[str, object]] = []
     if detail.is_empty():
         empty = pl.DataFrame(schema=MINUTES_MEASUREMENT_SUMMARY_COLUMNS)
@@ -705,6 +714,7 @@ __all__ = [
     "brier_score",
     "classify_error_regime",
     "format_misses_markdown",
+    "summarise_minutes_detail",
     "format_summary_table",
     "fpl_flag_label",
     "log_score",

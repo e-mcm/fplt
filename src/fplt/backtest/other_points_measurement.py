@@ -104,7 +104,7 @@ def run_other_points_measurement(
     as_ofs = [GWKey(season, gw) for gw in range(from_gw, to_gw + 1)]
     detail = _collect_detail(pit, store, as_ofs, spec)
     captain = captain_regret_by_gw(detail)
-    summary = _summarise(detail, captain, model_name=spec.name)
+    summary = summarise_other_points_detail(detail, captain, model_name=spec.name)
     out = output_dir or (
         data_dir / "other_points_measurement" / f"{season}_gw{from_gw}-{to_gw}"
     )
@@ -403,12 +403,25 @@ def _collect_detail(
     return pl.DataFrame(rows)
 
 
-def _summarise(
+def summarise_other_points_detail(
     detail: pl.DataFrame,
     captain: pl.DataFrame,
     *,
     model_name: str,
 ) -> pl.DataFrame:
+    """Build the other-points measurement summary from detail + captain rows.
+
+    Same rows as ``run_other_points_measurement`` writes to ``summary.parquet``.
+    Exposed for the Measure adapter (toolkit §2.3) without re-running fits.
+
+    Args:
+        detail: Player–fixture other-points diagnostic rows.
+        captain: Per-GW captain-regret proxy (``captain_regret_by_gw``).
+        model_name: Arm label written into the summary ``model_name`` column.
+
+    Returns:
+        Validated ``OtherPointsMeasurementSummarySchema`` rows.
+    """
     rows: list[dict[str, object]] = []
     empty_summary = pl.DataFrame(schema=OTHER_POINTS_MEASUREMENT_SUMMARY_COLUMNS)
     if detail.is_empty():
@@ -805,5 +818,6 @@ __all__ = [
     "minutes_bucket",
     "pearson_corr",
     "run_other_points_measurement",
+    "summarise_other_points_detail",
     "team_goals_band",
 ]
