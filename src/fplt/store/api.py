@@ -16,7 +16,12 @@ from pathlib import Path
 
 import polars as pl
 
-from fplt.backtest.ledger import align_ledger_columns, empty_ledger, ledger_path
+from fplt.backtest.ledger import (
+    align_ledger_columns,
+    empty_ledger,
+    ledger_path,
+    predictions_from_benchmarks,
+)
 from fplt.data.pit import PITView
 from fplt.data.store import DataStore
 from fplt.schemas.ledger import LEDGER_COLUMNS, LedgerSchema
@@ -285,6 +290,7 @@ class Store:
         runs: Sequence[str] | None = None,
         *,
         outcomes_build: str | None = None,
+        include_benchmarks: bool | None = None,
     ) -> pl.DataFrame:
         """Join predictions to ``player_fixture_outcomes`` (ledger-as-view).
 
@@ -294,7 +300,10 @@ class Store:
 
         When ``runs`` is omitted, every succeeded predict run under ``runs/``
         is included. If none exist, a legacy ``ledger/predictions`` parquet
-        (B10 archive) is read when present.
+        (B10 archive) is read when present. Archived ``benchmark_projections``
+        (ep_next / OpenFPL) are appended as mean-only pseudo-models by default
+        when discovering the full view (#390); OpenFPL seasons before
+        ``OPENFPL_COMPARE_FROM`` are excluded.
 
         Args:
             runs: Optional run ids whose ``predictions/player_fixture.parquet``
@@ -302,11 +311,21 @@ class Store:
             outcomes_build: Curated build id to pin; ``None`` uses the latest
                 build that contains outcomes, else staged
                 ``player_fixture_outcomes``.
+            include_benchmarks: When ``None`` (default), include archives only
+                for the full discovered view (``runs is None``). Pass ``True``
+                / ``False`` to force.
 
         Returns:
             ``LedgerSchema`` rows (possibly empty).
         """
         predictions = self._predictions(runs)
+        with_benchmarks = (
+            include_benchmarks if include_benchmarks is not None else runs is None
+        )
+        if with_benchmarks:
+            predictions = _concat_predictions(
+                predictions, predictions_from_benchmarks(self.data_dir)
+            )
         if predictions.is_empty():
             return empty_ledger()
         outcomes = self._player_outcomes(outcomes_build)
@@ -438,6 +457,15 @@ def _legacy_predictions(data_dir: Path) -> pl.DataFrame:
     if not path.is_file():
         return empty_ledger()
     return _strip_actuals(align_ledger_columns(pl.read_parquet(path)))
+
+
+def _concat_predictions(left: pl.DataFrame, right: pl.DataFrame) -> pl.DataFrame:
+    """Stack two ledger-shaped prediction frames, tolerating empties."""
+    if left.is_empty():
+        return right
+    if right.is_empty():
+        return left
+    return align_ledger_columns(pl.concat([left, right], how="vertical_relaxed"))
 
 
 def _latest_outcomes(frame: pl.DataFrame) -> pl.DataFrame:
