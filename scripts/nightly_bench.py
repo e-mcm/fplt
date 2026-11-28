@@ -47,7 +47,10 @@ def _run_fixture(data_dir: Path, bucket_dir: Path) -> dict[str, float]:
     from pydantic import SecretStr
 
     from fplt.automation.bench import consolidate_fixture_phases
-    from fplt.automation.checkpoints import CheckpointState, save_checkpoint_state
+    from fplt.automation.checkpoints import (
+        write_notified_marker,
+        write_plan_checkpoint_marker,
+    )
     from fplt.automation.official_slate import run_official_checkpoint
     from fplt.automation.ops_tick import run_ops_tick
     from fplt.data.remote import Remote
@@ -58,8 +61,8 @@ def _run_fixture(data_dir: Path, bucket_dir: Path) -> dict[str, float]:
     from fplt.utils.timing import load_timing_records
     from tests.builders_e2e import (
         CURRENT_SEASON,
+        E2E_LINE,
         E2E_MODEL,
-        GW2_DEADLINE,
         NOW_T90M,
         PRIOR_SEASONS,
         e2e_production_ops,
@@ -117,15 +120,10 @@ def _run_fixture(data_dir: Path, bucket_dir: Path) -> dict[str, float]:
             path.parent.mkdir(parents=True, exist_ok=True)
             pl.DataFrame({"player_key": [1], "step": [0]}).write_parquet(path)
 
-        save_checkpoint_state(
-            data_dir,
-            CheckpointState(
-                key=GWKey(CURRENT_SEASON, 2),
-                deadline=GW2_DEADLINE,
-                done=frozenset({"T-24h", "T-6h"}),
-                alarms_done=frozenset(),
-            ),
-        )
+        key = GWKey(CURRENT_SEASON, 2)
+        write_plan_checkpoint_marker(data_dir, key, "T-24h", primary_line=E2E_LINE)
+        write_plan_checkpoint_marker(data_dir, key, "T-6h", primary_line=E2E_LINE)
+        write_notified_marker(data_dir, key)
         settings = Settings(
             data_dir=data_dir,
             data_bucket="fplt-data",

@@ -100,8 +100,9 @@ back to the default branch when the tag is missing). Capture dual-write
 `due_checkpoints` drives T−24h / T−6h / T−90m / T−30m plan+refresh windows
 (missed minutes catch up on the next tick; apply at T−90m is stubbed until
 ops-05). The no-plan alarm retries at T−3h and sends an urgent ntfy at T−2h
-when any production model still lacks a plan. Checkpoint completion state
-lives under `$FPLT_DATA_DIR/ops/checkpoint_state.json`.
+when any production model still lacks a plan. Checkpoint / alarm completion
+is derived from write-once markers under
+`official/season=<s>/gw=<gw>/` (not a mutable state file).
 
 **Promote / roll back `prod`:** `gh workflow run release.yml -f ref=main` (or
 `make release ARGS='--ref …'`). Refused during the freeze window, on red CI, or

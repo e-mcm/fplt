@@ -5,6 +5,15 @@ GitHub Actions cron is best-effort: ticks can arrive late or be dropped.
 that is not yet recorded in ``done``, so a missed T−24h still runs on the
 next tick. After the deadline nothing is due.
 
+**Done = write-once output exists in R2** (no mutable ops state). ``done`` /
+``alarms_done`` are derived from an ``rclone lsf official/season=/gw=/ -R``
+listing (or the local ``official/`` tree). Markers:
+
+* T−24h / T−30m — ``checkpoint=<id>/line=<primary>.json``
+* T−6h — that pointer **and** ``checkpoint=T-6h/notified.json``
+* T−90m — ``checkpoint=T-90m/line=<line>.json`` for every official slate line
+* no-plan alarms — ``alarms/<alarm_id>.json``
+
 Checkpoints (offsets before the deadline):
 
 * ``T-24h`` — full plan
@@ -25,17 +34,24 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from fplt.data.store import DataStore
+from fplt.store.official import official_checkpoint_dir, pointer_path
 from fplt.types import GWKey
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from fplt.data.remote import Remote
+    from fplt.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 CheckpointId = Literal["T-24h", "T-6h", "T-90m", "T-30m"]
 AlarmId = Literal["retry", "urgent"]
 
-_STATE_REL = Path("ops") / "checkpoint_state.json"
+_NOTIFIED_NAME = "notified.json"
 
 
 @dataclass(frozen=True)
@@ -43,7 +59,7 @@ class Checkpoint:
     """One deadline-relative ops action window.
 
     Attributes:
-        id: Stable identifier recorded in checkpoint state when completed.
+        id: Stable identifier recorded via write-once official markers.
         offset: How long before the deadline this checkpoint becomes due.
         plan: Create a plan when missing.
         refresh: Retire and rebuild when availability signals are newer.
@@ -113,23 +129,6 @@ class NoPlanAlarm:
 
     id: AlarmId
     offset: timedelta
-
-
-@dataclass(frozen=True)
-class CheckpointState:
-    """Persisted completion set for one upcoming deadline.
-
-    Attributes:
-        key: Gameweek the state belongs to.
-        deadline: That gameweek's ``deadline_time`` (UTC).
-        done: Checkpoint ids already completed for this deadline.
-        alarms_done: No-plan alarm ids already fired for this deadline.
-    """
-
-    key: GWKey
-    deadline: datetime
-    done: frozenset[str]
-    alarms_done: frozenset[str]
 
 
 def due_checkpoints(
@@ -245,125 +244,341 @@ def next_upcoming_deadline(
     return key, deadline
 
 
-def checkpoint_state_path(root: Path) -> Path:
-    """Return the on-disk path for checkpoint completion state."""
-    return root / _STATE_REL
+def official_gw_prefix(key: GWKey) -> str:
+    """Return the R2 / local prefix for one season/GW under ``official/``."""
+    return f"official/season={key.season}/gw={key.gw}"
 
 
-def load_checkpoint_state(root: Path) -> CheckpointState | None:
-    """Load persisted checkpoint state, or ``None`` when missing/corrupt.
-
-    Args:
-        root: Data directory (contains ``ops/``).
-
-    Returns:
-        Parsed state, or ``None`` when the file is absent or unreadable.
-    """
-    path = checkpoint_state_path(root)
-    if not path.is_file():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("checkpoint state unreadable at %s: %s", path, exc)
-        return None
-    if not isinstance(raw, dict):
-        return None
-    payload = cast(dict[str, Any], raw)
-    try:
-        season = str(payload["season"])
-        gw = int(payload["gw"])
-        deadline = _aware(datetime.fromisoformat(str(payload["deadline"])))
-        done_raw = payload.get("done", [])
-        alarms_raw = payload.get("alarms_done", [])
-        if not isinstance(done_raw, list) or not isinstance(alarms_raw, list):
-            raise TypeError("done and alarms_done must be lists")
-        done = frozenset(str(item) for item in cast(list[object], done_raw))
-        alarms = frozenset(str(item) for item in cast(list[object], alarms_raw))
-    except (KeyError, TypeError, ValueError) as exc:
-        logger.warning("checkpoint state invalid at %s: %s", path, exc)
-        return None
-    return CheckpointState(
-        key=GWKey(season, gw),
-        deadline=deadline,
-        done=done,
-        alarms_done=alarms,
-    )
-
-
-def save_checkpoint_state(root: Path, state: CheckpointState) -> Path:
-    """Write checkpoint completion state (overwrites the single status file).
-
-    Args:
-        root: Data directory.
-        state: State to persist for the current upcoming deadline.
-
-    Returns:
-        Path written.
-    """
-    path = checkpoint_state_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "season": state.key.season,
-        "gw": state.key.gw,
-        "deadline": _aware(state.deadline).isoformat(),
-        "done": sorted(state.done),
-        "alarms_done": sorted(state.alarms_done),
-    }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    return path
-
-
-def resolve_checkpoint_state(
+def list_official_gw_outputs(
     root: Path,
     key: GWKey,
-    deadline: datetime,
-) -> CheckpointState:
-    """Return state for ``key``/``deadline``, resetting when the deadline moves.
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> frozenset[str]:
+    """List relative paths under ``official/season=/gw=/`` (remote preferred).
+
+    Prefers ``rclone lsf -R`` against the data bucket when configured so a
+    fresh runner sees write-once markers without a full pull. Falls back to
+    the local tree when no remote is available.
+
+    Args:
+        root: Local data directory (fallback listing root).
+        key: Season / gameweek.
+        settings: Process settings for ``Remote.from_settings``.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        Relative paths such as ``checkpoint=T-6h/notified.json``.
+    """
+    from fplt.data.remote import Remote, RemoteError, lsf
+    from fplt.settings import get_settings
+
+    cfg = get_settings() if settings is None else settings
+    target = remote if remote is not None else Remote.from_settings(cfg)
+    prefix = official_gw_prefix(key)
+    if target is not None:
+        if target.kind != "data":
+            raise ValueError(
+                f"official listing requires the data bucket; got kind={target.kind!r}"
+            )
+        try:
+            return frozenset(lsf(target, prefix, recursive=True))
+        except RemoteError:
+            logger.exception(
+                "official lsf failed for %s; falling back to local",
+                prefix,
+            )
+    return _list_local_official_gw(root, key)
+
+
+def done_from_official_listing(
+    listing: Iterable[str],
+    *,
+    primary_line: str,
+    slate_lines: Iterable[str],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Derive checkpoint / alarm completion sets from an official GW listing.
+
+    Args:
+        listing: Relative paths under ``official/season=/gw=/``.
+        primary_line: Primary official line name (plan-checkpoint marker).
+        slate_lines: Every line in ``ProductionOps.official_slate`` (T−90m).
+
+    Returns:
+        ``(done_checkpoints, alarms_done)``.
+    """
+    paths = frozenset(listing)
+    slate = tuple(slate_lines)
+    done: set[str] = set()
+    for checkpoint in CHECKPOINTS:
+        if checkpoint.id == "T-90m":
+            if slate and all(
+                f"checkpoint=T-90m/line={line}.json" in paths for line in slate
+            ):
+                done.add("T-90m")
+            continue
+        pointer = f"checkpoint={checkpoint.id}/line={primary_line}.json"
+        if pointer not in paths:
+            continue
+        if checkpoint.id == "T-6h":
+            if f"checkpoint=T-6h/{_NOTIFIED_NAME}" in paths:
+                done.add("T-6h")
+        else:
+            done.add(checkpoint.id)
+    alarms = frozenset(
+        alarm for alarm in ("retry", "urgent") if f"alarms/{alarm}.json" in paths
+    )
+    return frozenset(done), alarms
+
+
+def resolve_done_sets(
+    root: Path,
+    key: GWKey,
+    *,
+    primary_line: str,
+    slate_lines: Iterable[str],
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """List official outputs and return ``(done, alarms_done)``.
+
+    Args:
+        root: Local data directory.
+        key: Upcoming gameweek.
+        primary_line: Primary line name for plan-checkpoint markers.
+        slate_lines: Official slate line names for T−90m completeness.
+        settings: Process settings.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        Checkpoint ids and alarm ids already completed for ``key``.
+    """
+    listing = list_official_gw_outputs(root, key, settings=settings, remote=remote)
+    return done_from_official_listing(
+        listing,
+        primary_line=primary_line,
+        slate_lines=slate_lines,
+    )
+
+
+def notified_path(root: Path, key: GWKey, *, checkpoint: str = "T-6h") -> Path:
+    """Path for the write-once T−6h notify marker."""
+    return (
+        official_checkpoint_dir(
+            root, season=key.season, gw=key.gw, checkpoint=checkpoint
+        )
+        / _NOTIFIED_NAME
+    )
+
+
+def alarm_marker_path(root: Path, key: GWKey, alarm_id: str) -> Path:
+    """Path for a write-once no-plan alarm marker."""
+    return (
+        root
+        / "official"
+        / f"season={key.season}"
+        / f"gw={key.gw}"
+        / "alarms"
+        / f"{alarm_id}.json"
+    )
+
+
+def write_plan_checkpoint_marker(
+    root: Path,
+    key: GWKey,
+    checkpoint_id: str,
+    *,
+    primary_line: str,
+    written_at: datetime | None = None,
+) -> Path:
+    """Write ``line=<primary>.json`` once for a plan checkpoint (T−24h/T−6h/T−30m).
+
+    Idempotent: if the marker already exists, return it without error.
 
     Args:
         root: Data directory.
-        key: Upcoming gameweek.
-        deadline: That gameweek's deadline.
+        key: Season / gameweek.
+        checkpoint_id: Checkpoint id (directory name).
+        primary_line: Primary official line name.
+        written_at: Marker timestamp (default now UTC).
 
     Returns:
-        Existing state when it matches ``key`` and ``deadline``, otherwise a
-        fresh empty state.
+        Path of the marker file.
     """
-    cut = _aware(deadline)
-    existing = load_checkpoint_state(root)
-    if (
-        existing is not None
-        and existing.key == key
-        and _aware(existing.deadline) == cut
-    ):
-        return existing
-    return CheckpointState(
-        key=key,
-        deadline=cut,
-        done=frozenset(),
-        alarms_done=frozenset(),
+    dest = pointer_path(
+        root,
+        season=key.season,
+        gw=key.gw,
+        line=primary_line,
+        checkpoint=checkpoint_id,
     )
+    moment = _aware(written_at or datetime.now(UTC))
+    payload = {
+        "checkpoint": checkpoint_id,
+        "line": primary_line,
+        "kind": "plan_checkpoint",
+        "written_at": moment.isoformat(),
+    }
+    return _write_json_once(dest, payload)
 
 
-def mark_checkpoint_done(state: CheckpointState, checkpoint_id: str) -> CheckpointState:
-    """Return a copy of ``state`` with ``checkpoint_id`` added to ``done``."""
-    return CheckpointState(
-        key=state.key,
-        deadline=state.deadline,
-        done=frozenset(set(state.done) | {checkpoint_id}),
-        alarms_done=state.alarms_done,
-    )
+def write_notified_marker(
+    root: Path,
+    key: GWKey,
+    *,
+    written_at: datetime | None = None,
+) -> Path:
+    """Write ``checkpoint=T-6h/notified.json`` once after a successful ntfy send.
+
+    Idempotent: existing file is left untouched.
+
+    Args:
+        root: Data directory.
+        key: Season / gameweek.
+        written_at: Marker timestamp (default now UTC).
+
+    Returns:
+        Path of the marker file.
+    """
+    dest = notified_path(root, key)
+    moment = _aware(written_at or datetime.now(UTC))
+    payload = {
+        "checkpoint": "T-6h",
+        "kind": "notified",
+        "written_at": moment.isoformat(),
+    }
+    return _write_json_once(dest, payload)
 
 
-def mark_alarm_done(state: CheckpointState, alarm_id: str) -> CheckpointState:
-    """Return a copy of ``state`` with ``alarm_id`` added to ``alarms_done``."""
-    return CheckpointState(
-        key=state.key,
-        deadline=state.deadline,
-        done=state.done,
-        alarms_done=frozenset(set(state.alarms_done) | {alarm_id}),
-    )
+def write_alarm_marker(
+    root: Path,
+    key: GWKey,
+    alarm_id: str,
+    *,
+    written_at: datetime | None = None,
+) -> Path:
+    """Write ``alarms/<alarm_id>.json`` once after a no-plan alarm fires.
+
+    Idempotent: existing file is left untouched.
+
+    Args:
+        root: Data directory.
+        key: Season / gameweek.
+        alarm_id: ``retry`` or ``urgent``.
+        written_at: Marker timestamp (default now UTC).
+
+    Returns:
+        Path of the marker file.
+    """
+    dest = alarm_marker_path(root, key, alarm_id)
+    moment = _aware(written_at or datetime.now(UTC))
+    payload = {
+        "alarm": alarm_id,
+        "kind": "no_plan_alarm",
+        "written_at": moment.isoformat(),
+    }
+    return _write_json_once(dest, payload)
+
+
+def push_checkpoint_markers(
+    root: Path,
+    key: GWKey,
+    checkpoint_id: str,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> bool:
+    """Push write-once markers under ``official/.../checkpoint=<id>/``.
+
+    Soft-skips when no data bucket is configured. Existing remote objects are
+    left alone (``push`` uses ``--immutable``; identical first write wins).
+
+    Args:
+        root: Local data directory.
+        key: Season / gameweek.
+        checkpoint_id: Checkpoint directory to push.
+        settings: Process settings.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        True when a push was attempted.
+    """
+    from fplt.data.remote import Remote, RemoteError
+    from fplt.settings import get_settings
+    from fplt.store.push import push_official
+
+    cfg = get_settings() if settings is None else settings
+    target = remote if remote is not None else Remote.from_settings(cfg)
+    if target is None:
+        return False
+    try:
+        push_official(
+            root,
+            season=key.season,
+            gw=key.gw,
+            checkpoint=checkpoint_id,
+            settings=cfg,
+            remote=target,
+        )
+    except (RemoteError, FileNotFoundError, ValueError) as exc:
+        # Immutable conflict when the marker is already on R2 is success.
+        detail = str(exc).lower()
+        if "immutable" in detail or "already" in detail:
+            logger.info(
+                "official checkpoint markers already on remote key=%s cp=%s",
+                key,
+                checkpoint_id,
+            )
+            return True
+        logger.exception(
+            "failed to push checkpoint markers key=%s cp=%s",
+            key,
+            checkpoint_id,
+        )
+        return False
+    return True
+
+
+def push_alarm_markers(
+    root: Path,
+    key: GWKey,
+    *,
+    settings: Settings | None = None,
+    remote: Remote | None = None,
+) -> bool:
+    """Push write-once ``alarms/`` markers for one GW.
+
+    Args:
+        root: Local data directory.
+        key: Season / gameweek.
+        settings: Process settings.
+        remote: Optional pre-built remote (tests).
+
+    Returns:
+        True when a push was attempted.
+    """
+    from fplt.data.remote import Remote, RemoteError, push
+    from fplt.settings import get_settings
+
+    cfg = get_settings() if settings is None else settings
+    target = remote if remote is not None else Remote.from_settings(cfg)
+    if target is None:
+        return False
+    local = root / "official" / f"season={key.season}" / f"gw={key.gw}" / "alarms"
+    if not local.is_dir() or not any(local.iterdir()):
+        return False
+    prefix = f"{official_gw_prefix(key)}/alarms"
+    try:
+        push(target, local, prefix)
+    except (RemoteError, ValueError) as exc:
+        detail = str(exc).lower()
+        if "immutable" in detail or "already" in detail:
+            logger.info("alarm markers already on remote key=%s", key)
+            return True
+        logger.exception("failed to push alarm markers key=%s", key)
+        return False
+    return True
 
 
 def checkpoint_by_id(checkpoint_id: str) -> Checkpoint:
@@ -378,6 +593,25 @@ def checkpoint_by_id(checkpoint_id: str) -> Checkpoint:
         raise KeyError(f"unknown checkpoint id: {checkpoint_id!r}") from exc
 
 
+def _list_local_official_gw(root: Path, key: GWKey) -> frozenset[str]:
+    base = root / "official" / f"season={key.season}" / f"gw={key.gw}"
+    if not base.is_dir():
+        return frozenset()
+    out: set[str] = set()
+    for path in base.rglob("*"):
+        if path.is_file():
+            out.add(path.relative_to(base).as_posix())
+    return frozenset(out)
+
+
+def _write_json_once(dest: Path, payload: dict[str, Any]) -> Path:
+    if dest.is_file():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return dest
+
+
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
@@ -389,18 +623,22 @@ __all__ = [
     "AlarmId",
     "Checkpoint",
     "CheckpointId",
-    "CheckpointState",
     "NO_PLAN_RETRY_OFFSET",
     "NO_PLAN_URGENT_OFFSET",
     "NoPlanAlarm",
+    "alarm_marker_path",
     "checkpoint_by_id",
-    "checkpoint_state_path",
+    "done_from_official_listing",
     "due_checkpoints",
     "due_no_plan_alarms",
-    "load_checkpoint_state",
-    "mark_alarm_done",
-    "mark_checkpoint_done",
+    "list_official_gw_outputs",
     "next_upcoming_deadline",
-    "resolve_checkpoint_state",
-    "save_checkpoint_state",
+    "notified_path",
+    "official_gw_prefix",
+    "push_alarm_markers",
+    "push_checkpoint_markers",
+    "resolve_done_sets",
+    "write_alarm_marker",
+    "write_notified_marker",
+    "write_plan_checkpoint_marker",
 ]

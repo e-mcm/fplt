@@ -20,7 +20,10 @@ from fplt.analysis.this_week import (
     plan_panel,
     players_table,
 )
-from fplt.automation.checkpoints import CheckpointState, save_checkpoint_state
+from fplt.automation.checkpoints import (
+    write_notified_marker,
+    write_plan_checkpoint_marker,
+)
 from fplt.automation.history_guard import HistoryGuardError
 from fplt.automation.official_slate import run_official_checkpoint
 from fplt.automation.ops_tick import run_ops_tick
@@ -43,7 +46,6 @@ from tests.builders_e2e import (
     CURRENT_SEASON,
     E2E_LINE,
     E2E_MODEL,
-    GW2_DEADLINE,
     NOW_T90M,
     e2e_production_ops,
     seed_e2e_bucket,
@@ -133,15 +135,10 @@ def _configure_tick(
         r2_access_key_id=SecretStr("test"),
         r2_secret_access_key=SecretStr("test"),
     )
-    save_checkpoint_state(
-        data,
-        CheckpointState(
-            key=GWKey(CURRENT_SEASON, 2),
-            deadline=GW2_DEADLINE,
-            done=frozenset({"T-24h", "T-6h"}),
-            alarms_done=frozenset(),
-        ),
-    )
+    key = GWKey(CURRENT_SEASON, 2)
+    write_plan_checkpoint_marker(data, key, "T-24h", primary_line=E2E_LINE)
+    write_plan_checkpoint_marker(data, key, "T-6h", primary_line=E2E_LINE)
+    write_notified_marker(data, key)
     _seed_catchup_plan_markers(data)
     return bucket, data, remote, settings
 

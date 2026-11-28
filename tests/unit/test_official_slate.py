@@ -106,17 +106,16 @@ def test_ops_tick_t90m_calls_official_slate(
         "fplt.automation.ops_tick.enforce_training_history",
         lambda *a, **k: None,
     )
-    from fplt.automation.checkpoints import CheckpointState, save_checkpoint_state
-
-    save_checkpoint_state(
-        tmp_path,
-        CheckpointState(
-            key=GWKey("2024-25", 3),
-            deadline=_DEADLINE,
-            done=frozenset({"T-24h", "T-6h"}),
-            alarms_done=frozenset(),
-        ),
+    from fplt.automation.checkpoints import (
+        write_notified_marker,
+        write_plan_checkpoint_marker,
     )
+
+    key = GWKey("2024-25", 3)
+    primary = _tiny_ops().primary_line().line
+    write_plan_checkpoint_marker(tmp_path, key, "T-24h", primary_line=primary)
+    write_plan_checkpoint_marker(tmp_path, key, "T-6h", primary_line=primary)
+    write_notified_marker(tmp_path, key)
 
     result = run_ops_tick(
         tmp_path,
