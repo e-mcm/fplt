@@ -90,14 +90,32 @@ def _seed_captures(raw: Path) -> None:
 
 def _seed_plan(
     data_dir: Path, model_name: str, season: str, gw: int, horizon: int
-) -> Path:
+) -> str:
+    from tests.builders import write_test_plan_run
+
     specs = load_model_specs()
     model_id = specs[model_name].model_id
-    stamp = f"as_of={season}_gw{gw:02d}_h{horizon:02d}"
-    path = data_dir / "plans" / model_id / stamp / "part.parquet"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame({"x": [1]}).write_parquet(path)
-    return path
+    rows = [
+        {
+            "model_id": model_id,
+            "as_of_season": season,
+            "as_of_gw": gw,
+            "target_gw": gw + step,
+            "step": step,
+            "player_key": 100,
+            "position": "MID",
+            "team_key": 3,
+            "in_xi": True,
+            "captain": True,
+            "vice": False,
+            "bought": False,
+            "sold": False,
+            "xpts": 1.0,
+            "hit": 0.0,
+        }
+        for step in range(horizon)
+    ]
+    return write_test_plan_run(data_dir, pl.DataFrame(rows))
 
 
 def test_capture_status_requires_reason_when_null() -> None:

@@ -32,7 +32,6 @@ from fplt.optimise.plan import (
     covered_horizon,
     ensure_plan_chip_column,
     next_free_transfers,
-    plan_parquet,
 )
 from fplt.optimise.squad import select_squad
 from fplt.optimise.state import SquadState, load_squad_state
@@ -46,6 +45,7 @@ from fplt.schemas.explain import (
 )
 from fplt.schemas.plan import PlanSchema
 from fplt.scoring.rules import Rules
+from fplt.store.plan_runs import read_latest_plan
 from fplt.types import GWKey
 from fplt.utils.frames import require_dataframe, require_not_none
 
@@ -567,7 +567,7 @@ def run_explain(
     """Load ledger predictions and a saved plan; render explain markdown.
 
     Args:
-        data_dir: Data root with ``ledger/`` and ``plans/``.
+        data_dir: Data root with ``runs/`` (and ledger view over them).
         model_name: YAML spec name.
         season: Season label.
         gameweek: Deadline / as-of gameweek.
@@ -662,10 +662,18 @@ def run_explain(
     candidates: pl.DataFrame | None = None
     if include_decision:
         covered = covered_horizon(gameweek, horizon)
-        path = plan_parquet(data_dir, spec.model_id, season, gameweek, covered)
-        if not path.exists():
-            raise FileNotFoundError(f"plan not found: {path}")
-        raw = PlanSchema.validate(ensure_plan_chip_column(pl.read_parquet(path)))
+        try:
+            plan_rows = read_latest_plan(
+                data_dir,
+                spec_label=model_name,
+                key=GWKey(season, gameweek),
+                horizon=covered,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"plan not found for {model_name} {season} gw{gameweek} h{covered}"
+            ) from exc
+        raw = PlanSchema.validate(ensure_plan_chip_column(plan_rows))
         raw = require_dataframe(raw)
         candidates = candidates_as_of(view)
         plan_frame = raw

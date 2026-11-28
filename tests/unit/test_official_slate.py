@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from fplt.utils.timing import ops_timing_path as timing_ops_path
 from tests.unit._ops_tick_curated import patch_curated_ops_path
 
 _DEADLINE = datetime(2024, 9, 1, 17, 0, tzinfo=UTC)
+_HAS_RCLONE = shutil.which("rclone") is not None
 
 
 def _tiny_ops(*, model: str = "rolling_mean_v1", horizon: int = 1) -> ProductionOps:
@@ -142,6 +144,7 @@ def test_maybe_push_official_skips_without_bucket(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.skipif(not _HAS_RCLONE, reason="rclone binary not installed")
 def test_push_official_to_local_remote(tmp_path: Path) -> None:
     from fplt.data.remote import Remote
 
@@ -341,10 +344,6 @@ def test_official_predict_writes_run(
         lambda *a, **k: _Model(),
     )
     monkeypatch.setattr(
-        "fplt.automation.official_slate.write_predictions",
-        lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
         "fplt.automation.official_slate.ledger_rows",
         lambda *a, **k: empty_predictions(),
     )
@@ -429,7 +428,7 @@ def test_official_predict_unknown_model(tmp_path: Path) -> None:
         )
 
 
-def test_official_predict_tolerates_legacy_predictions(
+def test_official_predict_adhoc_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fplt.automation.official_slate import _slate_predict
@@ -450,10 +449,6 @@ def test_official_predict_tolerates_legacy_predictions(
         lambda *a, **k: _Model(),
     )
     monkeypatch.setattr(
-        "fplt.automation.official_slate.write_predictions",
-        lambda *a, **k: (_ for _ in ()).throw(FileExistsError("exists")),
-    )
-    monkeypatch.setattr(
         "fplt.automation.official_slate.ledger_rows",
         lambda *a, **k: empty_predictions(),
     )
@@ -467,27 +462,6 @@ def test_official_predict_tolerates_legacy_predictions(
     monkeypatch.setattr(
         "fplt.automation.official_slate._pmf_builder",
         lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        "fplt.automation.official_slate.write_predict_run",
-        lambda *a, **k: type("M", (), {"run_id": "pred-legacy"})(),
-    )
-    assert (
-        _slate_predict(
-            tmp_path,
-            spec.name,
-            key=key,
-            horizon=1,
-            checkpoint="T-90m",
-            build_id="build1",
-            fp="f" * 64,
-            prod_tag=None,
-            build=_stub_build(),
-            kind="official",
-            purpose=None,
-            write_pmf=True,
-        )
-        == "pred-legacy"
     )
 
     def fake_fp_write(*_a: Any, **kwargs: Any) -> Any:
@@ -518,12 +492,10 @@ def test_official_predict_tolerates_legacy_predictions(
     )
 
 
-def test_official_plan_success_and_exists(
+def test_official_plan_success_and_bad_squad(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fplt.automation.official_slate import _slate_plan
-    from fplt.models.spec import load_model_specs
-    from fplt.optimise.decisions import PlanExistsError
     from fplt.optimise.state import SquadState
     from tests.builders import build_league
 
@@ -576,62 +548,12 @@ def test_official_plan_success_and_exists(
             purpose=None,
         )
 
-    plan_path = tmp_path / "legacy_plan.parquet"
-    pl.DataFrame(
-        {
-            "model_id": ["x"],
-            "as_of_season": ["2024-25"],
-            "as_of_gw": [2],
-            "target_gw": [2],
-            "step": [0],
-            "player_key": [100],
-            "position": ["MID"],
-            "team_key": [3],
-            "in_xi": [True],
-            "captain": [True],
-            "vice": [False],
-            "bought": [False],
-            "sold": [False],
-            "xpts": [1.0],
-            "hit": [0.0],
-        }
-    ).write_parquet(plan_path)
-
-    def boom(*_a: Any, **_k: Any) -> Any:
-        raise PlanExistsError(plan_path, "already planned")
-
-    monkeypatch.setattr("fplt.automation.official_slate.run_plan", boom)
-    monkeypatch.setattr(
-        "fplt.automation.official_slate.write_plan_run",
-        lambda *a, **k: type("M", (), {"run_id": "plan-from-legacy"})(),
-    )
-    assert load_model_specs()["rolling_mean_v1"]
-    assert (
-        _slate_plan(
-            tmp_path,
-            line,
-            key=key,
-            parent_run_id="p",
-            checkpoint="T-90m",
-            squad=squad,
-            chip_arm="off",
-            build_id="build1",
-            fp="f" * 64,
-            prod_tag=None,
-            kind="official",
-            purpose=None,
-        )
-        == "plan-from-legacy"
-    )
-
-    def fake_fp_plan_write(*_a: Any, **kwargs: Any) -> Any:
-        assert kwargs["kind"] == "adhoc"
+    def fake_fp_plan(*_a: Any, **kwargs: Any) -> tuple[object, object, object, str]:
+        assert kwargs["run_kind"] == "adhoc"
         assert kwargs["purpose"] == "fingerprint"
-        return type("M", (), {"run_id": "plan-fp-legacy"})()
+        return None, None, None, "plan-fp"
 
-    monkeypatch.setattr(
-        "fplt.automation.official_slate.write_plan_run", fake_fp_plan_write
-    )
+    monkeypatch.setattr("fplt.automation.official_slate.run_plan", fake_fp_plan)
     assert (
         _slate_plan(
             tmp_path,
@@ -647,7 +569,7 @@ def test_official_plan_success_and_exists(
             kind="adhoc",
             purpose="fingerprint",
         )
-        == "plan-fp-legacy"
+        == "plan-fp"
     )
 
 
@@ -759,6 +681,7 @@ def test_push_official_error_paths(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.skipif(not _HAS_RCLONE, reason="rclone binary not installed")
 def test_maybe_push_official_with_bucket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

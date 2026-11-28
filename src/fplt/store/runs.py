@@ -613,9 +613,8 @@ def write_predict_run(
     fp: str | None = None,
     prod_tag: str | None = None,
 ) -> RunManifest:
-    """Dual-write a live predict table into a new run folder.
+    """Write a live predict table into a new run folder under ``runs/``.
 
-    Legacy ``predictions/<model_id>/…`` paths stay the caller's responsibility.
     Persists the resolved spec under ``specs/sha=<spec_hash>.json``. When
     ``components_for_run_id`` is a callable ``(run_id) -> RunComponentTables |
     None``, layered §3.1 tables are written after the run id is minted;
@@ -733,7 +732,7 @@ def write_plan_run(
     tags: dict[str, str] | None = None,
     report_md: str | None = None,
 ) -> RunManifest:
-    """Dual-write a plan table into a new run folder.
+    """Write a plan table into a new run folder under ``runs/``.
 
     Args:
         data_dir: Local data root.
@@ -803,7 +802,7 @@ def write_backtest_run(
     kind: RunKind = "adhoc",
     purpose: str = "",
 ) -> RunManifest:
-    """Dual-write a backtest prediction window into a new run folder.
+    """Write a backtest prediction window into a new run folder.
 
     Args:
         data_dir: Local data root.

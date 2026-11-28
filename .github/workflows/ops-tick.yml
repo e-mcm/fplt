@@ -92,9 +92,7 @@ jobs:
         with:
           path: |
             data/staged
-            data/plans
             data/ledger
-            data/predictions
             data/artifacts
             data/runs
             data/curated

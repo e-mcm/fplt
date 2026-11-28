@@ -2094,55 +2094,86 @@ def test_preflight_forecast_combine_fails_when_member_predictions_miss(
     tmp_path: Path,
 ) -> None:
     _seed_overlay_base(tmp_path)
+    from datetime import UTC, datetime
+
     from fplt.models.spec import load_model_specs
+    from fplt.store.runs import write_predict_run
+    from fplt.types import GWKey
 
     specs = load_model_specs()
     dc = specs["dc_layered_v4"]
     lgbm = specs["lgbm_direct_v1"]
-    # Archive DC predictions for the scored pool; LGBM archive exists but
-    # covers none of the scored keys → member missing on the join.
-    pred_dir = tmp_path / "predictions" / dc.model_id / "as_of=2025-26_gw01"
-    pred_dir.mkdir(parents=True)
-    pl.DataFrame(
-        {
-            "model_id": [dc.model_id, dc.model_id],
-            "as_of_season": ["2025-26", "2025-26"],
-            "as_of_gw": [1, 1],
-            "target_season": ["2025-26", "2025-26"],
-            "target_gw": [1, 1],
-            "player_key": [100, 200],
-            "fixture_id": [1, 1],
-            "xpts": [4.0, 5.0],
-            "xpts_sd": [1.0, 1.0],
-            "p_played": [0.9, 0.9],
-            "p_60": [0.8, 0.8],
-            "p_goal": [0.2, 0.3],
-            "p_assist": [0.1, 0.1],
-            "p_cs": [0.0, 0.0],
-            "p_haul": [0.1, 0.2],
-        }
-    ).write_parquet(pred_dir / "part.parquet")
-    lgbm_dir = tmp_path / "predictions" / lgbm.model_id / "as_of=2025-26_gw01"
-    lgbm_dir.mkdir(parents=True)
-    pl.DataFrame(
-        {
-            "model_id": [lgbm.model_id],
-            "as_of_season": ["2025-26"],
-            "as_of_gw": [1],
-            "target_season": ["2025-26"],
-            "target_gw": [1],
-            "player_key": [999],
-            "fixture_id": [99],
-            "xpts": [1.0],
-            "xpts_sd": [0.5],
-            "p_played": [None],
-            "p_60": [None],
-            "p_goal": [None],
-            "p_assist": [None],
-            "p_cs": [None],
-            "p_haul": [None],
-        }
-    ).write_parquet(lgbm_dir / "part.parquet")
+    deadline = datetime(2025, 8, 15, 17, 30, tzinfo=UTC)
+    # DC predict run covers the scored pool; LGBM run covers none of those
+    # keys → member missing on the join.
+    write_predict_run(
+        tmp_path,
+        spec=dc,
+        as_of=GWKey("2025-26", 1),
+        deadline_utc=deadline,
+        horizon=1,
+        frame=pl.DataFrame(
+            {
+                "model_id": [dc.model_id, dc.model_id],
+                "run_kind": ["live", "live"],
+                "as_of_season": ["2025-26", "2025-26"],
+                "as_of_gw": [1, 1],
+                "target_season": ["2025-26", "2025-26"],
+                "target_gw": [1, 1],
+                "horizon": [0, 0],
+                "player_key": [100, 200],
+                "position": ["MID", "FWD"],
+                "fixture_id": [1, 1],
+                "xpts": [4.0, 5.0],
+                "xpts_sd": [1.0, 1.0],
+                "p_played": [0.9, 0.9],
+                "p_60": [0.8, 0.8],
+                "p_goal": [0.2, 0.3],
+                "p_assist": [0.1, 0.1],
+                "p_cs": [0.0, 0.0],
+                "p_haul": [0.1, 0.2],
+                "actual_pts": [None, None],
+                "actual_minutes": [None, None],
+                "actual_goals": [None, None],
+                "actual_assists": [None, None],
+                "actual_cs": [None, None],
+            }
+        ),
+    )
+    write_predict_run(
+        tmp_path,
+        spec=lgbm,
+        as_of=GWKey("2025-26", 1),
+        deadline_utc=deadline,
+        horizon=1,
+        frame=pl.DataFrame(
+            {
+                "model_id": [lgbm.model_id],
+                "run_kind": ["live"],
+                "as_of_season": ["2025-26"],
+                "as_of_gw": [1],
+                "target_season": ["2025-26"],
+                "target_gw": [1],
+                "horizon": [0],
+                "player_key": [999],
+                "position": ["MID"],
+                "fixture_id": [99],
+                "xpts": [1.0],
+                "xpts_sd": [0.5],
+                "p_played": [None],
+                "p_60": [None],
+                "p_goal": [None],
+                "p_assist": [None],
+                "p_cs": [None],
+                "p_haul": [None],
+                "actual_pts": [None],
+                "actual_minutes": [None],
+                "actual_goals": [None],
+                "actual_assists": [None],
+                "actual_cs": [None],
+            }
+        ),
+    )
 
     payload = _base_payload(
         name="combine_miss",

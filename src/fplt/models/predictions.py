@@ -1,8 +1,6 @@
-"""Validate and store player-fixture predictions."""
+"""Validate player-fixture predictions."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import polars as pl
 
@@ -110,36 +108,3 @@ def prediction_frame(
     checked = PredictionSchema.validate(frame)
     checked = require_dataframe(checked)
     return checked
-
-
-def predictions_path(data_dir: Path, spec: ModelSpec, as_of: GWKey) -> Path:
-    """Parquet path for one model's predictions at one deadline."""
-    stamp = f"as_of={as_of.season}_gw{as_of.gw:02d}"
-    return data_dir / "predictions" / spec.model_id / stamp / "part.parquet"
-
-
-def write_predictions(
-    data_dir: Path, spec: ModelSpec, as_of: GWKey, frame: pl.DataFrame
-) -> Path:
-    """Validate ``frame`` and write it once.
-
-    Args:
-        data_dir: Root that contains ``predictions/``.
-        spec: Model that produced ``frame``.
-        as_of: Deadline the prediction was made at.
-        frame: A ``PredictionSchema`` frame.
-
-    Returns:
-        The parquet path that was written.
-
-    Raises:
-        FileExistsError: That model and deadline were already written.
-    """
-    checked = PredictionSchema.validate(frame)
-    checked = require_dataframe(checked)
-    path = predictions_path(data_dir, spec, as_of)
-    if path.exists():
-        raise FileExistsError(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    checked.write_parquet(path)
-    return path

@@ -3055,39 +3055,60 @@ def _member_prediction_keys(
 ) -> tuple[pl.DataFrame, str]:
     """Keys a member covers on the scored pool.
 
-    Prefer archived ``predictions/<model_id>/`` rows when present. Otherwise
-    fall back to the ``player_fixtures`` universe from staged players/fixtures
-    (what both blend members ``predict`` on).
+    Prefer predict-run ``player_fixture`` rows for ``member.model_id`` when
+    present. Otherwise fall back to the ``player_fixtures`` universe from
+    staged players/fixtures (what both blend members ``predict`` on).
     """
     keys = ["season", "gw", "player_key", "fixture_id"]
     empty = scored.clear()
-    pred_root = data_dir / "predictions" / member.model_id
-    if pred_root.is_dir():
+    from fplt.store.catalog import scan_succeeded_runs
+    from fplt.store.runs import run_dir
+
+    catalog = scan_succeeded_runs(data_dir)
+    if not catalog.is_empty():
+        run_ids = (
+            catalog.filter(
+                (pl.col("run_type") == "predict")
+                & (pl.col("model_id") == member.model_id)
+            )
+            .get_column("run_id")
+            .to_list()
+        )
         frames: list[pl.DataFrame] = []
-        for path in pred_root.glob("as_of=*/part.parquet"):
+        for run_id in run_ids:
+            path = (
+                run_dir(data_dir, str(run_id))
+                / "predictions"
+                / "player_fixture.parquet"
+            )
+            if not path.is_file():
+                continue
             try:
                 frame = pl.read_parquet(path)
             except Exception:  # noqa: BLE001 - skip corrupt/partial prediction parts
                 continue
-            needed = {
+            if "xpts" not in frame.columns:
+                continue
+            if {"season", "gw", "player_key", "fixture_id"}.issubset(frame.columns):
+                frames.append(
+                    frame.filter(pl.col("xpts").is_not_null()).select(keys).unique()
+                )
+            elif {
                 "target_season",
                 "target_gw",
                 "player_key",
                 "fixture_id",
-                "xpts",
-            }
-            if not needed.issubset(frame.columns):
-                continue
-            frames.append(
-                frame.filter(pl.col("xpts").is_not_null())
-                .select(
-                    pl.col("target_season").alias("season"),
-                    pl.col("target_gw").alias("gw"),
-                    "player_key",
-                    "fixture_id",
+            }.issubset(frame.columns):
+                frames.append(
+                    frame.filter(pl.col("xpts").is_not_null())
+                    .select(
+                        pl.col("target_season").alias("season"),
+                        pl.col("target_gw").alias("gw"),
+                        "player_key",
+                        "fixture_id",
+                    )
+                    .unique()
                 )
-                .unique()
-            )
         if frames:
             covered = pl.concat(frames).unique(subset=keys)
             return covered, "predictions"

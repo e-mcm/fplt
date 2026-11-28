@@ -55,7 +55,6 @@ def _run_fixture(data_dir: Path, bucket_dir: Path) -> dict[str, float]:
     from fplt.automation.ops_tick import run_ops_tick
     from fplt.data.remote import Remote
     from fplt.models.spec import load_model_specs
-    from fplt.optimise.plan import plan_parquet
     from fplt.settings import Settings, get_settings
     from fplt.types import GWKey
     from fplt.utils.timing import load_timing_records
@@ -111,14 +110,33 @@ def _run_fixture(data_dir: Path, bucket_dir: Path) -> dict[str, float]:
             _skip_archive,
         )
 
+        from tests.builders import write_test_plan_run
+
         spec = load_model_specs()[E2E_MODEL]
         for season, gw in [
             (CURRENT_SEASON, 1),
             *((s, 1) for s in PRIOR_SEASONS),
         ]:
-            path = plan_parquet(data_dir, spec.model_id, season, gw, 1)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            pl.DataFrame({"player_key": [1], "step": [0]}).write_parquet(path)
+            stub = pl.DataFrame(
+                {
+                    "model_id": [spec.model_id],
+                    "as_of_season": [season],
+                    "as_of_gw": [gw],
+                    "target_gw": [gw],
+                    "step": [0],
+                    "player_key": [100],
+                    "position": ["MID"],
+                    "team_key": [1],
+                    "in_xi": [True],
+                    "captain": [True],
+                    "vice": [False],
+                    "bought": [False],
+                    "sold": [False],
+                    "xpts": [1.0],
+                    "hit": [0.0],
+                }
+            )
+            write_test_plan_run(data_dir, stub, report="# bench stub")
 
         key = GWKey(CURRENT_SEASON, 2)
         write_plan_checkpoint_marker(data_dir, key, "T-24h", primary_line=E2E_LINE)

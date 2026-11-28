@@ -10,11 +10,7 @@ from fplt.backtest.ledger import read_predictions
 from fplt.backtest.predict_live import resolve_as_of, run_predict
 from fplt.cli import main
 from fplt.data.store import DataStore
-from fplt.models.predictions import (
-    empty_predictions,
-    predictions_path,
-    require_scored_predictions,
-)
+from fplt.models.predictions import empty_predictions, require_scored_predictions
 from fplt.models.spec import artifact_dir, load_model_specs
 from fplt.settings import get_settings
 from fplt.types import GWKey
@@ -36,7 +32,8 @@ def test_run_predict_writes_predictions_and_ledger(tmp_path: Path) -> None:
         gw=2,
     )
     spec = load_model_specs()["rolling_mean_v1"]
-    assert path == predictions_path(tmp_path, spec, _AS_OF)
+    assert "runs" in path.parts
+    assert path.name == "player_fixture.parquet"
     assert path.exists()
     frame = pl.read_parquet(path)
     assert frame.height == 2
@@ -50,18 +47,18 @@ def test_run_predict_writes_predictions_and_ledger(tmp_path: Path) -> None:
 def test_run_predict_loads_an_existing_artifact(tmp_path: Path) -> None:
     build_league(DataStore(tmp_path))
     first = run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
-    first.unlink()
     second = run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
     assert second.exists()
+    assert "runs" in second.parts
+    assert first != second
     assert pl.read_parquet(second).height == 2
 
 
 def test_run_predict_rejects_an_all_zero_frame(tmp_path: Path) -> None:
     build_league(DataStore(tmp_path))
-    spec = load_model_specs()["rolling_mean_v1"]
     with pytest.raises(ValueError, match="all zero|predicted 0"):
         run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=1)
-    assert not predictions_path(tmp_path, spec, GWKey(_SEASON, 1)).exists()
+    assert not (tmp_path / "predictions").exists()
     require_scored_predictions(empty_predictions(), "rolling_mean_v1")
 
 
@@ -101,8 +98,9 @@ def test_predict_command_smoke(
             ]
         )
         printed = capsys.readouterr().out.strip()
-        assert printed.endswith("part.parquet")
-        assert Path(printed).exists()
+        out_path = Path(printed.splitlines()[-1])
+        assert "runs" in out_path.parts
+        assert out_path.exists()
         with pytest.raises(SystemExit) as raised:
             main(
                 [
@@ -128,9 +126,10 @@ def test_bad_predict_requests_are_rejected(tmp_path: Path) -> None:
         run_predict(tmp_path, "rolling_mean_v1", 0, season=_SEASON, gw=2)
     with pytest.raises(ValueError, match="unknown model"):
         run_predict(tmp_path, "missing", 1, season=_SEASON, gw=2)
-    run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
-    with pytest.raises(FileExistsError):
-        run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
+    first = run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
+    second = run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
+    assert first != second
+    assert second.exists()
 
 
 def test_fit_or_load_predictor_fit_fp_reuse_and_mismatch(tmp_path: Path) -> None:

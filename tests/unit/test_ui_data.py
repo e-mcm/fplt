@@ -135,14 +135,13 @@ def test_dashboard_store_reads_runs_plan_official_quarantine_status(
     assert store.status_payload() == {"last_error": None, "quarantines": 1}
 
 
-def test_dashboard_store_falls_back_to_legacy_plans(tmp_path: Path) -> None:
+def test_dashboard_store_ignores_legacy_plans_tree(tmp_path: Path) -> None:
+    """Legacy ``plans/`` is archive-only; summary comes from plan runs."""
     path = tmp_path / "plans" / "deadbeef" / "as_of=2025-26_gw12_h03" / "part.parquet"
     path.parent.mkdir(parents=True)
     _plan_rows().write_parquet(path)
     store = DashboardStore(tmp_path)
-    plan = store.latest_plan_summary()
-    assert plan.height == 1
-    assert plan["as_of_gw"].to_list()[0] == 12
+    assert store.latest_plan_summary().is_empty()
 
 
 def test_dashboard_store_this_week_loaders(tmp_path: Path) -> None:

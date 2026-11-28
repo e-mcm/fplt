@@ -28,7 +28,6 @@ from fplt.schemas.timing import TimingRecord
 from fplt.settings import get_settings
 from fplt.store import Store
 from fplt.store.builds import CuratedBuildSource
-from fplt.store.legacy import parse_as_of_dir
 from fplt.store.official import official_checkpoint_dir
 from fplt.store.push import load_run_manifest
 from fplt.store.runs import run_dir
@@ -90,7 +89,7 @@ class DashboardStore:
         return official_pointers_frame(_scan_official_pointers(self.data_dir))
 
     def latest_plan_summary(self) -> pl.DataFrame:
-        """Summarise the newest local plan (run or legacy ``plans/`` tree).
+        """Summarise the newest local plan run under ``runs/``.
 
         Returns:
             One-row ``plan_summary_frame``, or empty when no plan is found.
@@ -188,7 +187,7 @@ class DashboardStore:
             path = run_dir(self.data_dir, run_id) / "plans" / "plan.parquet"
             if path.is_file():
                 return pl.read_parquet(path)
-        return _latest_legacy_plan(self.data_dir)
+        return pl.DataFrame()
 
 
 def _scan_run_manifests(data_dir: Path) -> list[RunManifest]:
@@ -264,24 +263,3 @@ def _scan_official_pointers(
             )
         )
     return rows
-
-
-def _latest_legacy_plan(data_dir: Path) -> pl.DataFrame:
-    root = data_dir / "plans"
-    if not root.is_dir():
-        return pl.DataFrame()
-    candidates: list[tuple[str, Path]] = []
-    for model_dir in root.iterdir():
-        if not model_dir.is_dir():
-            continue
-        for as_dir in model_dir.glob("as_of=*"):
-            parsed = parse_as_of_dir(as_dir.name)
-            if parsed is None:
-                continue
-            part = as_dir / "part.parquet"
-            if part.is_file():
-                candidates.append((as_dir.name, part))
-    if not candidates:
-        return pl.DataFrame()
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return pl.read_parquet(candidates[0][1])

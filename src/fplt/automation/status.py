@@ -51,9 +51,6 @@ _STATUS_DIR = "status"
 _STATUS_FILE = "status.json"
 _PUBLIC_FILE = "status.public.json"
 _LAST_ERROR_FILE = "last_error.json"
-_AS_OF_RE = re.compile(
-    r"^as_of=(?P<season>\d{4}-\d{2})_gw(?P<gw>\d{2})_h(?P<horizon>\d{2})$"
-)
 _CAPTURE_STAMP_RE = re.compile(
     r"captured_at=(\d{4}-\d{2}-\d{2}(?:T\d{2}-\d{2}-\d{2}Z)?)"
 )
@@ -453,7 +450,7 @@ def _last_plans(
                     model=name,
                     model_id=model_id,
                     horizon=horizon,
-                    reason="no plan parquet for production model/horizon",
+                    reason="no plan run for production model/horizon",
                 )
             )
             continue
@@ -477,21 +474,34 @@ def _last_plans(
 def _plans_for_model(
     data_dir: Path, model_id: str, horizon: int
 ) -> list[tuple[str, int, int, datetime, str]]:
-    base = data_dir / "plans" / model_id
-    if not base.is_dir():
+    from fplt.store.catalog import scan_succeeded_runs
+
+    catalog = scan_succeeded_runs(data_dir)
+    if catalog.is_empty() or horizon < 1:
         return []
+    horizon_match = (
+        pl.when(pl.col("plan_horizon").is_not_null())
+        .then(pl.col("plan_horizon") == horizon)
+        .otherwise(pl.col("horizon") == horizon)
+    )
+    rows = catalog.filter(
+        (pl.col("run_type") == "plan")
+        & (pl.col("model_id") == model_id)
+        & horizon_match
+    )
     found: list[tuple[str, int, int, datetime, str]] = []
-    for parquet in base.glob("as_of=*/part.parquet"):
-        match = _AS_OF_RE.match(parquet.parent.name)
-        if match is None:
-            continue
-        weeks = int(match.group("horizon"))
-        if weeks != horizon:
-            continue
-        season = match.group("season")
-        gw = int(match.group("gw"))
-        rel = parquet.relative_to(data_dir).as_posix()
-        found.append((season, gw, weeks, _mtime_utc(parquet), rel))
+    for row in rows.iter_rows(named=True):
+        run_id = str(row["run_id"])
+        weeks = int(row["plan_horizon"] or row["horizon"] or horizon)
+        found.append(
+            (
+                str(row["as_of_season"]),
+                int(row["as_of_gw"]),
+                weeks,
+                _aware(row["finished_at"]),
+                f"runs/run={run_id}/plans/plan.parquet",
+            )
+        )
     return found
 
 

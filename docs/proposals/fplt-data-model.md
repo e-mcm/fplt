@@ -367,7 +367,7 @@ Table formats give atomic appends, time travel and schema evolution on top of pa
      - gates are frozen at submit (editing the EvalSpec afterwards doesn't change a submitted experiment's verdict)
 8. **Store read API + catalog + `fplt sql`.**
 9. **Legacy import.** Wrap existing `predictions/`, `plans/`, `ledger/`, `artifacts/` and eval outputs as `kind=legacy` runs via `fplt legacy import` (`fplt.store.legacy.import_legacy`). Best-effort manifests (`code_sha` / `spec_hash` / `lockfile_hash` = `unknown`) and `run_id = legacy-<model_id>-<as_of>`, so old results stay retrievable alongside new ones. Push to `fplt-lab` is opt-in (`--push`).
-10. **Cut-over.** Stop writing the old paths; old directories stay as read-only archives.
+10. **Cut-over.** Stop writing the old paths; old directories stay as read-only archives. **Done** (readers in cut-over 1/2; writers + `PlanExistsError` / `retire_plans` / ops cache trim in cut-over 2/2 / #387): live predict and plan write only under `runs/`.
 
 Tests throughout: write-once refusal, `_SUCCESS` semantics (an incomplete run is invisible to `Store`), sortable `run_id` uniqueness under parallel minting, build dedup (an unchanged table reuses its sha), pointer write-once, ledger-view equivalence (the view after migration returns exactly the rows the old ledger had), and double and blank gameweeks in every keyed table.
 

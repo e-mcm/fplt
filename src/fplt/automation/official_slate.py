@@ -42,9 +42,9 @@ from fplt.backtest.walk_forward import allowed_seasons, horizon_for, ledger_rows
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.contracts import SampledPointsPredictor
-from fplt.models.predictions import require_scored_predictions, write_predictions
+from fplt.models.predictions import require_scored_predictions
 from fplt.models.spec import load_model_specs
-from fplt.optimise.decisions import PlanExistsError, resolve_squad_state, run_plan
+from fplt.optimise.decisions import resolve_squad_state, run_plan
 from fplt.optimise.state import SquadState
 from fplt.schemas.manifests import BuildManifest, RunKind
 from fplt.settings import Settings, get_settings
@@ -57,7 +57,7 @@ from fplt.store.official import (
 )
 from fplt.store.points_pmf import points_pmf_tables_from_sample
 from fplt.store.push import load_run_manifest, maybe_push_official
-from fplt.store.runs import write_plan_run, write_predict_run
+from fplt.store.runs import write_predict_run
 from fplt.types import GWKey
 from fplt.utils.timing import timed_phase
 
@@ -403,14 +403,6 @@ def _slate_predict(
         model = fit_or_load_predictor(data_dir, spec, key, view, fit_fp=fit_fp)
         predicted = model.predict(view, horizon_for(key, horizon))
         require_scored_predictions(predicted, model_name)
-        try:
-            write_predictions(data_dir, spec, key, predicted)
-        except FileExistsError as exc:
-            logger.info(
-                "official_slate: legacy predictions exist for %s; continuing (%s)",
-                key,
-                exc,
-            )
         rows = ledger_rows(predicted, view, key, "live")
         deadline_utc = store.deadline(key)
         pmf_builder = None
@@ -474,69 +466,30 @@ def _slate_plan(
     purpose: str | None,
     squad_source: str | None = None,
 ) -> str:
-    """Plan one slate line; dual-write even when legacy plan already exists."""
+    """Plan one slate line into a new plan run."""
     if not isinstance(squad, SquadState):
         raise TypeError(f"expected SquadState, got {type(squad).__name__}")
     with timed_phase("plan"):
-        try:
-            _plan, _path, _report, run_id = run_plan(
-                data_dir,
-                line.spec,
-                key.season,
-                key.gw,
-                line.horizon,
-                squad=squad,
-                squad_source=squad_source,
-                chip_arm=chip_arm,  # type: ignore[arg-type]
-                run_kind=kind,
-                checkpoint=checkpoint,
-                line=line.line,
-                squad_mode=line.squad_mode,
-                parent_run_id=parent_run_id,
-                build_id=build_id,
-                fp=fp,
-                prod_tag=prod_tag,
-                purpose=purpose,
-            )
-            return run_id
-        except PlanExistsError as exc:
-            logger.info(
-                "official_slate: legacy plan exists for %s h=%s; writing %s run",
-                key,
-                line.horizon,
-                kind,
-            )
-            frame = pl.read_parquet(Path(str(exc)))
-            spec = load_model_specs()[line.spec]
-            store = DataStore(data_dir)
-            if purpose is not None:
-                plan_purpose = purpose
-            else:
-                plan_purpose = (
-                    f"official {checkpoint} {line.line} {key.season} gw{key.gw} "
-                    f"h{line.horizon}"
-                )
-            run = write_plan_run(
-                data_dir,
-                spec=spec,
-                as_of=key,
-                deadline_utc=store.deadline(key),
-                horizon=line.horizon,
-                frame=frame,
-                kind=kind,
-                checkpoint=checkpoint,
-                line=line.line,
-                squad_mode=line.squad_mode,
-                parent_run_id=parent_run_id,
-                purpose=plan_purpose,
-                build_id=build_id,
-                fp=fp,
-                prod_tag=prod_tag,
-                tags=(
-                    {"squad_source": squad_source} if squad_source is not None else None
-                ),
-            )
-            return run.run_id
+        _plan, _path, _report, run_id = run_plan(
+            data_dir,
+            line.spec,
+            key.season,
+            key.gw,
+            line.horizon,
+            squad=squad,
+            squad_source=squad_source,
+            chip_arm=chip_arm,  # type: ignore[arg-type]
+            run_kind=kind,
+            checkpoint=checkpoint,
+            line=line.line,
+            squad_mode=line.squad_mode,
+            parent_run_id=parent_run_id,
+            build_id=build_id,
+            fp=fp,
+            prod_tag=prod_tag,
+            purpose=purpose,
+        )
+        return run_id
 
 
 def _pmf_builder(

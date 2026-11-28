@@ -53,7 +53,6 @@ from fplt.optimise.plan import (
     plan_squad,
     plan_table,
     render_report,
-    write_plan,
 )
 from fplt.optimise.price_forecast import (
     PriceForecastMethod,
@@ -89,7 +88,7 @@ from fplt.optimise.state import (
 from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
 from fplt.settings import Settings, get_settings, secret_value
-from fplt.store.runs import write_plan_run
+from fplt.store.runs import run_dir, write_plan_run
 from fplt.types import GWKey
 from fplt.utils.frames import require_dataframe, require_not_none
 from fplt.utils.timing import (
@@ -123,7 +122,6 @@ DEFAULT_LIVE_PRICE_FORECAST_METHOD: PriceForecastMethod = "mean_gw_delta"
 __all__ = [
     "DEFAULT_LIVE_CHIP_ARM",
     "DEFAULT_LIVE_PRICE_FORECAST_METHOD",
-    "PlanExistsError",
     "advance_squad_from_plan",
     "assert_sane_mean_ppg",
     "candidates_as_of",
@@ -148,23 +146,6 @@ __all__ = [
     "prediction_rows_from_ledger",
     "actual_rows_from_ledger",
 ]
-
-
-class PlanExistsError(FileExistsError):
-    """The plan parquet for this model, deadline, and horizon is already on disk.
-
-    ``report`` is the transfer summary computed before the write was refused.
-    """
-
-    def __init__(self, path: Path, report: str) -> None:
-        """Remember the existing path and the summary that could not be saved.
-
-        Args:
-            path: Parquet path that already exists.
-            report: Markdown summary of the plan.
-        """
-        super().__init__(str(path))
-        self.report = report
 
 
 def candidates_as_of(view: PITView) -> pl.DataFrame:
@@ -646,7 +627,7 @@ def run_plan(
     prod_tag: str | None = None,
     purpose: str | None = None,
 ) -> tuple[GameweekPlan, Path, str, str]:
-    """Build a plan from the ledger and write the parquet and the report.
+    """Build a plan from the ledger and write a plan run (``runs/`` only).
 
     When ``squad`` is omitted, squad state comes from ``resolve_squad_state``:
     ``entry_json`` if provided, else the live / public team when
@@ -658,8 +639,10 @@ def run_plan(
     the short-horizon MILP chooses under ``ChipRules``. Pass ``chip_arm="off"``
     for the pre-C6 chips-off path.
 
+    Re-planning the same key creates a new plan run; readers use the newest.
+
     Args:
-        data_dir: Root that contains ``staged/`` and ``ledger/``.
+        data_dir: Root that contains ``staged/`` and receives ``runs/``.
         model_name: YAML spec name.
         season: Season to plan.
         gameweek: Deadline to plan from.
@@ -697,13 +680,11 @@ def run_plan(
         purpose: Optional free-text purpose (e.g. ``fingerprint`` for #374).
 
     Returns:
-        The plan, the parquet path, the markdown report, and the dual-write
-        ``run_id``.
+        The plan, the plan-run ``report.md`` path, the markdown report, and
+        the plan ``run_id``.
 
     Raises:
         KeyError: The spec name or the gameweek is unknown.
-        PlanExistsError: This deadline and horizon were already written.
-            ``report`` on the exception is the summary.
         FPLAPIError: Live load fails when ``FPLT_ENTRY_ID`` is set and no
             ``entry_json`` / ``squad`` was provided.
         ValueError: This deadline has no predictions, a horizon week is
@@ -873,17 +854,6 @@ def run_plan(
                 gameweek=gameweek,
                 names=names,
             )
-            try:
-                from fplt.automation.release import resolve_prod_tag_label
-
-                path = write_plan(
-                    data_dir,
-                    table,
-                    prod_tag=resolve_prod_tag_label(),
-                )
-            except FileExistsError as exc:
-                raise PlanExistsError(Path(str(exc)), report) from exc
-            (path.parent / "report.md").write_text(report, encoding="utf-8")
             from fplt.schemas.manifests import RunKind, SquadMode
 
             plan_run = write_plan_run(
@@ -910,7 +880,8 @@ def run_plan(
                 report_md=report,
             )
             plan_run_id = plan_run.run_id
-            logger.info("dual-wrote plan run_id=%s", plan_run_id)
+            path = run_dir(data_dir, plan_run_id) / "report.md"
+            logger.info("wrote plan run_id=%s", plan_run_id)
     meta = {
         "model": model_name,
         "season": season,
@@ -921,7 +892,8 @@ def run_plan(
     logger.info(format_kind_summary("plan", plan_timings, meta=meta))
     write_timing_record("plan", plan_timings, meta=meta)
     logger.info(
-        "plan written path=%s hits=%s points=%.2f chips=%s",
+        "plan written run_id=%s path=%s hits=%s points=%.2f chips=%s",
+        plan_run_id,
         path,
         solved.hits,
         solved.points,

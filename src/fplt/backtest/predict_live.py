@@ -16,9 +16,9 @@ from fplt.backtest.walk_forward import allowed_seasons, horizon_for, ledger_rows
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.contracts import PointsPredictor
-from fplt.models.predictions import require_scored_predictions, write_predictions
+from fplt.models.predictions import require_scored_predictions
 from fplt.models.spec import ModelSpec, artifact_dir, get_model, load_model_specs
-from fplt.store.runs import write_predict_run
+from fplt.store.runs import run_dir, write_predict_run
 from fplt.types import GWKey
 
 logger = logging.getLogger(__name__)
@@ -92,16 +92,14 @@ def run_predict(
     now: datetime | None = None,
     append_ledger: bool = True,
 ) -> Path:
-    """Fit or load ``model_name`` and write predictions for the next gameweeks.
+    """Fit or load ``model_name`` and write a predict run for the next gameweeks.
 
     Loads an existing artifact for the resolved as-of deadline when present;
     otherwise fits on the PIT view and saves the artifact. Predictions are
-    written under ``predictions/<model_id>/as_of=.../part.parquet`` and as a
-    ledger-shaped ``runs/…/predictions/player_fixture.parquet`` for
-    ``Store.ledger()``.
+    written only under ``runs/…/predictions/player_fixture.parquet``.
 
     Args:
-        data_dir: Root that contains ``staged/`` and receives ``predictions/``.
+        data_dir: Root that contains ``staged/`` and receives ``runs/``.
         model_name: Spec name from ``configs/models``.
         horizon: Number of gameweeks to predict, starting at the as-of.
         season: Optional season override for the as-of deadline.
@@ -111,14 +109,13 @@ def run_predict(
             through the run folder; there is no mutable ledger.
 
     Returns:
-        The parquet path written under ``predictions/``.
+        The parquet path written inside the predict run.
 
     Raises:
         ValueError: The horizon, model name, or as-of resolution is invalid,
             or every predicted ``xpts`` is 0.
         KeyError: The model kind is unregistered, or an explicit gameweek is
             missing from staged data.
-        FileExistsError: Predictions for this model and deadline already exist.
     """
     if horizon < 1:
         raise ValueError(f"horizon must be positive, got {horizon}")
@@ -140,8 +137,6 @@ def run_predict(
     model = fit_or_load_predictor(data_dir, spec, as_of, view)
     predicted = model.predict(view, horizon_for(as_of, horizon))
     require_scored_predictions(predicted, model_name)
-    path = write_predictions(data_dir, spec, as_of, predicted)
-    logger.info("wrote %s prediction rows to %s", predicted.height, path)
     _ = append_ledger  # CLI flag retained; mutation path removed in B9.
     rows = ledger_rows(predicted, view, as_of, "live")
     deadline_utc = store.deadline(as_of)
@@ -156,7 +151,8 @@ def run_predict(
             model, view, as_of=as_of, deadline_utc=deadline_utc, horizon=horizon
         ),
     )
-    logger.info("wrote predict run_id=%s", run.run_id)
+    path = run_dir(data_dir, run.run_id) / "predictions" / "player_fixture.parquet"
+    logger.info("wrote %s prediction rows to run_id=%s", predicted.height, run.run_id)
     return path
 
 
