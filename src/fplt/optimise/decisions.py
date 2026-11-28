@@ -25,7 +25,12 @@ from typing import cast
 import polars as pl
 
 from fplt.backtest.ledger import read_predictions
-from fplt.data.fpl_client import CurrentTeam, load_current_team
+from fplt.data.fpl_client import (
+    CurrentTeam,
+    FPLAPIError,
+    is_auth_failure,
+    load_current_team,
+)
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -59,6 +64,12 @@ from fplt.optimise.prices import (
     fpl_selling_price,
     market_prices_from_candidates,
 )
+from fplt.optimise.public_squad import (
+    PublicSquadState,
+    ResolvedSquad,
+    compare_public_to_my_team,
+    public_squad_state,
+)
 from fplt.optimise.realised import (
     assert_sane_mean_ppg,
     explain_gameweek,
@@ -77,7 +88,7 @@ from fplt.optimise.state import (
 )
 from fplt.schemas.plan import CandidateSchema, ChipWindowsSchema, DecisionSchema
 from fplt.scoring.chips import ChipName, ChipRules, empty_remaining
-from fplt.settings import Settings, get_settings
+from fplt.settings import Settings, get_settings, secret_value
 from fplt.store.runs import write_plan_run
 from fplt.types import GWKey
 from fplt.utils.frames import require_dataframe, require_not_none
@@ -91,6 +102,7 @@ from fplt.utils.timing import (
 )
 
 TeamLoader = Callable[..., CurrentTeam]
+PublicSquadLoader = Callable[..., PublicSquadState]
 logger = logging.getLogger(__name__)
 
 # A blank gameweek drops a couple of clubs. Below half the candidate pool,
@@ -122,6 +134,7 @@ __all__ = [
     "points_from_ledger",
     "read_chip_windows",
     "read_decisions",
+    "ResolvedSquad",
     "resolve_squad_state",
     "run_chip_decision_board",
     "run_decision_bakeoff",
@@ -496,33 +509,43 @@ def resolve_squad_state(
     event: int | None = None,
     settings: Settings | None = None,
     load_team: TeamLoader | None = None,
-) -> SquadState:
+    load_public: PublicSquadLoader | None = None,
+) -> ResolvedSquad:
     """Build squad state from YAML, optional entry JSON, or the live FPL team.
 
     Preference order:
 
     1. ``entry_json`` when provided (CLI ``--entry-json``).
-    2. Live / public team when ``FPLT_ENTRY_ID`` is set
-       (``load_current_team`` → ``apply_entry_picks``).
+    2. When ``FPLT_ENTRY_ID`` is set:
+       a. Token/session present and ``my-team`` succeeds → use it
+          (authoritative). Also derive ``public_squad_state`` and log a
+          WARNING on bank / FT / selling-price mismatch.
+       b. No token, or ``my-team`` raises 401/403/expired →
+          ``public_squad_state`` (selling prices, FTs, chips from public
+          endpoints + PIT). Logs INFO with ``source=public``.
     3. Otherwise the YAML draft (empty ``owned`` is an initial squad).
 
-    Free transfers from authenticated ``my-team`` replace the YAML value when
-    they fit ``ft_bank_cap``. Public entry picks leave YAML free transfers
-    unchanged. Chip overrides always stay in YAML.
+    Free transfers from ``my-team`` or the public derivation replace the YAML
+    value when they fit ``ft_bank_cap``. Public derivation also replaces chip
+    inventory from ``history.chips``. ``fplt apply`` still needs a valid
+    Bearer token.
 
     Args:
-        view: Point-in-time view used to map FPL element ids to ``player_key``.
+        view: Point-in-time view used to map FPL element ids to ``player_key``
+            and to price never-transferred-in players.
         entry_json: Optional picks JSON path. Wins over the live entry.
-        event: Finished gameweek for the public picks fallback when no
-            session cookie is set. Ignored when ``my-team`` succeeds.
+        event: Finished gameweek hint for ``load_current_team``; ignored by
+            ``public_squad_state`` (uses last finished from history).
         settings: Process settings; defaults to ``get_settings()``.
         load_team: Injectable ``load_current_team`` (for tests).
+        load_public: Injectable ``public_squad_state`` (for tests).
 
     Returns:
-        Squad state ready for ``plan_squad`` / ``run_plan``.
+        ``ResolvedSquad`` ready for ``plan_squad`` / ``run_plan``, including
+        ``source`` (``yaml`` / ``entry_json`` / ``my_team`` / ``public``).
 
     Raises:
-        FPLAPIError: Live load fails when ``entry_id`` is set.
+        FPLAPIError: Live / public load fails when ``entry_id`` is set.
         KeyError: A pick's element has no ``player_key`` in ``view``.
         ValueError: An entry payload is malformed or lacks selling prices.
     """
@@ -537,7 +560,7 @@ def resolve_squad_state(
             len(resolved.owned),
             resolved.bank,
         )
-        return resolved
+        return ResolvedSquad(state=resolved, source="entry_json")
 
     cfg = settings if settings is not None else get_settings()
     if cfg.entry_id is None:
@@ -546,25 +569,51 @@ def resolve_squad_state(
             len(state.owned),
             state.bank,
         )
-        return state
+        return ResolvedSquad(state=state, source="yaml")
 
     logger.info(
         "resolving squad via FPL API entry_id=%s event=%s",
         cfg.entry_id,
         event,
     )
-    loader = load_current_team if load_team is None else load_team
-    team = loader(event=event, settings=cfg)
-    state = apply_entry_picks(state, team.picks_payload(), keys)
-    state = _with_live_free_transfers(state, team)
-    logger.info(
-        "squad ready: owned=%s bank=%s free_transfers=%s source=%s",
-        len(state.owned),
-        state.bank,
-        state.free_transfers,
-        team.source,
+    public_loader = public_squad_state if load_public is None else load_public
+    token_set = bool(secret_value(cfg.fpl_api_token)) or bool(
+        secret_value(cfg.fpl_session)
     )
-    return state
+    if token_set:
+        loader = load_current_team if load_team is None else load_team
+        try:
+            team = loader(event=event, settings=cfg)
+        except FPLAPIError as exc:
+            if not is_auth_failure(exc):
+                raise
+            logger.info(
+                "my-team unauthorized (entry_id=%s); using public_squad_state",
+                cfg.entry_id,
+            )
+            return _from_public(state, view, cfg, keys, public_loader=public_loader)
+        if team.source == "my_team":
+            return _from_my_team(
+                state,
+                team,
+                view,
+                cfg,
+                keys,
+                public_loader=public_loader,
+            )
+        # Token present but current_team fell back to raw entry_picks (no
+        # selling prices) — rebuild via the public derivation.
+        logger.info(
+            "token present but squad source=%s; using public_squad_state",
+            team.source,
+        )
+        return _from_public(state, view, cfg, keys, public_loader=public_loader)
+
+    logger.info(
+        "no FPL token/session; using public_squad_state entry_id=%s",
+        cfg.entry_id,
+    )
+    return _from_public(state, view, cfg, keys, public_loader=public_loader)
 
 
 @binds_timing_artifacts()
@@ -577,6 +626,7 @@ def run_plan(
     entry_json: Path | None = None,
     squad: SquadState | None = None,
     *,
+    squad_source: str | None = None,
     chip_arm: ChipArm = DEFAULT_LIVE_CHIP_ARM,
     chip_rules_season: str | None = None,
     force_play: bool = True,
@@ -599,7 +649,8 @@ def run_plan(
 
     When ``squad`` is omitted, squad state comes from ``resolve_squad_state``:
     ``entry_json`` if provided, else the live / public team when
-    ``FPLT_ENTRY_ID`` is set, else the YAML draft.
+    ``FPLT_ENTRY_ID`` is set, else the YAML draft. The resolved
+    ``squad_source`` is written to the plan run manifest tags.
 
     Chip policy defaults to ``DEFAULT_LIVE_CHIP_ARM`` (``optimised``): the
     season chip scheduler rebuilds ``ChipUseWindows`` for this deadline, then
@@ -616,6 +667,10 @@ def run_plan(
             replaces the owned squad and the bank when ``squad`` is omitted.
         squad: Pre-resolved squad state (e.g. from ``resolve_squad_state``).
             When set, ``entry_json`` and ``FPLT_ENTRY_ID`` are ignored.
+        squad_source: Provenance tag when ``squad`` is pre-resolved
+            (``my_team`` / ``public`` / ``yaml`` / ``entry_json``). Recorded
+            on the plan run manifest; ignored when ``squad`` is omitted
+            (taken from ``resolve_squad_state`` instead).
         chip_arm: Chip policy (default ``optimised`` for live / automation).
         chip_rules_season: Chip-rules year when chips are on. Defaults to
             ``season``.
@@ -676,15 +731,18 @@ def run_plan(
             spec = load_model_specs()[model_name]
             store = DataStore(data_dir)
             view = PITData(store).view(GWKey(season, gameweek))
+            resolved_source = squad_source
             if squad is not None:
                 state = squad
                 logger.info("using pre-resolved squad (owned=%s)", len(state.owned))
             else:
-                state = resolve_squad_state(
+                resolved = resolve_squad_state(
                     view,
                     entry_json=entry_json,
                     event=gameweek,
                 )
+                state = resolved.state
+                resolved_source = resolved.source
             window = [
                 gameweek + offset
                 for offset in range(horizon)
@@ -841,6 +899,11 @@ def run_plan(
                 build_id=build_id,
                 fp=fp,
                 prod_tag=prod_tag,
+                tags=(
+                    {"squad_source": resolved_source}
+                    if resolved_source is not None
+                    else None
+                ),
             )
             plan_run_id = plan_run.run_id
             logger.info("dual-wrote plan run_id=%s", plan_run_id)
@@ -1941,11 +2004,80 @@ def _element_keys(view: PITView) -> dict[int, int]:
 
 
 def _with_live_free_transfers(state: SquadState, team: CurrentTeam) -> SquadState:
-    """Apply ``my-team`` free transfers when they fit the banking cap."""
+    """Apply ``my-team`` / public free transfers when they fit the banking cap."""
     free = team.free_transfers
     if free is None or free < 1 or free > state.ft_bank_cap:
         return state
     return state.model_copy(update={"free_transfers": free})
+
+
+def _from_my_team(
+    state: SquadState,
+    team: CurrentTeam,
+    view: PITView,
+    cfg: Settings,
+    keys: dict[int, int],
+    *,
+    public_loader: PublicSquadLoader,
+) -> ResolvedSquad:
+    """Apply authenticated my-team and cross-check against the public derivation."""
+    resolved = apply_entry_picks(state, team.picks_payload(), keys)
+    resolved = _with_live_free_transfers(resolved, team)
+    try:
+        public = public_loader(cfg.entry_id, view, cfg)  # type: ignore[arg-type]
+    except (FPLAPIError, KeyError, ValueError, OSError, RuntimeError) as exc:
+        # Cross-check is best-effort (network blocked in unit tests, stale
+        # public payloads, etc.); my-team values remain authoritative.
+        logger.warning(
+            "public_squad_state cross-check skipped entry_id=%s: %s",
+            cfg.entry_id,
+            exc,
+        )
+    else:
+        mismatches = compare_public_to_my_team(public, team)
+        if mismatches:
+            logger.warning(
+                "public_squad_state mismatch vs my-team entry_id=%s: %s "
+                "(using my-team values)",
+                cfg.entry_id,
+                "; ".join(mismatches),
+            )
+        else:
+            logger.info(
+                "public_squad_state agrees with my-team entry_id=%s",
+                cfg.entry_id,
+            )
+    logger.info(
+        "squad ready: owned=%s bank=%s free_transfers=%s source=my_team",
+        len(resolved.owned),
+        resolved.bank,
+        resolved.free_transfers,
+    )
+    return ResolvedSquad(state=resolved, source="my_team")
+
+
+def _from_public(
+    state: SquadState,
+    view: PITView,
+    cfg: Settings,
+    keys: dict[int, int],
+    *,
+    public_loader: PublicSquadLoader,
+) -> ResolvedSquad:
+    """Apply ``public_squad_state`` (no token / expired token path)."""
+    if cfg.entry_id is None:
+        raise FPLAPIError("set FPLT_ENTRY_ID or pass entry_id")
+    public = public_loader(cfg.entry_id, view, cfg)
+    resolved = apply_entry_picks(state, public.team.picks_payload(), keys)
+    resolved = _with_live_free_transfers(resolved, public.team)
+    resolved = resolved.model_copy(update={"chips": public.chips})
+    logger.info(
+        "squad ready: owned=%s bank=%s free_transfers=%s source=public",
+        len(resolved.owned),
+        resolved.bank,
+        resolved.free_transfers,
+    )
+    return ResolvedSquad(state=resolved, source="public")
 
 
 def _empty_decisions() -> pl.DataFrame:

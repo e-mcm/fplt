@@ -27,11 +27,12 @@ _FIXTURES = Path(__file__).parents[1] / "fixtures" / "fpl_api"
 
 def test_resolve_keeps_yaml_without_entry_id(tmp_path: Path) -> None:
     view = _view(tmp_path, element_ids=list(range(1, 16)))
-    state = resolve_squad_state(view, settings=Settings(entry_id=None))
+    resolved = resolve_squad_state(view, settings=Settings(entry_id=None))
     yaml_state = load_squad_state()
-    assert state.owned == []
-    assert state.bank == yaml_state.bank
-    assert state.free_transfers == yaml_state.free_transfers
+    assert resolved.source == "yaml"
+    assert resolved.state.owned == []
+    assert resolved.state.bank == yaml_state.bank
+    assert resolved.state.free_transfers == yaml_state.free_transfers
 
 
 def test_resolve_prefers_entry_json_over_live_entry(tmp_path: Path) -> None:
@@ -52,16 +53,17 @@ def test_resolve_prefers_entry_json_over_live_entry(tmp_path: Path) -> None:
         calls.append(True)
         raise AssertionError("live team must not load when entry_json is set")
 
-    state = resolve_squad_state(
+    resolved = resolve_squad_state(
         view,
         entry_json=entry,
         settings=Settings(entry_id=99, fpl_session="cookie"),
         load_team=boom,
     )
     assert calls == []
-    assert state.bank == 12
-    assert state.owned[0].player_key == 10
-    assert state.owned[0].selling_price == 55
+    assert resolved.source == "entry_json"
+    assert resolved.state.bank == 12
+    assert resolved.state.owned[0].player_key == 10
+    assert resolved.state.owned[0].selling_price == 55
 
 
 def test_resolve_applies_my_team_fixture(tmp_path: Path) -> None:
@@ -73,41 +75,76 @@ def test_resolve_applies_my_team_fixture(tmp_path: Path) -> None:
     def load_team(**_: object) -> CurrentTeam:
         return team
 
-    state = resolve_squad_state(
+    def load_public(entry_id: int, pit_view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=team.model_copy(update={"source": "public"}),
+            chips=ChipInventory(),
+            last_finished=3,
+        )
+
+    resolved = resolve_squad_state(
         view,
         event=3,
         settings=Settings(entry_id=42, fpl_session="cookie"),
         load_team=load_team,
+        load_public=load_public,
     )
-    assert state.bank == 21
-    assert len(state.owned) == 15
-    assert state.owned[0].player_key == elements[0]
-    assert state.owned[0].selling_price == 46
-    assert state.owned[0].purchase_price == 46
-    assert state.free_transfers == 1
+    assert resolved.source == "my_team"
+    assert resolved.state.bank == 21
+    assert len(resolved.state.owned) == 15
+    assert resolved.state.owned[0].player_key == elements[0]
+    assert resolved.state.owned[0].selling_price == 46
+    assert resolved.state.owned[0].purchase_price == 46
+    assert resolved.state.free_transfers == 1
 
 
-def test_resolve_keeps_yaml_free_transfers_for_public_picks(tmp_path: Path) -> None:
+def test_resolve_no_token_uses_public_not_raw_picks(tmp_path: Path) -> None:
+    """Regression: entry_id set, no token → public path (not ValueError)."""
     payload = json.loads((_FIXTURES / "entry_picks.json").read_text(encoding="utf-8"))
-    # Fixture public picks lack selling_price; inject so apply_entry_picks works.
-    for index, pick in enumerate(payload["picks"]):
-        pick["selling_price"] = 40 + index
     elements = [int(row["element"]) for row in payload["picks"]]
     view = _view(tmp_path, element_ids=elements)
-    team = CurrentTeam.from_entry_picks(1, 9, payload)
-    yaml_state = load_squad_state()
-
-    def load_team(**_: object) -> CurrentTeam:
-        return team
-
-    state = resolve_squad_state(
-        view,
-        settings=Settings(entry_id=1, fpl_session=None),
-        load_team=load_team,
+    priced = CurrentTeam.from_entry_picks(1, 9, payload).model_copy(
+        update={
+            "source": "public",
+            "free_transfers": 2,
+            "picks": [
+                pick.model_copy(
+                    update={
+                        "selling_price": 40 + index,
+                        "purchase_price": 40 + index,
+                    }
+                )
+                for index, pick in enumerate(
+                    CurrentTeam.from_entry_picks(1, 9, payload).picks
+                )
+            ],
+        }
     )
-    assert state.bank == int(payload["entry_history"]["bank"])
-    assert len(state.owned) == 15
-    assert state.free_transfers == yaml_state.free_transfers
+
+    def load_public(entry_id: int, pit_view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=priced,
+            chips=ChipInventory(),
+            last_finished=9,
+        )
+
+    resolved = resolve_squad_state(
+        view,
+        settings=Settings(entry_id=1, fpl_session=None, fpl_api_token=None),
+        load_public=load_public,
+    )
+    assert resolved.source == "public"
+    assert resolved.state.bank == int(payload["entry_history"]["bank"])
+    assert len(resolved.state.owned) == 15
+    assert resolved.state.free_transfers == 2
 
 
 def test_rebuild_folds_selling_prices_into_bank() -> None:
@@ -141,12 +178,24 @@ def test_resolve_ignores_free_transfers_outside_cap(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, payload)
     yaml_state = load_squad_state()
 
-    state = resolve_squad_state(
+    def load_public(entry_id: int, pit_view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=team.model_copy(update={"source": "public", "free_transfers": 1}),
+            chips=ChipInventory(),
+            last_finished=3,
+        )
+
+    resolved = resolve_squad_state(
         view,
         settings=Settings(entry_id=42, fpl_session="cookie"),
         load_team=lambda **_: team,
+        load_public=load_public,
     )
-    assert state.free_transfers == yaml_state.free_transfers
+    assert resolved.state.free_transfers == yaml_state.free_transfers
 
 
 def _view(root: Path, *, element_ids: list[int]):

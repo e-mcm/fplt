@@ -155,7 +155,7 @@ def ensure_slate_runs(
         push_fp_index(data_dir, line_fp, settings=cfg)
 
     view = PITData(DataStore(data_dir)).view(key)
-    squad = resolve_squad_state(view, event=key.gw)
+    resolved = resolve_squad_state(view, event=key.gw)
     pairs: list[LineRunPair] = []
     for line in lines:
         decision = by_line[line.line]
@@ -168,7 +168,8 @@ def ensure_slate_runs(
                 key=key,
                 parent_run_id=predict_ids[line.spec],
                 checkpoint=cp_label,
-                squad=squad,
+                squad=resolved.state,
+                squad_source=resolved.source,
                 chip_arm=chip_arm,
                 build_id=resolved_build_id,
                 fp=decision.plan_fp,
@@ -385,6 +386,7 @@ def _official_plan(
     build_id: str,
     fp: str,
     prod_tag: str | None,
+    squad_source: str | None = None,
 ) -> str:
     """Plan one official line; dual-write even when legacy plan already exists."""
     if not isinstance(squad, SquadState):
@@ -397,6 +399,7 @@ def _official_plan(
             key.gw,
             line.horizon,
             squad=squad,
+            squad_source=squad_source,
             chip_arm=chip_arm,  # type: ignore[arg-type]
             run_kind="official",
             checkpoint=checkpoint,
@@ -436,6 +439,7 @@ def _official_plan(
             build_id=build_id,
             fp=fp,
             prod_tag=prod_tag,
+            tags=({"squad_source": squad_source} if squad_source is not None else None),
         )
         return run.run_id
 

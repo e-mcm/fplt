@@ -6,6 +6,7 @@ from fplt.data.fpl_client import (
     EntryPick,
     FPLAPIError,
     FPLClient,
+    is_auth_failure,
     load_current_team,
 )
 from fplt.data.overall_rank import (
@@ -31,6 +32,7 @@ __all__ = [
     "PointsAtRank",
     "capture_overall_rank",
     "fetch_overall_rank_snapshot",
+    "is_auth_failure",
     "load_current_team",
     "load_latest_overall_rank",
     "load_overall_rank_snapshot",

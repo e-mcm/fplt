@@ -17,12 +17,13 @@ urgent.
 
 | | |
 |---|---|
-| **Means** | `FPLT_FPL_API_TOKEN` is missing, unparseable, expired, or expires before the next deadline (or within the warn window). Live squad / `fplt apply` needs a fresh JWT from the browser. |
-| **Urgency** | **Urgent** if `exp` is before the next deadline or already past on a pre-deadline run. **Warning** if expiry is within ~3 days but after the deadline. |
+| **Means** | `FPLT_FPL_API_TOKEN` is missing, unparseable, expired, or expires before the next deadline (or within the warn window). **`fplt apply --confirm`** needs a fresh JWT from the browser. Planning does **not**: with `FPLT_ENTRY_ID` set it uses `public_squad_state` (public entry / history / transfers + PIT prices) when the token is missing or `my-team` returns 401/403. |
+| **Urgency** | **Urgent** if `exp` is before the next deadline or already past on a pre-deadline run **and** you intend to auto-apply. **Warning** if expiry is within ~3 days but after the deadline. |
 | **Fix** | `uv run fplt auth from-browser --entry-id YOUR_ID` (or `uv run fplt auth set --token …`) |
 
-Planning still runs when the token is dead; apply must be done by hand until
-refreshed. Check: `uv run fplt auth status`.
+Planning still runs when the token is dead (squad source `public` on the plan
+manifest). Apply must be done by hand until refreshed. Check:
+`uv run fplt auth status`.
 
 ### ops-02: No plan
 

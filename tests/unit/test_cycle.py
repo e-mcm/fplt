@@ -202,6 +202,19 @@ def test_catch_up_passes_live_squad_when_entry_id_set(
         return team
 
     monkeypatch.setattr("fplt.optimise.decisions.load_current_team", load_team)
+
+    def load_public(entry_id: int, view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=team.model_copy(update={"source": "public"}),
+            chips=ChipInventory(),
+            last_finished=1,
+        )
+
+    monkeypatch.setattr("fplt.optimise.decisions.public_squad_state", load_public)
     _stub_predict_and_plan(monkeypatch, seen=seen)
     try:
         done = catch_up(league_dir, [_MODEL], horizon=1)

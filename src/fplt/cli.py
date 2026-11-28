@@ -3160,15 +3160,19 @@ def _plan(args: argparse.Namespace) -> None:
                 args.entry_json,
             )
             view = PITData(DataStore(data_dir)).view(GWKey(args.season, args.gw))
-            squad = resolve_squad_state(
+            resolved = resolve_squad_state(
                 view,
                 entry_json=args.entry_json,
                 event=args.gw,
                 settings=settings,
             )
+            squad = resolved.state
+            squad_source = resolved.source
+            logger.info("resolved squad source=%s", squad_source)
         else:
             logger.info("planning from YAML squad (no FPLT_ENTRY_ID)")
             squad = load_squad_state()
+            squad_source = "yaml"
         if args.rebuild:
             owned_n = len(squad.owned)
             squad = rebuild_squad_state(squad)
@@ -3184,6 +3188,7 @@ def _plan(args: argparse.Namespace) -> None:
             args.gw,
             args.horizon,
             squad=squad,
+            squad_source=squad_source,
             chip_arm=args.chip_arm,
             chip_rules_season=args.chip_rules_season,
             force_play=not bool(args.no_force_play),

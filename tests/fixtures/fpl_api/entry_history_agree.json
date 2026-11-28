@@ -1,0 +1,123 @@
+{
+  "current": [
+    {
+      "event": 1,
+      "points": 40,
+      "total_points": 40,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 0,
+      "value": 1000,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 2,
+      "points": 40,
+      "total_points": 80,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 5,
+      "value": 1005,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 3,
+      "points": 40,
+      "total_points": 120,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 10,
+      "value": 1010,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 4,
+      "points": 40,
+      "total_points": 160,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 12,
+      "value": 1012,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 5,
+      "points": 40,
+      "total_points": 200,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 14,
+      "value": 1014,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 6,
+      "points": 40,
+      "total_points": 240,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 16,
+      "value": 1016,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 7,
+      "points": 40,
+      "total_points": 280,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 18,
+      "value": 1018,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 8,
+      "points": 40,
+      "total_points": 320,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 20,
+      "value": 1020,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 0
+    },
+    {
+      "event": 9,
+      "points": 57,
+      "total_points": 377,
+      "rank": 1,
+      "rank_sort": 1,
+      "overall_rank": 1,
+      "bank": 21,
+      "value": 1022,
+      "event_transfers": 1,
+      "event_transfers_cost": 0,
+      "points_on_bench": 11
+    }
+  ],
+  "past": [],
+  "chips": []
+}

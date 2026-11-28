@@ -482,8 +482,10 @@ def test_run_plan_resolves_squad_when_entry_id_set(
     calls: list[object] = []
 
     def fake_resolve(view, **kwargs):  # noqa: ANN001
+        from fplt.optimise.public_squad import ResolvedSquad
+
         calls.append(kwargs)
-        return resolved
+        return ResolvedSquad(state=resolved, source="my_team")
 
     monkeypatch.setattr("fplt.optimise.decisions.resolve_squad_state", fake_resolve)
     try:

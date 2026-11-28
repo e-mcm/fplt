@@ -707,6 +707,7 @@ def write_plan_run(
     build_id: str | None = None,
     fp: str | None = None,
     prod_tag: str | None = None,
+    tags: dict[str, str] | None = None,
 ) -> RunManifest:
     """Dual-write a plan table into a new run folder.
 
@@ -726,6 +727,7 @@ def write_plan_run(
         build_id: Curated build id for the manifest (#346).
         fp: Run fingerprint for skip-if-done (#346).
         prod_tag: Moving ops tag label when known.
+        tags: Optional manifest tags (e.g. ``squad_source=public``).
 
     Returns:
         The succeeded ``RunManifest``.
@@ -756,6 +758,7 @@ def write_plan_run(
         fp=fp,
         prod_tag=prod_tag,
         auto_build_id=build_id is None,
+        tags=tags,
     ) as writer:
         writer.write_parquet("plans/plan.parquet", frame)
     _push_if_configured(data_dir, writer.run_id)

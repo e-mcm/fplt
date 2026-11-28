@@ -22,8 +22,11 @@ from fplt.optimise.state import OwnedPlayer, SquadState
 def fpl_selling_price(purchase_price: int, current_price: int) -> int:
     """Compute FPL selling price in tenths of a million.
 
-    Keep half of any rise (rounded down to the nearest 0.1) and take the
-    full loss on any fall.
+    Official FPL sell-on rule (prices in tenths of £1m): if the list price
+    has not risen since purchase, sell at the current list price; if it has
+    risen, keep half the rise floored to the nearest 0.1
+    (``sell = purchase + floor((now - purchase) / 2)``). Falls are taken in
+    full (``sell = now`` when ``now < purchase``).
 
     Args:
         purchase_price: Price paid when the player joined the squad.
@@ -37,9 +40,9 @@ def fpl_selling_price(purchase_price: int, current_price: int) -> int:
     """
     if purchase_price < 0 or current_price < 0:
         raise ValueError("prices must be >= 0")
-    if current_price >= purchase_price:
-        return purchase_price + (current_price - purchase_price) // 2
-    return current_price
+    if current_price <= purchase_price:
+        return current_price
+    return purchase_price + (current_price - purchase_price) // 2
 
 
 def refresh_owned_selling_prices(

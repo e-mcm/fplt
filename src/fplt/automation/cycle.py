@@ -261,10 +261,18 @@ def _play(data_dir: Path, models: list[str], key: GWKey, horizon: int) -> None:
     run_backtest(data_dir, key.season, key.gw, key.gw, models, steps=horizon)
     # Live squad when FPLT_ENTRY_ID is set; otherwise YAML draft / empty owned.
     view = PITData(DataStore(data_dir)).view(key)
-    squad = resolve_squad_state(view, event=key.gw)
+    resolved = resolve_squad_state(view, event=key.gw)
     for name in models:
         try:
-            run_plan(data_dir, name, key.season, key.gw, horizon, squad=squad)
+            run_plan(
+                data_dir,
+                name,
+                key.season,
+                key.gw,
+                horizon,
+                squad=resolved.state,
+                squad_source=resolved.source,
+            )
         except FileExistsError:
             logger.info("plan already exists for %s / %s; skipping", name, key)
             continue
