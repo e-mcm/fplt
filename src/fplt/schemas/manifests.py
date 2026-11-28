@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 RunKind = Literal["official", "adhoc", "experiment", "benchmark", "legacy"]
 RunMode = Literal["live", "backtest"]
-RunType = Literal["predict", "plan", "eval"]
+RunType = Literal["predict", "plan", "eval", "component"]
 RunStatus = Literal["running", "succeeded", "failed"]
 SquadMode = Literal["real", "virtual"]
 LineRole = Literal["primary", "candidate"]
@@ -60,7 +60,7 @@ class RunManifest(BaseModel):
     purpose: str = ""
     experiment_id: str | None = None
     arm: str | None = None
-    run_type: RunType
+    run_type: RunType  # predict | plan | eval | component (#405 / experiments §7)
     spec_hash: str = Field(min_length=1)
     spec_label: str = Field(min_length=1)
     model_id: str = Field(min_length=1)

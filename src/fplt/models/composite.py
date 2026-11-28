@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import pickle
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ import numpy as np
 import polars as pl
 
 from fplt.data.pit import PITView
+from fplt.models.component_cache import LAYERED_COMPONENT_SLOTS
 from fplt.models.components.involvement.shares import InvolvementShares
 from fplt.models.components.involvement.xg import InvolvementXg
 from fplt.models.components.minutes.empirical import EmpiricalMinutes
@@ -135,16 +137,36 @@ class CompositePredictor:
         self._other = _build(spec, "other")
         self._fitted = False
 
-    def fit(self, view: PITView) -> None:
-        """Fit each component on rows visible at ``view.as_of``."""
-        with timed_phase("fit/score"):
-            self._score.fit(view)
-        with timed_phase("fit/minutes"):
-            self._minutes.fit(view)
-        with timed_phase("fit/involvement"):
-            self._involvement.fit(view)
-        with timed_phase("fit/other"):
-            self._other.fit(view)
+    def fit(
+        self,
+        view: PITView,
+        *,
+        precomputed: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Fit each component on rows visible at ``view.as_of``.
+
+        Args:
+            view: Point-in-time tables at one deadline.
+            precomputed: Optional ``slot → fitted component`` map for the
+                layered slots (``score`` / ``minutes`` / ``involvement`` /
+                ``other``). Present slots are injected instead of fitted so
+                experiment arms can reuse cached upstream outputs
+                (toolkit §2.2). Omitted slots are fitted as usual.
+
+        Raises:
+            ValueError: ``precomputed`` names an unknown slot.
+        """
+        injected = dict(precomputed or {})
+        unknown = sorted(set(injected) - set(LAYERED_COMPONENT_SLOTS))
+        if unknown:
+            raise ValueError(f"precomputed has unknown component slots {unknown}")
+        for name in LAYERED_COMPONENT_SLOTS:
+            attr = f"_{name}"
+            if name in injected:
+                setattr(self, attr, injected[name])
+                continue
+            with timed_phase(f"fit/{name}"):
+                getattr(self, attr).fit(view)
         _apply_involvement_sim_params(self)
         self._fitted = True
 

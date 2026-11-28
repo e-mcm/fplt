@@ -197,7 +197,7 @@ def run_fingerprint(
         spec: Model that will run.
         build: Curated build supplying table content shas.
         target_gw: Deadline gameweek the run covers.
-        run_type: ``predict`` / ``plan`` / ``eval``.
+        run_type: ``predict`` / ``plan`` / ``eval`` / ``component``.
         prod_tag: Moving ops tag label, or ``None``.
         kind: Run kind (``official`` vs ``adhoc`` fingerprint, …). Part of
             the hash so light mid-week runs do not block official PMF runs
