@@ -44,12 +44,12 @@ class RunManifest(BaseModel):
     """Immutable identity and provenance for one analytic run.
 
     Written as ``runs/run=<run_id>/manifest.json``. Ops reuse identity is the
-    run fingerprint ``fp`` (#346 / AGENTS.md §7): sha256 of spec_hash, prod_tag,
-    target GW, run_type, and content shas of ``required_tables(spec)``.
-    ``build_id`` names the curated build the PITView was made from; the
-    write-once index ``runs/by_fp/fp=<fp>.json`` maps ``fp`` → ``run_id``.
-    ``raw_manifest_hash`` / ``staged_digests`` remain for migration / debug.
-    Legacy imports may omit ``fp``.
+    run fingerprint ``fp`` (#346 / #374 / AGENTS.md §7): sha256 of spec_hash,
+    prod_tag, target GW, run_type, kind, and content shas of
+    ``required_tables(spec)``. ``build_id`` names the curated build the
+    PITView was made from; the write-once index ``runs/by_fp/fp=<fp>.json``
+    maps ``fp`` → ``run_id``. ``raw_manifest_hash`` / ``staged_digests`` remain
+    for migration / debug. Legacy imports may omit ``fp``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

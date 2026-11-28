@@ -322,8 +322,8 @@ def test_run_official_checkpoint_happy_path(
 def test_official_predict_writes_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``_official_predict`` fits, scores, and writes an official run id."""
-    from fplt.automation.official_slate import _official_predict
+    """``_slate_predict`` fits, scores, and writes an official run id."""
+    from fplt.automation.official_slate import _slate_predict
     from fplt.models.predictions import empty_predictions
     from fplt.models.spec import load_model_specs
     from tests.builders import build_league
@@ -364,11 +364,14 @@ def test_official_predict_writes_run(
     def fake_write(*_a: Any, **kwargs: Any) -> Any:
         assert kwargs["kind"] == "official"
         assert kwargs["checkpoint"] == "T-90m"
+        assert kwargs["points_pmf_for_run_id"] is None or callable(
+            kwargs.get("points_pmf_for_run_id")
+        )
         return type("M", (), {"run_id": "pred-1"})()
 
     monkeypatch.setattr("fplt.automation.official_slate.write_predict_run", fake_write)
     assert (
-        _official_predict(
+        _slate_predict(
             tmp_path,
             spec.name,
             key=key,
@@ -378,6 +381,9 @@ def test_official_predict_writes_run(
             fp="f" * 64,
             prod_tag=None,
             build=_stub_build(),
+            kind="official",
+            purpose=None,
+            write_pmf=True,
         )
         == "pred-1"
     )
@@ -404,10 +410,10 @@ def _stub_build() -> Any:
 
 
 def test_official_predict_unknown_model(tmp_path: Path) -> None:
-    from fplt.automation.official_slate import _official_predict
+    from fplt.automation.official_slate import _slate_predict
 
     with pytest.raises(ValueError, match="unknown model spec"):
-        _official_predict(
+        _slate_predict(
             tmp_path,
             "no_such_model",
             key=GWKey("2024-25", 1),
@@ -417,13 +423,16 @@ def test_official_predict_unknown_model(tmp_path: Path) -> None:
             fp="f" * 64,
             prod_tag=None,
             build=_stub_build(),
+            kind="official",
+            purpose=None,
+            write_pmf=True,
         )
 
 
 def test_official_predict_tolerates_legacy_predictions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from fplt.automation.official_slate import _official_predict
+    from fplt.automation.official_slate import _slate_predict
     from fplt.models.predictions import empty_predictions
     from fplt.models.spec import load_model_specs
     from tests.builders import build_league
@@ -464,7 +473,7 @@ def test_official_predict_tolerates_legacy_predictions(
         lambda *a, **k: type("M", (), {"run_id": "pred-legacy"})(),
     )
     assert (
-        _official_predict(
+        _slate_predict(
             tmp_path,
             spec.name,
             key=key,
@@ -474,15 +483,45 @@ def test_official_predict_tolerates_legacy_predictions(
             fp="f" * 64,
             prod_tag=None,
             build=_stub_build(),
+            kind="official",
+            purpose=None,
+            write_pmf=True,
         )
         == "pred-legacy"
+    )
+
+    def fake_fp_write(*_a: Any, **kwargs: Any) -> Any:
+        assert kwargs["kind"] == "adhoc"
+        assert kwargs["purpose"] == "fingerprint"
+        assert kwargs["points_pmf_for_run_id"] is None
+        return type("M", (), {"run_id": "pred-fp"})()
+
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.write_predict_run", fake_fp_write
+    )
+    assert (
+        _slate_predict(
+            tmp_path,
+            spec.name,
+            key=key,
+            horizon=1,
+            checkpoint=None,
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
+            build=_stub_build(),
+            kind="adhoc",
+            purpose="fingerprint",
+            write_pmf=False,
+        )
+        == "pred-fp"
     )
 
 
 def test_official_plan_success_and_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from fplt.automation.official_slate import _official_plan
+    from fplt.automation.official_slate import _slate_plan
     from fplt.models.spec import load_model_specs
     from fplt.optimise.decisions import PlanExistsError
     from fplt.optimise.state import SquadState
@@ -504,7 +543,7 @@ def test_official_plan_success_and_exists(
         lambda *a, **k: (None, None, None, "plan-ok"),
     )
     assert (
-        _official_plan(
+        _slate_plan(
             tmp_path,
             line,
             key=key,
@@ -515,12 +554,14 @@ def test_official_plan_success_and_exists(
             build_id="build1",
             fp="f" * 64,
             prod_tag=None,
+            kind="official",
+            purpose=None,
         )
         == "plan-ok"
     )
 
     with pytest.raises(TypeError, match="SquadState"):
-        _official_plan(
+        _slate_plan(
             tmp_path,
             line,
             key=key,
@@ -531,6 +572,8 @@ def test_official_plan_success_and_exists(
             fp="f" * 64,
             prod_tag=None,
             chip_arm="off",
+            kind="official",
+            purpose=None,
         )
 
     plan_path = tmp_path / "legacy_plan.parquet"
@@ -564,7 +607,7 @@ def test_official_plan_success_and_exists(
     )
     assert load_model_specs()["rolling_mean_v1"]
     assert (
-        _official_plan(
+        _slate_plan(
             tmp_path,
             line,
             key=key,
@@ -575,8 +618,36 @@ def test_official_plan_success_and_exists(
             build_id="build1",
             fp="f" * 64,
             prod_tag=None,
+            kind="official",
+            purpose=None,
         )
         == "plan-from-legacy"
+    )
+
+    def fake_fp_plan_write(*_a: Any, **kwargs: Any) -> Any:
+        assert kwargs["kind"] == "adhoc"
+        assert kwargs["purpose"] == "fingerprint"
+        return type("M", (), {"run_id": "plan-fp-legacy"})()
+
+    monkeypatch.setattr(
+        "fplt.automation.official_slate.write_plan_run", fake_fp_plan_write
+    )
+    assert (
+        _slate_plan(
+            tmp_path,
+            line,
+            key=key,
+            parent_run_id="p",
+            checkpoint=None,
+            squad=squad,
+            chip_arm="off",
+            build_id="build1",
+            fp="f" * 64,
+            prod_tag=None,
+            kind="adhoc",
+            purpose="fingerprint",
+        )
+        == "plan-fp-legacy"
     )
 
 
@@ -820,11 +891,11 @@ def test_ensure_slate_runs_skip_and_execute(
         plan_run_id=None,
     )
     monkeypatch.setattr(
-        "fplt.automation.official_slate._official_predict",
+        "fplt.automation.official_slate._slate_predict",
         lambda *a, **k: "pred-new",
     )
     monkeypatch.setattr(
-        "fplt.automation.official_slate._official_plan",
+        "fplt.automation.official_slate._slate_plan",
         lambda *a, **k: "plan-new",
     )
     bid2, pairs2 = ensure_slate_runs(

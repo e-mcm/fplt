@@ -46,6 +46,10 @@ min_run_interval_minutes: 60
 # #346 freshness: T−90m / T−30m refuse a curated build older than this
 # and ntfy instead of planning on stale data.
 max_build_age_minutes: 30
+# #374: skip light fingerprint (adhoc) runs when a not-yet-done checkpoint
+# becomes due within this many minutes, so background work never collides
+# with T−24h / T−6h / T−90m / T−30m.
+background_quiet_minutes: 45
 
 lines:
   - {line: v4_h3, spec: dc_layered_v4_native, horizon: 3, role: primary}
