@@ -49,6 +49,7 @@ from tests.builders_e2e import (
     NOW_T90M,
     e2e_production_ops,
     seed_e2e_bucket,
+    seed_e2e_curated,
 )
 
 _HAS_RCLONE = shutil.which("rclone") is not None
@@ -104,6 +105,8 @@ def _configure_tick(
         shutil.rmtree(bucket / "raw" / "vaastav")
     remote = Remote(target=str(bucket), kind="data", env={})
     _patch_local_remote(monkeypatch, remote)
+    # #346: ops pulls curated only — seed a build + latest pointer on the bucket.
+    seed_e2e_curated(bucket, data, remote)
     monkeypatch.setenv("FPLT_DATA_DIR", str(data))
     monkeypatch.setenv("FPLT_DATA_BUCKET", "fplt-data")
     monkeypatch.setenv("FPLT_R2_ACCOUNT_ID", "test")

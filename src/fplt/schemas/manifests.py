@@ -43,10 +43,13 @@ class AsOfDeadline(BaseModel):
 class RunManifest(BaseModel):
     """Immutable identity and provenance for one analytic run.
 
-    Written as ``runs/run=<run_id>/manifest.json``. Identity for reuse is
-    ``(spec_hash, code_sha, lockfile_hash, build_id, seeds)``. ``build_id``
-    names the curated build the PITView was made from when one exists;
+    Written as ``runs/run=<run_id>/manifest.json``. Ops reuse identity is the
+    run fingerprint ``fp`` (#346 / AGENTS.md §7): sha256 of spec_hash, prod_tag,
+    target GW, run_type, and content shas of ``required_tables(spec)``.
+    ``build_id`` names the curated build the PITView was made from; the
+    write-once index ``runs/by_fp/fp=<fp>.json`` maps ``fp`` → ``run_id``.
     ``raw_manifest_hash`` / ``staged_digests`` remain for migration / debug.
+    Legacy imports may omit ``fp``.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -72,6 +75,7 @@ class RunManifest(BaseModel):
     fplt_mc_version: str | None = None
     lockfile_hash: str = Field(min_length=1)
     build_id: str | None = None
+    fp: str | None = None
     raw_manifest_hash: str | None = None
     staged_digests: dict[str, str] = Field(default_factory=dict)
     as_of: list[AsOfDeadline] = Field(min_length=1)

@@ -15,7 +15,6 @@ from fplt.automation.checkpoints import (
     write_notified_marker,
     write_plan_checkpoint_marker,
 )
-from fplt.automation.ops_feeds import FeedRefreshResult
 from fplt.automation.ops_tick import run_ops_tick
 from fplt.automation.production import OfficialLine, ProductionOps
 from fplt.data.remote import Remote
@@ -23,6 +22,7 @@ from fplt.data.store import DataStore
 from fplt.models.pipeline_spec import live_pipeline_defaults
 from fplt.settings import Settings, get_settings
 from fplt.types import GWKey
+from tests.unit._ops_tick_curated import patch_curated_ops_path
 
 _DEADLINE = datetime(2024, 9, 1, 17, 0, tzinfo=UTC)
 _PRIMARY = "v4_h3"
@@ -92,10 +92,7 @@ def _patch_tick_deps(
     plans_exist_impl: object | None = None,
     plan_calls: list[str] | None = None,
 ) -> list[Request]:
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
+    patch_curated_ops_path(monkeypatch)
     monkeypatch.setattr("fplt.automation.ops_tick.catch_up", lambda *a, **k: [])
     monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", lambda *a, **k: None)
     monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])
@@ -136,6 +133,7 @@ def _patch_tick_deps(
         *,
         settings: object = None,
         chip_arm: str = "optimised",
+        **_kwargs: object,
     ) -> object:
         from fplt.automation.official_slate import OfficialCheckpointResult
 
@@ -320,10 +318,7 @@ def test_ops_tick_skips_urgent_when_retry_creates_plan(
         has_plan["value"] = True
         return True
 
-    monkeypatch.setattr(
-        "fplt.automation.ops_tick.refresh_ops_feeds",
-        lambda *a, **k: FeedRefreshResult(0, 0, 0, 0),
-    )
+    patch_curated_ops_path(monkeypatch)
     monkeypatch.setattr("fplt.automation.ops_tick.catch_up", lambda *a, **k: [])
     monkeypatch.setattr("fplt.automation.ops_tick.pre_deadline", lambda *a, **k: None)
     monkeypatch.setattr("fplt.automation.ops_tick.pending_checked", lambda *a, **k: [])

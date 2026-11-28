@@ -131,3 +131,23 @@ def test_bad_predict_requests_are_rejected(tmp_path: Path) -> None:
     run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
     with pytest.raises(FileExistsError):
         run_predict(tmp_path, "rolling_mean_v1", 1, season=_SEASON, gw=2)
+
+
+def test_fit_or_load_predictor_fit_fp_reuse_and_mismatch(tmp_path: Path) -> None:
+    from fplt.backtest.predict_live import fit_or_load_predictor
+    from fplt.data.pit import PITData
+    from fplt.models.spec import load_model_specs
+
+    store = build_league(DataStore(tmp_path))
+    key = GWKey(_SEASON, 2)
+    spec = load_model_specs()["rolling_mean_v1"]
+    view = PITData(store).view(key)
+    fit_fp = "a" * 64
+    first = fit_or_load_predictor(tmp_path, spec, key, view, fit_fp=fit_fp)
+    second = fit_or_load_predictor(tmp_path, spec, key, view, fit_fp=fit_fp)
+    assert first is not second  # freshly loaded instance
+    dest = artifact_dir(tmp_path, spec, key) / f"fit_fp={fit_fp}"
+    assert (dest / "fit_fp.txt").read_text(encoding="utf-8").strip() == fit_fp
+    (dest / "fit_fp.txt").write_text("wrong\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="fit_fp mismatch"):
+        fit_or_load_predictor(tmp_path, spec, key, view, fit_fp=fit_fp)
