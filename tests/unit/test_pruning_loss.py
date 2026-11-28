@@ -28,15 +28,18 @@ from fplt.optimise.pruning_loss import (
 )
 from fplt.schemas.pruning_loss import PruningLossRowSchema
 
-# Small pool keeps HiGHS solves reliable under the full `make check` suite.
-_TEST_POOL = {"GK": 6, "DEF": 16, "MID": 22, "FWD": 10}
+# Tiny pool + H=3 keep harness/CLI HiGHS toys off the xdist long pole
+# (FDB-419 T5 / FDB-424). Assertions only need reference week-1 agreement.
+_TEST_POOL = {"GK": 4, "DEF": 10, "MID": 12, "FWD": 6}
+_TEST_HORIZON = 3
 
 
 def _fast_options() -> HighsSolveOptions:
     # threads=1 is safe: HighsSolveOptions.apply resets the thread-local
     # scheduler before pinning (avoids kNotset after parallel HiGHS).
+    # time_limit is a ceiling; these toys usually finish well under it.
     return HighsSolveOptions(
-        time_limit=30.0,
+        time_limit=3.0,
         mip_rel_gap=0.0,
         threads=1,
         parallel="off",
@@ -45,7 +48,9 @@ def _fast_options() -> HighsSolveOptions:
 
 
 def _scenarios(n: int, *, seed: int):
-    return sample_synthetic_scenarios(n, seed=seed, horizon=5, pool_counts=_TEST_POOL)
+    return sample_synthetic_scenarios(
+        n, seed=seed, horizon=_TEST_HORIZON, pool_counts=_TEST_POOL
+    )
 
 
 def test_sample_synthetic_scenarios_covers_tags() -> None:
@@ -168,8 +173,16 @@ def test_week1_actions_detect_transfer_mismatch() -> None:
 def test_harness_records_reference_agreement_and_writes_report(
     tmp_path: Path,
 ) -> None:
-    """Reference arm always agrees with itself; report artifacts validate."""
-    scenarios = _scenarios(4, seed=3)
+    """Reference arm always agrees with itself; report artifacts validate.
+
+    Two scenarios × (reference + scaled + current) is enough to exercise
+    multi-solve agreement and report I/O; four scenarios at H=5 was a ~5s
+    hotspot without stronger asserts (FDB-419 T5).
+    """
+    scenarios = _scenarios(2, seed=3)
+    # Guard against shrinking to a single trivial solve / reference-only arm.
+    assert len(scenarios) >= 2
+    assert all(scenario.horizon >= 3 for scenario in scenarios)
     # Scale against a small reference so n=40 actually prunes the test pool.
     tight = policy_for_target_pool(40, reference_n=60)
     arms = (
@@ -177,6 +190,7 @@ def test_harness_records_reference_agreement_and_writes_report(
         PruneArm(arm_id="n=40", policy=tight, target_pool=40),
         PruneArm(arm_id="current", policy=DEFAULT_PRUNE_POLICY),
     )
+    assert any(arm.policy is not None for arm in arms)
     report = run_pruning_loss_harness(
         scenarios,
         arms=arms,
@@ -187,11 +201,15 @@ def test_harness_records_reference_agreement_and_writes_report(
     assert isinstance(checked, pl.DataFrame)
     assert checked.height == len(scenarios) * len(arms)
     ref_rows = checked.filter(pl.col("arm_id") == "reference")
+    assert ref_rows.height == len(scenarios)
     assert ref_rows["week1_agree"].all()
     assert (ref_rows["objective_gap"].abs() < 1e-9).all()
     assert set(ref_rows["mip_status"].drop_nulls().to_list()).issubset(
         {"kOptimal", "kTimeLimit"}
     )
+    pruned_rows = checked.filter(pl.col("arm_id") != "reference")
+    assert pruned_rows.height == len(scenarios) * (len(arms) - 1)
+    assert "week1_agree" in pruned_rows.columns
     summary = summarise_pruning_loss(checked)
     assert "agree_rate" in summary.columns
     text = format_pruning_loss_summary(summary)
@@ -235,14 +253,18 @@ def test_cli_pruning_loss_smoke(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CLI writes the report and prints the summary table."""
+    """CLI writes the report and prints the summary table.
+
+    H=3 + tiny pool + short time limits keep the smoke path under ~1s while
+    still running reference + target + current arms (FDB-419 T5).
+    """
     from fplt.cli import main
 
     def _tiny_scenarios(
         n: int,
         *,
         seed: int = 0,
-        horizon: int = 5,
+        horizon: int = _TEST_HORIZON,
         pool_counts: object = None,
     ):
         return sample_synthetic_scenarios(
@@ -258,17 +280,17 @@ def test_cli_pruning_loss_smoke(
         [
             "pruning-loss",
             "--n-scenarios",
-            "2",
+            "1",
             "--seed",
             "6",
             "--horizon",
-            "5",
+            str(_TEST_HORIZON),
             "--targets",
-            "100",
+            "40",
             "--reference-time-limit",
-            "30",
+            "3",
             "--sweep-time-limit",
-            "30",
+            "3",
             "--output-dir",
             str(out),
         ]
@@ -276,3 +298,6 @@ def test_cli_pruning_loss_smoke(
     captured = capsys.readouterr()
     assert "reference" in captured.out
     assert (out / "summary.json").is_file()
+    summary_text = (out / "summary.json").read_text()
+    assert "identical week-1 actions" in summary_text
+    assert '"n_scenarios": 1' in summary_text
