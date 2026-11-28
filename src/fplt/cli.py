@@ -3164,6 +3164,7 @@ def _plan(args: argparse.Namespace) -> None:
                 view,
                 entry_json=args.entry_json,
                 event=args.gw,
+                as_of_gw=args.gw,
                 settings=settings,
             )
             squad = resolved.state

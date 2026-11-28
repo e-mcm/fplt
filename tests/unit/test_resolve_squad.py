@@ -7,11 +7,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.pit import PITData
 from fplt.data.store import DataStore
-from fplt.optimise.decisions import resolve_squad_state
+from fplt.optimise.decisions import PastGameweekSquadError, resolve_squad_state
 from fplt.optimise.state import (
     OwnedPlayer,
     SquadState,
@@ -165,6 +166,83 @@ def test_rebuild_folds_selling_prices_into_bank() -> None:
     assert rebuilt.bank == 176
     assert rebuilt.free_transfers == 2
     assert rebuild_squad_state(rebuilt) == rebuilt
+
+
+def test_resolve_refuses_past_gw_from_live_public_squad(tmp_path: Path) -> None:
+    """#381: as_of_gw <= last_finished must not silently use the live squad."""
+    payload = json.loads((_FIXTURES / "entry_picks.json").read_text(encoding="utf-8"))
+    elements = [int(row["element"]) for row in payload["picks"]]
+    view = _view(tmp_path, element_ids=elements)
+    priced = CurrentTeam.from_entry_picks(1, 12, payload).model_copy(
+        update={"source": "public"}
+    )
+    public_calls: list[int] = []
+
+    def load_public(entry_id: int, pit_view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        public_calls.append(entry_id)
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=priced,
+            chips=ChipInventory(),
+            last_finished=12,
+        )
+
+    def boom_team(**_: object) -> CurrentTeam:
+        raise AssertionError("must refuse before my-team when as_of_gw is past")
+
+    with pytest.raises(PastGameweekSquadError, match="as_of_gw=1") as exc_info:
+        resolve_squad_state(
+            view,
+            as_of_gw=1,
+            settings=Settings(entry_id=1, fpl_session="cookie"),
+            load_team=boom_team,
+            load_public=load_public,
+        )
+    assert exc_info.value.as_of_gw == 1
+    assert exc_info.value.last_finished == 12
+    assert public_calls == [1]
+
+    # Equal to last_finished is also past (post-deadline squad).
+    with pytest.raises(PastGameweekSquadError, match="as_of_gw=12"):
+        resolve_squad_state(
+            view,
+            as_of_gw=12,
+            settings=Settings(entry_id=1, fpl_api_token=None, fpl_session=None),
+            load_public=load_public,
+        )
+
+
+def test_resolve_allows_upcoming_gw_after_last_finished(tmp_path: Path) -> None:
+    """#381: upcoming deadline (as_of_gw > last_finished) may use the live squad."""
+    payload = json.loads((_FIXTURES / "my_team.json").read_text(encoding="utf-8"))
+    elements = [int(row["element"]) for row in payload["picks"]]
+    view = _view(tmp_path, element_ids=elements)
+    team = CurrentTeam.from_my_team(42, payload)
+
+    def load_public(entry_id: int, pit_view: object, settings: object, **_: object):
+        from fplt.optimise.public_squad import PublicSquadState
+        from fplt.optimise.state import ChipInventory
+
+        return PublicSquadState(
+            entry_id=entry_id,
+            team=team.model_copy(update={"source": "public"}),
+            chips=ChipInventory(),
+            last_finished=12,
+        )
+
+    resolved = resolve_squad_state(
+        view,
+        as_of_gw=13,
+        event=13,
+        settings=Settings(entry_id=42, fpl_session="cookie"),
+        load_team=lambda **_: team,
+        load_public=load_public,
+    )
+    assert resolved.source == "my_team"
+    assert len(resolved.state.owned) == 15
 
 
 def test_resolve_ignores_free_transfers_outside_cap(tmp_path: Path) -> None:

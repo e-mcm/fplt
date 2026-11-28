@@ -1,4 +1,4 @@
-"""Catch-up plans a skipped week. Pre-deadline fires inside three hours."""
+"""Catch-up predicts a skipped week. Pre-deadline fires inside three hours."""
 
 from __future__ import annotations
 
@@ -18,13 +18,14 @@ from fplt.automation.cycle import (
     pending_checked,
     plans_exist,
     pre_deadline,
+    predicts_exist,
     reports,
 )
 from fplt.automation.production import (
     ProductionOps,
     load_production_ops,
 )
-from fplt.backtest.ledger import align_ledger_columns
+from fplt.backtest.ledger import align_ledger_columns, ledger_path
 from fplt.data.fpl_client import CurrentTeam
 from fplt.data.store import DataStore
 from fplt.models.spec import load_model_specs
@@ -32,7 +33,6 @@ from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, covered_horizon
 from fplt.optimise.state import SquadState
 from fplt.schemas.ledger import LedgerSchema
 from fplt.settings import get_settings
-from fplt.store.runs import write_backtest_run
 from fplt.types import GWKey
 from tests.builders import dual_write_plan
 
@@ -72,6 +72,8 @@ def test_production_models_are_dc_layered_v4_native_at_default_horizon() -> None
     assert pending_checked.__defaults__[-1] is None
     assert plans_exist.__defaults__ is not None
     assert plans_exist.__defaults__[-1] is None
+    assert predicts_exist.__defaults__ is not None
+    assert predicts_exist.__defaults__[-1] is None
 
 
 def test_production_models_is_lazy_not_import_time() -> None:
@@ -121,20 +123,24 @@ def test_a_deadline_is_due_only_inside_three_hours(league_dir: Path) -> None:
     assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 0) is False
 
 
-def test_catch_up_plans_a_skipped_checked_week(
+def test_catch_up_predicts_a_skipped_checked_week(
     league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Real predict+plan path: catch-up writes reports for skipped checked weeks."""
-    monkeypatch.setattr(
-        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
-    )
+    """#381: catch-up is predict-only; pre_deadline still plans the upcoming GW."""
+    monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", _boom_squad)
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", _boom_plan)
+    _stub_predict_only(monkeypatch)
     done = catch_up(league_dir, [_MODEL], horizon=1)
     assert [key.gw for key in done] == [1, 2]
     assert catch_up(league_dir, [_MODEL], horizon=1) == []
-    text = reports(league_dir)
-    assert "GW 1" in text
-    assert "GW 2" in text
+    assert predicts_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
+    assert predicts_exist(league_dir, [_MODEL], GWKey("2024-25", 2), 1)
+    # Catch-up must not write plans for past GWs.
+    assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is False
+    assert reports(league_dir) == ""
     moment = _GW3 - timedelta(hours=1)
+    # Upcoming deadline still plans (stub resolve/plan; predict already stubbed).
+    _stub_predict_and_plan(monkeypatch)
     assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is not None
     assert pre_deadline(league_dir, moment, [_MODEL], horizon=1) is None
 
@@ -185,73 +191,49 @@ def test_pre_deadline_refreshes_when_availability_signal_is_newer(
     )
 
 
-def test_catch_up_passes_live_squad_when_entry_id_set(
+def test_catch_up_never_resolves_live_squad_for_past_gw(
     league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Entry-id wiring: catch-up must pass the live squad into run_plan."""
+    """#381 regression: catch-up must not call live/public squad for last_finished."""
     monkeypatch.setenv("FPLT_ENTRY_ID", "42")
     monkeypatch.setenv("FPLT_FPL_SESSION", "cookie")
     get_settings.cache_clear()
-    team = CurrentTeam.from_my_team(42, _live_payload())
-    seen: list[SquadState | None] = []
 
-    def load_team(**_: object) -> CurrentTeam:
-        return team
+    def boom_team(**_: object) -> CurrentTeam:
+        raise AssertionError("catch-up must not load my-team for past GWs")
 
-    monkeypatch.setattr("fplt.optimise.decisions.load_current_team", load_team)
+    def boom_public(*_: object, **__: object):
+        raise AssertionError("catch-up must not call public_squad_state for past GWs")
 
-    def load_public(entry_id: int, view: object, settings: object, **_: object):
-        from fplt.optimise.public_squad import PublicSquadState
-        from fplt.optimise.state import ChipInventory
-
-        return PublicSquadState(
-            entry_id=entry_id,
-            team=team.model_copy(update={"source": "public"}),
-            chips=ChipInventory(),
-            last_finished=1,
-        )
-
-    monkeypatch.setattr("fplt.optimise.decisions.public_squad_state", load_public)
-    _stub_predict_and_plan(monkeypatch, seen=seen)
+    monkeypatch.setattr("fplt.optimise.decisions.load_current_team", boom_team)
+    monkeypatch.setattr("fplt.optimise.decisions.public_squad_state", boom_public)
+    monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", _boom_squad)
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", _boom_plan)
+    _stub_predict_only(monkeypatch)
     try:
         done = catch_up(league_dir, [_MODEL], horizon=1)
         assert [key.gw for key in done] == [1, 2]
-        # Regression: stubbed path still must receive a resolved live squad
-        # (bank / selling price / 15 owned) — not an empty YAML draft.
-        assert len(seen) == 2
-        for squad in seen:
-            assert squad is not None
-            assert squad.bank == 21
-            assert len(squad.owned) == 15
-            assert squad.owned[0].selling_price == 46
-            assert squad.free_transfers == 1
-        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
-        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 2), 1)
+        assert predicts_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
+        assert predicts_exist(league_dir, [_MODEL], GWKey("2024-25", 2), 1)
+        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is False
     finally:
         get_settings.cache_clear()
 
 
-def test_catch_up_without_entry_id_keeps_yaml_draft(
+def test_catch_up_without_entry_id_still_predict_only(
     league_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """YAML-draft wiring: without entry id, run_plan sees empty owned + bank 1000."""
+    """#381: without entry id, catch-up still skips plan / squad resolve."""
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     monkeypatch.delenv("FPLT_FPL_SESSION", raising=False)
     get_settings.cache_clear()
-    seen: list[SquadState | None] = []
-
-    def boom(**_: object) -> CurrentTeam:
-        raise AssertionError("load_current_team must not run without entry id")
-
-    monkeypatch.setattr("fplt.optimise.decisions.load_current_team", boom)
-    _stub_predict_and_plan(monkeypatch, seen=seen)
+    monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", _boom_squad)
+    monkeypatch.setattr("fplt.automation.cycle.run_plan", _boom_plan)
+    _stub_predict_only(monkeypatch)
     try:
         catch_up(league_dir, [_MODEL], horizon=1)
-        # Regression: stubbed path must still see YAML draft squad state.
-        assert seen
-        assert all(squad is not None and squad.owned == [] for squad in seen)
-        assert all(squad is not None and squad.bank == 1000 for squad in seen)
-        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
+        assert predicts_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1)
+        assert plans_exist(league_dir, [_MODEL], GWKey("2024-25", 1), 1) is False
     finally:
         get_settings.cache_clear()
 
@@ -322,7 +304,7 @@ def test_catch_up_is_bounded_per_tick(
     """#369: at most max_catch_up_per_tick GWs per call; the rest next tick."""
     monkeypatch.delenv("FPLT_ENTRY_ID", raising=False)
     get_settings.cache_clear()
-    _stub_predict_and_plan(monkeypatch)
+    _stub_predict_only(monkeypatch)
     monkeypatch.setattr(
         "fplt.automation.cycle.load_production_ops",
         lambda: _ops_with(max_catch_up_per_tick=1),
@@ -348,6 +330,8 @@ def test_play_refuses_a_past_season(
     monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", boom)
     with pytest.raises(CatchUpSeasonError, match="2023-24"):
         cycle._play(league_dir, [_MODEL], GWKey("2023-24", 1), 1)
+    with pytest.raises(CatchUpSeasonError, match="2023-24"):
+        cycle._predict_checked(league_dir, [_MODEL], GWKey("2023-24", 1), 1)
 
 
 def test_stub_plan_writer_marks_plans_exist(league_dir: Path) -> None:
@@ -368,6 +352,38 @@ def _use(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+def _boom_squad(*_: object, **__: object) -> None:
+    raise AssertionError("catch-up must not resolve a squad (#381)")
+
+
+def _boom_plan(*_: object, **__: object) -> None:
+    raise AssertionError("catch-up must not plan past GWs (#381)")
+
+
+def _stub_predict_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip real backtest; write a tiny predict run so ``predicts_exist`` succeeds."""
+    monkeypatch.setattr(
+        "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
+    )
+
+    def fake_backtest(
+        data_dir: Path,
+        season: str,
+        from_gw: int,
+        to_gw: int,
+        models: list[str],
+        *,
+        steps: int = 1,
+        **_: object,
+    ) -> list[object]:
+        assert from_gw == to_gw
+        for name in models:
+            _write_stub_predict(data_dir, name, season, from_gw, steps)
+        return []
+
+    monkeypatch.setattr("fplt.automation.cycle.run_backtest", fake_backtest)
+
+
 def _stub_predict_and_plan(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -378,6 +394,14 @@ def _stub_predict_and_plan(
         "fplt.automation.cycle.archive_if_missing", lambda *a, **k: None
     )
     monkeypatch.setattr("fplt.automation.cycle.run_backtest", lambda *a, **k: None)
+
+    def fake_resolve(view: object, **_: object):
+        from fplt.optimise.public_squad import ResolvedSquad
+        from fplt.optimise.state import load_squad_state
+
+        return ResolvedSquad(state=load_squad_state(), source="yaml")
+
+    monkeypatch.setattr("fplt.automation.cycle.resolve_squad_state", fake_resolve)
 
     def fake_run_plan(
         data_dir: Path,
@@ -396,6 +420,56 @@ def _stub_predict_and_plan(
         return None, path, report, "stub-run"
 
     monkeypatch.setattr("fplt.automation.cycle.run_plan", fake_run_plan)
+
+
+def _write_stub_predict(
+    data_dir: Path,
+    model_name: str,
+    season: str,
+    gameweek: int,
+    horizon: int,
+) -> None:
+    """Write a minimal predict run so ``predicts_exist`` recognises the deadline."""
+    from fplt.store.runs import write_backtest_run
+
+    spec = load_model_specs()[model_name]
+    store = DataStore(data_dir)
+    key = GWKey(season, gameweek)
+    frame = LedgerSchema.validate(
+        align_ledger_columns(
+            pl.DataFrame(
+                [
+                    {
+                        "model_id": spec.model_id,
+                        "run_kind": "backtest",
+                        "as_of_season": season,
+                        "as_of_gw": gameweek,
+                        "target_season": season,
+                        "target_gw": gameweek,
+                        "horizon": 1,
+                        "player_key": 1,
+                        "position": "MID",
+                        "fixture_id": 1,
+                        "xpts": 1.0,
+                        "xpts_sd": None,
+                        "p_haul": None,
+                        "p_60": None,
+                        "actual_pts": None,
+                        "actual_minutes": None,
+                    }
+                ]
+            )
+        )
+    )
+    assert isinstance(frame, pl.DataFrame)
+    write_backtest_run(
+        data_dir,
+        spec=spec,
+        as_ofs=[(key, store.deadline(key))],
+        horizon=horizon,
+        frame=frame,
+        purpose=f"stub predict {season} gw{gameweek}",
+    )
 
 
 def _write_stub_plan(
@@ -555,10 +629,13 @@ def _league(root: Path) -> DataStore:
 
 
 def _predictions(root: Path, players: list[dict[str, object]]) -> None:
-    """Seed non-zero scores as a predict run so catch-up can plan.
+    """Seed non-zero scores via the legacy ledger so pre_deadline can plan.
 
+    Written under ``ledger/predictions/`` (not ``runs/``) so catch-up's
+    ``predicts_exist`` / ``pending_checked`` still see GW1–2 as missing (#381).
     The synthetic league has no ``player_fixture_stats``, so walk-forward
-    rolling-mean xPts are zero; this run supplies usable rows for ``run_plan``.
+    rolling-mean xPts are zero; this archive supplies usable rows for
+    ``run_plan`` when stubs are not used.
     """
     spec = load_model_specs()[_MODEL]
     records: list[dict[str, object]] = []
@@ -593,15 +670,6 @@ def _predictions(root: Path, players: list[dict[str, object]]) -> None:
     )
     checked = LedgerSchema.validate(align_ledger_columns(frame))
     assert isinstance(checked, pl.DataFrame)
-    store = DataStore(root)
-    as_ofs = [
-        (GWKey("2024-25", gw), store.deadline(GWKey("2024-25", gw))) for gw in (1, 2, 3)
-    ]
-    write_backtest_run(
-        root,
-        spec=spec,
-        as_ofs=as_ofs,
-        horizon=1,
-        frame=checked,
-        purpose="cycle test seed",
-    )
+    path = ledger_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    checked.write_parquet(path)
