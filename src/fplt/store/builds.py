@@ -6,8 +6,9 @@ Stage B6 PR1. Layout from ``docs/proposals/fplt-data-model.md`` §3.2::
       tables/<table>/sha=<sha256>.parquet
       builds/build=<build_id>.json
 
-``build_id`` = hash(raw_manifest_hash, staging_version, schema hashes).
-Unchanged table bytes reuse the same ``sha=`` file across builds.
+``build_id`` = hash(table content shas, staging_version) so incremental and
+full rebuilds at the same cutoff share an id (#345). Unchanged table bytes
+reuse the same ``sha=`` file across builds.
 """
 
 from __future__ import annotations
@@ -162,25 +163,25 @@ def schema_hashes() -> dict[str, str]:
 
 def compute_build_id(
     *,
-    raw_manifest_hash: str,
+    table_shas: Mapping[str, str],
     staging_version: int = STAGING_VERSION,
-    schemas: dict[str, str] | None = None,
 ) -> str:
-    """Content-addressed build id from raw + staging + schema versions.
+    """Content-addressed build id from table digests + staging version.
+
+    Identical staged table bytes (same ``sha=`` files) plus the same
+    ``staging_version`` yield the same ``build_id``, so an incremental curate
+    and a weekly full rebuild at the same cutoff collide on id (#345).
 
     Args:
-        raw_manifest_hash: Digest from ``hash_raw_manifest``.
+        table_shas: Mapping of staged table name → content sha.
         staging_version: Staging transform version constant.
-        schemas: Per-table schema digests; defaults to ``schema_hashes()``.
 
     Returns:
         Hex SHA-256 build id.
     """
-    digests = schemas if schemas is not None else schema_hashes()
     lines = [
-        f"raw:{raw_manifest_hash}",
         f"staging_version:{staging_version}",
-        *[f"schema:{name}:{digests[name]}" for name in sorted(digests)],
+        *[f"table:{name}:{sha}" for name, sha in sorted(table_shas.items())],
     ]
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
@@ -321,6 +322,46 @@ def latest_build_id(data_dir: Path) -> str | None:
     return best_id
 
 
+def hydrate_staged_from_build(data_dir: Path, build_id: str) -> list[str]:
+    """Copy curated table parquet files into ``staged/<table>/part.parquet``.
+
+    Replaces any existing staged tree for tables present in the build so an
+    incremental curate can append new captures onto the previous snapshot.
+
+    Args:
+        data_dir: Local data root holding ``curated/`` and ``staged/``.
+        build_id: Curated build to materialise.
+
+    Returns:
+        Sorted table names written.
+
+    Raises:
+        FileNotFoundError: Manifest or a referenced table sha is missing.
+    """
+    import shutil
+
+    manifest = load_build_manifest(data_dir, build_id)
+    written: list[str] = []
+    for name, entry in sorted(manifest.tables.items()):
+        src = table_sha_path(data_dir, name, entry.sha)
+        if not src.is_file():
+            raise FileNotFoundError(src)
+        dest = data_dir / "staged" / name / "part.parquet"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        written.append(name)
+    return written
+
+
+def clear_staged(data_dir: Path) -> None:
+    """Remove ``data_dir/staged`` when present (full rebuild bootstrap)."""
+    import shutil
+
+    staged = data_dir / "staged"
+    if staged.is_dir():
+        shutil.rmtree(staged)
+
+
 def load_build_manifest(data_dir: Path, build_id: str) -> BuildManifest:
     """Load a curated build manifest by id.
 
@@ -350,10 +391,10 @@ def build_from_staged(
 ) -> BuildManifest:
     """Snapshot every non-empty staged table into a curated build.
 
-    Empty staged tables are skipped. ``build_id`` is computed from the raw
-    manifest hash, ``staging_version``, and registered schema hashes (not from
-    table bytes), so two builds from the same raw + staging version share an
-    id even when later table materialisation is still in flight.
+    Empty staged tables are skipped. Tables are written first; ``build_id`` is
+    then ``hash(table shas, staging_version)`` so identical content shares an
+    id across incremental and full rebuilds (#345). ``raw_manifest_hash`` is
+    still recorded on the manifest for provenance.
 
     Args:
         data_dir: Local data root with ``raw/`` and ``staged/``.
@@ -371,12 +412,6 @@ def build_from_staged(
     """
     store = DataStore(data_dir)
     raw_hash = hash_raw_manifest(data_dir)
-    schemas = schema_hashes()
-    build_id = compute_build_id(
-        raw_manifest_hash=raw_hash,
-        staging_version=staging_version,
-        schemas=schemas,
-    )
     tables: dict[str, BuildTableEntry] = {}
     for name in sorted(STAGED_SCHEMAS):
         frame = store.read(name)
@@ -385,6 +420,10 @@ def build_from_staged(
         tables[name] = write_table(data_dir, name, frame)
     if not tables:
         raise ValueError(f"no staged tables under {data_dir / 'staged'}")
+    build_id = compute_build_id(
+        table_shas={name: entry.sha for name, entry in tables.items()},
+        staging_version=staging_version,
+    )
     existing_path = build_manifest_path(data_dir, build_id)
     if existing_path.is_file():
         existing = load_build_manifest(data_dir, build_id)

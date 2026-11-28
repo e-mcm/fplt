@@ -103,14 +103,13 @@ def test_schema_hash_stable_and_known_tables() -> None:
 
 
 def test_compute_build_id_changes_with_staging_version() -> None:
-    raw = "a" * 64
-    schemas = {"players": "b" * 64}
-    first = compute_build_id(raw_manifest_hash=raw, staging_version=1, schemas=schemas)
-    second = compute_build_id(raw_manifest_hash=raw, staging_version=2, schemas=schemas)
+    tables = {"players": "b" * 64}
+    first = compute_build_id(table_shas=tables, staging_version=1)
+    second = compute_build_id(table_shas=tables, staging_version=2)
     assert first != second
+    assert compute_build_id(table_shas=tables, staging_version=1) == first
     assert (
-        compute_build_id(raw_manifest_hash=raw, staging_version=1, schemas=schemas)
-        == first
+        compute_build_id(table_shas={"players": "c" * 64}, staging_version=1) != first
     )
 
 

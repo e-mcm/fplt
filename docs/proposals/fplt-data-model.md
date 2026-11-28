@@ -61,7 +61,7 @@ curated/
   features/<name>/v=<ver>/build=<build_id>/season=…/gw=…/part.parquet
 ```
 
-- **`build_id`** = `hash(raw manifest, staging_version, schema versions)`. The raw manifest is the sorted list of `(path, size)` for every raw file included. Raw is write-once, so path plus size identifies it.
+- **`build_id`** = `hash(table content shas, staging_version)` (#345). Identical staged table bytes share an id across incremental and full rebuilds at the same cutoff. The build manifest still records `raw_manifest_hash` (sorted `(path, size)` of local raw) and `raw_cutoff` for provenance; the mutable watermark for incremental curate is `status/curated/latest.json`.
 - **`staging_version`** is a constant bumped whenever any staging transform changes output, with the same discipline as feature versions (AGENTS.md §2).
 - **Dedup:** a table whose content didn't change between builds points at the same `sha=` file. Keeping every build forever therefore costs about one copy of each *distinct* table version, which is megabytes per gameweek.
 - A **build manifest** records `build_id, created_at, staging_version, code_sha, raw_manifest_hash, raw_cutoff (max captured_at), tables{name: sha, rows, schema_hash}, quarantined_captures[]` (from ops-06).

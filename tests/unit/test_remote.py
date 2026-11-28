@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from fplt.data.remote import (
     Remote,
     RemoteError,
     lsf,
+    lsjson,
     pull,
     push,
     push_replace,
@@ -207,6 +209,57 @@ def test_push_refuses_non_whitelisted_prefix() -> None:
     assert "raw" not in PUSHABLE["lab"]
     assert "bench" in PUSHABLE["lab"]
     assert "bench" not in PUSHABLE["data"]
+
+
+def test_lsjson_parses_files_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        [
+            {"Path": "a/b.json.gz", "Size": 12, "IsDir": False},
+            {"Path": "a", "Size": 0, "IsDir": True},
+            {"Name": "c.json.gz", "Size": 3, "IsDir": False},
+        ]
+    )
+
+    def fake_stdout(args: list[str], *, env: dict[str, str]) -> str:
+        assert args[0] == "lsjson"
+        assert "--files-only" in args
+        return payload
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", fake_stdout)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    objects = lsjson(remote, "raw")
+    assert [obj.path for obj in objects] == ["a/b.json.gz", "c.json.gz"]
+    assert objects[0].size == 12
+
+
+def test_lsjson_missing_prefix_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("directory not found")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", missing)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    assert lsjson(remote, "raw/missing") == []
+
+
+def test_lsjson_invalid_json_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", lambda args, *, env: "not-json{")
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(RemoteError, match="invalid JSON"):
+        lsjson(remote, "raw")
+
+
+def test_lsjson_other_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(args: list[str], *, env: dict[str, str]) -> str:
+        raise RemoteError("permission denied")
+
+    monkeypatch.setattr(remote_mod, "_rclone_stdout", boom)
+    remote = Remote(target="fplt:fplt-data", kind="data", env={})
+    with pytest.raises(RemoteError, match="permission"):
+        lsjson(remote, "raw")
 
 
 def test_lsf_missing_prefix_returns_empty(

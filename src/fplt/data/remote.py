@@ -12,13 +12,14 @@ session when one is bound, and writes a ``kind=remote`` JSON artifact under
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fplt.settings import Settings, get_settings, secret_value
 from fplt.utils.process import run_command
@@ -36,7 +37,16 @@ _RCLONE_INSTALL_HINT = (
     "`brew install rclone` or `sudo apt-get install -y rclone`"
 )
 
-_RemoteOp = Literal["pull", "push", "check", "lsf"]
+_RemoteOp = Literal["pull", "push", "check", "lsf", "lsjson"]
+
+
+@dataclass(frozen=True)
+class RemoteObject:
+    """One object listed by ``rclone lsjson`` (path relative to the prefix)."""
+
+    path: str
+    size: int
+
 
 PUSHABLE: dict[str, frozenset[str]] = {
     "data": frozenset(
@@ -345,6 +355,59 @@ def lsf(remote: Remote, prefix: str, *, recursive: bool = True) -> list[str]:
         nbytes=0,
     )
     return paths
+
+
+def lsjson(remote: Remote, prefix: str) -> list[RemoteObject]:
+    """List objects under ``prefix`` via ``rclone lsjson`` (metadata only).
+
+    Args:
+        remote: rclone target (R2 or a local directory in tests).
+        prefix: Object prefix under the bucket (e.g. ``raw``).
+
+    Returns:
+        File objects with paths relative to ``prefix``, sorted by path. Empty
+        when the prefix is missing. Directory entries are omitted.
+
+    Raises:
+        RemoteError: rclone failed for a reason other than a missing prefix.
+    """
+    source = f"{remote.target.rstrip('/')}/{prefix.strip('/')}"
+    args = ["lsjson", source, "-R", "--files-only"]
+    start = time.perf_counter()
+    try:
+        with timed_phase("remote/lsjson"):
+            stdout = _rclone_stdout(args, env=remote.env)
+    except RemoteError as exc:
+        detail = str(exc).lower()
+        if "directory not found" in detail or "not found" in detail:
+            return []
+        raise
+    elapsed = time.perf_counter() - start
+    try:
+        payload: list[dict[str, Any]] = json.loads(stdout) if stdout.strip() else []
+    except json.JSONDecodeError as exc:
+        raise RemoteError(f"rclone lsjson returned invalid JSON: {exc}") from exc
+    objects = sorted(
+        (
+            RemoteObject(
+                path=str(item.get("Path") or item.get("Name") or "").strip("/"),
+                size=int(item.get("Size") or 0),
+            )
+            for item in payload
+            if not item.get("IsDir")
+        ),
+        key=lambda obj: obj.path,
+    )
+    objects = [obj for obj in objects if obj.path]
+    _emit_remote_timing(
+        "lsjson",
+        remote=remote,
+        prefix=prefix,
+        elapsed=elapsed,
+        n_objects=len(objects),
+        nbytes=sum(obj.size for obj in objects),
+    )
+    return objects
 
 
 def check_one_way(src: Path, remote: Remote, prefix: str) -> None:

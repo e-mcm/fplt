@@ -108,6 +108,19 @@ def test_run_manifest_plan_requires_plan_horizon() -> None:
         RunManifest.model_validate(_run_kwargs(run_type="plan", plan_horizon=None))
 
 
+def test_curated_latest_pointer_fields() -> None:
+    from fplt.schemas.manifests import CuratedLatestPointer
+
+    pointer = CuratedLatestPointer(
+        build_id="build_cafe",
+        created_at=_TS,
+        raw_cutoff=_TS,
+        code_sha="abc1234",
+    )
+    assert pointer.build_id == "build_cafe"
+    assert pointer.code_sha == "abc1234"
+
+
 def test_build_manifest_requires_tables() -> None:
     manifest = BuildManifest(
         build_id="build_cafe",

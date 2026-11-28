@@ -22,7 +22,7 @@ from fplt.store.runs import run_dir
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CHECKPOINT = "T-90m"
-_UI_TABLES = ("players", "teams", "fixtures", "gameweeks", "player_status")
+_UI_TABLES = frozenset({"players", "teams", "fixtures", "gameweeks", "player_status"})
 _GW_RE = re.compile(r"^gw=(\d+)$")
 _CRED_MSG = (
     "fplt data pull --official requires FPLT_DATA_BUCKET and "
@@ -162,7 +162,7 @@ def pull_official(
         build_id = load_run_manifest(data_dir, predict_id).build_id
         if build_id:
             build_ids.append(build_id)
-            written += _pull_build(data_dir, remote, build_id)
+            written += pull_build(data_dir, remote, build_id, tables=_UI_TABLES)
     result = OfficialPullResult(
         season=season,
         gw=gw,
@@ -212,14 +212,36 @@ def _pull_run(data_dir: Path, remote: Remote, run_id: str) -> int:
     return n
 
 
-def _pull_build(data_dir: Path, remote: Remote, build_id: str) -> int:
+def pull_build(
+    data_dir: Path,
+    remote: Remote,
+    build_id: str,
+    *,
+    tables: frozenset[str] | None = None,
+) -> int:
+    """Pull one curated build manifest and its table sha files.
+
+    Args:
+        data_dir: Local data root.
+        remote: Data-bucket remote.
+        build_id: Curated build id.
+        tables: Optional allow-list of table names. ``None`` pulls every table
+            named in the manifest (incremental curate / #345). Official UI
+            pulls pass the UI subset.
+
+    Returns:
+        Count of newly written local objects.
+
+    Raises:
+        OfficialPullError: Manifest or a required table sha is missing remotely.
+    """
     builds_dest = build_manifest_path(data_dir, build_id).parent
     builds_dest.mkdir(parents=True, exist_ok=True)
     n = _safe_pull(remote, f"curated/builds/build={build_id}.json", builds_dest)
     if not build_manifest_path(data_dir, build_id).is_file():
         raise OfficialPullError(f"curated build {build_id} missing in the data bucket")
     for table, entry in load_build_manifest(data_dir, build_id).tables.items():
-        if table not in _UI_TABLES:
+        if tables is not None and table not in tables:
             continue
         dest = table_sha_path(data_dir, table, entry.sha).parent
         dest.mkdir(parents=True, exist_ok=True)
