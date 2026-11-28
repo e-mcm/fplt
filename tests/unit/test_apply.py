@@ -28,6 +28,7 @@ from fplt.optimise.apply import (
 from fplt.optimise.plan import DEFAULT_PLAN_HORIZON, plan_parquet, write_plan
 from fplt.settings import Settings
 from fplt.types import GWKey
+from tests.builders import dual_write_plan
 
 _WHEN = datetime(2024, 8, 1, tzinfo=UTC)
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "fpl_api"
@@ -269,7 +270,7 @@ def test_apply_plan_dry_run_and_confirm(tmp_path: Path) -> None:
     owned = [pick.element for pick in team.picks]
     buy_key = 9001
     _view(tmp_path, element_ids=owned + [buy_key])
-    write_plan(tmp_path, _swap_plan(team, buy_key))
+    dual_write_plan(tmp_path, _swap_plan(team, buy_key))
 
     posts: list[tuple[str, dict[str, Any]]] = []
 
@@ -329,7 +330,7 @@ def test_apply_plan_transfers_only(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned + [9001])
-    write_plan(tmp_path, _swap_plan(team))
+    dual_write_plan(tmp_path, _swap_plan(team))
     posts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -538,7 +539,7 @@ def test_apply_plan_builds_client_from_secret_settings(
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    write_plan(
+    dual_write_plan(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )
@@ -645,7 +646,7 @@ def test_apply_plan_lineup_only_and_no_transfers(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    write_plan(
+    dual_write_plan(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )
@@ -704,7 +705,7 @@ def test_apply_plan_dry_run_fetches_team(tmp_path: Path) -> None:
     team = CurrentTeam.from_my_team(42, _load("my_team.json"))
     owned = [pick.element for pick in team.picks]
     _view(tmp_path, element_ids=owned)
-    write_plan(
+    dual_write_plan(
         tmp_path,
         _plan_rows(elements=owned, bought=[False] * 15, sold=[False] * 15),
     )

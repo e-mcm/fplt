@@ -907,6 +907,7 @@ def run_plan(
                     if resolved_source is not None
                     else None
                 ),
+                report_md=report,
             )
             plan_run_id = plan_run.run_id
             logger.info("dual-wrote plan run_id=%s", plan_run_id)

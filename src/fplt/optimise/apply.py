@@ -16,16 +16,15 @@ import polars as pl
 from fplt.data.fpl_client import CurrentTeam, FPLClient
 from fplt.data.pit import PITData, PITView
 from fplt.data.store import DataStore
-from fplt.models.spec import load_model_specs
 from fplt.optimise.plan import (
     DEFAULT_PLAN_HORIZON,
     covered_horizon,
     ensure_plan_chip_column,
-    plan_parquet,
     plan_step_chip,
 )
 from fplt.schemas.plan import PlanSchema
 from fplt.settings import Settings, get_settings, require_entry_id, secret_value
+from fplt.store.plan_runs import read_latest_plan
 from fplt.types import GWKey
 from fplt.utils.frames import require_dataframe
 
@@ -258,12 +257,14 @@ def apply_plan(
         raise ApplyError(
             "confirm needs FPLT_FPL_API_TOKEN (Bearer from x-api-authorization)"
         )
-    spec = load_model_specs()[model_name]
     covered = covered_horizon(gameweek, horizon)
-    path = plan_parquet(data_dir, spec.model_id, season, gameweek, covered)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    plan = pl.read_parquet(path)
+    # Data-model cut-over: newest succeeded plan run, never plans/<model_id>/.
+    plan = read_latest_plan(
+        data_dir,
+        spec_label=model_name,
+        key=GWKey(season, gameweek),
+        horizon=covered,
+    )
     view = PITData(DataStore(data_dir)).view(GWKey(season, gameweek))
     element_by_key = _key_to_element(view)
     prices = _purchase_prices(view)
